@@ -314,7 +314,29 @@ static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
 
 /* Channel methods (below 0x100) are PFIFO's own; the rest go to the
  * object bound to the subchannel. */
+/* Debugging: XBRT_GPU_DUMP=<file>:<first flip>:<flips> writes every method
+ * from that flip on, for that many flips, as "flip class method value". */
+static void dump_method(uint32_t subch, uint32_t method, uint32_t arg) {
+    static FILE *f;
+    static int state; /* 0 unparsed, 1 armed, 2 off */
+    static uint32_t first, count;
+    if (state == 0) {
+        const char *e = getenv("XBRT_GPU_DUMP");
+        char path[512];
+        state = 2;
+        if (e && sscanf(e, "%511[^:]:%u:%u", path, &first, &count) == 3 && (f = fopen(path, "w"))) state = 1;
+    }
+    if (state != 1 || nv2a.flips < first) return;
+    if (nv2a.flips >= first + count) {
+        fclose(f);
+        state = 2;
+        return;
+    }
+    fprintf(f, "%u %02x %04x %08x\n", nv2a.flips, nv2a.class_[subch], method, arg);
+}
+
 void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
+    dump_method(subch, method, arg);
     if (method == 0) {
         nv2a.object[subch] = arg;
         uint32_t inst = nv2a_lookup(arg);
@@ -357,8 +379,8 @@ static void *device_main(void *arg) {
             if (t > next_vblank) next_vblank = t + 16683333;
             nv2a.vblanks++;
             if (rt_log_level && nv2a.vblanks % 300 == 0)
-                rt_log("nv2a: %u vblanks, %u flips, %u draws, %u clears, %u traps\n", nv2a.vblanks, nv2a.flips,
-                       nv2a.draws, nv2a.clears, nv2a.traps);
+                rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps\n", nv2a.vblanks,
+                       nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears, nv2a.traps);
             REG(PCRTC_INTR_0) |= 1;
             update_irq();
         }

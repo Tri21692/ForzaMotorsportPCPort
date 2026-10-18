@@ -12,7 +12,7 @@ typedef struct {
     /* Kelvin (class 0x97) method state, indexed by method / 4 */
     uint32_t kelvin[0x2000 / 4];
 
-    uint32_t vblanks, draws, clears, flips, traps;
+    uint32_t vblanks, draws, clears, flips, traps, skipped;
 } Nv2a;
 
 extern Nv2a nv2a;
@@ -22,5 +22,7 @@ uint32_t nv2a_lookup(uint32_t handle);
 uint32_t nv2a_dma_base(uint32_t inst, uint32_t *limit);
 void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg);
 void nv2a_kelvin(uint32_t method, uint32_t arg);
+void nv2a_raster_method(uint32_t method, uint32_t arg); /* raster.c: draws in software */
+void nv2a_raster_invalidate(void);                      /* textures may have changed */
 
 #endif

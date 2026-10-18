@@ -76,9 +76,11 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     if (method >= 0x2000) return;
     if (rt_log_level >= 3) rt_log("nv2a: kelvin %04x = %08x\n", method, arg);
     nv2a.kelvin[method / 4] = arg;
+    nv2a_raster_method(method, arg);
     switch (method) {
     case FLIP_INCREMENT_WRITE: {
         nv2a.flips++;
+        nv2a_raster_invalidate();
         uint32_t mod = nv2a.kelvin[FLIP_MODULO / 4];
         uint32_t w = nv2a.kelvin[FLIP_WRITE / 4] + 1;
         nv2a.kelvin[FLIP_WRITE / 4] = mod ? w % mod : w;

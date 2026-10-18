@@ -50,17 +50,26 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 - The installer manifest is the `BKGDINST` section (37 files, 4 MB zlib
   chunks with SHA-1s).
 
-## Current lead (2026-10-18, night)
+## Current lead (2026-10-18, evening)
 
-No boot blocker: the game runs its front end (attract and intro movies,
-saves on U:, a fiber for the front end, ~150 draws a frame at about
-3 fps). There is now a window, and screenshots
-(`XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=2`, BMPs in `run/shots`):
-the movies and the loading spinner show; the menus are black because
-the GPU draws nothing. `CLEAR_SURFACE` fills the colour buffer, but the
-menus' frames reach the front buffer some other way (likely an
-anti-aliased back buffer copied by the GPU), so no clear colour shows
-yet; that is unverified.
+The menus draw: `runtime/raster.c` rasterises Kelvin primitives in
+software (vertex programs interpreted, register combiners, stage 0
+textures, blending) into the 1280x480 anti-aliased back buffer at
+0x01c40000, and D3D's downsample pass copies it to the front buffers
+(0x01b14000 and 0x019e8000) that PCRTC_START flips between. Screenshots
+show the background art, bars, button icons and dialog boxes.
+
+**Text is missing.** Fonts (`Fontsll\Arial_16.xpr`, `Fonts\Euro\*`),
+string tables (`Loc\EN\*.str`) and `Euro.SXWad` all load, and the
+512x128 DXT5 font atlas decodes correctly (check with
+`XBRT_TEX_DUMP=tex`). But every quad drawn with the atlas (format
+07910f29) has texcoords (1,1), and the glyph quads collapse to a point:
+runs of identical positions, about ten per string. Boxes drawn with the
+atlas's solid texel are fine. So glyph metrics come out zero on the CPU
+side, before D3D: find the game's text draw (callers of
+`D3DDevice_SetVertexData2f`, 0x3BACA0) and check where the glyph
+rectangle comes from (the .xpr glyph table, or float conversion in the
+recompiled code).
 
 ## Next after that
 
@@ -68,13 +77,9 @@ yet; that is unverified.
    samples of the main thread, or a build with `-O2` for the generated
    code: `make OPT=-O2`) before changing anything.
 2. Pace flips to the vertical blank (D3D's presentation interval).
-3. Find how a menu frame reaches the front buffer (log SET_SURFACE_*
-   and the surface addresses each frame, and what PCRTC_START points
-   at), so drawing has a target.
-4. Drawing: see the phase 4 list in [ROADMAP.md](ROADMAP.md). The front
-   end is mostly 2D (textured quads), a good first target. A software
-   rasteriser for pre-transformed quads with one texture would already
-   show most menus.
+3. Drawing: texture stages 1-3 (two menu states use T1), depth and
+   stencil, swizzled render targets, lighting. See the phase 4 list in
+   [ROADMAP.md](ROADMAP.md).
 
 ## Log
 
@@ -88,6 +93,12 @@ yet; that is unverified.
   mailbox acknowledged (effects not run); MmLockUnlock*; threads created
   suspended plus NtResumeThread/NtSuspendThread; MMIO range widened to
   everything from 0xFD000000. The game now reaches the attract movie.
+- 2026-10-18 (interactive, evening): software rasteriser (raster.c):
+  vertex program interpreter, viewport and matrices in the transform
+  constants (c58/c59 were zero, so every program put vertices at 0),
+  anti-aliasing scale, register combiners (the downsample pass was black
+  because texture times diffuse is not what its combiners say). Menus
+  draw, without text.
 - 2026-10-18 (interactive, evening): CPU detection (pushfd/popfd keep
   AC/ID, cpuid answers as the Xbox's Pentium III), so Bink finds MMX;
   CVTPS2PI/CVTTPS2PI/CVTPI2PS; the video overlay's STOP register; the

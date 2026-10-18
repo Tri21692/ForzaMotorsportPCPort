@@ -34,6 +34,7 @@ first build takes a while.
 | `XBRT_WINDOW` | `0` runs without a window (Windows shows one) | on |
 | `XBRT_SCREENSHOT` | a folder to save the picture to as BMP files | off |
 | `XBRT_SCREENSHOT_EVERY` | seconds between screenshots | 5 |
+| `XBRT_TEX_DUMP` | a folder to save every decoded texture to, as BMP | off |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1
 (shoulder buttons are WHITE and BLACK); without one, the keyboard
@@ -58,7 +59,8 @@ partition.
 | `dpc.c` | kernel timers and the DPC thread |
 | `hw.c` | interrupts, PCI config space, I/O ports, the video encoder |
 | `nv2a.c` | the GPU as its driver sees it: registers, push buffer, vblank |
-| `kelvin.c` | the GPU's 3D engine methods (state only; nothing is drawn yet) |
+| `kelvin.c` | the GPU's 3D engine methods: state, clears, semaphores, notifies |
+| `raster.c` | drawing in software: vertices, vertex programs, textures, register combiners, blending |
 | `apu.c` | the audio processor's registers, the AC'97 controller, and a stand-in for the GP DSP's command handling (nothing is played yet) |
 | `hle_input.c` | XAPI's controller functions, replaced, read from XInput or the keyboard |
 | `hle_net.c` | XNet and Winsock startup, replaced: a console with no network cable |
@@ -90,7 +92,11 @@ Two driver handshakes matter for D3D to get past `Present`:
   and uses one to wake `BlockOnTime`'s event.
 
 Colour clears (`CLEAR_SURFACE`) are carried out on linear 32- and 16-bit
-surfaces. Drawing the other methods on the PC is the next step.
+surfaces, and `raster.c` draws primitives in software (see the comment
+at its top for what is covered). D3D renders a frame into an
+anti-aliased back buffer, then draws that as a texture into the front
+buffer it flips to, so both have to work for anything to show.
+`XBRT_TEX_DUMP=<folder>` saves each texture as it is decoded.
 
 What reaches the screen (`display.c`) is what the console's video output
 would show: the front buffer at the address D3D programs into
