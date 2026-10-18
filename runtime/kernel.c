@@ -557,7 +557,19 @@ K(ObReferenceObjectByHandle) {
     return STATUS_SUCCESS;
 }
 
-K(ObfDereferenceObject) { return 0; }
+/* ObfDereferenceObject(Object), fastcall: the object a reference gave out,
+ * a FILE_OBJECT, a thread's KTHREAD or (for the rest) the handle. */
+K(ObfDereferenceObject) {
+    uint32_t obj = c->ecx, h = rt_file_handle(obj);
+    if (!h) {
+        for (int i = 1; i < 4096 && !h; i++) {
+            RtObject *o = rt_handle_slot(i);
+            if (o && o->type == OBJ_THREAD && o->thread && o->thread->kthread == obj) h = 0x100 + 4 * (uint32_t)i;
+        }
+    }
+    rt_object_release(h ? h : obj);
+    return 0;
+}
 
 /* Locking pages for DMA (DSOUND does it for its buffers): guest memory is
  * always resident, so there is nothing to lock. */
@@ -772,6 +784,7 @@ void xb_kernel(XbCtx *c, uint32_t ordinal) {
     const XbKernelInfo *k = rt_kernel_info(ordinal);
     if (v_tick_count) xb_wr32(v_tick_count, (uint32_t)(rt_now_100ns() / 10000));
     Handler h = ordinal < 400 ? handlers[ordinal] : NULL;
+    if (rt_self) rt_self->last_call = ordinal, rt_self->last_from = xb_rd32(c->esp);
     if (rt_log_level) {
         rt_log("%s(", k ? k->name : "?");
         int n = k ? (k->conv == 1 ? 2 : k->argbytes / 4) : 0;

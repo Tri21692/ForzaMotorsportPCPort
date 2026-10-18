@@ -125,6 +125,8 @@ typedef struct RtThread {
     pthread_t host;
     struct { uint32_t routine, context, iosb; } apc[32]; /* user APCs, run at the next alertable wait */
     int napc;
+    uint32_t last_call, last_from; /* its latest kernel call (ordinal) and caller, for thread dumps */
+    struct RtThread *next_all;      /* every thread started, for thread dumps */
 } RtThread;
 
 extern __thread RtThread *rt_self;
@@ -146,7 +148,8 @@ uint64_t rt_now_100ns(void); /* monotonic, Xbox system time units */
 enum { OBJ_FREE, OBJ_EVENT, OBJ_SEMAPHORE, OBJ_MUTANT, OBJ_THREAD, OBJ_FILE, OBJ_SYMLINK, OBJ_TIMER, OBJ_DIR };
 typedef struct {
     int type;
-    int refs;
+    int refs;           /* the handle, plus ObReferenceObjectByHandle's references */
+    int closed;         /* the handle is closed; references keep the object */
     int signaled;       /* event state, semaphore count, mutant free (1) */
     int manual;         /* manual-reset event */
     int limit;          /* semaphore maximum */
@@ -220,6 +223,7 @@ int rt_display_focused(void);           /* the game's window has the keyboard */
 void rt_apu_init(void);
 void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
 void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
+void rt_thread_dump(void); /* every guest thread's state, to stderr; with rt_gil held */
 uint32_t rt_apu_read(uint32_t off, int bytes);
 void rt_apu_write(uint32_t off, int bytes, uint32_t v);
 uint32_t rt_aci_read(uint32_t off, int bytes);
@@ -230,7 +234,8 @@ void rt_files_init(void);
 uint32_t rt_symlink(const char *link, const char *target);
 uint32_t rt_open(uint32_t *handle, uint32_t obj_attr, uint32_t access, uint32_t share, uint32_t disposition,
                  uint32_t options, uint32_t *info);
-RtObject *rt_handle_slot(int i); /* the handle table, for walking: NULL past the end or for free slots */
+RtObject *rt_handle_slot(int i);
+void rt_object_release(uint32_t h); /* drop a reference to the object behind h, even once h is closed */ /* the handle table, for walking: NULL past the end or for free slots */
 uint32_t rt_read(uint32_t h, uint32_t buf, uint32_t len, uint32_t offset_ptr, uint32_t *done);
 uint32_t rt_write(uint32_t h, uint32_t buf, uint32_t len, uint32_t offset_ptr, uint32_t *done);
 const char *rt_object_name(uint32_t obj_attr, char *out, size_t n);

@@ -63,13 +63,28 @@ uint32_t rt_handle_new(int type) {
 RtObject *rt_handle_get(uint32_t h) {
     if (h < 0x100 || (h & 3)) return NULL;
     uint32_t i = (h - 0x100) / 4;
-    return i < 4096 ? objects[i] : NULL;
+    return i < 4096 && objects[i] && !objects[i]->closed ? objects[i] : NULL;
 }
 
 RtObject *rt_handle_slot(int i) { return i > 0 && i < 4096 ? objects[i] : NULL; }
 
+/* Closing the handle releases a file's share access, as the NT I/O
+ * manager does when the last handle goes (IRP_MJ_CLEANUP); the object
+ * itself lasts until ObfDereferenceObject drops the last reference. XAPI's
+ * CreateFile references every file it opens, so without that the share
+ * access of a closed file stayed, and Forza's exclusive reopen of a track
+ * file it had just closed failed (and the race load hung). */
 void rt_handle_close(uint32_t h) {
     RtObject *o = rt_handle_get(h);
+    if (!o) return;
+    o->closed = 1;
+    o->access = 0;
+    rt_object_release(h);
+}
+
+void rt_object_release(uint32_t h) {
+    if (h < 0x100 || (h & 3) || (h - 0x100) / 4 >= 4096) return;
+    RtObject *o = objects[(h - 0x100) / 4];
     if (!o) return;
     if (--o->refs > 0) return;
     if (o->fd >= 0 && o->type == OBJ_FILE) close(o->fd);
@@ -200,12 +215,29 @@ static void *thread_main(void *arg) {
     return NULL;
 }
 
+static RtThread *all_threads;
+
 void rt_thread_start(RtThread *t) {
+    t->next_all = all_threads; /* under rt_gil, or before any guest thread runs */
+    all_threads = t;
     pthread_attr_t a;
     pthread_attr_init(&a);
     pthread_attr_setstacksize(&a, 64u << 20); /* deep guest call chains run on the host stack */
     if (pthread_create(&t->host, &a, thread_main, t) != 0) rt_fatal(NULL, "pthread_create failed");
     pthread_attr_destroy(&a);
+}
+
+/* Debugging (XBRT_THREAD_DUMP): each thread's registers, latest kernel
+ * call and stack, which holds its likely return addresses. The caller
+ * holds rt_gil, so no guest code is running. */
+void rt_thread_dump(void) {
+    for (RtThread *t = all_threads; t; t = t->next_all) {
+        const XbKernelInfo *k = rt_kernel_info(t->last_call);
+        fprintf(stderr, "thread %08x (start %08x)%s%s: last kernel call %s from %08x\n", t->handle, t->start,
+                t->terminated ? " terminated" : "", t->started ? "" : " not started", k ? k->name : "-", t->last_from);
+        if (!t->terminated && t->started) rt_backtrace(&t->ctx);
+    }
+    fflush(stderr);
 }
 
 void rt_thread_run_main(RtThread *t, uint32_t entry) {

@@ -406,6 +406,9 @@ func (g *gen) inst(in analysis.Inst) {
 	case x86asm.CDQ:
 		g.line("c->edx = (uint32_t)((int32_t)c->eax >> 31);")
 		return
+	case x86asm.XLATB: // al = [ebx + al]
+		g.line("c->eax = (c->eax & 0xFFFFFF00u) | xb_rd8(c->ebx + (c->eax & 0xFFu));")
+		return
 	case x86asm.CWDE:
 		g.line("c->eax = (uint32_t)(int32_t)(int16_t)c->eax;")
 		return

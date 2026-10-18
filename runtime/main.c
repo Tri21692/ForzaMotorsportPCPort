@@ -3,6 +3,7 @@
  * usage: forza [path/to/default.xbe]
  *   XBRT_LOG=1   log kernel calls (2: also memory and files)
  *   XBRT_LOG_FROM=<seconds>  start logging only then
+ *   XBRT_THREAD_DUMP=<seconds>  print every thread's state then (debugging)
  *   XBRT_DISC    directory holding the extracted disc (default: the XBE's)
  *   XBRT_HDD     directory for the hard disk partitions (default: ./hdd)
  */
@@ -169,6 +170,18 @@ static int log_deferred;  /* XBRT_LOG's level, held back until XBRT_LOG_FROM */
 static double log_from;
 
 void rt_log_tick(void) {
+    static const char *dumps; /* XBRT_THREAD_DUMP: seconds, comma-separated */
+    static double dump_at = -1;
+    if (dump_at < 0) {
+        dumps = getenv("XBRT_THREAD_DUMP");
+        dump_at = dumps && atof(dumps) > 0 ? atof(dumps) : 0;
+    }
+    if (dump_at > 0 && rt_now_100ns() >= (uint64_t)(dump_at * 1e7)) {
+        fprintf(stderr, "---- threads at %.1f s ----\n", rt_now_100ns() / 1e7);
+        rt_thread_dump();
+        dumps = strchr(dumps, ',');
+        dump_at = dumps ? atof(++dumps) : 0;
+    }
     if (log_deferred && rt_now_100ns() >= (uint64_t)(log_from * 1e7)) {
         rt_log_level = log_deferred, log_deferred = 0;
         rt_log("logging from here on (XBRT_LOG_FROM)\n");

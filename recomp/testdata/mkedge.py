@@ -84,6 +84,7 @@ case("rep_stosb_back", ["std", "and ecx, 31", "lea edi, [esi+0x80]", "rep stosb"
 case("repne_scasb", ["cld", "or ecx, 0x40", "and ecx, 0x7F", "mov edi, esi", "repne scasb"], ALL)
 case("repe_cmpsb", ["cld", "and ecx, 0x3F", "lea edi, [esi+1]", "repe cmpsb"], ALL)
 case("lodsd", ["cld", "lodsd"], 0)
+case("xlatb", ["mov ebx, esi", "xlatb"], 0)
 case("loop", ["and ecx, 7", "inc ecx", "xor eax, eax", "2:", "add eax, ebx", "loop 2b"], 0)
 case("jecxz", ["and ecx, 1", "xor eax, eax", "jecxz 3f", "inc eax", "3:"], 0)
 case("pushad_popad", ["pushad", "mov eax, 1", "mov ebx, 2", "popad"], 0)

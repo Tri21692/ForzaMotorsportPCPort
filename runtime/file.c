@@ -248,7 +248,7 @@ uint32_t rt_open(uint32_t *handle, uint32_t oa, uint32_t desired, uint32_t share
     }
     uint8_t access = access_bits(desired);
     if (exists && !is_dir && share_conflict(host, access, (uint8_t)(share & 7))) {
-        rt_log("  open %s: sharing violation\n", xbox);
+        fprintf(stderr, "xbrt: open %s: sharing violation (access %x, share %x)\n", xbox, access, share & 7);
         return STATUS_SHARING_VIOLATION;
     }
     uint32_t h;
@@ -306,7 +306,11 @@ uint32_t k_file_NtOpenFile(XbCtx *c) {
 /* NtReadFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock*, Buffer, Length, ByteOffset*) */
 uint32_t k_file_NtReadFile(XbCtx *c) {
     RtObject *o = rt_handle_get(ARG(0));
-    if (!o || o->type != OBJ_FILE) return STATUS_INVALID_HANDLE;
+    if (!o || o->type != OBJ_FILE) {
+        fprintf(stderr, "xbrt: NtReadFile on handle %x, which is %s (from %08x)\n", ARG(0), o ? "not a file" : "not open",
+                xb_rd32(c->esp));
+        return STATUS_INVALID_HANDLE;
+    }
     uint64_t pos = ARG(7) ? xb_rd64(ARG(7)) : o->pos;
     rt_mem_commit(ARG(5), ARG(6)); /* the host writes this memory, not guest code */
     ssize_t n = o->fd >= 0 ? pread(o->fd, xb_mem + ARG(5), ARG(6), (off_t)pos) : 0;
@@ -324,7 +328,13 @@ uint32_t k_file_NtReadFile(XbCtx *c) {
      * APC alone, as the NT I/O manager does; Forza reads ahead past the
      * end of its files and would otherwise collect a result for a read
      * that never started. */
-    if (n == 0 && ARG(6)) return STATUS_END_OF_FILE;
+    if (n == 0 && ARG(6)) {
+        static int warned;
+        if (warned++ < 20)
+            fprintf(stderr, "xbrt: read past the end of %s at %llx (%u bytes, %s)\n", o->path ? o->path : "?",
+                    (unsigned long long)pos, ARG(6), ARG(1) || ARG(2) ? "with an event or APC" : "synchronous");
+        return STATUS_END_OF_FILE;
+    }
     uint32_t r = STATUS_SUCCESS;
     io_status(ARG(4), r, (uint32_t)n);
     if (ARG(1)) {
