@@ -1,0 +1,13 @@
+# Game files never go in this repo. Bring your own dump.
+*.xbe
+*.iso
+*.xiso
+dump/
+game/
+
+# Tool output
+*.map
+/out/
+/xbeinfo
+/xbemap
+*.exe
