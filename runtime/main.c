@@ -13,6 +13,10 @@
 #include "rt.h"
 #include "nv2a.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 RtImage rt_image;
 int rt_log_level;
 
@@ -27,12 +31,12 @@ void rt_log(const char *fmt, ...) {
 
 /* Print the guest stack's likely return addresses, the closest thing to a
  * backtrace: dwords that point at the instruction after a translated call. */
-static void guest_backtrace(XbCtx *c) {
+void rt_backtrace(XbCtx *c) {
     if (!c) return;
     fprintf(stderr, "  eax=%08x ecx=%08x edx=%08x ebx=%08x esp=%08x ebp=%08x esi=%08x edi=%08x\n",
             c->eax, c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi);
     fprintf(stderr, "  stack:");
-    for (int i = 0; i < 24; i++) fprintf(stderr, "%s%08x", i % 8 ? " " : "\n    ", xb_rd32(c->esp + 4 * i));
+    for (int i = 0; i < 64; i++) fprintf(stderr, "%s%08x", i % 8 ? " " : "\n    ", xb_rd32(c->esp + 4 * i));
     fprintf(stderr, "\n");
 }
 
@@ -43,7 +47,7 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
-    guest_backtrace(c);
+    rt_backtrace(c);
     fflush(stderr);
     _exit(1);
 }
@@ -115,6 +119,9 @@ static void load_xbe(const char *path) {
 int main(int argc, char **argv) {
     const char *env = getenv("XBRT_LOG");
     rt_log_level = env ? atoi(env) : 0;
+#ifdef _WIN32
+    timeBeginPeriod(1); /* 1 ms sleeps, as the DPC thread and waits expect */
+#endif
     const char *path = argc > 1 ? argv[1] : "default.xbe";
 
     rt_mem_init();
@@ -123,6 +130,7 @@ int main(int argc, char **argv) {
     rt_files_init();
     rt_hw_init();
     rt_nv2a_init();
+    rt_apu_init();
 
     RtThread *t = rt_thread_create(0x40000, rt_image.tls_size, 0);
     rt_dpc_start();

@@ -12,7 +12,7 @@ typedef struct {
     /* Kelvin (class 0x97) method state, indexed by method / 4 */
     uint32_t kelvin[0x2000 / 4];
 
-    uint32_t vblanks, draws, clears;
+    uint32_t vblanks, draws, clears, flips, traps;
 } Nv2a;
 
 extern Nv2a nv2a;

@@ -47,6 +47,8 @@ void xb_trap(XbCtx *c, uint32_t addr, const char *why) {
     trap_why = why;
     longjmp(trap_jmp, 1);
 }
+volatile uint32_t xb_preempt_pending;
+void xb_preempt(XbCtx *c) { (void)c; }
 void xb_call_indirect(XbCtx *c, uint32_t target) { xb_trap(c, target, "indirect call"); }
 void xb_kernel(XbCtx *c, uint32_t ordinal) { xb_trap(c, ordinal, "kernel call"); }
 uint64_t xb_rdtsc(XbCtx *c) { xb_trap(c, 0, "rdtsc"); }

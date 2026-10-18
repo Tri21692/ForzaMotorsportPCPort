@@ -177,9 +177,11 @@ func (a *analyzer) descend(start uint32, owner map[uint32]uint32) *Func {
 	}
 	seen := map[uint32]bool{}
 	work := []uint32{start}
+	branchHist := map[uint32]recent{} // the path so far, at each branch target
 	for len(work) > 0 {
 		va := work[len(work)-1]
 		work = work[:len(work)-1]
+		hist := branchHist[va]
 	path:
 		for !seen[va] {
 			if va != start {
@@ -228,7 +230,7 @@ func (a *analyzer) descend(start uint32, owner map[uint32]uint32) *Func {
 					}
 				} else if k, ok := a.thunkRef(in); ok {
 					fn.KernelCalls = append(fn.KernelCalls, k.Ordinal)
-				} else if targets := a.jumpTable(in, start); len(targets) > 0 {
+				} else if targets := a.jumpTable(in, &hist, start); len(targets) > 0 {
 					fn.JumpTables++
 					work = append(work, targets...)
 				} else {
@@ -239,9 +241,15 @@ func (a *analyzer) descend(start uint32, owner map[uint32]uint32) *Func {
 				if isCondBranch(in.Op) {
 					if t, ok := relTarget(in, next); ok {
 						work = append(work, t)
+						if _, ok := branchHist[t]; !ok {
+							h := hist
+							h.add(in)
+							branchHist[t] = h
+						}
 					}
 				}
 			}
+			hist.add(in)
 			va = next
 		}
 	}
@@ -265,21 +273,91 @@ func (a *analyzer) thunkRef(in x86asm.Inst) (xbe.KernelImport, bool) {
 	return a.f.KernelBySlot(uint32(m.Disp))
 }
 
+// recent keeps the last few instructions of the straight-line path being
+// walked, for the jump table reader.
+type recent struct {
+	in [4]x86asm.Inst
+	n  int
+}
+
+func (r *recent) add(in x86asm.Inst) { r.in[r.n%len(r.in)] = in; r.n++ }
+
+// lastOp is the opcode of the latest instruction on the path, 0 if none.
+func (r *recent) lastOp() x86asm.Op {
+	if r.n == 0 {
+		return 0
+	}
+	return r.in[(r.n-1)%len(r.in)].Op
+}
+
+// indexSetter finds the latest instruction on the path that writes reg,
+// looking back a few instructions.
+func (r *recent) indexSetter(reg x86asm.Reg) (x86asm.Inst, bool) {
+	for k := 1; k <= len(r.in) && k <= r.n; k++ {
+		in := r.in[(r.n-k)%len(r.in)]
+		if dst, ok := in.Args[0].(x86asm.Reg); ok && dst == reg {
+			return in, in.Op != x86asm.CMP && in.Op != x86asm.TEST
+		}
+	}
+	return x86asm.Inst{}, false
+}
+
 // jumpTable reads an MSVC switch table, `jmp dword ptr [table + reg*4]`.
 // Entries are taken while they point into the function's own section; MSVC
 // puts the table right after the function, so the first non-code value ends
-// it.
-func (a *analyzer) jumpTable(in x86asm.Inst, fnStart uint32) []uint32 {
+// it. Three forms in the CRT's hand-written memcpy/memmove need the code
+// before the jump: after `and reg, mask` the table has exactly mask+1
+// slots, some of which may never be used (slot 0 can overlap code); after
+// `neg reg` the table is indexed backwards from its end; after `sub reg,
+// k` taken on a borrow (jb) the index is -k..-1, the k slots below it.
+func (a *analyzer) jumpTable(in x86asm.Inst, hist *recent, fnStart uint32) []uint32 {
 	m, ok := in.Args[0].(x86asm.Mem)
 	if !ok || m.Base != 0 || m.Index == 0 || m.Scale != 4 {
 		return nil
 	}
 	sec := a.f.SectionAt(fnStart)
 	table := uint32(m.Disp)
+	entry := func(addr uint32) (uint32, bool) {
+		v, err := a.f.Uint32(addr)
+		return v, err == nil && sec != nil && sec.Contains(v)
+	}
 	var out []uint32
+	if set, ok := hist.indexSetter(m.Index); ok {
+		switch set.Op {
+		case x86asm.NEG:
+			for i := uint32(0); i < 64; i++ {
+				v, ok := entry(table - 4*i)
+				if !ok {
+					break
+				}
+				out = append(out, v)
+			}
+			return out
+		case x86asm.SUB:
+			if k, ok := set.Args[1].(x86asm.Imm); ok && k > 0 && k <= 16 && hist.lastOp() == x86asm.JB {
+				for i := uint32(1); i <= uint32(k); i++ {
+					if v, ok := entry(table - 4*i); ok {
+						out = append(out, v)
+					}
+				}
+				if len(out) > 0 {
+					return out
+				}
+			}
+		case x86asm.AND:
+			if mask, ok := set.Args[1].(x86asm.Imm); ok && mask >= 0 && mask < 1024 {
+				for i := uint32(0); i <= uint32(mask); i++ {
+					if v, ok := entry(table + 4*i); ok {
+						out = append(out, v)
+					}
+				}
+				return out
+			}
+		}
+	}
 	for i := uint32(0); i < 1024; i++ {
-		v, err := a.f.Uint32(table + 4*i)
-		if err != nil || sec == nil || !sec.Contains(v) {
+		v, ok := entry(table + 4*i)
+		if !ok {
 			break
 		}
 		out = append(out, v)
@@ -543,9 +621,11 @@ func (p *Program) Body(start uint32) Body {
 	b := Body{Start: start, Tables: map[uint32][]uint32{}}
 	seen := map[uint32]bool{}
 	work := []uint32{start}
+	branchHist := map[uint32]recent{} // the path so far, at each branch target
 	for len(work) > 0 {
 		va := work[len(work)-1]
 		work = work[:len(work)-1]
+		hist := branchHist[va]
 	path:
 		for !seen[va] {
 			if va != start {
@@ -570,7 +650,7 @@ func (p *Program) Body(start uint32) Body {
 						work = append(work, t)
 					}
 				} else if _, ok := a.thunkRef(in); !ok {
-					if targets := a.jumpTable(in, start); len(targets) > 0 {
+					if targets := a.jumpTable(in, &hist, start); len(targets) > 0 {
 						b.Tables[va] = targets
 						work = append(work, targets...)
 					}
@@ -580,9 +660,15 @@ func (p *Program) Body(start uint32) Body {
 				if isCondBranch(in.Op) {
 					if t, ok := relTarget(in, next); ok {
 						work = append(work, t)
+						if _, ok := branchHist[t]; !ok {
+							h := hist
+							h.add(in)
+							branchHist[t] = h
+						}
 					}
 				}
 			}
+			hist.add(in)
 			va = next
 		}
 	}

@@ -57,7 +57,7 @@ static void *dpc_main(void *arg) {
     XbCtx *c = &t->ctx;
     xb_wr8(t->kpcr + 0x24, 2); /* DISPATCH_LEVEL */
     for (;;) {
-        pthread_mutex_lock(&rt_gil);
+        rt_gil_lock();
         uint64_t now = rt_now_100ns();
         for (int i = 0; i < ntimers;) {
             Timer *tm = &timers[i];

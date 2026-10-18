@@ -15,6 +15,11 @@
 
 #include "rt.h"
 
+#ifdef _WIN32
+#define gmtime_r(t, tm) gmtime_s(tm, t)
+#define timegm _mkgmtime
+#endif
+
 #define ARG(i) xb_rd32(c->esp + 4 + 4 * (i))
 #define K(name) static uint32_t k_##name(XbCtx *c)
 
@@ -139,8 +144,8 @@ K(RtlEqualString) {
     return (nocase ? strncasecmp(pa, pb, la) : strncmp(pa, pb, la)) == 0;
 }
 
-K(RtlNtStatusToDosError) {
-    switch (ARG(0)) {
+static uint32_t dos_error(uint32_t status) {
+    switch (status) {
     case STATUS_SUCCESS: return 0;
     case STATUS_OBJECT_NAME_NOT_FOUND: return 2;   /* ERROR_FILE_NOT_FOUND */
     case STATUS_OBJECT_PATH_NOT_FOUND: return 3;   /* ERROR_PATH_NOT_FOUND */
@@ -156,6 +161,19 @@ K(RtlNtStatusToDosError) {
     case STATUS_PENDING: return 997;               /* ERROR_IO_PENDING */
     }
     return 317; /* ERROR_MR_MID_NOT_FOUND */
+}
+
+K(RtlNtStatusToDosError) { return dos_error(ARG(0)); }
+
+/* NtUserIoApcDispatcher(ApcContext, IoStatusBlock, Reserved): the APC
+ * routine XAPI's ReadFileEx/WriteFileEx pass. ApcContext is the caller's
+ * completion routine, called as (dwErrorCode, dwNumberOfBytesTransfered,
+ * lpOverlapped); the IO_STATUS_BLOCK is the start of the OVERLAPPED. */
+K(NtUserIoApcDispatcher) {
+    uint32_t iosb = ARG(1), status = xb_rd32(iosb);
+    uint32_t err = (status >> 30) == 3 ? dos_error(status) : 0; /* NT_ERROR */
+    rt_guest_call(c, ARG(0), 3, err, xb_rd32(iosb + 4), iosb);
+    return 0;
 }
 
 /* TIME_FIELDS: Year, Month, Day, Hour, Minute, Second, Milliseconds, Weekday (u16 each). */
@@ -208,7 +226,15 @@ K(KeQuerySystemTime) {
 
 static int never(void *p) { (void)p; return 0; }
 
+/* An alertable wait runs the thread's queued user APCs first and returns
+ * STATUS_USER_APC if there were any, as the Xbox kernel does. */
+#define ALERTABLE_WAIT(alertable) \
+    do { \
+        if (((alertable) & 0xFF) && rt_run_user_apcs(c)) return STATUS_USER_APC; \
+    } while (0)
+
 K(KeDelayExecutionThread) {
+    ALERTABLE_WAIT(ARG(1));
     uint64_t d = rt_deadline(ARG(2));
     rt_wait(never, NULL, d ? d : rt_now_100ns() + 1);
     return STATUS_SUCCESS;
@@ -254,6 +280,7 @@ K(KeSetEvent) {
 }
 
 K(KeWaitForSingleObject) {
+    ALERTABLE_WAIT(ARG(3));
     uint32_t obj = ARG(0);
     if (!rt_wait(header_ready, (void *)(uintptr_t)obj, rt_deadline(ARG(4)))) return STATUS_TIMEOUT;
     header_consume(obj);
@@ -407,7 +434,10 @@ static uint32_t wait_one(uint32_t h, uint32_t timeout) {
 }
 
 K(NtWaitForSingleObject) { return wait_one(ARG(0), ARG(2)); }
-K(NtWaitForSingleObjectEx) { return wait_one(ARG(0), ARG(3)); }
+K(NtWaitForSingleObjectEx) {
+    ALERTABLE_WAIT(ARG(2));
+    return wait_one(ARG(0), ARG(3));
+}
 
 typedef struct {
     uint32_t n, handles, all, which;
@@ -430,6 +460,7 @@ static int multi_ready(void *p) {
 }
 
 K(NtWaitForMultipleObjectsEx) {
+    ALERTABLE_WAIT(ARG(4));
     MultiWait w = {ARG(0), ARG(1), ARG(2) == 0, 0};
     if (!rt_wait(multi_ready, &w, rt_deadline(ARG(5)))) return STATUS_TIMEOUT;
     for (uint32_t i = 0; i < w.n; i++) {
@@ -449,7 +480,7 @@ K(NtClose) {
 K(NtYieldExecution) {
     pthread_mutex_unlock(&rt_gil);
     sched_yield();
-    pthread_mutex_lock(&rt_gil);
+    rt_gil_lock();
     return STATUS_SUCCESS;
 }
 
@@ -481,15 +512,33 @@ K(ObReferenceObjectByHandle) {
         return STATUS_SUCCESS;
     }
     RtObject *o = rt_handle_get(ARG(0));
-    if (!o) return STATUS_INVALID_HANDLE;
+    if (!o) {
+        if (getenv("XBRT_DEBUG_BADHANDLE")) rt_backtrace(c);
+        return STATUS_INVALID_HANDLE;
+    }
     o->refs++;
-    /* Threads give their guest ETHREAD; other objects are host-side and
-     * only their handle means anything to the game. */
-    xb_wr32(ARG(2), o->type == OBJ_THREAD ? o->thread->kthread : ARG(0));
+    /* Threads give their guest ETHREAD and files a guest FILE_OBJECT;
+     * other objects are host-side and only their handle means anything
+     * to the game. */
+    uint32_t obj = ARG(0);
+    if (o->type == OBJ_THREAD) obj = o->thread->kthread;
+    else if (o->type == OBJ_FILE || o->type == OBJ_DIR) obj = rt_file_object(ARG(0));
+    xb_wr32(ARG(2), obj);
     return STATUS_SUCCESS;
 }
 
 K(ObfDereferenceObject) { return 0; }
+
+/* The file system cache: the host caches files itself, so only the size
+ * the game asked for is remembered. In 4 KB pages. */
+static uint32_t fsc_pages = 64;
+K(FscGetCacheSize) { return fsc_pages; }
+K(FscSetCacheSize) {
+    fsc_pages = ARG(0);
+    rt_log("  file cache: %u pages\n", fsc_pages);
+    return STATUS_SUCCESS;
+}
+K(FscInvalidateIdleBlocks) { return 0; }
 
 /* ---- memory ---- */
 
@@ -659,6 +708,9 @@ extern uint32_t k_file_NtQueryVolumeInformationFile(XbCtx *c);
 extern uint32_t k_file_NtQueryFullAttributesFile(XbCtx *c);
 extern uint32_t k_file_NtOpenSymbolicLinkObject(XbCtx *c);
 extern uint32_t k_file_NtQuerySymbolicLinkObject(XbCtx *c);
+extern uint32_t k_file_IoQueryVolumeInformation(XbCtx *c);
+extern uint32_t k_file_NtFsControlFile(XbCtx *c);
+extern uint32_t k_file_NtDeviceIoControlFile(XbCtx *c);
 
 void xb_kernel(XbCtx *c, uint32_t ordinal) {
     const XbKernelInfo *k = rt_kernel_info(ordinal);
@@ -775,6 +827,10 @@ void rt_kernel_init(void) {
     H(238, NtYieldExecution);
     H(246, ObReferenceObjectByHandle);
     H(250, ObfDereferenceObject);
+    H(232, NtUserIoApcDispatcher);
+    H(35, FscGetCacheSize);
+    H(36, FscInvalidateIdleBlocks);
+    H(37, FscSetCacheSize);
     H(255, PsCreateSystemThreadEx);
     H(258, PsTerminateSystemThread);
     H(269, RtlCompareMemoryUlong);
@@ -800,6 +856,9 @@ void rt_kernel_init(void) {
     handlers[210] = k_file_NtQueryFullAttributesFile;
     handlers[203] = k_file_NtOpenSymbolicLinkObject;
     handlers[215] = k_file_NtQuerySymbolicLinkObject;
+    handlers[76] = k_file_IoQueryVolumeInformation;
+    handlers[200] = k_file_NtFsControlFile;
+    handlers[196] = k_file_NtDeviceIoControlFile;
 
     /* Fill the XBE's kernel thunk table: functions get fake addresses that
      * xb_call_indirect recognises, variables get real storage. */

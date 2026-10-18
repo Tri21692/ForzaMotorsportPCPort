@@ -5,7 +5,9 @@
 dump/
 game/
 
-# Tool output
+# Tool output, and the runtime's hard disk and working folders
+hdd/
+/run/
 *.map
 /out/
 /xbeinfo

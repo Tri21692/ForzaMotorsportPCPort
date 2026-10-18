@@ -10,16 +10,24 @@
 GEN ?= ../out
 CC ?= gcc
 OPT ?= -O1
-GENFLAGS = $(OPT) -w -ffp-contract=off -fno-math-errno -fno-strict-aliasing -I$(GEN)
-RTFLAGS = -O2 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=off -I$(GEN)
+GENFLAGS = $(OPT) -w -ffp-contract=off -fno-math-errno -fno-strict-aliasing -I$(GEN) $(OSFLAGS)
+RTFLAGS = -O2 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=off -I$(GEN) $(OSFLAGS)
+
+# Windows (MinGW-w64, e.g. w64devkit): the generated files have more
+# sections than a COFF object normally allows, and file offsets are 64-bit.
+ifeq ($(OS),Windows_NT)
+EXE = .exe
+OSFLAGS = -Wa,-mbig-obj -D_FILE_OFFSET_BITS=64
+OSLIBS = -lwinmm
+endif
 
 GEN_SRC = $(wildcard $(GEN)/*.c)
 GEN_OBJ = $(patsubst $(GEN)/%.c,build/gen/%.o,$(GEN_SRC))
-RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c hle_input.c
+RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c hle_input.c hle_net.c
 RT_OBJ = $(patsubst %.c,build/%.o,$(RT_SRC))
 
-forza: $(GEN_OBJ) $(RT_OBJ)
-	$(CC) -o $@ $^ -lm -lpthread
+forza$(EXE): $(GEN_OBJ) $(RT_OBJ)
+	$(CC) -o $@ $^ -lm -lpthread $(OSLIBS)
 
 build/gen/%.o: $(GEN)/%.c $(GEN)/xbrt.h $(GEN)/funcs.h
 	@mkdir -p build/gen
@@ -30,6 +38,6 @@ build/%.o: %.c rt.h nv2a.h $(GEN)/xbrt.h $(GEN)/names.h
 	$(CC) $(RTFLAGS) -c $< -o $@
 
 clean:
-	rm -rf build forza
+	rm -rf build forza forza.exe
 
 .PHONY: clean

@@ -15,10 +15,18 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "xbrt.h"
 
 /* ---- status codes ---- */
+#ifdef _WIN32 /* windows.h has some of these, typed DWORD */
+#undef STATUS_TIMEOUT
+#undef STATUS_PENDING
+#undef STATUS_INVALID_HANDLE
+#undef STATUS_INVALID_PARAMETER
+#undef STATUS_NO_MEMORY
+#endif
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_TIMEOUT 0x00000102u
 #define STATUS_PENDING 0x00000103u
@@ -38,6 +46,7 @@
 /* ---- logging ---- */
 extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void rt_backtrace(XbCtx *c); /* registers and likely return addresses, to stderr */
 void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));
 
 /* ---- memory (mem.c) ----
@@ -56,6 +65,8 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(pr
 #define RT_PHYS_WC 0xF0000000u
 #define RT_PHYS_INSTANCE 0x03FE0000u /* GPU instance memory, 64 KB, then 64 KB padding */
 #define RT_NV2A_BASE 0xFD000000u
+#define RT_APU_BASE 0xFE800000u /* the audio processor's registers, 512 KB */
+#define RT_APU_SIZE 0x00080000u
 #define RT_POOL_BASE 0xB0000000u
 #define RT_POOL_LIMIT 0xBF000000u
 #define RT_KDATA_BASE 0xC0000000u
@@ -63,6 +74,10 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(pr
 #define RT_KFUNC_BASE 0xFFFF0000u
 
 void rt_mem_init(void);
+/* Make [addr, addr+size) usable. A no-op on Linux; on Windows guest memory
+ * is committed on first use, and host calls that write guest memory
+ * (ReadFile) need it committed beforehand. */
+void rt_mem_commit(uint32_t addr, uint32_t size);
 uint32_t rt_user_alloc(uint32_t base, uint32_t size, uint32_t protect); /* 0 on failure */
 int rt_user_free(uint32_t base, uint32_t *size);
 int rt_user_query(uint32_t addr, uint32_t *base, uint32_t *size, uint32_t *protect, uint32_t *state);
@@ -88,6 +103,10 @@ extern RtImage rt_image;
 
 /* ---- threads and objects (thread.c) ---- */
 extern pthread_mutex_t rt_gil;
+/* Take the big lock. A thread spinning in guest code hands it over at its
+ * next loop back-edge (xb_preempt), so use this rather than locking
+ * rt_gil directly whenever the caller has work to do. */
+void rt_gil_lock(void);
 extern pthread_cond_t rt_changed; /* broadcast whenever an object is signalled */
 
 typedef struct RtThread {
@@ -99,9 +118,20 @@ typedef struct RtThread {
     int terminated;
     uint32_t exit_code;
     pthread_t host;
+    struct { uint32_t routine, context, iosb; } apc[32]; /* user APCs, run at the next alertable wait */
+    int napc;
 } RtThread;
 
 extern __thread RtThread *rt_self;
+/* Condition variables time out against RT_COND_CLOCK: monotonic on Linux,
+ * the wall clock on Windows, where winpthreads waits on that. */
+#ifdef _WIN32
+#define RT_COND_CLOCK CLOCK_REALTIME
+#else
+#define RT_COND_CLOCK CLOCK_MONOTONIC
+#endif
+void rt_cond_init(pthread_cond_t *cv);
+void rt_abstime(struct timespec *ts, uint64_t ns_from_now); /* for pthread_cond_timedwait */
 RtThread *rt_thread_create(uint32_t stack_size, uint32_t tls_size, uint32_t extra_size);
 void rt_thread_start(RtThread *t);
 void rt_thread_run_main(RtThread *t, uint32_t entry);
@@ -122,6 +152,12 @@ typedef struct {
     char *path;         /* file, directory or symlink target (host or Xbox path) */
     void *dir;          /* directory listing cursor */
     uint64_t pos;       /* file position */
+    uint32_t file_object; /* guest FILE_OBJECT, made when the game asks for it */
+    int raw;              /* a raw hard disk partition: its number + 1 */
+    int delete_on_close;  /* FileDispositionInformation */
+    char *host;           /* file: host path, for share checks */
+    uint8_t access, share; /* file: SHARE_* bits it uses (read 1, write 2, delete 4) and allows */
+    uint8_t unbuffered;    /* file: opened with FILE_NO_INTERMEDIATE_BUFFERING */
 } RtObject;
 uint32_t rt_handle_new(int type);
 RtObject *rt_handle_get(uint32_t h);
@@ -132,6 +168,14 @@ void rt_handle_close(uint32_t h);
  * Returns 1 if ready, 0 on timeout. */
 int rt_wait(int (*ready)(void *), void *arg, uint64_t deadline);
 uint64_t rt_deadline(uint32_t timeout_ptr); /* from a guest PLARGE_INTEGER */
+
+/* User APCs: an I/O call given an ApcRoutine queues one on the calling
+ * thread, which runs it, as ApcRoutine(ApcContext, IoStatusBlock, 0), the
+ * next time it waits alertably. That wait then returns STATUS_USER_APC.
+ * rt_run_user_apcs returns how many ran. */
+#define STATUS_USER_APC 0x000000C0u
+void rt_queue_user_apc(uint32_t routine, uint32_t context, uint32_t iosb);
+int rt_run_user_apcs(XbCtx *c);
 
 /* ---- kernel exports (kernel.c) ---- */
 void rt_kernel_init(void);
@@ -160,12 +204,23 @@ void rt_interrupt_ack(uint32_t irq, void (*ack)(void)); /* called after the ISR 
 extern uint32_t rt_display_fb;            /* AvSetDisplayMode: front buffer, physical */
 extern uint32_t rt_display_mode, rt_display_format, rt_display_pitch;
 
+/* ---- the audio processor (apu.c) ---- */
+void rt_apu_init(void);
+uint32_t rt_apu_read(uint32_t off, int bytes);
+void rt_apu_write(uint32_t off, int bytes, uint32_t v);
+
 /* ---- files (file.c) ---- */
 void rt_files_init(void);
 uint32_t rt_symlink(const char *link, const char *target);
-uint32_t rt_open(uint32_t *handle, uint32_t obj_attr, uint32_t disposition, uint32_t options, uint32_t *info);
+uint32_t rt_open(uint32_t *handle, uint32_t obj_attr, uint32_t access, uint32_t share, uint32_t disposition,
+                 uint32_t options, uint32_t *info);
+RtObject *rt_handle_slot(int i); /* the handle table, for walking: NULL past the end or for free slots */
 uint32_t rt_read(uint32_t h, uint32_t buf, uint32_t len, uint32_t offset_ptr, uint32_t *done);
 uint32_t rt_write(uint32_t h, uint32_t buf, uint32_t len, uint32_t offset_ptr, uint32_t *done);
 const char *rt_object_name(uint32_t obj_attr, char *out, size_t n);
+/* The guest FILE_OBJECT for a file or directory handle, and back. */
+uint32_t rt_file_object(uint32_t h);
+uint32_t rt_file_handle(uint32_t file_object);
+void rt_file_delete(const char *xbox_path); /* when its last handle closes */
 
 #endif

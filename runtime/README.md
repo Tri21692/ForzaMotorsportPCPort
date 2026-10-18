@@ -4,16 +4,22 @@ The C runtime that recompiled Xbox code links against. It stands in for
 the Xbox kernel (HLE): the game's own code, XAPI and the C runtime run
 recompiled, and every `xboxkrnl.exe` import lands here instead.
 
-Linux on x86-64 with gcc or clang. The generated code keeps x87 math in
-80-bit `long double`, which needs an x86 host.
+Linux or Windows on x86-64, with gcc or clang (on Windows, MinGW-w64 gcc,
+for example [w64devkit](https://github.com/skeeto/w64devkit)). The
+generated code keeps x87 math in 80-bit `long double`, which needs an x86
+host and rules out MSVC. Windows needs version 10 1803 or later.
 
 ## Build and run
 
 ```sh
 go run ./cmd/xbrecomp -xbsdb ~/XbSymbolDatabase -o out/ default.xbe
 make -C runtime GEN=../out -j$(nproc)
-runtime/forza path/to/default.xbe
+runtime/forza path/to/default.xbe        # runtime/forza.exe on Windows
 ```
+
+Point it at the `default.xbe` of an extracted disc (extract-xiso does
+this); the disc's `media` folder must sit next to it, or `XBRT_DISC` must
+name the folder that holds it.
 
 `-xbsdb` is needed: the runtime replaces library functions by name, and
 the names come from XbSymbolDatabase. The generated C is large, so the
@@ -24,6 +30,17 @@ first build takes a while.
 | `XBRT_DISC` | the extracted disc (`D:`, `\Device\CdRom0`) | the XBE's directory |
 | `XBRT_HDD` | the hard disk; `PartitionN` folders inside it | `./hdd` |
 | `XBRT_LOG` | `1` logs every kernel call, `2` more | quiet |
+| `XBRT_AUTOPRESS` | `1` taps START and A every two seconds | off |
+
+Controller: on Windows the first XInput pad is the Xbox pad on port 1
+(shoulder buttons are WHITE and BLACK); without one, the keyboard
+(arrows, Enter START, Escape BACK, Space A, X B, C X, V Y, W/S triggers).
+
+The hard disk folder fills like a console's: `Partition1` holds saves
+(`TDATA`, `UDATA`), the game installs its archives to the cache
+partitions it claims (`Z:` and `N:`, folders `Partition5` and `Partition4`),
+and `partition0.bin` is the raw table of which title owns which cache
+partition.
 
 ## Layout
 
@@ -31,15 +48,15 @@ first build takes a while.
 |---|---|
 | `rt.h` | shared declarations and the guest address map |
 | `main.c` | XBE loader, logging, fatal errors with a guest backtrace |
-| `mem.c` | the 4 GB guest space, virtual/contiguous/pool allocators |
+| `mem.c` | the 4 GB guest space, virtual/contiguous/pool allocators; on Windows, placeholders and commit on first touch |
 | `thread.c` | guest threads (TLS, KPCR, KTHREAD), the big lock, handles, waits |
 | `kernel.c` | kernel export dispatch and the Rtl/Ke/Nt/Ps/Ob/Mm/Ex/Hal/Io/Xe handlers |
-| `file.c` | devices, symbolic links and the Nt file calls |
+| `file.c` | devices, symbolic links, raw partitions and the Nt/Io file calls |
 | `dpc.c` | kernel timers and the DPC thread |
 | `hw.c` | interrupts, PCI config space, I/O ports, the video encoder |
 | `nv2a.c` | the GPU as its driver sees it: registers, push buffer, vblank |
 | `kelvin.c` | the GPU's 3D engine methods (state only; nothing is drawn yet) |
-| `hle_input.c` | XAPI's controller functions, replaced |
+| `hle_input.c` | XAPI's controller functions, replaced, read from XInput or the keyboard |
 
 ## The GPU
 
@@ -50,8 +67,31 @@ sections (D3D, DSOUND) through a range check, so register reads and writes
 reach `nv2a.c` with their hardware behaviour (interrupt bits that clear
 when written with ones, a running timer, flushes that complete). A device
 thread runs the push buffer whenever D3D moves PUT, writes fences back,
-and raises the 60 Hz vertical blank. Drawing those methods on the PC is
-the next step.
+and raises the 60 Hz vertical blank.
+
+Two driver handshakes matter for D3D to get past `Present`:
+
+- A semaphore release also stores the value, shifted left by 2, in PGRAPH
+  register 0x400B10. `D3D_BlockOnTime` spins until those bits match the
+  fence in RAM. (Inferred from D3D's own loop; xemu calls the register
+  `PATT_COLOR0`.)
+- A `NO_OPERATION` with a nonzero parameter is a notify for the driver.
+  PGRAPH records it in TRAPPED_ADDR/DATA, raises the ERROR interrupt and
+  stalls the push buffer until D3D's ISR clears it. D3D sends one per
+  frame (Forza's two alternate, which looks like the two framebuffers)
+  and uses one to wake `BlockOnTime`'s event.
+
+Drawing the methods on the PC is the next step.
+
+## Threads and preemption
+
+One guest thread runs at a time, under the big lock. A guest loop that
+spins waiting for another thread or for an interrupt (D3D does this,
+waiting for the GPU to pass a fence) would hold the lock forever, so every
+translated loop back-edge checks `xb_preempt_pending` and, at PASSIVE
+IRQL, hands the lock to whoever is waiting for it (`rt_gil_lock`). The DPC
+thread asks for it every millisecond, which is when interrupts are
+delivered. ISRs, DPCs and code at raised IRQL are never preempted.
 
 ## Replacing library code
 

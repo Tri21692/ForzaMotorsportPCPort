@@ -7,10 +7,12 @@ title ID `4D53006E`) to PC as a native program. The plan is a static
 recompilation of the game's own code plus a PC runtime for the Xbox kernel,
 graphics, audio and input. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
-**Status: phase 3, the runtime.** The recompiled game builds as a native
-Linux program and boots through its own startup code until Direct3D
-initialisation, which phase 4 replaces. Nothing is drawn yet. What exists
-today:
+**Status: phases 3 and 4, the runtime and graphics.** The recompiled game
+builds as a native Linux or Windows program. With the player's extracted
+disc it boots, installs its archives to the hard disk cache, starts its
+sound engine and reaches its main loop, reading the controller, all
+through the real D3D and DSOUND down to models of the GPU and APU.
+Nothing is drawn on screen yet. What exists today:
 
 - `xbe` parses an XBE: header, certificate, sections (with SHA-1 checks),
   linked XDK libraries, TLS and the kernel import table. It names all 371
@@ -26,7 +28,7 @@ today:
   with our own patterns. On Forza that's 530 symbols. All 507 the original
   C implementation reports for this XBE come out at the same addresses.
 - `recomp` translates the game's x86 to C: integer, SSE1, x87 and MMX,
-  with x87 kept bit-exact by running it on the host's own x87 unit. **99.1%
+  with x87 kept bit-exact by running it on the host's own x87 unit. **99.2%
   of Forza's functions translate fully.** Correctness is checked by
   differential testing against the Unicorn CPU emulator: 473 edge-case
   instruction forms pass with 0 mismatches, and so do 5,021 of Forza's own

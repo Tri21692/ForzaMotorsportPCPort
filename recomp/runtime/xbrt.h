@@ -29,8 +29,14 @@
 #define XB_WEAK __attribute__((weak))
 
 /* At every loop back-edge: re-read guest memory on the next iteration
- * (see recomp.go, jump). */
-#define XB_LOOP() __asm__ volatile("" ::: "memory")
+ * (see recomp.go, jump), and give the CPU away if another thread is
+ * waiting for it. The runtime runs one guest thread at a time; a loop that
+ * polls for something an interrupt or another thread does would otherwise
+ * never let that happen. On the Xbox the interrupt simply preempts it. */
+extern volatile uint32_t xb_preempt_pending; /* threads waiting to run guest code */
+struct XbCtx;
+void xb_preempt(struct XbCtx *c);
+#define XB_LOOP() do {         __asm__ volatile("" ::: "memory");         if (__builtin_expect(xb_preempt_pending != 0, 0)) xb_preempt(c);     } while (0)
 
 /* One SSE register: the Pentium III has SSE1, four floats per register. */
 typedef union XbVec {
@@ -61,11 +67,12 @@ static inline void xb_wr16(uint32_t a, uint16_t v) { memcpy(xb_mem + a, &v, 2); 
 static inline void xb_wr32(uint32_t a, uint32_t v) { memcpy(xb_mem + a, &v, 4); }
 
 /* Device registers. Driver code (see Translator.HW) reaches hardware
- * through ordinary loads and stores; its accesses come here, and the GPU's
- * register range (0xFD000000-0xFDFFFFFF) goes to the runtime's model. */
+ * through ordinary loads and stores; its accesses come here, and the
+ * register ranges of the GPU (0xFD000000-0xFDFFFFFF) and the audio
+ * processor (0xFE800000-0xFE87FFFF) go to the runtime's models. */
 uint32_t xb_mmio_read(uint32_t a, int bytes);
 void xb_mmio_write(uint32_t a, int bytes, uint32_t v);
-#define XB_IS_MMIO(a) __builtin_expect(((a) >> 24) == 0xFDu, 0)
+#define XB_IS_MMIO(a) __builtin_expect(((a) >> 24) == 0xFDu || ((a) >> 19) == (0xFE800000u >> 19), 0)
 static inline uint8_t xb_hw_rd8(uint32_t a) { return XB_IS_MMIO(a) ? (uint8_t)xb_mmio_read(a, 1) : xb_rd8(a); }
 static inline uint16_t xb_hw_rd16(uint32_t a) { return XB_IS_MMIO(a) ? (uint16_t)xb_mmio_read(a, 2) : xb_rd16(a); }
 static inline uint32_t xb_hw_rd32(uint32_t a) { return XB_IS_MMIO(a) ? xb_mmio_read(a, 4) : xb_rd32(a); }

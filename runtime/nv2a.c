@@ -59,7 +59,13 @@
 #define PFB_WBC_FLUSH (1u << 16)
 
 #define PGRAPH_INTR 0x400100
+#define PGRAPH_INTR_ERROR (1u << 20)
+#define PGRAPH_NSOURCE 0x400108
+#define PGRAPH_NSOURCE_NOTIFICATION (1u << 0)
+#define PGRAPH_CTX_USER 0x400148
 #define PGRAPH_STATUS 0x400700
+#define PGRAPH_TRAPPED_ADDR 0x400704
+#define PGRAPH_TRAPPED_DATA_LOW 0x400708
 
 #define PCRTC_INTR_0 0x600100
 #define PCRTC_INTR_EN_0 0x600140
@@ -146,6 +152,7 @@ static uint64_t ptimer(void) {
 }
 
 uint32_t xb_mmio_read(uint32_t a, int bytes) {
+    if (a - RT_APU_BASE < RT_APU_SIZE) return rt_apu_read(a - RT_APU_BASE, bytes);
     uint32_t off = a - RT_NV2A_BASE;
     switch (off) {
     case PTIMER_TIME_0:
@@ -155,12 +162,24 @@ uint32_t xb_mmio_read(uint32_t a, int bytes) {
     case USER_DMA_GET:
         return REG(PFIFO_CACHE1_DMA_GET);
     }
+    if (rt_log_level) { /* registers read as plain storage: name the new ones */
+        static uint8_t seen[0x1000000 / 4 / 8];
+        uint32_t i = off / 4;
+        if (!(seen[i / 8] & (1u << (i % 8)))) {
+            seen[i / 8] |= 1u << (i % 8);
+            rt_log("nv2a: register %06x first read (= %08x)\n", off, REG(off & ~3u));
+        }
+    }
     if (bytes == 4) return REG(off);
     if (bytes == 2) return *(volatile uint16_t *)(xb_mem + a);
     return *(volatile uint8_t *)(xb_mem + a);
 }
 
 void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
+    if (a - RT_APU_BASE < RT_APU_SIZE) {
+        rt_apu_write(a - RT_APU_BASE, bytes, v);
+        return;
+    }
     uint32_t off = a - RT_NV2A_BASE;
     if (bytes != 4) { /* nothing with effects is written in parts */
         if (bytes == 2) *(volatile uint16_t *)(xb_mem + a) = (uint16_t)v;
@@ -175,6 +194,7 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
     case PCRTC_INTR_0: /* write one to clear */
         REG(off) &= ~v;
         update_irq();
+        if (off == PGRAPH_INTR) pthread_cond_broadcast(&kick); /* a trapped method may resume */
         break;
     case PMC_INTR_EN_0:
     case PCRTC_INTR_EN_0:
@@ -245,6 +265,30 @@ static void run_pushbuf(void) {
     REG(USER_DMA_GET) = get;
 }
 
+/* Hand a method to the driver's interrupt handler, as PGRAPH does for a
+ * NO_OPERATION with a nonzero parameter: record it in TRAPPED_ADDR/DATA,
+ * raise the ERROR interrupt, and stall the push buffer until the ISR
+ * clears it. D3D's BlockOnTime waits for this (D3D sets an event in the
+ * ISR). Layout as xemu has it; runs on the device thread. */
+static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
+    pthread_mutex_lock(&lock);
+    uint32_t chid = (REG(PGRAPH_CTX_USER) >> 24) & 0x1F;
+    REG(PGRAPH_TRAPPED_ADDR) = chid << 20 | subch << 16 | (method & 0x1FFF);
+    REG(PGRAPH_TRAPPED_DATA_LOW) = arg;
+    REG(PGRAPH_NSOURCE) = PGRAPH_NSOURCE_NOTIFICATION;
+    REG(PGRAPH_INTR) |= PGRAPH_INTR_ERROR;
+    update_irq();
+    nv2a.traps++;
+    if (rt_log_level >= 2) rt_log("nv2a: trapped method %04x = %08x\n", method, arg);
+    while (REG(PGRAPH_INTR) & PGRAPH_INTR_ERROR) {
+        struct timespec ts;
+        rt_abstime(&ts, 100000000); /* 100 ms; say so if the driver never answers */
+        if (pthread_cond_timedwait(&kick, &lock, &ts) != 0 && (REG(PGRAPH_INTR) & PGRAPH_INTR_ERROR))
+            rt_log("nv2a: still waiting for the driver to clear PGRAPH_INTR (%08x)\n", REG(PGRAPH_INTR));
+    }
+    pthread_mutex_unlock(&lock);
+}
+
 /* Channel methods (below 0x100) are PFIFO's own; the rest go to the
  * object bound to the subchannel. */
 void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
@@ -267,6 +311,10 @@ void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
     }
     switch (nv2a.class_[subch]) {
     case 0x97:
+        if (method == 0x100 && arg) { /* NO_OPERATION with a parameter: a notify for the driver */
+            trap_method(subch, method, arg);
+            return;
+        }
         nv2a_kelvin(method, arg);
         return;
     }
@@ -285,6 +333,9 @@ static void *device_main(void *arg) {
             next_vblank += 16683333; /* 59.94 Hz */
             if (t > next_vblank) next_vblank = t + 16683333;
             nv2a.vblanks++;
+            if (rt_log_level && nv2a.vblanks % 300 == 0)
+                rt_log("nv2a: %u vblanks, %u flips, %u draws, %u clears, %u traps\n", nv2a.vblanks, nv2a.flips,
+                       nv2a.draws, nv2a.clears, nv2a.traps);
             REG(PCRTC_INTR_0) |= 1;
             update_irq();
         }
@@ -295,9 +346,7 @@ static void *device_main(void *arg) {
             continue;
         }
         struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        uint64_t wake = (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec + (next_vblank - t);
-        ts.tv_sec = wake / 1000000000ull, ts.tv_nsec = wake % 1000000000ull;
+        rt_abstime(&ts, next_vblank - t);
         pthread_cond_timedwait(&kick, &lock, &ts);
     }
     return NULL;
@@ -314,10 +363,7 @@ void rt_nv2a_init(void) {
     REG(PFIFO_CACHE1_STATUS) = 0x10; /* EMPTY */
     REG(PFIFO_RUNOUT_STATUS) = 0x10; /* EMPTY */
     rt_interrupt_ack(GPU_IRQ, after_isr);
-    pthread_condattr_t ca;
-    pthread_condattr_init(&ca);
-    pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
-    pthread_cond_init(&kick, &ca);
+    rt_cond_init(&kick);
     pthread_t h;
     pthread_create(&h, NULL, device_main, NULL);
 }
