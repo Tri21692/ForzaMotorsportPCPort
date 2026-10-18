@@ -14,25 +14,32 @@ things going for it here:
 
 The hard parts are graphics and audio, not the CPU.
 
-## Phase 0: read the executable (mostly done)
+## Phase 0: read the executable (done)
 
 - [x] XBE parser: sections, certificate, libraries, TLS, kernel thunks, SHA-1
 - [x] Kernel export table with calling conventions
 - [x] Function discovery: descent, jump tables, prologue and vtable scans
-- [ ] Disassembly listing per function (`xbemap -dis`)
+- [x] Disassembly listing per function (`xbedis`)
 - [ ] Lower the indirect-jump count: find register-loaded jump tables and
       `jmp eax` after table loads
 - [ ] Cross-references from code to data (strings, globals, float constants)
 
-## Phase 1: name the library code
+## Phase 1: name the library code (in progress)
 
-- Match XAPI, LIBC and LIBCPMT functions inside `.text` by byte signatures
-  for XDK 5849. Cxbx-Reloaded's XbSymbolDatabase covers this version. Check
-  its license before taking data from it, or build our own signatures from
-  an XDK we have the rights to.
-- Name the exported entry points of the D3D, DSOUND and XACT sections. These
-  are the functions the runtime replaces.
-- Output: a symbol map with real names wherever possible.
+- [x] Signature matcher for XbSymbolDatabase (package `sigdb`): it parses
+      the database's C sources, runs the XRef-resolving scan, and feeds hits
+      to function discovery as named starts. On Forza it names 412 symbols:
+      102 D3D8, 202 DSOUND, 49 XAPI, 20 XACT, 21 XOnline, 7 XGraphics and
+      11 derived globals.
+- [ ] Port the database's hand-written scans (`manual_*.h`). Some D3D and
+      DSOUND symbols, and the D3D render-state tables, are only found that
+      way.
+- [ ] LIBC/LIBCPMT (memcpy, sprintf, operator new, the x87 helpers such as
+      `_ftol`). These are not in the database. Options are FLIRT-style
+      signatures built from an MSVC 7.1 runtime, or recognizing them by
+      behavior.
+- [ ] Use the database's parameter lists and calling conventions, so the
+      runtime's replacement functions get the right signatures.
 
 ## Phase 2: static recompiler (x86 → C)
 
@@ -50,6 +57,9 @@ The hard parts are graphics and audio, not the CPU.
 
 ## Phase 3: runtime (HLE kernel)
 
+- Map the XBE header itself at `0x10000`. `mainCRTStartup` reads it back
+  (certificate pointer at `0x10118`, header size at `0x10108`) along with
+  the TLS directory, just as it would on the console.
 - Implement the 159 kernel imports listed in research/xbe.md: threads,
   sync, files mapped to an extracted-disc folder, memory, the crypto used
   for saves, and the data exports.

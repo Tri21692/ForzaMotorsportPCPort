@@ -32,14 +32,18 @@ type Source int
 const (
 	FromEntry Source = iota
 	FromCall
+	FromSignature // matched an XDK library signature (see package sigdb)
 	FromTailJump
 	FromPrologue
 	FromDataRef
 )
 
 func (s Source) String() string {
-	return [...]string{"entry", "call", "tailjump", "prologue", "dataref"}[s]
+	return [...]string{"entry", "call", "signature", "tailjump", "prologue", "dataref"}[s]
 }
+
+// NumSources is the number of Source values, for tables indexed by Source.
+const NumSources = int(FromDataRef) + 1
 
 type Func struct {
 	Addr    uint32
@@ -82,10 +86,14 @@ type analyzer struct {
 	code   map[string]bool
 }
 
-// Analyze discovers the code in f.
-func Analyze(f *xbe.File) *Program {
+// Analyze discovers the code in f. Seeds are extra function starts known
+// from elsewhere, such as library signature matches.
+func Analyze(f *xbe.File, seeds ...uint32) *Program {
 	a := &analyzer{f: f, starts: map[uint32]Source{}, code: map[string]bool{}}
 	a.addStart(f.EntryPoint, FromEntry)
+	for _, va := range seeds {
+		a.addStart(va, FromSignature)
+	}
 
 	p := &Program{File: f, Code: a.code}
 	for {

@@ -82,3 +82,43 @@ Notes from tuning:
   handlers, not new functions, so they are skipped.
 - `DSOUND` (35%) and `WMADEC` (26%) have low coverage because both hold large
   tables next to their code. That's fine, since DSOUND gets replaced anyway.
+
+## Library symbols (sigdb + XbSymbolDatabase)
+
+The signature scan names 412 symbols in about 0.1 s. Every match lands in
+its library's own section, and no two functions share an address. Two
+independent checks agree with the XBE parser:
+
+- `mainCRTStartup` matches at `0x268EB5`, which is exactly the decoded entry
+  point.
+- `_tls_index` is derived as `0x5E4C28`, the same address the TLS directory
+  gives.
+
+| Library | Symbols | Where |
+|---|---|---|
+| D3D8 | 102 | `D3D` (and 1 inlined into `.text`) |
+| DSOUND | 202 | `DSOUND` |
+| XAPILIB | 49 | `.text` `0x264BF7`–`0x26CFF4`, plus `XPP` (input) |
+| XACTENG | 20 | `XACTENG` |
+| XONLINES | 21 | `XONLINE`, `XNET` |
+| XGRAPHC | 7 | `XGRPH` |
+| derived | 11 | globals and struct offsets, e.g. `g_XapiMountedMUs`, `D3DDevice__m_VertexShader_OFFSET` = 0x794 |
+
+XAPI sits in one block of `.text` just below the entry point, which is the
+usual XDK link order: game objects first, then XAPI and the CRT. The
+unnamed functions around `0x264000`–`0x270000` are probably the rest of
+XAPI plus LIBC.
+
+### Startup
+
+`mainCRTStartup` (`0x268EB5`) does the following, in order:
+
+1. It reads the XBE header from memory: the certificate at `[0x10118]` and
+   the header size at `[0x10108]`.
+2. It sizes the TLS block from the TLS directory at `0x4CE6EC`.
+3. It starts `mainXapiStartup` on a new thread with `CreateThread`, or boots
+   to the dashboard with `XapiBootToDash` if that fails.
+4. It waits on that thread.
+
+The runtime therefore has to map the header at `0x10000` and provide working
+thread creation before any game code runs.

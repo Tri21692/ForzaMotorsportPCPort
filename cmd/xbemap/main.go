@@ -2,9 +2,14 @@
 //
 //	xbemap default.xbe                 # summary on stdout
 //	xbemap -o forza.map default.xbe    # also write the full function list
+//	xbemap -xbsdb ~/XbSymbolDatabase -o forza.map default.xbe
+//
+// With -xbsdb, XDK library functions are named from signature matches (see
+// package sigdb) and used as extra function starts.
 //
 // Map lines are: address, size, section, how it was found, name, then the
-// kernel imports the function calls directly.
+// kernel imports the function calls directly. Library variables found by
+// signatures follow, marked "var".
 package main
 
 import (
@@ -16,13 +21,15 @@ import (
 	"strings"
 
 	"github.com/Tri21692/ForzaMotorsportPC/analysis"
+	"github.com/Tri21692/ForzaMotorsportPC/sigdb"
 	"github.com/Tri21692/ForzaMotorsportPC/xbe"
 )
 
 func main() {
 	out := flag.String("o", "", "write the function map to this file")
+	dbDir := flag.String("xbsdb", "", "XbSymbolDatabase checkout, to name library functions")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: xbemap [-o file.map] default.xbe")
+		fmt.Fprintln(os.Stderr, "usage: xbemap [-xbsdb dir] [-o file.map] default.xbe")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -38,10 +45,27 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	p := analysis.Analyze(f)
+	var syms []sigdb.Match
+	var seeds []uint32
+	if *dbDir != "" {
+		db, err := sigdb.Load(*dbDir)
+		if err != nil {
+			fail(err)
+		}
+		syms = sigdb.Scan(f, db)
+		for _, m := range syms {
+			if m.Kind == sigdb.Function {
+				seeds = append(seeds, m.Addr)
+			}
+		}
+	}
+	p := analysis.Analyze(f, seeds...)
 	summary(p)
+	if *dbDir != "" {
+		fmt.Printf("%d library symbols named from signatures\n", len(syms))
+	}
 	if *out != "" {
-		if err := writeMap(p, *out); err != nil {
+		if err := writeMap(p, syms, *out); err != nil {
 			fail(err)
 		}
 		fmt.Printf("\nwrote %s\n", *out)
@@ -56,7 +80,7 @@ func fail(err error) {
 func summary(p *analysis.Program) {
 	type secStat struct {
 		funcs, bytes int
-		bySrc        [5]int
+		bySrc        [analysis.NumSources]int
 	}
 	stats := map[string]*secStat{}
 	var bad, unresolved, tables, indirect int
@@ -78,7 +102,7 @@ func summary(p *analysis.Program) {
 	}
 
 	fmt.Printf("%d functions after %d discovery rounds\n\n", len(p.Funcs), p.Rounds)
-	fmt.Printf("  %-10s %6s %9s %6s   %s\n", "section", "funcs", "code", "cover", "found by entry/call/tailjump/prologue/dataref")
+	fmt.Printf("  %-10s %6s %9s %6s   %s\n", "section", "funcs", "code", "cover", "found by entry/call/signature/tailjump/prologue/dataref")
 	// Several sections share a name (BINKYUY2), so sum their sizes per name.
 	size := map[string]uint32{}
 	var names []string
@@ -126,7 +150,7 @@ func summary(p *analysis.Program) {
 	}
 }
 
-func writeMap(p *analysis.Program, path string) error {
+func writeMap(p *analysis.Program, syms []sigdb.Match, path string) error {
 	fh, err := os.Create(path)
 	if err != nil {
 		return err
@@ -134,9 +158,17 @@ func writeMap(p *analysis.Program, path string) error {
 	w := bufio.NewWriter(fh)
 	fmt.Fprintf(w, "# %s (%08X) function map from xbemap\n", p.File.Certificate.TitleName, p.File.Certificate.TitleID)
 	fmt.Fprintln(w, "# addr     size     section    source    name  [kernel calls]")
+	names := map[uint32]string{}
+	for _, m := range syms {
+		if m.Kind == sigdb.Function {
+			names[m.Addr] = m.Name
+		}
+	}
 	for _, fn := range p.Sorted() {
 		name := fmt.Sprintf("sub_%08X", fn.Addr)
-		if fn.Source == analysis.FromEntry {
+		if n, ok := names[fn.Addr]; ok {
+			name = n
+		} else if fn.Source == analysis.FromEntry {
 			name = "entry"
 		}
 		fmt.Fprintf(w, "%08X %08X %-10s %-9s %s", fn.Addr, fn.End-fn.Addr, fn.Section, fn.Source, name)
@@ -153,6 +185,11 @@ func writeMap(p *analysis.Program, path string) error {
 			fmt.Fprintf(w, "  [%s]", strings.Join(ks, " "))
 		}
 		fmt.Fprintln(w)
+	}
+	for _, m := range syms {
+		if m.Kind != sigdb.Function {
+			fmt.Fprintf(w, "%08X var %s\n", m.Addr, m.Name)
+		}
 	}
 	if err := w.Flush(); err != nil {
 		fh.Close()
