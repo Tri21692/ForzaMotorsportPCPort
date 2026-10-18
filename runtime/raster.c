@@ -570,11 +570,13 @@ static void stage(Comb *cb, uint32_t icw, uint32_t ocw, int alpha, int mux_msb) 
     if (!alpha && dcd && (flags & 0x40)) cb->r[dcd][3] = cd[2];
 }
 
-/* The fragment colour from the interpolated diffuse colour and T0-T3. */
-static void combine(const float v0[4], const float tv[4][4], int t0_used, float out[4]) {
+/* The fragment colour from the interpolated diffuse (V0) and specular (V1)
+ * colours and T0-T3. */
+static void combine(const float v0[4], const float v1[4], const float tv[4][4], int t0_used, float out[4]) {
     Comb cb;
     memset(&cb, 0, sizeof cb);
     memcpy(cb.r[4], v0, sizeof cb.r[4]);
+    memcpy(cb.r[5], v1, sizeof cb.r[5]);
     memcpy(cb.r[8], tv, 4 * sizeof cb.r[8]);
     cb.r[12][3] = t0_used ? cb.r[8][3] : 1; /* R0.a starts as T0.a */
     uint32_t ctl = K(SET_COMBINER_CONTROL);
@@ -623,7 +625,7 @@ static int alpha_pass(float a) {
 
 typedef struct {
     float x, y, z, iw;          /* screen position, depth, 1/w */
-    float c[4], tc[4][4];       /* diffuse, texture coordinates 0-3 */
+    float c[4], c1[4], tc[4][4]; /* diffuse, specular, texture coordinates 0-3 */
 } Pt;
 
 static float inv_w(float w) { return fabsf(w) < 1e-20f ? 1 : 1 / w; }
@@ -636,6 +638,7 @@ static Pt project(const Vertex *v) {
         r.x = o.o[O_POS][0], r.y = o.o[O_POS][1], r.z = o.o[O_POS][2];
         r.iw = inv_w(o.o[O_POS][3]); /* D3D's programs divide x, y, z themselves and leave w */
         for (int k = 0; k < 4; k++) r.c[k] = o.o[O_D0][k] != o.o[O_D0][k] ? 1 : fminf(fmaxf(o.o[O_D0][k], 0), 1);
+        for (int k = 0; k < 4; k++) r.c1[k] = o.o[O_D1][k] != o.o[O_D1][k] ? 0 : fminf(fmaxf(o.o[O_D1][k], 0), 1);
         memcpy(r.tc, o.o[O_T0], sizeof r.tc);
         return r;
     }
@@ -650,6 +653,7 @@ static Pt project(const Vertex *v) {
     r.z = o[2] / w + f32(K(SET_VIEWPORT_OFFSET + 8));
     r.iw = inv_w(o[3]);
     memcpy(r.c, v->a[ATTR_DIFFUSE], sizeof r.c);
+    memcpy(r.c1, v->a[ATTR_DIFFUSE + 1], sizeof r.c1); /* specular */
     memcpy(r.tc, v->a[ATTR_TEX0], sizeof r.tc);
     return r;
 }
@@ -758,8 +762,9 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
             float p0 = w0 * a.iw, p1 = w1 * b.iw, p2 = w2 * c.iw, psum = p0 + p1 + p2;
             if (psum != 0 && psum == psum) p0 /= psum, p1 /= psum, p2 /= psum;
             else p0 = w0, p1 = w1, p2 = w2;
-            float s[4];
+            float s[4], s1[4];
             for (int k = 0; k < 4; k++) s[k] = a.c[k] * p0 + b.c[k] * p1 + c.c[k] * p2;
+            for (int k = 0; k < 4; k++) s1[k] = a.c1[k] * p0 + b.c1[k] * p1 + c.c1[k] * p2;
             float tv[4][4] = {{0}};
             for (int i = 0; i < 4; i++) {
                 if (!mode[i] || (mode[i] != 4 && !tex[i])) continue;
@@ -772,7 +777,7 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
                     argb(sample(tex[i], i, q[0], q[1]), tv[i]);
                 }
             }
-            combine(s, tv, mode[0] != 0, s);
+            combine(s, s1, tv, mode[0] != 0, s);
             if (!alpha_pass(s[3])) continue;
             uint32_t dst;
             if (bpp == 4) memcpy(&dst, row + x * 4, 4);

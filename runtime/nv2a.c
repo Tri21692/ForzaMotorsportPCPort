@@ -245,6 +245,11 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
 
 /* ---- the push buffer ---- */
 
+/* The latest control words (jumps, calls, returns), for the report when a
+ * push buffer goes wrong. */
+static struct { uint32_t at, word, put; } recent_ctl[16];
+static unsigned recent_n;
+
 static void run_pushbuf(void) {
     uint32_t put = REG(PFIFO_CACHE1_DMA_PUT), get = REG(PFIFO_CACHE1_DMA_GET);
     if (get == put) return;
@@ -264,6 +269,10 @@ static void run_pushbuf(void) {
         }
         if (rt_log_level >= 2 && ((word & 0xE0000003u) == 0x20000000u || (word & 3)))
             rt_log("nv2a: push buffer %08x: %08x\n", get - 4, word);
+        if ((word & 0xE0000003u) == 0x20000000u || (word & 3) || word == 0x00020000u) {
+            recent_ctl[recent_n % 16].at = get - 4, recent_ctl[recent_n % 16].word = word, recent_ctl[recent_n % 16].put = put;
+            recent_n++;
+        }
         if ((word & 0xE0000003u) == 0x20000000u) { /* old-style jump */
             get = word & 0x1FFFFFFFu;
         } else if ((word & 3) == 1) { /* jump */
@@ -280,6 +289,18 @@ static void run_pushbuf(void) {
             count = (word >> 18) & 0x7FF;
             ni = (word & 0x40000000u) != 0;
         } else {
+            static int reported;
+            if (!reported++) {
+                fprintf(stderr, "xbrt: bad push buffer word %08x at %08x (base %08x, put %08x); latest control words:\n", word, get - 4,
+                        base, put);
+                for (unsigned i = recent_n > 16 ? recent_n - 16 : 0; i < recent_n; i++)
+                    fprintf(stderr, "  at %08x: %08x (put %08x)\n", recent_ctl[i % 16].at, recent_ctl[i % 16].word, recent_ctl[i % 16].put);
+                uint32_t last = recent_ctl[(recent_n - 1) % 16].at;
+                fprintf(stderr, "  words before %08x:", last);
+                for (uint32_t a = last - 0x100; a <= last; a += 4)
+                    fprintf(stderr, "%s%08x", (a - (last - 0x100)) % 32 ? " " : "\n    ", *(volatile uint32_t *)phys(base + a));
+                fprintf(stderr, "\n");
+            }
             rt_log("nv2a: bad push buffer word %08x at %08x (base %08x, put %08x, instance %08x)\n", word, get - 4, base, put, REG(PFIFO_CACHE1_DMA_INSTANCE));
         }
     }
