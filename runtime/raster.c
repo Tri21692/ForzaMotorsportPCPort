@@ -23,7 +23,10 @@
  *             (LU_IMAGE) textures take texel coordinates, the rest 0..1.
  *   colour    the register combiners (general stages and the final
  *             combiner) over T0-T3; alpha test; blending; colour write mask.
- *   surface   linear colour buffers, 32 or 16 bit. No depth or stencil.
+ *   depth     Z16 and Z24S8 buffers: test, write mask, clears (kelvin.c).
+ *             z is interpolated linearly on screen; colours and texture
+ *             coordinates perspective-correctly, through 1/w. No stencil.
+ *   surface   linear colour buffers, 32 or 16 bit.
  *
  * XBRT_TEX_DUMP=<folder> saves every texture as it is decoded, and log
  * level 2 lists each new combination of pixel state once.
@@ -47,6 +50,11 @@
 #define SET_SURFACE_FORMAT 0x0208
 #define SET_SURFACE_PITCH 0x020C
 #define SET_SURFACE_COLOR_OFFSET 0x0210
+#define SET_SURFACE_ZETA_OFFSET 0x0214
+#define SET_CONTEXT_DMA_ZETA 0x0198
+#define SET_DEPTH_TEST_ENABLE 0x030C
+#define SET_DEPTH_FUNC 0x0354
+#define SET_DEPTH_MASK 0x035C
 #define SET_ALPHA_TEST_ENABLE 0x0300
 #define SET_BLEND_ENABLE 0x0304
 #define SET_ALPHA_FUNC 0x033C
@@ -614,15 +622,19 @@ static int alpha_pass(float a) {
 }
 
 typedef struct {
-    float x, y, c[4], tc[4][4]; /* position, diffuse, texture coordinates 0-3 */
+    float x, y, z, iw;          /* screen position, depth, 1/w */
+    float c[4], tc[4][4];       /* diffuse, texture coordinates 0-3 */
 } Pt;
+
+static float inv_w(float w) { return fabsf(w) < 1e-20f ? 1 : 1 / w; }
 
 static Pt project(const Vertex *v) {
     if ((K(SET_TRANSFORM_EXECUTION_MODE) & 3) == 2) { /* a vertex program: oPos is in surface coordinates */
         VshOut o;
         run_program(v, &o);
         Pt r;
-        r.x = o.o[O_POS][0], r.y = o.o[O_POS][1];
+        r.x = o.o[O_POS][0], r.y = o.o[O_POS][1], r.z = o.o[O_POS][2];
+        r.iw = inv_w(o.o[O_POS][3]); /* D3D's programs divide x, y, z themselves and leave w */
         for (int k = 0; k < 4; k++) r.c[k] = o.o[O_D0][k] != o.o[O_D0][k] ? 1 : fminf(fmaxf(o.o[O_D0][k], 0), 1);
         memcpy(r.tc, o.o[O_T0], sizeof r.tc);
         return r;
@@ -635,6 +647,8 @@ static Pt project(const Vertex *v) {
     Pt r;
     r.x = o[0] / w + f32(K(SET_VIEWPORT_OFFSET));
     r.y = o[1] / w + f32(K(SET_VIEWPORT_OFFSET + 4));
+    r.z = o[2] / w + f32(K(SET_VIEWPORT_OFFSET + 8));
+    r.iw = inv_w(o[3]);
     memcpy(r.c, v->a[ATTR_DIFFUSE], sizeof r.c);
     memcpy(r.tc, v->a[ATTR_TEX0], sizeof r.tc);
     return r;
@@ -694,6 +708,14 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
                    K(SET_VERTEX_DATA_ARRAY_FORMAT + 12), va->a[3][0], va->a[3][1], va->a[3][2], va->a[3][3], K(SET_VERTEX_DATA_ARRAY_FORMAT + 16));
         }
     }
+    /* The depth buffer: same sample grid as the colour buffer. */
+    uint32_t zfmt = (fmt >> 4) & 15, zpitch = K(SET_SURFACE_PITCH) >> 16;
+    int zbpp = zfmt == 1 ? 2 : zfmt == 2 ? 4 : 0;
+    int ztest = K(SET_DEPTH_TEST_ENABLE) && zbpp && zpitch && (uint32_t)(cx0 + cw) * (uint32_t)zbpp <= zpitch;
+    uint32_t zbase = ztest ? dma_base(SET_CONTEXT_DMA_ZETA) + K(SET_SURFACE_ZETA_OFFSET) : 0;
+    uint32_t zfunc = K(SET_DEPTH_FUNC), zwrite = ztest && K(SET_DEPTH_MASK);
+    float zmax = zbpp == 2 ? 65535.0f : 16777215.0f;
+
     int blend = K(SET_BLEND_ENABLE) != 0;
     uint32_t sf = K(SET_BLEND_FUNC_SFACTOR), df = K(SET_BLEND_FUNC_DFACTOR), eq = K(SET_BLEND_EQUATION), mask = K(SET_COLOR_MASK);
     if (!mask) mask = 0x01010101u;
@@ -710,13 +732,39 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
             float w1 = ((c.x - px) * (a.y - py) - (c.y - py) * (a.x - px)) * inv;
             float w2 = 1.0f - w0 - w1;
             if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+            uint8_t *zp = NULL;
+            uint32_t zv = 0;
+            if (ztest) {
+                float z = a.z * w0 + b.z * w1 + c.z * w2;
+                zv = (uint32_t)fminf(fmaxf(z, 0), zmax);
+                zp = phys(zbase + (uint32_t)y * zpitch) + x * zbpp;
+                uint32_t old;
+                if (zbpp == 2) { uint16_t o16; memcpy(&o16, zp, 2); old = o16; }
+                else { memcpy(&old, zp, 4); old >>= 8; }
+                int pass;
+                switch (zfunc) {
+                case 0x200: pass = 0; break;
+                case 0x201: pass = zv < old; break;
+                case 0x202: pass = zv == old; break;
+                case 0x203: pass = zv <= old; break;
+                case 0x204: pass = zv > old; break;
+                case 0x205: pass = zv != old; break;
+                case 0x206: pass = zv >= old; break;
+                default: pass = 1;
+                }
+                if (!pass) continue;
+            }
+            /* Perspective-correct weights for everything but z. */
+            float p0 = w0 * a.iw, p1 = w1 * b.iw, p2 = w2 * c.iw, psum = p0 + p1 + p2;
+            if (psum != 0 && psum == psum) p0 /= psum, p1 /= psum, p2 /= psum;
+            else p0 = w0, p1 = w1, p2 = w2;
             float s[4];
-            for (int k = 0; k < 4; k++) s[k] = a.c[k] * w0 + b.c[k] * w1 + c.c[k] * w2;
+            for (int k = 0; k < 4; k++) s[k] = a.c[k] * p0 + b.c[k] * p1 + c.c[k] * p2;
             float tv[4][4] = {{0}};
             for (int i = 0; i < 4; i++) {
                 if (!mode[i] || (mode[i] != 4 && !tex[i])) continue;
                 float q[4];
-                for (int k = 0; k < 4; k++) q[k] = a.tc[i][k] * w0 + b.tc[i][k] * w1 + c.tc[i][k] * w2;
+                for (int k = 0; k < 4; k++) q[k] = a.tc[i][k] * p0 + b.tc[i][k] * p1 + c.tc[i][k] * p2;
                 if (mode[i] == 4) {
                     for (int k = 0; k < 4; k++) tv[i][k] = fminf(fmaxf(q[k], 0), 1);
                 } else {
@@ -752,6 +800,10 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
             else {
                 uint16_t o16 = (uint16_t)((out >> 8 & 0xF800) | (out >> 5 & 0x07E0) | (out >> 3 & 0x001F));
                 memcpy(row + x * 2, &o16, 2);
+            }
+            if (zwrite) {
+                if (zbpp == 2) { uint16_t z16 = (uint16_t)zv; memcpy(zp, &z16, 2); }
+                else { uint32_t old; memcpy(&old, zp, 4); old = (old & 0xFF) | zv << 8; memcpy(zp, &old, 4); } /* stencil kept */
             }
         }
     }
