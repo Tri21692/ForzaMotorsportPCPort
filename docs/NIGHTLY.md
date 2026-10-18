@@ -50,17 +50,17 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 - The installer manifest is the `BKGDINST` section (37 files, 4 MB zlib
   chunks with SHA-1s).
 
-## Current lead (2026-10-18, evening)
+## Current lead (2026-10-18, night)
 
-No boot blocker: the game runs its front end. In a 400 s run it shows
-the attract and intro movies, reads and creates its saves (U:), starts a
-fiber for the front end, and renders menus: ~150 draws a frame, about
-3 frames a second, rescanning the save folder every ~12 s. Nothing
-reaches the screen yet: the GPU model keeps state but draws nothing, and
-there is no window.
-
-So the work moves from boot blockers to what the next section lists.
-When a run stops on a new `xbrt:` error or stall, fix that first.
+No boot blocker: the game runs its front end (attract and intro movies,
+saves on U:, a fiber for the front end, ~150 draws a frame at about
+3 fps). There is now a window, and screenshots
+(`XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=2`, BMPs in `run/shots`):
+the movies and the loading spinner show; the menus are black because
+the GPU draws nothing. `CLEAR_SURFACE` fills the colour buffer, but the
+menus' frames reach the front buffer some other way (likely an
+anti-aliased back buffer copied by the GPU), so no clear colour shows
+yet; that is unverified.
 
 ## Next after that
 
@@ -68,11 +68,13 @@ When a run stops on a new `xbrt:` error or stall, fix that first.
    samples of the main thread, or a build with `-O2` for the generated
    code: `make OPT=-O2`) before changing anything.
 2. Pace flips to the vertical blank (D3D's presentation interval).
-3. A window (SDL is not installed here; plain Win32/GDI needs
-   nothing new), presenting the front buffer, and CLEAR_SURFACE filling
-   the colour buffer, so the clear colours show.
+3. Find how a menu frame reaches the front buffer (log SET_SURFACE_*
+   and the surface addresses each frame, and what PCRTC_START points
+   at), so drawing has a target.
 4. Drawing: see the phase 4 list in [ROADMAP.md](ROADMAP.md). The front
-   end is mostly 2D (textured quads), a good first target.
+   end is mostly 2D (textured quads), a good first target. A software
+   rasteriser for pre-transformed quads with one texture would already
+   show most menus.
 
 ## Log
 
@@ -92,3 +94,7 @@ When a run stops on a new `xbrt:` error or stall, fix that first.
   directory listing (NtQueryDirectoryFile); fibers (SwitchToFiber on
   host threads, MmCreate/DeleteKernelStack); SHA-1, HMAC and RC4 for save
   signing. The game now runs its front end; no boot blocker left.
+- 2026-10-18 (interactive, night): a window and screenshots (front
+  buffer plus the video overlay); colour clears. First pictures: the
+  loading spinner, the attract movie and the intro movie with the Forza
+  Motorsport logo.

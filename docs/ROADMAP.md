@@ -115,7 +115,8 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
       stay on this machine).
 - **Status:** with the player's extracted disc, the game boots through
   the install, the movies and its saves into the front end, and runs its
-  menus (about 3 frames a second, nothing on screen yet). See
+  menus (about 3 frames a second). The movies and the loading screen
+  show in a window; the menus need the GPU to draw. See
   [NIGHTLY.md](NIGHTLY.md) for what is next.
 - [ ] The remaining kernel imports as the game reaches them.
 
@@ -133,6 +134,8 @@ boundary is smaller and fixed instead.
       device and runs its startup command stream.
 - [x] The driver handshakes `Present` needs: semaphore releases mirrored
       into PGRAPH 0x400B10, NOP notifies trapped to the ISR.
+- [x] A window and screenshots: the scanned-out front buffer with the
+      video overlay composited, so Bink movies play; colour clears.
 - [ ] Pace flips to the vertical blank (they run at ~500 a second now).
 - [ ] Render Kelvin methods on the PC: surfaces, vertex arrays and
       inline vertices, vertex programs and register combiners translated

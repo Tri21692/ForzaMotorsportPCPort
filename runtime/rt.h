@@ -211,6 +211,11 @@ void rt_interrupt_ack(uint32_t irq, void (*ack)(void)); /* called after the ISR 
 extern uint32_t rt_display_fb;            /* AvSetDisplayMode: front buffer, physical */
 extern uint32_t rt_display_mode, rt_display_format, rt_display_pitch;
 
+/* ---- the picture (display.c): window and screenshots ---- */
+void rt_display_init(void);
+void rt_display_compose(uint32_t *out); /* 640x480 xRGB, as the TV would show it */
+int rt_display_focused(void);           /* the game's window has the keyboard */
+
 /* ---- the audio processor (apu.c) ---- */
 void rt_apu_init(void);
 void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */

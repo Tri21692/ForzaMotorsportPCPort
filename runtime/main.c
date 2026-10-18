@@ -158,6 +158,7 @@ int main(int argc, char **argv) {
     rt_hw_init();
     rt_nv2a_init();
     rt_apu_init();
+    rt_display_init();
 
     RtThread *t = rt_thread_create(0x40000, rt_image.tls_size, 0);
     rt_dpc_start();

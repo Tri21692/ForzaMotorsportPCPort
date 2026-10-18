@@ -31,6 +31,9 @@ first build takes a while.
 | `XBRT_HDD` | the hard disk; `PartitionN` folders inside it | `./hdd` |
 | `XBRT_LOG` | `1` logs every kernel call, `2` more | quiet |
 | `XBRT_AUTOPRESS` | `1` taps START and A every two seconds | off |
+| `XBRT_WINDOW` | `0` runs without a window (Windows shows one) | on |
+| `XBRT_SCREENSHOT` | a folder to save the picture to as BMP files | off |
+| `XBRT_SCREENSHOT_EVERY` | seconds between screenshots | 5 |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1
 (shoulder buttons are WHITE and BLACK); without one, the keyboard
@@ -61,6 +64,7 @@ partition.
 | `hle_net.c` | XNet and Winsock startup, replaced: a console with no network cable |
 | `hle_fiber.c` | XAPI's SwitchToFiber, replaced: each fiber on its own host thread; fiber stacks |
 | `crypto.c` | the kernel's SHA-1, HMAC and RC4 (save signing) |
+| `display.c` | the picture: the scanned-out front buffer plus the video overlay, in a window and as screenshots |
 
 ## The GPU
 
@@ -85,7 +89,14 @@ Two driver handshakes matter for D3D to get past `Present`:
   frame (Forza's two alternate, which looks like the two framebuffers)
   and uses one to wake `BlockOnTime`'s event.
 
-Drawing the methods on the PC is the next step.
+Colour clears (`CLEAR_SURFACE`) are carried out on linear 32- and 16-bit
+surfaces. Drawing the other methods on the PC is the next step.
+
+What reaches the screen (`display.c`) is what the console's video output
+would show: the front buffer at the address D3D programs into
+`PCRTC_START`, with the video overlay (`PVIDEO`) composited on top. Bink
+movies are decoded by the CPU into overlay surfaces, so they already
+play, as does the loading screen's spinner.
 
 ## Threads and preemption
 

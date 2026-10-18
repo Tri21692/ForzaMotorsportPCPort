@@ -21,8 +21,56 @@
 #define SET_SEMAPHORE_OFFSET 0x1D6C
 #define BACK_END_WRITE_SEMAPHORE_RELEASE 0x1D70
 #define CLEAR_SURFACE 0x1D94
+#define SET_CONTEXT_DMA_COLOR 0x0194
+#define SET_SURFACE_FORMAT 0x0208
+#define SET_SURFACE_PITCH 0x020C
+#define SET_SURFACE_COLOR_OFFSET 0x0210
+#define SET_COLOR_CLEAR_VALUE 0x1D90
+#define SET_CLEAR_RECT_HORIZONTAL 0x1D98
+#define SET_CLEAR_RECT_VERTICAL 0x1D9C
 
 static uint32_t seen[0x2000 / 4 / 32]; /* methods logged once */
+
+#define K(m) nv2a.kelvin[(m) / 4]
+
+/* CLEAR_SURFACE on the colour buffer: fill the clear rectangle (inclusive
+ * corners, in samples when the surface is anti-aliased) with
+ * SET_COLOR_CLEAR_VALUE (A8R8G8B8), touching only the channels the method
+ * selects. Linear (pitch) surfaces in 32- and 16-bit formats; depth and
+ * stencil are not kept yet, so their clears do nothing. */
+static void clear_color(uint32_t flags) {
+    if (!(flags & 0xF0)) return;
+    uint32_t fmt = K(SET_SURFACE_FORMAT), color = fmt & 0xF, type = (fmt >> 8) & 0xF, aa = (fmt >> 12) & 0xF;
+    if (type != 1) return; /* swizzled */
+    uint32_t base = nv2a_dma_base(nv2a_lookup(K(SET_CONTEXT_DMA_COLOR)), NULL);
+    if (base == ~0u) return;
+    uint32_t addr = base + K(SET_SURFACE_COLOR_OFFSET), pitch = K(SET_SURFACE_PITCH) & 0xFFFF;
+    uint32_t x1 = K(SET_CLEAR_RECT_HORIZONTAL) & 0xFFFF, x2 = K(SET_CLEAR_RECT_HORIZONTAL) >> 16;
+    uint32_t y1 = K(SET_CLEAR_RECT_VERTICAL) & 0xFFFF, y2 = K(SET_CLEAR_RECT_VERTICAL) >> 16;
+    if (aa == 1 || aa == 2) x1 *= 2, x2 = x2 * 2 + 1; /* 2 samples across */
+    if (aa == 2) y1 *= 2, y2 = y2 * 2 + 1;           /* and 2 down */
+    if (x2 < x1 || y2 < y1 || !pitch) return;
+    uint32_t v = K(SET_COLOR_CLEAR_VALUE);
+    int bpp = (color >= 4 && color <= 8) ? 4 : (color == 1 || color == 2 || color == 3) ? 2 : 0;
+    if (!bpp || (x2 + 1) * (uint32_t)bpp > pitch) return;
+    uint32_t mask32 = (flags & 0x10 ? 0x00FF0000u : 0) | (flags & 0x20 ? 0x0000FF00u : 0) | (flags & 0x40 ? 0x000000FFu : 0) |
+                      (flags & 0x80 ? 0xFF000000u : 0);
+    uint16_t v16 = color == 3 ? (uint16_t)((v >> 8 & 0xF800) | (v >> 5 & 0x07E0) | (v >> 3 & 0x001F))
+                              : (uint16_t)((v >> 9 & 0x7C00) | (v >> 6 & 0x03E0) | (v >> 3 & 0x001F));
+    uint16_t mask16 = color == 3 ? (uint16_t)((flags & 0x10 ? 0xF800 : 0) | (flags & 0x20 ? 0x07E0 : 0) | (flags & 0x40 ? 0x001F : 0))
+                                 : (uint16_t)((flags & 0x10 ? 0x7C00 : 0) | (flags & 0x20 ? 0x03E0 : 0) | (flags & 0x40 ? 0x001F : 0));
+    for (uint32_t y = y1; y <= y2; y++) {
+        uint8_t *row = xb_mem + RT_PHYS_VIEW + ((addr + y * pitch) & (RT_PHYS_SIZE - 1));
+        if (row + (x2 + 1) * bpp > xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE) return;
+        if (bpp == 4) {
+            uint32_t *p = (uint32_t *)row;
+            for (uint32_t x = x1; x <= x2; x++) p[x] = (p[x] & ~mask32) | (v & mask32);
+        } else {
+            uint16_t *p = (uint16_t *)row;
+            for (uint32_t x = x1; x <= x2; x++) p[x] = (uint16_t)((p[x] & ~mask16) | (v16 & mask16));
+        }
+    }
+}
 
 void nv2a_kelvin(uint32_t method, uint32_t arg) {
     if (method >= 0x2000) return;
@@ -59,6 +107,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
         return;
     case CLEAR_SURFACE:
         nv2a.clears++;
+        clear_color(arg);
         return;
     }
     if (rt_log_level && !(seen[method / 128] & (1u << (method / 4 % 32)))) {

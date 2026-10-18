@@ -88,9 +88,10 @@ static int pc_pad(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
 }
 
 /* Keyboard: arrows steer (D-pad and left stick), Enter START, Escape
- * BACK, Space/Z A, X B, C X, V Y, W/S throttle and brake. Until the game
- * has a window this reads the keyboard whatever has focus. */
+ * BACK, Space/Z A, X B, C X, V Y, W/S throttle and brake, while the
+ * game's window has focus. */
 static void keyboard(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
+    if (!rt_display_focused()) return; /* only keys meant for the game window */
 #define DOWN(vk) ((GetAsyncKeyState(vk) & 0x8000) != 0)
     if (DOWN(VK_UP)) *buttons |= 0x1, thumbs[1] = 32767;
     if (DOWN(VK_DOWN)) *buttons |= 0x2, thumbs[1] = -32768;
