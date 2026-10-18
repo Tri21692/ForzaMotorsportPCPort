@@ -55,6 +55,7 @@
 #define SET_DEPTH_TEST_ENABLE 0x030C
 #define SET_DEPTH_FUNC 0x0354
 #define SET_DEPTH_MASK 0x035C
+#define SET_SHADOW_DEPTH_FUNC 0x1E6C
 #define SET_ALPHA_TEST_ENABLE 0x0300
 #define SET_BLEND_ENABLE 0x0304
 #define SET_ALPHA_FUNC 0x033C
@@ -117,6 +118,7 @@ typedef struct {
     uint32_t key[6]; /* offset, format, control1, image rect, palette, generation */
     int w, h, linear;
     int cube;         /* six faces, one after another in texels */
+    uint32_t depth;   /* a depth texture: texels hold depth, up to this maximum */
     uint32_t *texels; /* A8R8G8B8 */
 } Texture;
 
@@ -239,6 +241,7 @@ static Texture *texture(int i) {
     t->texels = malloc((size_t)w * h * 4 * faces);
     memcpy(t->key, key, sizeof key);
     t->w = w, t->h = h, t->linear = linear, t->cube = cube;
+    t->depth = color == 0x2E ? 0xFFFFFF : color == 0x30 ? 0xFFFF : 0;
   for (int face = 0; face < faces; face++) {
     const uint8_t *src = phys(base + (uint32_t)face * face_size);
     uint32_t *o = t->texels + (size_t)face * w * h;
@@ -284,11 +287,25 @@ static Texture *texture(int i) {
                         (uint32_t)((s >> 5 & 31) * 255 / 31) << 8 | (uint32_t)((s & 31) * 255 / 31);
                 break;
             }
+            case 0x2E: { /* depth X8_Y24, linear: keep the 24 bits of depth */
+                const uint8_t *p = src + (size_t)y * pitch + (size_t)x * 4;
+                v = (uint32_t)(p[1] | p[2] << 8 | p[3] << 16);
+                break;
+            }
+            case 0x30: { /* depth Y16, linear */
+                const uint8_t *p = src + (size_t)y * pitch + (size_t)x * 2;
+                v = (uint32_t)(p[0] | p[1] << 8);
+                break;
+            }
             case 0x0B: v = pal[src[i]]; break;
             case 0x00: case 0x13: { uint8_t y8 = linear ? src[(size_t)y * pitch + x] : src[i]; v = 0xFF000000u | y8 * 0x010101u; break; }
             case 0x19: case 0x1F: { uint8_t a8 = linear ? src[(size_t)y * pitch + x] : src[i]; v = (uint32_t)a8 << 24 | 0xFFFFFF; break; }
             case 0x1A: case 0x20: { const uint8_t *p = linear ? src + (size_t)y * pitch + (size_t)x * 2 : src + (size_t)i * 2; v = (uint32_t)p[1] << 24 | p[0] * 0x010101u; break; }
-            default: v = 0xFFFF00FFu; /* not decoded: magenta */
+            default: { /* not decoded: magenta, and say so once per format */
+                static uint8_t told[256];
+                if (!told[color]) told[color] = 1, fprintf(stderr, "xbrt: texture format %02x (%08x, %dx%d) is not decoded\n", color, fmt, w, h);
+                v = 0xFFFF00FFu;
+            }
             }
             o[y * w + x] = v;
         }
@@ -800,6 +817,22 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
                 for (int k = 0; k < 4; k++) q[k] = a.tc[i][k] * p0 + b.tc[i][k] * p1 + c.tc[i][k] * p2;
                 if (mode[i] == 4) {
                     for (int k = 0; k < 4; k++) tv[i][k] = fminf(fmaxf(q[k], 0), 1);
+                } else if (tex[i]->depth) { /* a shadow map: compare, as xemu does */
+                    float qw = q[3] != 0 ? q[3] : 1;
+                    uint32_t d = sample(tex[i], i, q[0] / qw, q[1] / qw);
+                    float r = mode[i] == 2 ? fminf(fmaxf(q[2] / qw, 0), (float)tex[i]->depth) : 0, dv = (float)d;
+                    int lit;
+                    switch (K(SET_SHADOW_DEPTH_FUNC) & 7) {
+                    case 0: lit = 0; break;
+                    case 1: lit = dv < r; break;
+                    case 2: lit = dv == r; break;
+                    case 3: lit = dv <= r; break;
+                    case 4: lit = dv > r; break;
+                    case 5: lit = dv != r; break;
+                    case 6: lit = dv >= r; break;
+                    default: lit = 1;
+                    }
+                    for (int k = 0; k < 4; k++) tv[i][k] = lit ? 1 : 0;
                 } else if (tex[i]->cube) {
                     argb(sample_cube(tex[i], q[0], q[1], q[2]), tv[i]);
                 } else {
