@@ -152,17 +152,31 @@ func (a *analyzer) decode(va uint32) (x86asm.Inst, bool) {
 	if s == nil {
 		return x86asm.Inst{}, false
 	}
-	n := s.VirtualAddr + s.RawSize - va
 	if va >= s.VirtualAddr+s.RawSize {
 		return x86asm.Inst{}, false
 	}
+	// An instruction may end in the section's zero-filled tail: Forza's
+	// FZFULLUI section stores one byte less than it maps, and its last
+	// instruction (ret 0x1c, C2 1C 00) ends in that byte. The loader
+	// fills it with zeros, so decode with the same zeros.
+	end := s.VirtualAddr + s.VirtualSize
+	if raw := s.VirtualAddr + s.RawSize; raw > end {
+		end = raw
+	}
+	n := end - va
 	if n > 15 {
 		n = 15
 	}
-	b, err := a.f.Bytes(va, n)
+	b := make([]byte, n)
+	have := s.VirtualAddr + s.RawSize - va
+	if have > n {
+		have = n
+	}
+	data, err := a.f.Bytes(va, have)
 	if err != nil {
 		return x86asm.Inst{}, false
 	}
+	copy(b, data)
 	in, err := x86asm.Decode(b, 32)
 	if err != nil {
 		return x86asm.Inst{}, false
@@ -501,7 +515,16 @@ func (a *analyzer) looksLikeStart(va uint32) bool {
 	}
 	// Right after ret imm16 (C2 xx xx), which MSVC packs functions behind.
 	r, err := a.f.Bytes(va-3, 1)
-	return err == nil && r[0] == 0xC2
+	if err == nil && r[0] == 0xC2 {
+		return true
+	}
+	// Right after a function that ends in an unconditional jump (EB xx or
+	// E9 xx xx xx xx): DSOUND packs functions behind those too.
+	if j, err := a.f.Bytes(va-2, 1); err == nil && j[0] == 0xEB {
+		return true
+	}
+	j, err := a.f.Bytes(va-5, 1)
+	return err == nil && j[0] == 0xE9
 }
 
 // scanPrologues seeds `push ebp; mov ebp, esp` (55 8B EC) found in unowned

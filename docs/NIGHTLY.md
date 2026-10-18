@@ -39,6 +39,9 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
   the runtime commits guest memory on first touch through access
   violations. Break on runtime functions (`rt_open`, `k_file_*`), not on
   the generated weak symbols, which did not trigger.
+- Live guest registers from gdb: `frame function thread_main`, then
+  `p/x *(XbCtx*)arg` (also `p/x *(unsigned*)(xb_mem + 0xADDR)` for guest
+  memory and device registers).
 - `XBRT_TRACE_OPEN=<substring>` prints a guest backtrace when a matching
   file is opened; `XBRT_DEBUG_BADHANDLE=1` does so when an invalid handle
   reaches ObReferenceObjectByHandle.
@@ -47,32 +50,34 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 - The installer manifest is the `BKGDINST` section (37 files, 4 MB zlib
   chunks with SHA-1s).
 
-## Current lead (2026-10-18)
+## Current lead (2026-10-18, afternoon)
 
-The game reaches its main loop and polls the controller, then stops:
+The game now gets through its main loop's start-up, polls the
+controller, and opens the attract movie (`D:\MEDIA\FrontEnd\AttractVideo.bik`).
+The Bink decode thread starts (created suspended, then resumed), then:
 
 ```
-xbrt: indirect call to 003a98c0, which is not a translated function (return address 003a8c15)
+xbrt: indirect call to 00000000, which is not a translated function (return address 003b43c6)
 ```
 
-`0x3A98C0` is a real method in `FZFULLUI` (`push esi; mov esi, ecx; mov
-eax, [esi]; call [eax+8]; ...`), 16-byte aligned after `int3` padding,
-reached only through a vtable the game builds at run time. Discovery
-misses it: it has no `push ebp; mov ebp, esp` prologue and nothing
-points at it statically.
+At `0x3B43B8`/`0x3B43C0` (in `sub_003B4010`, section BINK) Bink calls
+through function pointers at `0x5E6FC8` and `0x5E6FF0` (zero-initialised
+data). Those are installed by `sub_003B3990`, `sub_003B3AF0` and
+`sub_003B3B80` (which choose between `0x3B3670`/`0x3B3740`,
+`0x3B3810`/`0x3B38D0` and `0x3B3A70`/`0x3B3AB0` from a bit-reader state
+word at `[0x5E6FFC]`). They are not CPU-feature dispatch. `sub_003B3B80`
+is called from `sub_003B4010` itself (at `0x3B40FE`) and from
+`sub_003B4490`. Next: find out whether `sub_003B3B80` ran before the
+failing call (break on `rt_kernel` calls nearby, or add a temporary
+`XBRT_LOG` line to the translated function), and whether the path to
+`0x3B43B8` skipped it legitimately (then something else should have set
+the pointers: look for other writers, including through `[0x5E6FFC]`) or
+because a branch went the wrong way (a translation bug: a differential
+test of `sub_003B4010` against Unicorn would show it).
 
-Tried: seeding every 16-aligned address after `int3` padding in
-`scanPrologues`, behind `plausible`. It found ~300 more functions but not
-this one: `plausible(0x3A98C0)` returns false although a linear decode
-of its first 80 instructions is clean, so it is the jump-target check
-at the end of `plausible` (a branch landing inside a decoded
-instruction). Find which branch, decide whether the check or the walk is
-wrong, then land the padding scan with its own `Source` (after
-`FromDataRef`, so `TestAnalyze`'s expectations hold) and check the
-real-game tests still pass.
-
-A wider fix to consider: when an indirect call hits an untranslated
-address, log it to a file the next xbrecomp run reads as extra seeds.
+Startup is slow under the runtime: the audio banks (TireSkids,
+RoadNoise, Collisions) take from ~17 s to ~97 s, and the movie opens at
+~124 s. Allow `timeout 200` or more for runs.
 
 ## Next after that
 
@@ -85,3 +90,11 @@ address, log it to a file the next xbrecomp run reads as extra seeds.
 
 - 2026-10-18 (interactive): Windows port; boot through install, DSOUND,
   font cache and front end to the main loop. See the commit for detail.
+- 2026-10-18 (interactive, afternoon): branches now pushed to GitHub as
+  backups. Fixed: decoding of an instruction that ends in a section's
+  zero-filled tail (FZFULLUI's last byte; found 0x3A98C0 and ~25 more);
+  prologues after a function's final jmp count as starts (~740 more
+  functions); AC'97 controller model (channel reset); GP DSP command
+  mailbox acknowledged (effects not run); MmLockUnlock*; threads created
+  suspended plus NtResumeThread/NtSuspendThread; MMIO range widened to
+  everything from 0xFD000000. The game now reaches the attract movie.

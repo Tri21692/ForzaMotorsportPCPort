@@ -56,7 +56,9 @@ partition.
 | `hw.c` | interrupts, PCI config space, I/O ports, the video encoder |
 | `nv2a.c` | the GPU as its driver sees it: registers, push buffer, vblank |
 | `kelvin.c` | the GPU's 3D engine methods (state only; nothing is drawn yet) |
+| `apu.c` | the audio processor's registers, the AC'97 controller, and a stand-in for the GP DSP's command handling (nothing is played yet) |
 | `hle_input.c` | XAPI's controller functions, replaced, read from XInput or the keyboard |
+| `hle_net.c` | XNet and Winsock startup, replaced: a console with no network cable |
 
 ## The GPU
 

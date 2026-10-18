@@ -492,8 +492,38 @@ K(PsCreateSystemThreadEx) {
     t->start = ARG(9), t->arg1 = ARG(5), t->arg2 = ARG(6);
     if (out) xb_wr32(out, t->handle);
     if (tid) xb_wr32(tid, t->handle);
-    if (ARG(7) & 0xFF) rt_log("PsCreateSystemThreadEx: CreateSuspended is not supported yet; starting anyway\n");
+    t->suspend = (ARG(7) & 0xFF) ? 1 : 0; /* CreateSuspended */
     rt_thread_start(t);
+    return STATUS_SUCCESS;
+}
+
+/* Suspend counts. A thread created suspended starts once its count drops
+ * to 0. Suspending a thread that is already running guest code is not
+ * supported (it would have to stop at its next kernel call or loop
+ * back-edge); that is logged and only the count is kept. */
+static RtThread *thread_of(uint32_t h) {
+    if (h == 0xFFFFFFFEu) return rt_self; /* NtCurrentThread() */
+    RtObject *o = rt_handle_get(h);
+    return o && o->type == OBJ_THREAD ? o->thread : NULL;
+}
+
+/* NtResumeThread(ThreadHandle, PreviousSuspendCount*) */
+K(NtResumeThread) {
+    RtThread *t = thread_of(ARG(0));
+    if (!t) return STATUS_INVALID_HANDLE;
+    if (ARG(1)) xb_wr32(ARG(1), (uint32_t)t->suspend);
+    if (t->suspend > 0) t->suspend--;
+    pthread_cond_broadcast(&rt_changed);
+    return STATUS_SUCCESS;
+}
+
+/* NtSuspendThread(ThreadHandle, PreviousSuspendCount*) */
+K(NtSuspendThread) {
+    RtThread *t = thread_of(ARG(0));
+    if (!t) return STATUS_INVALID_HANDLE;
+    if (ARG(1)) xb_wr32(ARG(1), (uint32_t)t->suspend);
+    t->suspend++;
+    if (t->started) rt_log("NtSuspendThread: thread %08x is already running; not stopped\n", t->handle);
     return STATUS_SUCCESS;
 }
 
@@ -528,6 +558,11 @@ K(ObReferenceObjectByHandle) {
 }
 
 K(ObfDereferenceObject) { return 0; }
+
+/* Locking pages for DMA (DSOUND does it for its buffers): guest memory is
+ * always resident, so there is nothing to lock. */
+K(MmLockUnlockBufferPages) { return 0; }
+K(MmLockUnlockPhysicalPage) { return 0; }
 
 /* The file system cache: the host caches files itself, so only the size
  * the game asked for is remembered. In 4 KB pages. */
@@ -827,6 +862,10 @@ void rt_kernel_init(void) {
     H(238, NtYieldExecution);
     H(246, ObReferenceObjectByHandle);
     H(250, ObfDereferenceObject);
+    H(224, NtResumeThread);
+    H(231, NtSuspendThread);
+    H(175, MmLockUnlockBufferPages);
+    H(176, MmLockUnlockPhysicalPage);
     H(232, NtUserIoApcDispatcher);
     H(35, FscGetCacheSize);
     H(36, FscInvalidateIdleBlocks);

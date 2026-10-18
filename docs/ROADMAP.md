@@ -111,12 +111,11 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
       (`hle_net.c`).
 - **Status:** with the player's extracted disc, the game boots, shows
   the disclaimer and splash screens, installs and verifies its archives
-  on the cache drives, starts DSOUND, builds its font cache, loads the
-  front end's fonts and string tables, and reaches its main loop, where
-  it detects the controller and polls it every frame. It then calls a
-  front-end method (`0x3A98C0`, reached only through a vtable built at
-  run time) that discovery missed. See [NIGHTLY.md](NIGHTLY.md) for the
-  current lead.
+  on the cache drives, starts DSOUND (with the AC'97 controller and a
+  stand-in for the DSP's command handling), builds its font cache, loads
+  the front end, polls the controller every frame, and opens the attract
+  movie. The Bink player then calls a decoding routine it has not set up
+  yet. See [NIGHTLY.md](NIGHTLY.md) for the current lead.
 - [ ] The crypto used for saves, the remaining kernel imports as the game
       reaches them.
 

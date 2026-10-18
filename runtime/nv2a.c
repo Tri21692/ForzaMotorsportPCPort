@@ -153,6 +153,11 @@ static uint64_t ptimer(void) {
 
 uint32_t xb_mmio_read(uint32_t a, int bytes) {
     if (a - RT_APU_BASE < RT_APU_SIZE) return rt_apu_read(a - RT_APU_BASE, bytes);
+    if (a - RT_ACI_BASE < RT_ACI_SIZE) return rt_aci_read(a - RT_ACI_BASE, bytes);
+    if (a - RT_NV2A_BASE >= 0x01000000u) { /* other devices: plain storage until modelled */
+        if (bytes == 4) return xb_rd32(a);
+        return bytes == 2 ? xb_rd16(a) : xb_rd8(a);
+    }
     uint32_t off = a - RT_NV2A_BASE;
     switch (off) {
     case PTIMER_TIME_0:
@@ -178,6 +183,16 @@ uint32_t xb_mmio_read(uint32_t a, int bytes) {
 void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
     if (a - RT_APU_BASE < RT_APU_SIZE) {
         rt_apu_write(a - RT_APU_BASE, bytes, v);
+        return;
+    }
+    if (a - RT_ACI_BASE < RT_ACI_SIZE) {
+        rt_aci_write(a - RT_ACI_BASE, bytes, v);
+        return;
+    }
+    if (a - RT_NV2A_BASE >= 0x01000000u) { /* other devices: plain storage until modelled */
+        if (bytes == 4) xb_wr32(a, v);
+        else if (bytes == 2) xb_wr16(a, (uint16_t)v);
+        else xb_wr8(a, (uint8_t)v);
         return;
     }
     uint32_t off = a - RT_NV2A_BASE;

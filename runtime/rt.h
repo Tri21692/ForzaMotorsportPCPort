@@ -67,6 +67,8 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(pr
 #define RT_NV2A_BASE 0xFD000000u
 #define RT_APU_BASE 0xFE800000u /* the audio processor's registers, 512 KB */
 #define RT_APU_SIZE 0x00080000u
+#define RT_ACI_BASE 0xFEC00000u /* the AC'97 controller, 4 KB */
+#define RT_ACI_SIZE 0x00001000u
 #define RT_POOL_BASE 0xB0000000u
 #define RT_POOL_LIMIT 0xBF000000u
 #define RT_KDATA_BASE 0xC0000000u
@@ -116,6 +118,8 @@ typedef struct RtThread {
     uint32_t handle;
     uint32_t start, arg1, arg2; /* StartRoutine(StartContext1, StartContext2) */
     int terminated;
+    int suspend;  /* suspend count; a thread starts running guest code only at 0 */
+    int started;  /* has begun running guest code */
     uint32_t exit_code;
     pthread_t host;
     struct { uint32_t routine, context, iosb; } apc[32]; /* user APCs, run at the next alertable wait */
@@ -206,8 +210,11 @@ extern uint32_t rt_display_mode, rt_display_format, rt_display_pitch;
 
 /* ---- the audio processor (apu.c) ---- */
 void rt_apu_init(void);
+void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
 uint32_t rt_apu_read(uint32_t off, int bytes);
 void rt_apu_write(uint32_t off, int bytes, uint32_t v);
+uint32_t rt_aci_read(uint32_t off, int bytes);
+void rt_aci_write(uint32_t off, int bytes, uint32_t v);
 
 /* ---- files (file.c) ---- */
 void rt_files_init(void);

@@ -174,10 +174,14 @@ RtThread *rt_thread_create(uint32_t stack_size, uint32_t tls_size, uint32_t extr
     return t;
 }
 
+static int not_suspended(void *p) { return ((RtThread *)p)->suspend == 0; }
+
 static void *thread_main(void *arg) {
     RtThread *t = arg;
     rt_gil_lock();
     rt_self = t;
+    rt_wait(not_suspended, t, 0); /* created suspended: wait for NtResumeThread */
+    t->started = 1;
     XbCtx *c = &t->ctx;
     xb_fpu_setcw(c, c->fcw);
     xb_push(c, t->arg2);
