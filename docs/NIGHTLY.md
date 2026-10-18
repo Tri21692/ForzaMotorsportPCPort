@@ -92,11 +92,13 @@ ring space from the GPU's read position and from fences
 conservatively. `CDevice_KickOff` (0x3BD370) has a second path, taken
 when bit 0x2000 of the device flags is set, that points its register
 block at a dummy in RAM (0x3C8550) and sets the fake GET equal to PUT.
-If that path runs, D3D believes everything was consumed and reuses ring
-space the device thread has not read. Nothing writes the global
-(0x3C85A0) that sets the flag in KickOff itself, but other code may set
-bit 0x2000: find who does (xbrecomp -trace on its writers) before
-anything else.
+That path is ruled out: the only instruction in the XBE that sets bit
+0x2000 is in KickOff itself, behind a global (0x3C85A0) that nothing
+writes. Next ideas: log PUT writes and pass boundaries (get, put, method
+count) to a ring as well, and compare a failing pass against the ring
+contents; check that a pass never starts with a nonzero method count left
+over from a pass that ended at PUT mid-command (legal on hardware, but
+then D3D must have split a command across kicks).
 
 Then: cars are very dark (cube maps are read as 2D textures, and texture
 stages 1-3 may hold environment maps; check the combiner state with
