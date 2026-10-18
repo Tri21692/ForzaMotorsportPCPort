@@ -249,6 +249,10 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
  * push buffer goes wrong. */
 static struct { uint32_t at, word, put; } recent_ctl[16];
 static unsigned recent_n;
+/* XBRT_PB_TRACE=<file>: every word parsed, the last 65536 of them, written
+ * out at the first bad word (debugging the reader losing sync). */
+static struct { uint32_t at, word, count; } pb_ring[65536];
+static unsigned pb_n;
 
 static void run_pushbuf(void) {
     uint32_t put = REG(PFIFO_CACHE1_DMA_PUT), get = REG(PFIFO_CACHE1_DMA_GET);
@@ -257,9 +261,15 @@ static void run_pushbuf(void) {
     uint32_t base = nv2a_dma_base(REG(PFIFO_CACHE1_DMA_INSTANCE) << 4, &limit);
     if (base == ~0u) base = 0;
     uint32_t method = nv2a.method, subch = nv2a.subch, count = nv2a.count, ni = nv2a.ni;
+    static int tracing = -1;
+    if (tracing < 0) tracing = getenv("XBRT_PB_TRACE") != NULL;
     int guard = 0;
     while (get != put && guard++ < 1 << 22) {
         uint32_t word = *(volatile uint32_t *)phys(base + get);
+        if (tracing) {
+            pb_ring[pb_n % 65536].at = get, pb_ring[pb_n % 65536].word = word, pb_ring[pb_n % 65536].count = count;
+            pb_n++;
+        }
         get += 4;
         if (count) { /* a parameter */
             nv2a_method(subch, method, word);
@@ -300,6 +310,13 @@ static void run_pushbuf(void) {
                 for (uint32_t a = last - 0x100; a <= last; a += 4)
                     fprintf(stderr, "%s%08x", (a - (last - 0x100)) % 32 ? " " : "\n    ", *(volatile uint32_t *)phys(base + a));
                 fprintf(stderr, "\n");
+                const char *path = getenv("XBRT_PB_TRACE");
+                FILE *f = path ? fopen(path, "w") : NULL;
+                if (f) {
+                    for (unsigned i = pb_n > 65536 ? pb_n - 65536 : 0; i < pb_n; i++)
+                        fprintf(f, "%08x %08x %u\n", pb_ring[i % 65536].at, pb_ring[i % 65536].word, pb_ring[i % 65536].count);
+                    fclose(f);
+                }
             }
             rt_log("nv2a: bad push buffer word %08x at %08x (base %08x, put %08x, instance %08x)\n", word, get - 4, base, put, REG(PFIFO_CACHE1_DMA_INSTANCE));
         }

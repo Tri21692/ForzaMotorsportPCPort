@@ -83,6 +83,21 @@ word now prints the latest jumps and the 64 words before it
 - D3D writing GET or PUT itself (a reset) while a pass is in flight; the
   pass then writes back its own GET and keeps its method count.
 
+More evidence, from the evening session: `XBRT_PB_TRACE=<file>` keeps the
+last 65536 words parsed and writes them out at the first bad word.
+With it on, three runs did not freeze (it slows the device thread), so
+the bug needs the reader to catch up with the writer. D3D works out free
+ring space from the GPU's read position and from fences
+(`D3D_MakeRequestedSpace` 0x3BD6C0), both of which the runtime publishes
+conservatively. `CDevice_KickOff` (0x3BD370) has a second path, taken
+when bit 0x2000 of the device flags is set, that points its register
+block at a dummy in RAM (0x3C8550) and sets the fake GET equal to PUT.
+If that path runs, D3D believes everything was consumed and reuses ring
+space the device thread has not read. Nothing writes the global
+(0x3C85A0) that sets the flag in KickOff itself, but other code may set
+bit 0x2000: find who does (xbrecomp -trace on its writers) before
+anything else.
+
 Then: cars are very dark (cube maps are read as 2D textures, and texture
 stages 1-3 may hold environment maps; check the combiner state with
 `XBRT_LOG=2`'s `draw state` lines), and speed (the race runs at well
