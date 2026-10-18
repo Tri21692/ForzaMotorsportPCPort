@@ -645,6 +645,13 @@ K(ExQueryPoolBlockSize) { return rt_size_of(ARG(0)); }
 /* ExQueryNonVolatileSetting(index, *type, value, length, *resultLength):
  * the EEPROM settings. Language English, region North America, everything
  * else 0. */
+/* Index 0xFFFF (XC_MAX_ALL) is the whole 256-byte EEPROM. XAPI reads it
+ * when XboxHDKey is all zeros, as here, and keys save signatures with
+ * bytes from it, so it must be the same on every boot: a zeroed EEPROM
+ * with the settings below in their places (factory game region at 0x2C,
+ * video standard at 0x58, language at 0x90). Buffers are always cleared
+ * first; leaving them as they were made signatures differ between boots
+ * ("This profile is damaged"). */
 K(ExQueryNonVolatileSetting) {
     uint32_t index = ARG(0), type = ARG(1), value = ARG(2), len = ARG(3), result = ARG(4);
     uint32_t v = 0;
@@ -653,6 +660,18 @@ K(ExQueryNonVolatileSetting) {
     case 0x104: v = 1; break;    /* XC_FACTORY_GAME_REGION: North America */
     case 0x10C: v = 0x400100; break; /* XC_FACTORY_AV_REGION: NTSC-M */
     }
+    if (index == 0xFFFF) {
+        uint8_t eeprom[256] = {0};
+        uint32_t region = 1, video = 0x400100, language = 1;
+        memcpy(eeprom + 0x2C, &region, 4), memcpy(eeprom + 0x58, &video, 4), memcpy(eeprom + 0x90, &language, 4);
+        uint32_t n = len < 256 ? len : 256;
+        if (value) memcpy(xb_mem + value, eeprom, n);
+        if (type) xb_wr32(type, 3); /* REG_BINARY */
+        if (result) xb_wr32(result, 256);
+        rt_log("  setting %#x: the whole EEPROM\n", index);
+        return len < 256 ? 0xC0000023 /* STATUS_BUFFER_TOO_SMALL */ : STATUS_SUCCESS;
+    }
+    if (value && len) memset(xb_mem + value, 0, len < 256 ? len : 256);
     if (type) xb_wr32(type, 4); /* REG_DWORD */
     if (value && len >= 4) xb_wr32(value, v);
     if (result) xb_wr32(result, 4);

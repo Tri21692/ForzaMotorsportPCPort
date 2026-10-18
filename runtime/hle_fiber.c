@@ -16,6 +16,13 @@
  * switches back. Only one guest thread runs at a time anyway, and a parked
  * fiber waits in rt_wait, which releases the big lock. As XAPI's own
  * SwitchToFiber does, each fiber keeps its own SEH chain (fs:[0]).
+ *
+ * DeleteFiber frees the fiber's stack with MmDeleteKernelStack. That is
+ * where a fiber is forgotten: its parked host thread exits, and a new
+ * fiber that CreateFiber puts at the same address (the stack memory comes
+ * back) gets a host thread of its own. Waking the old one instead resumed
+ * the deleted fiber's code, which ran off the end of its start routine
+ * and into KeBugCheck.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +40,7 @@ typedef struct Fiber {
     uint32_t guest; /* the guest FIBER */
     RtThread *t;    /* the host thread running it */
     int active;     /* the fiber its guest thread is running now */
+    int deleted;    /* its stack was freed: the host thread is to exit */
     uint32_t seh;   /* its SEH chain head (fs:[0]) while it is switched out */
     struct Fiber *next;
 } Fiber;
@@ -53,7 +61,7 @@ static Fiber *fiber_new(uint32_t guest, RtThread *t) {
     return f;
 }
 
-static int fiber_active(void *p) { return ((Fiber *)p)->active; }
+static int fiber_active(void *p) { return ((Fiber *)p)->active || ((Fiber *)p)->deleted; }
 
 /* XAPI's per-thread block: [StackBase (fs:[4]) + 4 * _tls_index]. */
 static uint32_t xapi_thread_data(XbCtx *c) {
@@ -107,8 +115,29 @@ void XB_FN_SwitchToFiber(XbCtx *c) {
     }
     pthread_cond_broadcast(&rt_changed);
     rt_wait(fiber_active, me, 0);
+    if (me->deleted) { /* DeleteFiber freed this fiber while it was switched out */
+        free(me);
+        pthread_mutex_unlock(&rt_gil);
+        pthread_exit(NULL);
+    }
 }
 
+/* Forget the fibers whose FIBER sits in a stack being freed. */
+static void fibers_deleted(uint32_t limit, uint32_t base) {
+    for (Fiber **p = &fibers; *p;) {
+        Fiber *f = *p;
+        if (f->guest >= limit && f->guest < base && !f->active) {
+            *p = f->next;
+            f->deleted = 1;
+            rt_log("fiber %08x deleted\n", f->guest);
+        } else {
+            p = &f->next;
+        }
+    }
+    pthread_cond_broadcast(&rt_changed);
+}
+#else
+static void fibers_deleted(uint32_t limit, uint32_t base) { (void)limit, (void)base; }
 #endif
 
 /* PVOID MmCreateKernelStack(ULONG NumberOfBytes, BOOLEAN DebuggerThread):
@@ -121,6 +150,7 @@ static uint32_t k_MmCreateKernelStack(XbCtx *c) {
 
 /* VOID MmDeleteKernelStack(PVOID StackBase, PVOID StackLimit) */
 static uint32_t k_MmDeleteKernelStack(XbCtx *c) {
+    fibers_deleted(ARG(1), ARG(0));
     rt_user_free(ARG(1), NULL);
     return 0;
 }
