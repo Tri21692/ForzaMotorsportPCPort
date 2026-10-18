@@ -131,10 +131,6 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
         uint32_t pa = base + nv2a.kelvin[SET_SEMAPHORE_OFFSET / 4];
         if (rt_log_level >= 2) rt_log("nv2a: semaphore %08x = %u\n", pa, arg);
         xb_wr32(RT_PHYS_VIEW + (pa & (RT_PHYS_SIZE - 1)), arg);
-        /* PGRAPH keeps the low bits of the last released value at 0x400B10
-         * (bits 2-6). D3D's BlockOnTime spins until they match the
-         * semaphore in RAM; inferred from that loop (0x3BD240 in Forza). */
-        *(volatile uint32_t *)(xb_mem + RT_NV2A_BASE + 0x400B10) = arg << 2;
         return;
     }
     case SET_BEGIN_END:

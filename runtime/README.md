@@ -86,10 +86,14 @@ and raises the 60 Hz vertical blank.
 
 Two driver handshakes matter for D3D to get past `Present`:
 
-- A semaphore release also stores the value, shifted left by 2, in PGRAPH
-  register 0x400B10. `D3D_BlockOnTime` spins until those bits match the
-  fence in RAM. (Inferred from D3D's own loop; xemu calls the register
-  `PATT_COLOR0`.)
+- Each D3D fence also sends the image pattern object (class 0x44,
+  subchannel 5) a SET_MONOCHROME_COLOR0 (0x310) with the fence's push
+  buffer position, time and lap count packed together. PGRAPH keeps it in
+  PATT_COLOR0 (0x400B10), and D3D reads it back to learn how far the GPU
+  has got when GET is outside the ring. An earlier guess, the semaphore
+  value shifted left by 2, lost the lap bits: after the ring wrapped D3D
+  thought the GPU was ahead, overwrote commands not yet read, and the
+  race froze.
 - A `NO_OPERATION` with a nonzero parameter is a notify for the driver.
   PGRAPH records it in TRAPPED_ADDR/DATA, raises the ERROR interrupt and
   stalls the push buffer until D3D's ISR clears it. D3D sends one per

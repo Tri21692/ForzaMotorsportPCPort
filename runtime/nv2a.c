@@ -89,6 +89,8 @@
 Nv2a nv2a;
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; /* registers with effects */
+static struct { uint32_t put, get; } recent_put[64];      /* PUT writes, and GET then */
+static unsigned recent_put_n;
 static pthread_cond_t kick = PTHREAD_COND_INITIALIZER;   /* PUT moved */
 static uint64_t start_ns;
 
@@ -227,6 +229,8 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
         break;
     case USER_DMA_PUT:
     case PFIFO_CACHE1_DMA_PUT:
+        recent_put[recent_put_n % 64].put = v, recent_put[recent_put_n % 64].get = REG(PFIFO_CACHE1_DMA_GET);
+        recent_put_n++;
         REG(USER_DMA_PUT) = v;
         REG(PFIFO_CACHE1_DMA_PUT) = v;
         pthread_cond_signal(&kick);
@@ -247,6 +251,8 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
 
 /* The latest control words (jumps, calls, returns), for the report when a
  * push buffer goes wrong. */
+static struct { uint32_t get, put, count, method, end; } recent_pass[64]; /* reader passes */
+static unsigned recent_pass_n;
 static struct { uint32_t at, word, put; } recent_ctl[16];
 static unsigned recent_n;
 /* XBRT_PB_TRACE=<file>: every word parsed, the last 65536 of them, written
@@ -254,17 +260,30 @@ static unsigned recent_n;
 static struct { uint32_t at, word, count; } pb_ring[65536];
 static unsigned pb_n;
 
-static void run_pushbuf(void) {
+/* Runs the push buffer from GET towards PUT, as xemu's pusher does: PUT is
+ * read again before every word (D3D keeps kicking while a long pass runs)
+ * and GET is published as it moves. A jump to itself parks the GPU until
+ * PUT moves; that returns 0, so the device thread goes back to its timed
+ * wait (and keeps raising vertical blanks) instead of spinning here. */
+static int run_pushbuf(void) {
     uint32_t put = REG(PFIFO_CACHE1_DMA_PUT), get = REG(PFIFO_CACHE1_DMA_GET);
-    if (get == put) return;
+    if (get == put) return 0;
+    int parked = 0;
     uint32_t limit = 0;
     uint32_t base = nv2a_dma_base(REG(PFIFO_CACHE1_DMA_INSTANCE) << 4, &limit);
     if (base == ~0u) base = 0;
     uint32_t method = nv2a.method, subch = nv2a.subch, count = nv2a.count, ni = nv2a.ni;
+    unsigned pass = recent_pass_n++ % 64;
+    recent_pass[pass].get = get, recent_pass[pass].put = put, recent_pass[pass].count = count, recent_pass[pass].method = method;
+    recent_pass[pass].end = 0;
     static int tracing = -1;
     if (tracing < 0) tracing = getenv("XBRT_PB_TRACE") != NULL;
     int guard = 0;
-    while (get != put && guard++ < 1 << 22) {
+    while (guard++ < 1 << 22) {
+        REG(PFIFO_CACHE1_DMA_GET) = get;
+        REG(USER_DMA_GET) = get;
+        put = REG(PFIFO_CACHE1_DMA_PUT);
+        if (get == put) break;
         uint32_t word = *(volatile uint32_t *)phys(base + get);
         if (tracing) {
             pb_ring[pb_n % 65536].at = get, pb_ring[pb_n % 65536].word = word, pb_ring[pb_n % 65536].count = count;
@@ -286,6 +305,11 @@ static void run_pushbuf(void) {
         if ((word & 0xE0000003u) == 0x20000000u) { /* old-style jump */
             get = word & 0x1FFFFFFFu;
         } else if ((word & 3) == 1) { /* jump */
+            if ((word & ~3u) == get - 4) { /* to itself: park here until PUT moves */
+                get -= 4;
+                parked = 1;
+                break;
+            }
             get = word & ~3u;
         } else if ((word & 3) == 2) { /* call */
             REG(PFIFO_CACHE1_DMA_SUBROUTINE) = get | 1;
@@ -305,6 +329,14 @@ static void run_pushbuf(void) {
                         base, put);
                 for (unsigned i = recent_n > 16 ? recent_n - 16 : 0; i < recent_n; i++)
                     fprintf(stderr, "  at %08x: %08x (put %08x)\n", recent_ctl[i % 16].at, recent_ctl[i % 16].word, recent_ctl[i % 16].put);
+                fprintf(stderr, "  latest PUT writes (put, get then):");
+                for (unsigned i = recent_put_n > 64 ? recent_put_n - 64 : 0; i < recent_put_n; i++)
+                    fprintf(stderr, "%s%08x/%08x", (i % 6) ? " " : "\n    ", recent_put[i % 64].put, recent_put[i % 64].get);
+                fprintf(stderr, "\n  latest passes (get, put, count, method, end):");
+                for (unsigned i = recent_pass_n > 64 ? recent_pass_n - 64 : 0; i < recent_pass_n; i++)
+                    fprintf(stderr, "\n    %08x %08x %u %04x %08x", recent_pass[i % 64].get, recent_pass[i % 64].put,
+                            recent_pass[i % 64].count, recent_pass[i % 64].method, recent_pass[i % 64].end);
+                fprintf(stderr, "\n");
                 uint32_t last = recent_ctl[(recent_n - 1) % 16].at;
                 fprintf(stderr, "  words before %08x:", last);
                 for (uint32_t a = last - 0x100; a <= last; a += 4)
@@ -322,8 +354,10 @@ static void run_pushbuf(void) {
         }
     }
     nv2a.method = method, nv2a.subch = subch, nv2a.count = count, nv2a.ni = ni;
+    recent_pass[pass].end = get;
     REG(PFIFO_CACHE1_DMA_GET) = get;
     REG(USER_DMA_GET) = get;
+    return !parked;
 }
 
 /* Hand a method to the driver's interrupt handler, as PGRAPH does for a
@@ -400,6 +434,9 @@ void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
         }
         nv2a_kelvin(method, arg);
         return;
+    case 0x44: /* image pattern: SET_MONOCHROME_COLOR0 lands in PGRAPH's PATT_COLOR0 */
+        if (method == 0x310) REG(0x400B10) = arg;
+        return;
     }
     if (rt_log_level >= 2) rt_log("nv2a: class %02x (subchannel %u) method %04x = %08x\n", nv2a.class_[subch], subch, method, arg);
 }
@@ -430,16 +467,17 @@ static void *device_main(void *arg) {
                 }
             }
             if (rt_log_level && nv2a.vblanks % 300 == 0)
-                rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps\n", nv2a.vblanks,
-                       nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears, nv2a.traps);
+                rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
+                       "PATT_COLOR0 %08x, intr %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
+                       nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR));
             REG(PCRTC_INTR_0) |= 1;
             update_irq();
         }
         if (REG(PFIFO_CACHE1_DMA_GET) != REG(PFIFO_CACHE1_DMA_PUT)) {
             pthread_mutex_unlock(&lock);
-            run_pushbuf();
+            int moved = run_pushbuf();
             pthread_mutex_lock(&lock);
-            continue;
+            if (moved) continue;
         }
         struct timespec ts;
         rt_abstime(&ts, next_vblank - t);

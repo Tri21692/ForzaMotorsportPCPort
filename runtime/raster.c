@@ -17,7 +17,7 @@
  *             surface multiplies into samples. No lighting or texgen yet.
  *   texture   four stages, each off, sampling a texture (swizzled and
  *             linear formats, 32 and 16 bit, 8-bit palettes, DXT1/3/5; point
- *             sampling, wrap or clamp; 3D and cube maps read as 2D) or
+ *             sampling, wrap or clamp; cube maps; 3D textures read as 2D) or
  *             passing its texture coordinate through as a colour (Forza's
  *             text uses that to pick a channel of its glyph cache). Linear
  *             (LU_IMAGE) textures take texel coordinates, the rest 0..1.
@@ -116,6 +116,7 @@ static uint32_t dma_base(uint32_t handle_method) {
 typedef struct {
     uint32_t key[6]; /* offset, format, control1, image rect, palette, generation */
     int w, h, linear;
+    int cube;         /* six faces, one after another in texels */
     uint32_t *texels; /* A8R8G8B8 */
 } Texture;
 
@@ -218,16 +219,29 @@ static Texture *texture(int i) {
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return NULL;
     uint32_t base = dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + KT(SET_TEXTURE_OFFSET);
     uint32_t pitch = KT(SET_TEXTURE_CONTROL1) >> 16;
-    const uint8_t *src = phys(base);
-    if (src + (size_t)w * h * 4 > xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE && !(color >= 0x0C && color <= 0x0F)) return NULL;
+    /* A cube map holds six faces, each with its mipmap chain, rounded up to
+     * 128 bytes (xemu: NV2A_CUBEFACE_ALIGNMENT). */
+    int cube = (fmt >> 2) & 1, faces = cube ? 6 : 1, levels = (int)((fmt >> 16) & 15);
+    int dxt = color >= 0x0C && color <= 0x0F, dxt_bytes = color == 0x0C ? 8 : 16;
+    int bpp = (color == 0x06 || color == 0x07 || color == 0x12 || color == 0x1E) ? 4
+              : (color == 0x0B || color == 0x00 || color == 0x13 || color == 0x19 || color == 0x1F) ? 1 : 2;
+    uint32_t face_size = 0;
+    for (int l = 0; l < (levels ? levels : 1); l++) {
+        int lw = w >> l > 1 ? w >> l : 1, lh = h >> l > 1 ? h >> l : 1;
+        face_size += dxt ? (uint32_t)((lw + 3) / 4 * ((lh + 3) / 4) * dxt_bytes) : (uint32_t)(lw * lh * bpp);
+    }
+    face_size = (face_size + 127) & ~127u;
+    if (base + (uint64_t)face_size * faces > (uint64_t)RT_PHYS_SIZE * 2 && !dxt && !linear) return NULL;
 
     Texture *t = &cache[cache_next];
     cache_next = (cache_next + 1) % 64;
     free(t->texels);
-    t->texels = malloc((size_t)w * h * 4);
+    t->texels = malloc((size_t)w * h * 4 * faces);
     memcpy(t->key, key, sizeof key);
-    t->w = w, t->h = h, t->linear = linear;
-    uint32_t *o = t->texels;
+    t->w = w, t->h = h, t->linear = linear, t->cube = cube;
+  for (int face = 0; face < faces; face++) {
+    const uint8_t *src = phys(base + (uint32_t)face * face_size);
+    uint32_t *o = t->texels + (size_t)face * w * h;
 
     uint32_t pal[256] = {0};
     if (color == 0x0B) {
@@ -246,8 +260,7 @@ static Texture *texture(int i) {
                     if (x < w && y < h) o[y * w + x] = blk[i];
                 }
             }
-        dump_texture(t, base, fmt);
-        return t;
+        continue;
     }
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
@@ -279,8 +292,23 @@ static Texture *texture(int i) {
             }
             o[y * w + x] = v;
         }
+  }
     dump_texture(t, base, fmt);
     return t;
+}
+
+/* A cube map: the major axis of (s, t, r) picks the face, as OpenGL does. */
+static uint32_t sample_cube(const Texture *t, float s, float tt, float r) {
+    float as = fabsf(s), at = fabsf(tt), ar = fabsf(r), sc, tc, ma;
+    int face;
+    if (as >= at && as >= ar) face = s >= 0 ? 0 : 1, sc = s >= 0 ? -r : r, tc = -tt, ma = as;
+    else if (at >= ar) face = tt >= 0 ? 2 : 3, sc = s, tc = tt >= 0 ? r : -r, ma = at;
+    else face = r >= 0 ? 4 : 5, sc = r >= 0 ? s : -s, tc = -tt, ma = ar;
+    if (ma == 0) return 0;
+    int x = (int)((sc / ma + 1) * 0.5f * (float)t->w), y = (int)((tc / ma + 1) * 0.5f * (float)t->h);
+    x = x < 0 ? 0 : x >= t->w ? t->w - 1 : x;
+    y = y < 0 ? 0 : y >= t->h ? t->h - 1 : y;
+    return t->texels[(size_t)face * t->w * t->h + (size_t)y * t->w + x];
 }
 
 static int wrap(int c, int n, int mode) {
@@ -772,6 +800,8 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
                 for (int k = 0; k < 4; k++) q[k] = a.tc[i][k] * p0 + b.tc[i][k] * p1 + c.tc[i][k] * p2;
                 if (mode[i] == 4) {
                     for (int k = 0; k < 4; k++) tv[i][k] = fminf(fmaxf(q[k], 0), 1);
+                } else if (tex[i]->cube) {
+                    argb(sample_cube(tex[i], q[0], q[1], q[2]), tv[i]);
                 } else {
                     if (q[3] != 0 && q[3] != 1) q[0] /= q[3], q[1] /= q[3]; /* projective */
                     argb(sample(tex[i], i, q[0], q[1]), tv[i]);
