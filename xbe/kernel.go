@@ -46,13 +46,3 @@ func LookupKernel(ordinal uint32) (KernelExport, bool) {
 	}
 	return e, true
 }
-
-// KernelByName finds an export by its undecorated name.
-func KernelByName(name string) (KernelExport, bool) {
-	for _, e := range kernelExports {
-		if e.Name == name {
-			return e, true
-		}
-	}
-	return KernelExport{}, false
-}

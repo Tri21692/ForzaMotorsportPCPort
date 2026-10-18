@@ -22,8 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/Tri21692/ForzaMotorsportPC/xbe"
 )
 
 // ScanType mirrors DB_ST_*: whether a symbol is found by the generic
@@ -74,15 +72,36 @@ type Symbol struct {
 	Name      string // display name, e.g. D3DDevice_BeginPush_4
 	XRef      string // address slot it fills, e.g. D3DDevice_BeginPush
 	Kind      Kind
-	Conv      string // std, fastcall, thiscall, ... as given by the database
+	Conv      string  // std, cdecl, fast, thi, ... as the database spells it
+	Params    []Param // in declaration order; empty for void or variables
 	Scan      ScanType
 	Revisions []Revision // ascending versions
+}
+
+// Param is one function parameter. Loc says where it is passed: "psh"
+// (pushed on the stack) or a register such as "ecx" or "eax".
+type Param struct {
+	Loc  string
+	Name string
+}
+
+// RenderState is one entry of the D3D8 render state table, in table order.
+// XRef is set for the states the database tracks by name.
+type RenderState struct {
+	Version, Removed uint16
+	XRef             string
+}
+
+// Available reports whether the state exists in a given D3D8 build.
+func (r RenderState) Available(build uint16) bool {
+	return r.Version <= build && (r.Removed == 0 || build < r.Removed)
 }
 
 // LibraryDB is the symbol table for one or more XDK libraries, and the XBE
 // sections they are searched in. It follows SymbolDBList in
 // libXbSymbolDatabase.c.
 type LibraryDB struct {
+	Name      string   // table name in the database source
 	Libraries []string // XBE library names this table applies to
 	Sections  []string
 	Symbols   []*Symbol
@@ -93,22 +112,37 @@ type DB struct {
 	// Derive lists XRefs that start out as "derive": a signature that
 	// references one sets it on match instead of checking it.
 	Derive map[string]bool
+	// RenderStates is the D3D8 render state layout from
+	// manual_d3d8__ltcg.h, used to place the D3DRS_* globals.
+	RenderStates []RenderState
 }
 
-// libraryTables follows SymbolDBList, without the LTCG tables (Forza links
-// the standard libraries) and without DSOUND's manual-only table.
+// Table returns the table with the given database name, or nil.
+func (db *DB) Table(name string) *LibraryDB {
+	for _, t := range db.Tables {
+		if t.Name == name {
+			return t
+		}
+	}
+	return nil
+}
+
+// libraryTables follows SymbolDBList in libXbSymbolDatabase.c, without the
+// LTCG tables (Forza links the standard libraries).
 var libraryTables = []struct {
-	file     string
-	libs     []string
-	sections []string
+	file, table string
+	libs        []string
+	sections    []string
 }{
-	{"D3D8_OOVPA.c", []string{"D3D8", "D3D8LTCG"}, []string{".text", "D3D", "FLASHROM"}},
-	{"DSound_OOVPA.c", []string{"DSOUND"}, []string{"DSOUND", ".rdata", "FLASHROM"}},
-	{"XActEng_OOVPA.c", []string{"XACTENG"}, []string{"XACTENG", "FLASHROM"}},
-	{"Xapi_OOVPA.c", []string{"XAPILIB"}, []string{".text", "XPP", "FLASHROM"}},
-	{"XGraphic_OOVPA.c", []string{"XGRAPHC"}, []string{".text", "XGRPH", "FLASHROM"}},
-	{"XOnline_OOVPA.c", []string{"XONLINE", "XONLINES", "XONLINLS"}, []string{".text", "XONLINE", "XNET", "FLASHROM"}},
-	{"XNet_OOVPA.c", []string{"XNET", "XNETS", "XNETN", "XONLINE", "XONLINES", "XONLINLS"}, []string{".text", "XNET", "FLASHROM"}},
+	{"D3D8_OOVPA.c", "D3D8_OOVPA_Table", []string{"D3D8", "D3D8LTCG"}, []string{".text", "D3D", "FLASHROM"}},
+	// Used only by the hand-written DSOUND scan.
+	{"DSound_OOVPA.c", "DSound_OOVPA_manual_Table", []string{"DSOUND"}, []string{"DSOUND", ".rdata", "FLASHROM", ".text"}},
+	{"DSound_OOVPA.c", "DSound_OOVPA_Table", []string{"DSOUND"}, []string{"DSOUND", ".rdata", "FLASHROM"}},
+	{"XActEng_OOVPA.c", "XACTENG_OOVPA_Table", []string{"XACTENG"}, []string{"XACTENG", "FLASHROM"}},
+	{"Xapi_OOVPA.c", "XAPILIB_OOVPA_Table", []string{"XAPILIB"}, []string{".text", "XPP", "FLASHROM"}},
+	{"XGraphic_OOVPA.c", "XGRAPHC_OOVPA_Table", []string{"XGRAPHC"}, []string{".text", "XGRPH", "FLASHROM"}},
+	{"XOnline_OOVPA.c", "XONLINE_OOVPA_Table", []string{"XONLINE", "XONLINES", "XONLINLS"}, []string{".text", "XONLINE", "XNET", "FLASHROM"}},
+	{"XNet_OOVPA.c", "XNET_OOVPA_Table", []string{"XNET", "XNETS", "XNETN", "XONLINE", "XONLINES", "XONLINLS"}, []string{".text", "XNET", "FLASHROM"}},
 }
 
 // Load reads an XbSymbolDatabase checkout (the repository root).
@@ -116,27 +150,62 @@ func Load(root string) (*DB, error) {
 	dbDir := filepath.Join(root, "src", "OOVPADatabase")
 	db := &DB{Derive: map[string]bool{}}
 	for _, t := range libraryTables {
-		lib, err := loadTable(dbDir, t.file)
+		lib, err := loadTable(dbDir, t.file, t.table)
 		if err != nil {
 			return nil, err
 		}
-		lib.Libraries, lib.Sections = t.libs, t.sections
+		lib.Name, lib.Libraries, lib.Sections = t.table, t.libs, t.sections
 		db.Tables = append(db.Tables, lib)
 	}
-	src, err := os.ReadFile(filepath.Join(root, "src", "lib", "libXbSymbolDatabase.c"))
+	libDir := filepath.Join(root, "src", "lib")
+	src, err := os.ReadFile(filepath.Join(libDir, "libXbSymbolDatabase.c"))
 	if err != nil {
 		return nil, err
 	}
 	for _, m := range deriveRe.FindAllStringSubmatch(preprocess(string(src)), -1) {
 		db.Derive[m[1]] = true
 	}
+	rs, err := os.ReadFile(filepath.Join(libDir, "manual_d3d8__ltcg.h"))
+	if err != nil {
+		return nil, err
+	}
+	if db.RenderStates, err = parseRenderStates(preprocess(string(rs))); err != nil {
+		return nil, err
+	}
 	return db, nil
+}
+
+var renderStateRe = regexp.MustCompile(`\{\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*XREF_NAME\((\w+)\))?\s*\}`)
+
+// parseRenderStates reads the DxbxRenderStateInfo table. Entries whose
+// XREF_NAME is commented out keep their slot but have no XRef.
+func parseRenderStates(src string) ([]RenderState, error) {
+	start := strings.Index(src, "DxbxRenderStateInfo[] =")
+	if start < 0 {
+		return nil, fmt.Errorf("manual_d3d8__ltcg.h: DxbxRenderStateInfo table not found")
+	}
+	end := strings.Index(src[start:], "};")
+	if end < 0 {
+		return nil, fmt.Errorf("manual_d3d8__ltcg.h: DxbxRenderStateInfo table not terminated")
+	}
+	var out []RenderState
+	for _, m := range renderStateRe.FindAllStringSubmatch(src[start:start+end], -1) {
+		v, _ := strconv.Atoi(m[1])
+		r, _ := strconv.Atoi(m[2])
+		out = append(out, RenderState{Version: uint16(v), Removed: uint16(r), XRef: m[3]})
+	}
+	// The C source asserts this size; a mismatch means the format moved.
+	if len(out) != 167 {
+		return nil, fmt.Errorf("manual_d3d8__ltcg.h: read %d render states, want 167", len(out))
+	}
+	return out, nil
 }
 
 var deriveRe = regexp.MustCompile(`xref_database\[XREF_(\w+)\]\s*=\s*XREF_ADDR_DERIVE`)
 
-// loadTable parses one *_OOVPA.c file and the .inl files it includes.
-func loadTable(dir, file string) (*LibraryDB, error) {
+// loadTable parses one symbol table from a *_OOVPA.c file, with the
+// signatures from the .inl files that file includes.
+func loadTable(dir, file, table string) (*LibraryDB, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		return nil, err
@@ -178,8 +247,12 @@ func loadTable(dir, file string) (*LibraryDB, error) {
 		return nil
 	}
 
+	body, err := tableBody(dropDirectives(src), table)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
 	lib := &LibraryDB{}
-	for _, call := range findCalls(dropDirectives(src), registerRe) {
+	for _, call := range findCalls(body, registerRe) {
 		sym, versions, err := parseRegister(call.name, call.args)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
@@ -278,6 +351,24 @@ func preprocess(src string) string {
 		}
 	}
 	return out.String()
+}
+
+// tableBody returns the initializer of `static OOVPATable name[] = {...}`.
+func tableBody(src, name string) (string, error) {
+	i := strings.Index(src, "OOVPATable "+name+"[]")
+	if i < 0 {
+		return "", fmt.Errorf("table %s not found", name)
+	}
+	open := strings.Index(src[i:], "{")
+	if open < 0 {
+		return "", fmt.Errorf("table %s has no body", name)
+	}
+	start := i + open + 1
+	args, end, ok := splitArgs(src, start)
+	if !ok || args == nil {
+		return "", fmt.Errorf("table %s not terminated", name)
+	}
+	return src[start : end-1], nil
 }
 
 // dropDirectives removes preprocessor lines, so macro definitions such as
@@ -410,6 +501,9 @@ func parseRegister(macro string, args []string) (*Symbol, []int, error) {
 		suffix, _ := inner(a[1], "SUFFIX")
 		structName = name + stackSuffix(a[3]) + strings.Join(suffix, "")
 		sym.Conv = callName(a[2])
+		if len(a) > 4 {
+			sym.Params = params(a[4])
+		}
 	case strings.HasPrefix(info, "SYM_FUN"):
 		a, ok := inner(info, "SYM_FUN")
 		if !ok || len(a) < 3 {
@@ -418,6 +512,9 @@ func parseRegister(macro string, args []string) (*Symbol, []int, error) {
 		name = a[0]
 		structName = name + stackSuffix(a[2])
 		sym.Conv = callName(a[1])
+		if len(a) > 3 {
+			sym.Params = params(a[3])
+		}
 	case strings.HasPrefix(info, "SYM_VAR"), strings.HasPrefix(info, "SYM_INT"):
 		macroName := info[:7]
 		a, ok := inner(info, macroName)
@@ -465,6 +562,24 @@ func stackSuffix(s string) string {
 	return "_" + a[0]
 }
 
+// params reads PARAMS(PARAM(psh, x), PARAM(ecx, this)). PARAM1(void) and
+// an empty list give nil.
+func params(s string) []Param {
+	list, ok := inner(s, "PARAMS")
+	if !ok {
+		return nil
+	}
+	var out []Param
+	for _, p := range list {
+		a, ok := inner(p, "PARAM")
+		if !ok || len(a) != 2 {
+			continue
+		}
+		out = append(out, Param{Loc: a[0], Name: a[1]})
+	}
+	return out
+}
+
 func callName(s string) string {
 	if a, ok := inner(s, "CALL"); ok && len(a) == 1 {
 		return a[0]
@@ -481,6 +596,10 @@ func parseSignatures(src string, sigs map[string]*Signature) error {
 		}
 		key := h.args[0] + "_" + strings.TrimSpace(h.args[1])
 		sig := &Signature{}
+		xrefCount, err := headerXRefCount(h.name, h.args)
+		if err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
 		if strings.Contains(h.name, "DETECT") || strings.Contains(h.name, "EXTEND") {
 			sig.Detect = detectValue(h.args[len(h.args)-1])
 		}
@@ -508,12 +627,42 @@ func parseSignatures(src string, sigs map[string]*Signature) error {
 		default:
 			return fmt.Errorf("%s: no signature body", key)
 		}
-		if err := parseEntries(body, sig); err != nil {
+		entries, err := parseEntries(body)
+		if err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
+		if err := sig.fill(entries, xrefCount); err != nil {
 			return fmt.Errorf("%s: %w", key, err)
 		}
 		sigs[key] = sig
 	}
 	return nil
+}
+
+// headerXRefCount reads the XRef count from a signature header. The C
+// matcher treats the first that-many entries as XRefs, whichever macro
+// wrote them, so the count matters more than the entry syntax.
+func headerXRefCount(macro string, args []string) (int, error) {
+	var a string
+	switch {
+	case strings.Contains(macro, "NO_XREF"):
+		return 0, nil
+	case strings.HasPrefix(macro, "OOVPA_SIG_HEADER_"): // (Name, Version, XRefCount[, Detect])
+		if len(args) < 3 {
+			return 0, fmt.Errorf("%s: missing XRef count", macro)
+		}
+		a = args[2]
+	default: // old style OOVPA_XREF(Name, Version, Count, XRefCount[, Detect])
+		if len(args) < 4 {
+			return 0, fmt.Errorf("%s: missing XRef count", macro)
+		}
+		a = args[3]
+	}
+	words := map[string]int{"XRefZero": 0, "XRefOne": 1, "XRefTwo": 2, "XRefThree": 3, "XRefFour": 4}
+	if n, ok := words[strings.TrimSpace(a)]; ok {
+		return n, nil
+	}
+	return evalInt(a)
 }
 
 func detectValue(s string) int {
@@ -530,65 +679,78 @@ func detectValue(s string) int {
 	return 0
 }
 
+// entry is one (offset, value) pair as written. XRef is set when the value
+// is an XREF_ name rather than a number.
+type entry struct {
+	off  int
+	val  int
+	xref string
+}
+
 var entryRe = regexp.MustCompile(`XREF_ENTRY\s*\(|OV_MATCH\s*\(|\{`)
 
-func parseEntries(body string, sig *Signature) error {
+// parseEntries lists a signature body's entries in source order;
+// OV_MATCH(off, a, b, c) expands to one entry per byte, as the macro does.
+func parseEntries(body string) ([]entry, error) {
+	var out []entry
 	for _, loc := range entryRe.FindAllStringIndex(body, -1) {
 		tok := body[loc[0]:loc[1]]
 		args, _, ok := splitArgs(body, loc[1])
 		if !ok {
-			return fmt.Errorf("unterminated entry")
+			return nil, fmt.Errorf("unterminated entry")
 		}
-		switch {
-		case strings.HasPrefix(tok, "XREF_ENTRY"):
-			if len(args) != 2 {
-				return fmt.Errorf("XREF_ENTRY needs 2 arguments: %v", args)
+		if strings.HasPrefix(tok, "{") && len(args) != 2 {
+			continue // a nested brace that is not a pair
+		}
+		if len(args) < 2 {
+			return nil, fmt.Errorf("%s needs an offset and a value: %v", tok, args)
+		}
+		off, err := evalInt(args[0])
+		if err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(tok, "XREF_ENTRY") && len(args) != 2 {
+			return nil, fmt.Errorf("XREF_ENTRY needs 2 arguments: %v", args)
+		}
+		for i, a := range args[1:] {
+			e := entry{off: off + i}
+			if name, isRef := strings.CutPrefix(a, "XREF_"); isRef {
+				e.xref = name
+			} else if e.val, err = evalInt(a); err != nil {
+				return nil, err
 			}
-			off, err := evalInt(args[0])
-			if err != nil {
-				return err
-			}
-			sig.XRefs = append(sig.XRefs, XRef{Off: uint16(off), Name: strings.TrimPrefix(args[1], "XREF_")})
-			sig.maxOff(uint16(off) + 3)
-		case strings.HasPrefix(tok, "OV_MATCH"):
-			if len(args) < 2 {
-				return fmt.Errorf("OV_MATCH needs bytes: %v", args)
-			}
-			off, err := evalInt(args[0])
-			if err != nil {
-				return err
-			}
-			for i, a := range args[1:] {
-				if err := sig.addByte(off+i, a); err != nil {
-					return err
-				}
-			}
-		default: // { off, val }
-			if len(args) != 2 {
-				continue // a nested brace that is not a pair
-			}
-			off, err := evalInt(args[0])
-			if err != nil {
-				return err
-			}
-			if err := sig.addByte(off, args[1]); err != nil {
-				return err
-			}
+			out = append(out, e)
 		}
 	}
-	return nil
+	return out, nil
 }
 
-func (s *Signature) addByte(off int, val string) error {
-	v, err := evalInt(val)
-	if err != nil {
-		return err
+// fill splits entries into XRefs (the first xrefCount) and bytes.
+func (s *Signature) fill(entries []entry, xrefCount int) error {
+	if xrefCount > len(entries) {
+		return fmt.Errorf("header declares %d XRefs but has %d entries", xrefCount, len(entries))
 	}
-	if v < 0 || v > 0xFF || off < 0 || off > 0xFFFF {
-		return fmt.Errorf("entry {%d, %s} out of range", off, val)
+	for i, e := range entries {
+		if e.off < 0 || e.off > 0xFFFF {
+			return fmt.Errorf("offset %#x out of range", e.off)
+		}
+		if i < xrefCount {
+			if e.xref == "" {
+				return fmt.Errorf("entry %d at %#x should be an XRef", i, e.off)
+			}
+			s.XRefs = append(s.XRefs, XRef{Off: uint16(e.off), Name: e.xref})
+			s.maxOff(uint16(e.off) + 3)
+			continue
+		}
+		if e.xref != "" {
+			return fmt.Errorf("XRef %s at %#x is past the declared XRef count", e.xref, e.off)
+		}
+		if e.val < 0 || e.val > 0xFF {
+			return fmt.Errorf("byte %#x at %#x out of range", e.val, e.off)
+		}
+		s.Bytes = append(s.Bytes, Byte{Off: uint16(e.off), Val: byte(e.val)})
+		s.maxOff(uint16(e.off))
 	}
-	s.Bytes = append(s.Bytes, Byte{Off: uint16(off), Val: byte(v)})
-	s.maxOff(uint16(off))
 	return nil
 }
 
@@ -603,16 +765,9 @@ func (s *Signature) maxOff(o uint16) {
 func evalInt(s string) (int, error) {
 	total := 0
 	for _, part := range strings.Split(s, "+") {
-		part = strings.TrimSpace(part)
-		n, err := strconv.ParseInt(part, 0, 32)
+		n, err := strconv.ParseInt(strings.TrimSpace(part), 0, 32)
 		if err != nil {
-			// XREF_KT_FUNC_x evaluates to x's kernel ordinal in C. One
-			// signature uses it as a byte value; mirror the compiler.
-			k, ok := xbe.KernelByName(strings.TrimPrefix(part, "XREF_KT_FUNC_"))
-			if !strings.HasPrefix(part, "XREF_KT_FUNC_") || !ok {
-				return 0, fmt.Errorf("cannot evaluate %q", s)
-			}
-			n = int64(k.Ordinal)
+			return 0, fmt.Errorf("cannot evaluate %q", s)
 		}
 		total += int(n)
 	}

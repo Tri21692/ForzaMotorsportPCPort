@@ -4,8 +4,9 @@
 //	xbemap -o forza.map default.xbe    # also write the full function list
 //	xbemap -xbsdb ~/XbSymbolDatabase -o forza.map default.xbe
 //
-// With -xbsdb, XDK library functions are named from signature matches (see
-// package sigdb) and used as extra function starts.
+// C runtime helpers are always named (package sigdb's own patterns). With
+// -xbsdb, XDK library functions are named too. Named functions also seed
+// discovery as extra function starts.
 //
 // Map lines are: address, size, section, how it was found, name, then the
 // kernel imports the function calls directly. Library variables found by
@@ -45,25 +46,23 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	var syms []sigdb.Match
-	var seeds []uint32
+	syms := sigdb.ScanCRT(f)
 	if *dbDir != "" {
 		db, err := sigdb.Load(*dbDir)
 		if err != nil {
 			fail(err)
 		}
-		syms = sigdb.Scan(f, db)
-		for _, m := range syms {
-			if m.Kind == sigdb.Function {
-				seeds = append(seeds, m.Addr)
-			}
+		syms = append(syms, sigdb.Scan(f, db)...)
+	}
+	var seeds []uint32
+	for _, m := range syms {
+		if m.Kind == sigdb.Function {
+			seeds = append(seeds, m.Addr)
 		}
 	}
 	p := analysis.Analyze(f, seeds...)
 	summary(p)
-	if *dbDir != "" {
-		fmt.Printf("%d library symbols named from signatures\n", len(syms))
-	}
+	fmt.Printf("%d library symbols named from signatures\n", len(syms))
 	if *out != "" {
 		if err := writeMap(p, syms, *out); err != nil {
 			fail(err)

@@ -24,22 +24,27 @@ The hard parts are graphics and audio, not the CPU.
       `jmp eax` after table loads
 - [ ] Cross-references from code to data (strings, globals, float constants)
 
-## Phase 1: name the library code (in progress)
+## Phase 1: name the library code (done)
 
 - [x] Signature matcher for XbSymbolDatabase (package `sigdb`): it parses
-      the database's C sources, runs the XRef-resolving scan, and feeds hits
-      to function discovery as named starts. On Forza it names 412 symbols:
-      102 D3D8, 202 DSOUND, 49 XAPI, 20 XACT, 21 XOnline, 7 XGraphics and
-      11 derived globals.
-- [ ] Port the database's hand-written scans (`manual_*.h`). Some D3D and
-      DSOUND symbols, and the D3D render-state tables, are only found that
-      way.
-- [ ] LIBC/LIBCPMT (memcpy, sprintf, operator new, the x87 helpers such as
-      `_ftol`). These are not in the database. Options are FLIRT-style
-      signatures built from an MSVC 7.1 runtime, or recognizing them by
-      behavior.
-- [ ] Use the database's parameter lists and calling conventions, so the
-      runtime's replacement functions get the right signatures.
+      the database's C sources and runs its XRef-resolving scan.
+- [x] Port the hand-written scans (`manual_*.h`): D3D render-state block,
+      device callbacks, DSOUND stream vtable, XAPI device tables.
+- [x] **Checked against the original.** XbSymbolDatabase's own C CLI,
+      built from source, prints 507 symbols for Forza. `sigdb` finds all
+      507 at identical addresses, plus 4 internal values the CLI computes
+      but doesn't print.
+- [x] C runtime helpers the database lacks (`sigdb/crt.go`, our own
+      patterns): 64-bit arithmetic, `_ftol2`, `_chkstk`, SEH frames,
+      `memcpy` and the string routines. 19 functions, each checked by
+      disassembly. memset/strlen/strcpy/strcmp are compiler intrinsics in
+      this build, so they are inlined rather than called.
+- [x] Calling conventions and parameter lists from the database are kept
+      on each symbol, for the runtime's replacement functions.
+
+Result: 530 named library symbols. Still open but not blocking: the rest
+of LIBC (printf family, heap, file I/O), which can be named as the
+recompiler runs into them.
 
 ## Phase 2: static recompiler (x86 → C)
 
@@ -70,7 +75,13 @@ The hard parts are graphics and audio, not the CPU.
 
 ## Phase 4: graphics
 
-- Replace the Xbox D3D8 API at the function level. The closest PC target is
+- Replace the Xbox D3D8 API at the function level. Evidence that this
+  works for Forza: game code never references D3D's globals (the device
+  pointer, push buffer, render state block). All 126 references are inside
+  the D3D section, so the game reaches the GPU only through D3D calls.
+  The game could still write device memory through a pointer it was
+  given, and the runtime should trap that rather than assume it can't
+  happen. The closest PC target is
   real D3D8. DXVK has run D3D8 on Vulkan since 2.4, so Xbox D3D → PC D3D8 →
   DXVK is a possible first path. A direct Vulkan backend is the long-term
   option.

@@ -43,18 +43,20 @@ func main() {
 		fail(err)
 	}
 
-	names := map[uint32]string{}
-	var seeds []uint32
+	syms := sigdb.ScanCRT(f)
 	if *dbDir != "" {
 		db, err := sigdb.Load(*dbDir)
 		if err != nil {
 			fail(err)
 		}
-		for _, m := range sigdb.Scan(f, db) {
-			names[m.Addr] = m.Name
-			if m.Kind == sigdb.Function {
-				seeds = append(seeds, m.Addr)
-			}
+		syms = append(syms, sigdb.Scan(f, db)...)
+	}
+	names := map[uint32]string{}
+	var seeds []uint32
+	for _, m := range syms {
+		names[m.Addr] = m.Name
+		if m.Kind == sigdb.Function {
+			seeds = append(seeds, m.Addr)
 		}
 	}
 	for _, k := range f.Kernel {

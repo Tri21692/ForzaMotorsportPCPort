@@ -85,29 +85,66 @@ Notes from tuning:
 
 ## Library symbols (sigdb + XbSymbolDatabase)
 
-The signature scan names 412 symbols in about 0.1 s. Every match lands in
-its library's own section, and no two functions share an address. Two
-independent checks agree with the XBE parser:
+`sigdb` names 530 library symbols: 511 from XbSymbolDatabase and 19 C
+runtime functions from our own patterns.
 
-- `mainCRTStartup` matches at `0x268EB5`, which is exactly the decoded entry
-  point.
-- `_tls_index` is derived as `0x5E4C28`, the same address the TLS directory
-  gives.
+**Checked against the reference implementation.** XbSymbolDatabase's own
+C CLI (`XbSymbolDatabaseCLI`, built from the same checkout) reports 507
+symbols for this XBE. `sigdb` finds every one of them at the identical
+address. The 4 extras are internal values the CLI computes but doesn't
+print: `DSS_STREAM_VTABLE`, `DSS_VOICE_VTABLE`, `D3DTSS_TEXCOORDINDEX` and
+`D3D_g_Stream_i_pVertexBuffer`. Two independent checks also agree with the
+XBE parser:
 
-| Library | Symbols | Where |
-|---|---|---|
-| D3D8 | 102 | `D3D` (and 1 inlined into `.text`) |
-| DSOUND | 202 | `DSOUND` |
-| XAPILIB | 49 | `.text` `0x264BF7`–`0x26CFF4`, plus `XPP` (input) |
-| XACTENG | 20 | `XACTENG` |
-| XONLINES | 21 | `XONLINE`, `XNET` |
-| XGRAPHC | 7 | `XGRPH` |
-| derived | 11 | globals and struct offsets, e.g. `g_XapiMountedMUs`, `D3DDevice__m_VertexShader_OFFSET` = 0x794 |
+- `mainCRTStartup` = `0x268EB5`, the decoded entry point.
+- `_tls_index` = `0x5E4C28`, the TLS directory's index address.
 
-XAPI sits in one block of `.text` just below the entry point, which is the
-usual XDK link order: game objects first, then XAPI and the CRT. The
-unnamed functions around `0x264000`–`0x270000` are probably the rest of
-XAPI plus LIBC.
+| Library | Where |
+|---|---|
+| D3D8 | `D3D` section, plus the render-state block at `0x3C87B0` (`D3D_g_RenderState`) |
+| DSOUND | `DSOUND` |
+| XAPILIB | `.text` `0x264BF7`–`0x26CFF4`, plus `XPP` (input) |
+| XACTENG | `XACTENG` |
+| XONLINES | `XONLINE`, `XNET` |
+| XGRAPHC | `XGRPH` |
+| C runtime | `.text` `0x2F8078`–`0x2FC130` |
+
+XAPI sits in one block of `.text` just below the entry point, and the C
+runtime sits at the end of `.text`. That's the usual XDK link order: game
+objects first, then XAPI, then the CRT.
+
+### Matching details worth knowing
+
+- **The C matcher treats the first *n* entries of a signature as XRefs**,
+  where *n* is the count in its header, whichever macro wrote them. One
+  Xapi signature writes a kernel-call XRef as `OV_MATCH`, and reading it as
+  a byte loses `XID_fCloseDevice` and `XInputClose`.
+- **Section order decides ties.** Sections are scanned in XBE order, and
+  within a section the highest matching revision wins.
+- The hand-written scans run before the automatic ones and depend on that
+  order (D3D's render-state block, for example).
+
+### C runtime
+
+The compiler helpers are what the recompiler cares about most:
+
+- `_ftol2`, the x87-to-integer conversion, is the most-called function in
+  the CRT, with 817 call sites. That's a sign of how much the game relies
+  on x87.
+- `_allmul`/`_alldiv`/`_allrem`/`_aulldiv`/`_aullrem`/`_allshl`/`_aullshr`
+  should become native 64-bit operations, not translated calls.
+- `_chkstk` is called with the frame size in EAX before large stack frames.
+- `_SEH_prolog`/`_SEH_epilog`/`_EH_prolog` mark functions using structured
+  or C++ exception handling.
+
+### Graphics access
+
+`D3DDevice_SetRenderState_Simple` writes NV2A commands straight into the
+push buffer. The write pointer is the global at `0x3C8A50`, and the code
+calls nothing. Game code never references that pointer, `D3D_g_pDevice`
+(`0x3C8A48`) or the render-state block. All 126 references to the device
+pointer are inside the `D3D` section. So D3D has not been inlined into
+Forza's code, and the game drives the GPU only through D3D's functions.
 
 ### Startup
 

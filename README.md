@@ -7,7 +7,7 @@ title ID `4D53006E`) to PC as a native program. The plan is a static
 recompilation of the game's own code plus a PC runtime for the Xbox kernel,
 graphics, audio and input. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
-**Status: phase 1, naming the library code.** Nothing runs yet. What exists today:
+**Status: phase 2, the recompiler.** Nothing runs yet. What exists today:
 
 - `xbe` parses an XBE: header, certificate, sections (with SHA-1 checks),
   linked XDK libraries, TLS and the kernel import table. It names all 371
@@ -15,12 +15,13 @@ graphics, audio and input. See [docs/ROADMAP.md](docs/ROADMAP.md).
 - `analysis` finds the game's code by recursive descent from the entry
   point, plus prologue and vtable scans. On Forza that comes to about
   17,000 functions and 88% of `.text`.
-- `sigdb` names XDK library code (D3D8, DSOUND, XAPI, XACT, XOnline...) by
-  matching byte signatures from Cxbx-Reloaded's
-  [XbSymbolDatabase](https://github.com/Cxbx-Reloaded/XbSymbolDatabase). On
-  Forza it names 412 symbols in about 0.1 s, `mainCRTStartup` among them, at
-  exactly the XBE's entry point.
-- Three tools: `xbeinfo`, `xbemap` and `xbedis`.
+- `sigdb` names library code. XDK libraries (D3D8, DSOUND, XAPI, XACT,
+  XOnline...) are matched with signatures from Cxbx-Reloaded's
+  [XbSymbolDatabase](https://github.com/Cxbx-Reloaded/XbSymbolDatabase),
+  including ports of its hand-written scans. C runtime helpers are matched
+  with our own patterns. On Forza that's 530 symbols. All 507 the original
+  C implementation reports for this XBE come out at the same addresses.
+- Four tools: `xbeinfo`, `xbemap`, `xbedis` and `xbesyms`.
 
 ## You need your own copy
 
@@ -38,6 +39,7 @@ go run ./cmd/xbeinfo default.xbe            # header, sections, libraries
 go run ./cmd/xbeinfo -kernel default.xbe    # plus all 159 kernel imports
 go run ./cmd/xbemap -o forza.map default.xbe
 go run ./cmd/xbedis default.xbe 0x268EB5    # disassemble one function
+go run ./cmd/xbesyms default.xbe            # list named library symbols
 ```
 
 `xbemap` prints per-section coverage and writes a map with one line per
@@ -46,7 +48,8 @@ calls it makes.
 
 ### Library names
 
-`xbemap` and `xbedis` take `-xbsdb DIR`, which points at a checkout of
+C runtime helpers are always named. For XDK library names, `xbemap`,
+`xbedis` and `xbesyms` take `-xbsdb DIR`, which points at a checkout of
 XbSymbolDatabase:
 
 ```sh
