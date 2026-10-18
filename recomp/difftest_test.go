@@ -74,7 +74,7 @@ func testableFuncs(tr *recomp.Translator, p *analysis.Program) (map[uint32]recom
 		}
 		code := tr.Function(va)
 		if len(code.Unsupported) > 0 || strings.Contains(code.Code, "fs_base") || strings.Contains(code.Code, "xb_call_indirect") ||
-			strings.Contains(code.Code, "xb_kernel") || strings.Contains(code.Code, "xb_rdtsc") || noReference.MatchString(code.Code) {
+			strings.Contains(code.Code, "xb_kernel") || strings.Contains(code.Code, "xb_rdtsc") || strings.Contains(code.Code, "xb_io_") || noReference.MatchString(code.Code) {
 			continue
 		}
 		cand[va] = code

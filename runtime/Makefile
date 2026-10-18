@@ -15,7 +15,7 @@ RTFLAGS = -O2 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=off -I$(GEN)
 
 GEN_SRC = $(wildcard $(GEN)/*.c)
 GEN_OBJ = $(patsubst $(GEN)/%.c,build/gen/%.o,$(GEN_SRC))
-RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hle_input.c
+RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c hle_input.c
 RT_OBJ = $(patsubst %.c,build/%.o,$(RT_SRC))
 
 forza: $(GEN_OBJ) $(RT_OBJ)
@@ -25,7 +25,7 @@ build/gen/%.o: $(GEN)/%.c $(GEN)/xbrt.h $(GEN)/funcs.h
 	@mkdir -p build/gen
 	$(CC) $(GENFLAGS) -c $< -o $@
 
-build/%.o: %.c rt.h $(GEN)/xbrt.h $(GEN)/names.h
+build/%.o: %.c rt.h nv2a.h $(GEN)/xbrt.h $(GEN)/names.h
 	@mkdir -p build
 	$(CC) $(RTFLAGS) -c $< -o $@
 

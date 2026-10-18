@@ -68,7 +68,7 @@ func main() {
 		funcs = append(funcs, va)
 	}
 
-	t := &recomp.Translator{P: p, F: f, Names: names, Vars: vars}
+	t := &recomp.Translator{P: p, F: f, Names: names, Vars: vars, HW: analysis.DriverSections}
 	files, out := t.Program(funcs, 500)
 	report(out, *top)
 

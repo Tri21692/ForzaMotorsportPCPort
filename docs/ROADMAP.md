@@ -91,15 +91,31 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
 - [x] `XeLoadSection` / `XeUnloadSection`, data exports, non-volatile
       settings, DbgPrint.
 - [x] Controllers: XAPI's input functions replaced (one neutral gamepad).
+- [x] Interrupts, PCI config space, port I/O, the AV encoder.
 - **Status:** the native build runs `mainCRTStartup`, XAPI init, the C++
-  static initializers and Forza's own startup: about 20,000 kernel calls,
-  D:/T:/U: mounted, `TitleImage.xbx` written, devices initialised. It
-  stops in `Direct3D_CreateDevice`, where D3D asks for the GPU's
-  interrupt vector. That is phase 4's job.
+  static initializers and Forza's own startup, creates the D3D device and
+  sets the display mode (640x480, 32-bit). It then looks for `D:\MEDIA`,
+  the disc's data, which the runtime needs from the player's own disc.
 - [ ] The Z: utility drive (`XMountUtilityDrive`), the crypto used for
       saves, the remaining kernel imports as the game reaches them.
 
-## Phase 4: graphics
+## Phase 4: graphics (in progress)
+
+**Approach chosen: run D3D recompiled and model the GPU underneath it.**
+Forza writes the push buffer itself in places (`BeginPush`, and inline
+render-state methods), and D3DX and the game call 122 D3D entry points,
+so replacing D3D would still need a push-buffer decoder. The hardware
+boundary is smaller and fixed instead.
+
+- [x] NV2A registers with hardware behaviour, PFIFO push buffer
+      (jumps, calls, methods), object lookup in instance memory, fences
+      (semaphore release), vertical blank interrupt. D3D initialises the
+      device and runs its startup command stream.
+- [ ] Render Kelvin methods on the PC: surfaces, vertex arrays and
+      inline vertices, vertex programs and register combiners translated
+      to shaders, swizzled textures. Present the front buffer.
+
+Earlier notes, from when the plan was to replace the API:
 
 - Replace the Xbox D3D8 API at the function level. Evidence that this
   works for Forza: game code never references D3D's globals (the device

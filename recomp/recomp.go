@@ -40,7 +40,15 @@ type Translator struct {
 	F     *xbe.File
 	Names map[uint32]string // optional real names, used in comments
 	Vars  map[uint32]string // named globals, exported to the runtime in names.h
+	// HW names the sections whose memory accesses may reach device
+	// registers (the XDK's drivers). Their loads and stores go through
+	// xb_hw_*, which hands the GPU's register range to the runtime.
+	HW map[string]bool
 }
+
+var hwAccess = strings.NewReplacer(
+	"xb_rd8(", "xb_hw_rd8(", "xb_rd16(", "xb_hw_rd16(", "xb_rd32(", "xb_hw_rd32(",
+	"xb_wr8(", "xb_hw_wr8(", "xb_wr16(", "xb_hw_wr16(", "xb_wr32(", "xb_hw_wr32(")
 
 // Func is one translated function.
 type Func struct {
@@ -101,10 +109,14 @@ func (t *Translator) Function(va uint32) Func {
 	fmt.Fprintf(&code, "/* %08X%s */\nXB_WEAK void %s(XbCtx *c) {\n", va, name, CName(va))
 	code.WriteString("    uint32_t cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;\n")
 	code.WriteString("    (void)cf; (void)zf; (void)sf; (void)of; (void)pf; (void)af;\n")
-	code.WriteString(labelMark.ReplaceAllStringFunc(g.w.String(), func(m string) string {
+	body := labelMark.ReplaceAllStringFunc(g.w.String(), func(m string) string {
 		va, _ := strconv.ParseUint(m[3:11], 16, 32)
 		return g.label(uint32(va))
-	}))
+	})
+	if fn := t.P.Funcs[va]; fn != nil && t.HW[fn.Section] {
+		body = hwAccess.Replace(body)
+	}
+	code.WriteString(body)
 	code.WriteString("}\n")
 	return Func{Addr: va, Code: code.String(), Unsupported: g.unsup, Insts: len(g.body.Insts)}
 }
@@ -143,9 +155,17 @@ func (g *gen) unsupported(why string) {
 
 // jump is the statement that transfers control to target. A jump back to
 // the function's own entry is a loop, not a recursive call.
+//
+// A backward jump closes a loop, and gets XB_LOOP, a compiler memory
+// barrier: guest memory is plain C memory, so without it the C compiler may
+// read a polled location once and spin forever, while another thread or a
+// device model is what changes it.
 func (g *gen) jump(target uint32) string {
 	if g.in[target] {
 		g.labels[target] = true
+		if target <= g.cur.Addr {
+			return fmt.Sprintf("{ XB_LOOP(); goto L_%08X; }", target)
+		}
 		return fmt.Sprintf("goto L_%08X;", target)
 	}
 	if g.t.P.IsFunc(target) {

@@ -310,6 +310,21 @@ var implausible = map[x86asm.Op]bool{
 	x86asm.SLDT: true, x86asm.STR: true, x86asm.LLDT: true, x86asm.SGDT: true, x86asm.LSL: true,
 }
 
+// DriverSections hold the XDK's hardware drivers, whose real code does port
+// I/O (the GPU's interrupt handler reads a GPIO port, for one).
+var DriverSections = map[string]bool{"D3D": true, "DSOUND": true}
+
+func (a *analyzer) implausibleAt(in x86asm.Inst, va uint32) bool {
+	if !implausible[in.Op] {
+		return false
+	}
+	if in.Op == x86asm.IN || in.Op == x86asm.OUT {
+		s := a.f.SectionAt(va)
+		return s == nil || !DriverSections[s.Name]
+	}
+	return true
+}
+
 // plausible reports whether va looks like the start of real code: a short
 // walk of it decodes cleanly, uses no implausible instruction, and never
 // jumps into the middle of an instruction it decoded or outside the image.
@@ -322,7 +337,7 @@ func (a *analyzer) plausible(va uint32) bool {
 		work = work[:len(work)-1]
 		for !starts[pc] && n < 256 {
 			in, ok := a.decode(pc)
-			if !ok || implausible[in.Op] || in.Op == 0 {
+			if !ok || a.implausibleAt(in, pc) || in.Op == 0 {
 				return false
 			}
 			starts[pc] = true

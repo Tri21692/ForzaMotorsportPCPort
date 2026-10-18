@@ -19,7 +19,8 @@ uint64_t rt_now_100ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     if (!t0.tv_sec && !t0.tv_nsec) t0 = t;
-    return (uint64_t)(t.tv_sec - t0.tv_sec) * 10000000ull + (uint64_t)(t.tv_nsec - t0.tv_nsec) / 100;
+    int64_t ns = (int64_t)(t.tv_sec - t0.tv_sec) * 1000000000ll + (t.tv_nsec - t0.tv_nsec);
+    return (uint64_t)ns / 100;
 }
 
 /* ---- handles ---- */

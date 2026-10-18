@@ -28,6 +28,10 @@
  * implements natively by defining the same symbol. */
 #define XB_WEAK __attribute__((weak))
 
+/* At every loop back-edge: re-read guest memory on the next iteration
+ * (see recomp.go, jump). */
+#define XB_LOOP() __asm__ volatile("" ::: "memory")
+
 /* One SSE register: the Pentium III has SSE1, four floats per register. */
 typedef union XbVec {
     float f[4];
@@ -55,6 +59,19 @@ static inline uint32_t xb_rd32(uint32_t a) { uint32_t v; memcpy(&v, xb_mem + a, 
 static inline void xb_wr8(uint32_t a, uint8_t v) { xb_mem[a] = v; }
 static inline void xb_wr16(uint32_t a, uint16_t v) { memcpy(xb_mem + a, &v, 2); }
 static inline void xb_wr32(uint32_t a, uint32_t v) { memcpy(xb_mem + a, &v, 4); }
+
+/* Device registers. Driver code (see Translator.HW) reaches hardware
+ * through ordinary loads and stores; its accesses come here, and the GPU's
+ * register range (0xFD000000-0xFDFFFFFF) goes to the runtime's model. */
+uint32_t xb_mmio_read(uint32_t a, int bytes);
+void xb_mmio_write(uint32_t a, int bytes, uint32_t v);
+#define XB_IS_MMIO(a) __builtin_expect(((a) >> 24) == 0xFDu, 0)
+static inline uint8_t xb_hw_rd8(uint32_t a) { return XB_IS_MMIO(a) ? (uint8_t)xb_mmio_read(a, 1) : xb_rd8(a); }
+static inline uint16_t xb_hw_rd16(uint32_t a) { return XB_IS_MMIO(a) ? (uint16_t)xb_mmio_read(a, 2) : xb_rd16(a); }
+static inline uint32_t xb_hw_rd32(uint32_t a) { return XB_IS_MMIO(a) ? xb_mmio_read(a, 4) : xb_rd32(a); }
+static inline void xb_hw_wr8(uint32_t a, uint8_t v) { if (XB_IS_MMIO(a)) xb_mmio_write(a, 1, v); else xb_wr8(a, v); }
+static inline void xb_hw_wr16(uint32_t a, uint16_t v) { if (XB_IS_MMIO(a)) xb_mmio_write(a, 2, v); else xb_wr16(a, v); }
+static inline void xb_hw_wr32(uint32_t a, uint32_t v) { if (XB_IS_MMIO(a)) xb_mmio_write(a, 4, v); else xb_wr32(a, v); }
 
 static inline float xb_rdf(uint32_t a) { float v; memcpy(&v, xb_mem + a, 4); return v; }
 static inline void xb_wrf(uint32_t a, float v) { memcpy(xb_mem + a, &v, 4); }
@@ -224,5 +241,7 @@ void xb_call_indirect(XbCtx *c, uint32_t target); /* call through a pointer */
 void xb_kernel(XbCtx *c, uint32_t ordinal);       /* xboxkrnl.exe import */
 void xb_trap(XbCtx *c, uint32_t addr, const char *why) __attribute__((noreturn));
 uint64_t xb_rdtsc(XbCtx *c);                       /* the game's view of the CPU clock */
+uint32_t xb_io_in(XbCtx *c, uint32_t port, int bytes); /* port I/O */
+void xb_io_out(XbCtx *c, uint32_t port, int bytes, uint32_t v);
 
 #endif

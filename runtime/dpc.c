@@ -76,6 +76,7 @@ static void *dpc_main(void *arg) {
                 *tm = timers[--ntimers];
             }
         }
+        rt_interrupts_run(c);
         while (nqueued) {
             Queued q = queue[0];
             memmove(queue, queue + 1, --nqueued * sizeof *queue);

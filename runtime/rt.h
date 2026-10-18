@@ -43,14 +43,19 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(pr
 /* ---- memory (mem.c) ----
  * Regions of the 4 GB guest space:
  *   0x00010000  the XBE image, then user allocations (NtAllocateVirtualMemory)
- *   0x80000000+ contiguous memory, Xbox style (MmAllocateContiguousMemory)
+ *   0x80000000  the 64 MB of RAM, by physical address: contiguous memory
  *   0xB0000000  kernel pool and system memory
  *   0xC0000000  kernel data: exported variables, thread and PCR blocks
+ *   0xF0000000  the same RAM again (write-combined view)
+ *   0xFD000000  the GPU's registers (NV2A, 16 MB)
  *   0xFFFF0000  fake addresses of kernel functions, stored in the thunks */
 #define RT_USER_BASE 0x00010000u
 #define RT_USER_LIMIT 0x7FFE0000u
-#define RT_CONTIG_BASE 0x83000000u
-#define RT_CONTIG_LIMIT 0x90000000u
+#define RT_PHYS_SIZE 0x04000000u
+#define RT_PHYS_VIEW 0x80000000u
+#define RT_PHYS_WC 0xF0000000u
+#define RT_PHYS_INSTANCE 0x03FE0000u /* GPU instance memory, 64 KB, then 64 KB padding */
+#define RT_NV2A_BASE 0xFD000000u
 #define RT_POOL_BASE 0xB0000000u
 #define RT_POOL_LIMIT 0xBF000000u
 #define RT_KDATA_BASE 0xC0000000u
@@ -61,7 +66,10 @@ void rt_mem_init(void);
 uint32_t rt_user_alloc(uint32_t base, uint32_t size, uint32_t protect); /* 0 on failure */
 int rt_user_free(uint32_t base, uint32_t *size);
 int rt_user_query(uint32_t addr, uint32_t *base, uint32_t *size, uint32_t *protect, uint32_t *state);
-uint32_t rt_contig_alloc(uint32_t size, uint32_t align);
+/* Contiguous physical memory in [lo, hi], returned at its 0x80000000 view. */
+uint32_t rt_contig_alloc(uint32_t size, uint32_t lo, uint32_t hi, uint32_t align);
+void rt_contig_free(uint32_t va);
+uint32_t rt_phys_of(uint32_t va);
 uint32_t rt_pool_alloc(uint32_t size);
 uint32_t rt_kdata_alloc(uint32_t size);
 void rt_mem_reserve_image(uint32_t base, uint32_t size);
@@ -127,6 +135,10 @@ uint64_t rt_deadline(uint32_t timeout_ptr); /* from a guest PLARGE_INTEGER */
 
 /* ---- kernel exports (kernel.c) ---- */
 void rt_kernel_init(void);
+/* Other files add handlers for their part of the kernel. A handler reads
+ * its arguments from the guest stack and returns EAX; see kernel.c. */
+typedef uint32_t (*RtHandler)(XbCtx *c);
+void rt_kernel_handler(uint32_t ordinal, RtHandler h);
 const XbKernelInfo *rt_kernel_info(uint32_t ordinal);
 void rt_call(XbCtx *c, uint32_t target); /* run guest code at target */
 /* Call a stdcall guest function from host code, e.g. a DPC routine, and
@@ -139,6 +151,14 @@ void rt_dpc_start(void);
 void rt_dpc_queue(uint32_t dpc, uint32_t arg1, uint32_t arg2);
 void rt_timer_set(uint32_t timer, uint64_t due, uint32_t period_ms, uint32_t dpc);
 int rt_timer_cancel(uint32_t timer);
+
+/* ---- hardware (hw.c): interrupts, PCI, I/O ports, video output ---- */
+void rt_hw_init(void);
+void rt_interrupt_raise(uint32_t vector); /* from any thread; the DPC thread runs the ISR */
+void rt_interrupts_run(XbCtx *c);         /* DPC thread: run raised ISRs */
+void rt_interrupt_ack(uint32_t irq, void (*ack)(void)); /* called after the ISR for irq */
+extern uint32_t rt_display_fb;            /* AvSetDisplayMode: front buffer, physical */
+extern uint32_t rt_display_mode, rt_display_format, rt_display_pitch;
 
 /* ---- files (file.c) ---- */
 void rt_files_init(void);

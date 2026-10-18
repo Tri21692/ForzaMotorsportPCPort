@@ -476,6 +476,10 @@ K(PsTerminateSystemThread) {
 }
 
 K(ObReferenceObjectByHandle) {
+    if (ARG(0) == 0xFFFFFFFEu) { /* NtCurrentThread() */
+        xb_wr32(ARG(2), rt_self->kthread);
+        return STATUS_SUCCESS;
+    }
     RtObject *o = rt_handle_get(ARG(0));
     if (!o) return STATUS_INVALID_HANDLE;
     o->refs++;
@@ -521,12 +525,22 @@ K(NtQueryVirtualMemory) {
     return STATUS_SUCCESS;
 }
 
-K(MmAllocateContiguousMemory) { return rt_contig_alloc(ARG(0), 0x1000); }
-K(MmAllocateContiguousMemoryEx) { return rt_contig_alloc(ARG(0), ARG(3)); }
-K(MmFreeContiguousMemory) { return 0; }
+K(MmAllocateContiguousMemory) { return rt_contig_alloc(ARG(0), 0, RT_PHYS_SIZE - 1, 0x1000); }
+/* (size, LowestAcceptableAddress, HighestAcceptableAddress, Alignment, Protect) */
+K(MmAllocateContiguousMemoryEx) { return rt_contig_alloc(ARG(0), ARG(1), ARG(2), ARG(3)); }
+K(MmFreeContiguousMemory) {
+    rt_contig_free(ARG(0));
+    return 0;
+}
+/* MmClaimGpuInstanceMemory(NumberOfBytes, *NumberOfPaddingBytes): the end
+ * of the GPU's instance memory, which D3D allocates down from. */
+K(MmClaimGpuInstanceMemory) {
+    if (ARG(1)) xb_wr32(ARG(1), RT_PHYS_SIZE - (RT_PHYS_INSTANCE + 0x10000));
+    return RT_PHYS_VIEW + RT_PHYS_INSTANCE + 0x10000;
+}
 K(MmPersistContiguousMemory) { return 0; }
 K(MmQueryAllocationSize) { return rt_size_of(ARG(0)); }
-K(MmGetPhysicalAddress) { return ARG(0) & 0x7FFFFFFFu; }
+K(MmGetPhysicalAddress) { return rt_phys_of(ARG(0)); }
 K(MmAllocateSystemMemory) { return rt_pool_alloc(ARG(0)); }
 K(MmFreeSystemMemory) { return rt_size_of(ARG(0)); }
 K(MmQueryAddressProtect) { return 0x04; }
@@ -628,10 +642,12 @@ K(DbgPrint) {
 
 /* ---- dispatch ---- */
 
-typedef uint32_t (*Handler)(XbCtx *);
+typedef RtHandler Handler;
 static Handler handlers[400];
 
 #define H(ord, name) handlers[ord] = k_##name
+
+void rt_kernel_handler(uint32_t ordinal, RtHandler h) { handlers[ordinal] = h; }
 
 extern uint32_t k_file_NtCreateFile(XbCtx *c);
 extern uint32_t k_file_NtOpenFile(XbCtx *c);
@@ -733,6 +749,7 @@ void rt_kernel_init(void) {
     H(165, MmAllocateContiguousMemory);
     H(166, MmAllocateContiguousMemoryEx);
     H(167, MmAllocateSystemMemory);
+    H(168, MmClaimGpuInstanceMemory);
     H(171, MmFreeContiguousMemory);
     H(172, MmFreeSystemMemory);
     H(173, MmGetPhysicalAddress);

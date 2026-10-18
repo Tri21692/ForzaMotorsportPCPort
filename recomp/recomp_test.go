@@ -38,8 +38,8 @@ func program(t *testing.T) (*recomp.Translator, *analysis.Program) {
 	tbl = xbetest.Le32(tbl, 0x11022)
 	at(0x11024, tbl...)
 	at(0x11030, 0xFF, 0xFF, 0xFF, 0xFF)
-	// 11040: in al, dx (a privileged port read, never supported); ret 4
-	at(0x11040, 0xEC, 0xC2, 0x04, 0x00)
+	// 11040: cli (privileged, never supported); ret 4
+	at(0x11040, 0xFA, 0xC2, 0x04, 0x00)
 
 	f, err := xbe.Parse(xbetest.Image{
 		Title: "Recomp", Entry: 0x11000, Thunk: 0x20000,
@@ -84,8 +84,8 @@ func TestControlFlow(t *testing.T) {
 	}
 
 	un := tr.Function(0x11040)
-	if un.Unsupported["IN"] != 1 || !strings.Contains(un.Code, `xb_trap(c, 0x00011040, "unsupported: IN");`) {
-		t.Errorf("IN not trapped: %v\n%s", un.Unsupported, un.Code)
+	if un.Unsupported["CLI"] != 1 || !strings.Contains(un.Code, `xb_trap(c, 0x00011040, "unsupported: CLI");`) {
+		t.Errorf("CLI not trapped: %v\n%s", un.Unsupported, un.Code)
 	}
 	if !strings.Contains(un.Code, "c->esp += 8; return;") {
 		t.Errorf("ret 4 not translated:\n%s", un.Code)
@@ -164,7 +164,7 @@ func TestEntryNotFirst(t *testing.T) {
 	if jump := strings.Index(code, "goto L_00011010;"); jump < 0 || jump > first {
 		t.Errorf("entry is not reached first:\n%s", code)
 	}
-	if !strings.Contains(code, "if (!zf) goto L_00011010;") || strings.Contains(code, "f_00011010(c); return;") {
+	if !strings.Contains(code, "if (!zf) { XB_LOOP(); goto L_00011010; }") || strings.Contains(code, "f_00011010(c); return;") {
 		t.Errorf("loop to the entry should be a goto:\n%s", code)
 	}
 }

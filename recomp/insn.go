@@ -345,6 +345,34 @@ func (g *gen) inst(in analysis.Inst) {
 		g.line("{ uint64_t t = xb_rdtsc(c); c->eax = (uint32_t)t; c->edx = (uint32_t)(t >> 32); }")
 		return
 
+	case x86asm.WBINVD, x86asm.INVD:
+		// Cache flushes, so the GPU sees what the CPU wrote. On the PC the
+		// GPU model reads the same memory, so a fence is all that's left.
+		g.line("__atomic_thread_fence(__ATOMIC_SEQ_CST);")
+		return
+
+	case x86asm.IN, x86asm.OUT:
+		// Port I/O, from driver code (SMBus, ACPI, PCI config). The runtime
+		// models the devices behind the ports.
+		port, val := a1, a0
+		if op == x86asm.OUT {
+			port, val = a0, a1
+		}
+		bits := g.size(val)
+		p, ok := g.read(port, 16)
+		if !ok {
+			break
+		}
+		if op == x86asm.IN {
+			if w, ok := g.write(val, bits, fmt.Sprintf("xb_io_in(c, %s, %d)", p, bits/8)); ok {
+				g.line("%s", w)
+				return
+			}
+		} else if v, ok := g.read(val, bits); ok {
+			g.line("xb_io_out(c, %s, %d, %s);", p, bits/8, v)
+			return
+		}
+
 	case x86asm.CMPXCHG8B:
 		m, ok := a0.(x86asm.Mem)
 		if !ok {

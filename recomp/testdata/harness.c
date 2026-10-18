@@ -50,6 +50,10 @@ void xb_trap(XbCtx *c, uint32_t addr, const char *why) {
 void xb_call_indirect(XbCtx *c, uint32_t target) { xb_trap(c, target, "indirect call"); }
 void xb_kernel(XbCtx *c, uint32_t ordinal) { xb_trap(c, ordinal, "kernel call"); }
 uint64_t xb_rdtsc(XbCtx *c) { xb_trap(c, 0, "rdtsc"); }
+uint32_t xb_io_in(XbCtx *c, uint32_t port, int bytes) { xb_trap(c, 0, "in"); }
+void xb_io_out(XbCtx *c, uint32_t port, int bytes, uint32_t v) { xb_trap(c, 0, "out"); }
+uint32_t xb_mmio_read(uint32_t a, int bytes) { xb_trap(0, a, "mmio read"); }
+void xb_mmio_write(uint32_t a, int bytes, uint32_t v) { xb_trap(0, a, "mmio write"); }
 
 /* Writable ranges hashed after each case: scratch, stack, then the image's
  * writable sections as listed in image.bin (flag bit 0 of the length). */

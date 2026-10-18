@@ -36,7 +36,22 @@ first build takes a while.
 | `kernel.c` | kernel export dispatch and the Rtl/Ke/Nt/Ps/Ob/Mm/Ex/Hal/Io/Xe handlers |
 | `file.c` | devices, symbolic links and the Nt file calls |
 | `dpc.c` | kernel timers and the DPC thread |
+| `hw.c` | interrupts, PCI config space, I/O ports, the video encoder |
+| `nv2a.c` | the GPU as its driver sees it: registers, push buffer, vblank |
+| `kelvin.c` | the GPU's 3D engine methods (state only; nothing is drawn yet) |
 | `hle_input.c` | XAPI's controller functions, replaced |
+
+## The GPU
+
+D3D itself runs recompiled. What the runtime models is the hardware under
+it: the NV2A's registers at 0xFD000000 and the push buffer of GPU methods
+D3D writes in RAM. The recompiler routes memory accesses in the driver
+sections (D3D, DSOUND) through a range check, so register reads and writes
+reach `nv2a.c` with their hardware behaviour (interrupt bits that clear
+when written with ones, a running timer, flushes that complete). A device
+thread runs the push buffer whenever D3D moves PUT, writes fences back,
+and raises the 60 Hz vertical blank. Drawing those methods on the PC is
+the next step.
 
 ## Replacing library code
 
