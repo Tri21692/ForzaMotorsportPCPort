@@ -64,6 +64,11 @@ def fill(rng, size):
             w = rng.next() & 0xFF
         else:
             w = rng.next()
+        # No signaling NaN patterns (see harness.c).
+        if (w & 0x7FC00000) == 0x7F800000 and (w & 0x003FFFFF):
+            w |= 0x00400000
+        if (w & 0x7FF80000) == 0x7FF00000:
+            w |= 0x00080000
         struct.pack_into("<I", out, off, w)
     return bytes(out)
 

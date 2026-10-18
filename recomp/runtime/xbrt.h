@@ -24,6 +24,10 @@
 #include <stdint.h>
 #include <string.h>
 
+/* Generated functions are weak: the runtime replaces library routines it
+ * implements natively by defining the same symbol. */
+#define XB_WEAK __attribute__((weak))
+
 /* One SSE register: the Pentium III has SSE1, four floats per register. */
 typedef union XbVec {
     float f[4];
@@ -204,6 +208,16 @@ static inline uint32_t xb_pop(XbCtx *c) { uint32_t v = xb_rd32(c->esp); c->esp +
 
 /* PF: set when the low byte has an even number of 1 bits. */
 static inline uint32_t xb_parity(uint32_t v) { return !__builtin_parity(v & 0xFF); }
+
+/* Tables the translator generates for the runtime. */
+typedef struct { uint32_t addr; void (*fn)(XbCtx *); } XbFuncEntry;
+extern const XbFuncEntry xb_funcs[];       /* sorted by addr */
+extern const unsigned xb_func_count;
+
+/* conv: 0 stdcall, 1 fastcall, 2 cdecl, 3 data (as xbe.CallConv). */
+typedef struct { uint32_t ordinal; const char *name; uint8_t conv, argbytes; } XbKernelInfo;
+extern const XbKernelInfo xb_kernel_info[]; /* sorted by ordinal */
+extern const unsigned xb_kernel_info_count;
 
 /* Leaving generated code. The runtime implements these. */
 void xb_call_indirect(XbCtx *c, uint32_t target); /* call through a pointer */

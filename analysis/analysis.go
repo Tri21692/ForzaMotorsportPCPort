@@ -104,6 +104,7 @@ func Analyze(f *xbe.File, seeds ...uint32) *Program {
 		funcs, owner := a.descendAll()
 		a.scanPrologues(owner)
 		a.scanDataRefs(owner)
+		a.scanImmediates(owner)
 		if len(a.starts) == before {
 			p.Funcs, p.Owner, p.a = funcs, owner, a
 			return p
@@ -297,9 +298,103 @@ func isCondBranch(op x86asm.Op) bool {
 	return false
 }
 
+// implausible are instructions MSVC does not emit in game code. Data that
+// happens to decode as x86 is full of them.
+var implausible = map[x86asm.Op]bool{
+	x86asm.AAA: true, x86asm.AAD: true, x86asm.AAM: true, x86asm.AAS: true, x86asm.DAA: true, x86asm.DAS: true,
+	x86asm.LES: true, x86asm.LDS: true, x86asm.INTO: true, x86asm.BOUND: true, x86asm.ARPL: true,
+	x86asm.IN: true, x86asm.OUT: true, x86asm.INSB: true, x86asm.INSD: true, x86asm.INSW: true,
+	x86asm.OUTSB: true, x86asm.OUTSD: true, x86asm.OUTSW: true, x86asm.HLT: true, x86asm.ICEBP: true,
+	x86asm.LRET: true, x86asm.LJMP: true, x86asm.LCALL: true, x86asm.IRET: true, x86asm.IRETD: true,
+	x86asm.CLI: true, x86asm.STI: true, x86asm.XLATB: true, x86asm.ENTER: true,
+	x86asm.SLDT: true, x86asm.STR: true, x86asm.LLDT: true, x86asm.SGDT: true, x86asm.LSL: true,
+}
+
+// plausible reports whether va looks like the start of real code: a short
+// walk of it decodes cleanly, uses no implausible instruction, and never
+// jumps into the middle of an instruction it decoded or outside the image.
+func (a *analyzer) plausible(va uint32) bool {
+	starts := map[uint32]bool{}
+	var targets []uint32
+	work := []uint32{va}
+	for n := 0; len(work) > 0 && n < 256; {
+		pc := work[len(work)-1]
+		work = work[:len(work)-1]
+		for !starts[pc] && n < 256 {
+			in, ok := a.decode(pc)
+			if !ok || implausible[in.Op] || in.Op == 0 {
+				return false
+			}
+			starts[pc] = true
+			n++
+			next := pc + uint32(in.Len)
+			if t, ok := relTarget(in, next); ok && (in.Op == x86asm.JMP || isCondBranch(in.Op) || in.Op == x86asm.CALL) {
+				if a.f.SectionAt(t) == nil {
+					return false
+				}
+				targets = append(targets, t)
+				if in.Op != x86asm.CALL && a.f.SectionAt(t) == a.f.SectionAt(va) {
+					work = append(work, t)
+				}
+			}
+			if in.Op == x86asm.RET || in.Op == x86asm.JMP || in.Op == x86asm.INT || in.Op == x86asm.UD2 {
+				break
+			}
+			pc = next
+		}
+	}
+	// A jump landing inside an instruction this walk decoded means the
+	// bytes were never code.
+	for _, t := range targets {
+		if starts[t] {
+			continue
+		}
+		for back := uint32(1); back < 15 && t >= back; back++ {
+			if starts[t-back] {
+				if in, ok := a.decode(t - back); ok && t-back+uint32(in.Len) > t {
+					return false
+				}
+				break
+			}
+		}
+	}
+	return true
+}
+
+// scanImmediates seeds functions from code addresses used as immediate
+// operands, as in push offset callback or mov [obj], offset method: how
+// atexit handlers, C++ initializers and callbacks are passed around. The
+// same plausibility test as data references applies.
+func (a *analyzer) scanImmediates(owner map[uint32]uint32) {
+	for va := range owner {
+		in, ok := a.decode(va)
+		if !ok {
+			continue
+		}
+		for _, arg := range in.Args {
+			imm, isImm := arg.(x86asm.Imm)
+			if !isImm {
+				continue
+			}
+			t := uint32(imm)
+			s := a.f.SectionAt(t)
+			if s == nil || !a.code[s.Name] || t >= s.VirtualAddr+s.RawSize {
+				continue
+			}
+			if _, known := a.starts[t]; known {
+				continue
+			}
+			if _, taken := owner[t]; !taken && a.looksLikeStart(t) && a.plausible(t) {
+				a.addStart(t, FromDataRef)
+			}
+		}
+	}
+}
+
 // looksLikeStart reports whether va sits where MSVC puts functions: 16-byte
-// aligned, or right after int3/nop padding or a ret. In Forza's .text 89% of
-// call targets are aligned and nearly all follow 0xCC padding.
+// aligned, or right after int3/nop padding, a ret or a ret imm16. In
+// Forza's .text 89% of call targets are aligned and nearly all follow 0xCC
+// padding.
 func (a *analyzer) looksLikeStart(va uint32) bool {
 	if va%16 == 0 {
 		return true
@@ -308,7 +403,12 @@ func (a *analyzer) looksLikeStart(va uint32) bool {
 	if err != nil {
 		return false
 	}
-	return b[0] == 0xCC || b[0] == 0x90 || b[0] == 0xC3
+	if b[0] == 0xCC || b[0] == 0x90 || b[0] == 0xC3 {
+		return true
+	}
+	// Right after ret imm16 (C2 xx xx), which MSVC packs functions behind.
+	r, err := a.f.Bytes(va-3, 1)
+	return err == nil && r[0] == 0xC2
 }
 
 // scanPrologues seeds `push ebp; mov ebp, esp` (55 8B EC) found in unowned
@@ -333,40 +433,63 @@ func (a *analyzer) scanPrologues(owner map[uint32]uint32) {
 	}
 }
 
-// scanDataRefs seeds functions from runs of at least two consecutive aligned
-// pointers to code in non-code sections (vtables, callback tables). Single
-// pointers are too often coincidences to trust. Pointers into the middle of
-// a known function are skipped: those are SEH scope-table handlers and
-// similar labels, not new functions.
+// scanDataRefs seeds functions from pointers to code found in data,
+// including data inside code sections (XPP keeps its device tables next to
+// its code; bytes of decoded instructions are skipped, scanImmediates
+// covers those). A run of two or more pointers is a table: vtables,
+// initializer lists, callback tables. A pointer that has a known function
+// as a neighbour vouches for the others. Lone pointers and unvouched
+// tables must also sit where MSVC aligns functions, and every candidate
+// must pass plausible. Pointers into the middle of a known function are
+// skipped: those are SEH scope-table handlers and similar labels.
+//
+// Generosity is safe here: a false start only adds translated code that
+// never runs, and even one inside a real function stays correct, because a
+// jump to it becomes a tail call into the same code.
 func (a *analyzer) scanDataRefs(owner map[uint32]uint32) {
 	isCode := func(v uint32) bool {
 		s := a.f.SectionAt(v)
 		return s != nil && a.code[s.Name] && v < s.VirtualAddr+s.RawSize
 	}
+	covered := map[uint32]bool{} // bytes of decoded instructions
+	for va := range owner {
+		if in, ok := a.decode(va); ok {
+			for k := 0; k < in.Len; k++ {
+				covered[va+uint32(k)] = true
+			}
+		}
+	}
 	for i := range a.f.Sections {
 		s := &a.f.Sections[i]
-		if a.code[s.Name] {
-			continue
-		}
 		d := a.f.SectionData(s)
+		inCode := a.code[s.Name]
 		var run []uint32
 		flush := func() {
-			if len(run) >= 2 {
-				for _, v := range run {
-					if _, known := a.starts[v]; known {
-						continue
-					}
-					if _, taken := owner[v]; taken || !a.looksLikeStart(v) {
-						continue
-					}
-					if _, ok := a.decode(v); ok {
-						a.addStart(v, FromDataRef)
-					}
+			vouched := false
+			for _, v := range run {
+				if _, known := a.starts[v]; known && len(run) >= 2 {
+					vouched = true
+				}
+			}
+			for _, v := range run {
+				if _, known := a.starts[v]; known {
+					continue
+				}
+				if _, taken := owner[v]; taken || (!vouched && !a.looksLikeStart(v)) {
+					continue
+				}
+				if a.plausible(v) {
+					a.addStart(v, FromDataRef)
 				}
 			}
 			run = run[:0]
 		}
 		for off := 0; off+4 <= len(d); off += 4 {
+			va := s.VirtualAddr + uint32(off)
+			if inCode && (covered[va] || covered[va+3]) {
+				flush()
+				continue
+			}
 			v := binary.LittleEndian.Uint32(d[off:])
 			if isCode(v) {
 				run = append(run, v)

@@ -75,6 +75,10 @@ static void fill(uint32_t base, uint32_t size) {
         case 1: w = next_rand() & 0xFF; break;
         default: w = next_rand(); break;
         }
+        /* No signaling NaN patterns: a real x87 quiets them on load and
+         * Unicorn does not, so they would only test Unicorn. */
+        if ((w & 0x7FC00000u) == 0x7F800000u && (w & 0x003FFFFFu)) w |= 0x00400000u; /* float */
+        if ((w & 0x7FF80000u) == 0x7FF00000u) w |= 0x00080000u;                      /* double high word */
         xb_wr32(base + off, w);
     }
 }

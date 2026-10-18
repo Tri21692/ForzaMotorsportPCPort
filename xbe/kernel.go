@@ -1,6 +1,9 @@
 package xbe
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 //go:generate go run gen_kernel.go
 
@@ -45,4 +48,14 @@ func LookupKernel(ordinal uint32) (KernelExport, bool) {
 		return KernelExport{Ordinal: ordinal, Name: fmt.Sprintf("KernelOrdinal%d", ordinal)}, false
 	}
 	return e, true
+}
+
+// KernelExports lists every known export in ordinal order.
+func KernelExports() []KernelExport {
+	out := make([]KernelExport, 0, len(kernelExports))
+	for _, e := range kernelExports {
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ordinal < out[j].Ordinal })
+	return out
 }

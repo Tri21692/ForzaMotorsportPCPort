@@ -46,7 +46,7 @@ Result: 530 named library symbols. Still open but not blocking: the rest
 of LIBC (printf family, heap, file I/O), which can be named as the
 recompiler runs into them.
 
-## Phase 2: static recompiler (x86 → C) (in progress)
+## Phase 2: static recompiler (x86 → C) (done)
 
 Design and test details are in [RECOMPILER.md](RECOMPILER.md).
 
@@ -56,35 +56,48 @@ Design and test details are in [RECOMPILER.md](RECOMPILER.md).
       flow.
 - [x] Integer core, SSE1, x87 as 80-bit `long double` on the host x87
       with the game's control word mirrored, MMX aliased onto the x87
-      registers as on hardware. **99.0% of Forza's functions translate
+      registers as on hardware. **99.1% of Forza's functions translate
       fully**. The rest is driver code that gets replaced, plus misdecoded
       data, and all of the generated C compiles.
 - [x] Differential testing against Unicorn: 473 edge-case instruction
-      forms (13,573 cases, 0 mismatches, run in CI) plus every fully
-      translated Forza leaf function. This caught one real bug (entry
+      forms (13,573 cases, 0 mismatches, run in CI) plus 5,021 fully
+      translated Forza functions (6,241 cases, 0 mismatches). This caught one real bug (entry
       ordering), now fixed.
-- [ ] Tighten data-reference discovery: its false starts cause the ~50
-      "jumps outside function".
-- [ ] Differential tests for functions that call others: link call
-      chains into the harness.
+- [x] Data-reference discovery checks every candidate with a
+      plausibility walk, and finds functions reached only through
+      pointers (immediates and data in all sections).
+- [x] Differential tests for functions that call others: call chains
+      whose callees are all testable (1,636 functions).
+- [x] Every generated function is a weak symbol, and `names.h` maps
+      library names to them, so the runtime replaces library code (HLE)
+      by defining a function of the same name.
 - [ ] x87 tag word and exception flags, MXCSR rounding mode, if the game
       turns out to depend on them.
 - [ ] Size and speed: the output is 141 MB of C. Emit flags only where
       some later instruction can read them, and cache memory addresses
       that repeat.
 
-## Phase 3: runtime (HLE kernel)
+## Phase 3: runtime (HLE kernel) (in progress)
 
-- Map the XBE header itself at `0x10000`. `mainCRTStartup` reads it back
-  (certificate pointer at `0x10118`, header size at `0x10108`) along with
-  the TLS directory, just as it would on the console.
-- Implement the 159 kernel imports listed in research/xbe.md: threads,
-  sync, files mapped to an extracted-disc folder, memory, the crypto used
-  for saves, and the data exports.
-- Section loading: `XeLoadSection` / `XeUnloadSection` for `FZGINIT` and
-  `FZFULLUI`.
-- First milestone: the game boots, reaches its main loop, and logs its file
-  reads, with graphics stubbed out.
+The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
+
+- [x] Load the XBE at `0x10000`, header included, with TLS laid out per
+      thread and a KPCR/KTHREAD at `fs:` as XAPI expects.
+- [x] Threads as host threads under one big lock, waits, events,
+      semaphores, mutants, timers and DPCs (on their own thread).
+- [x] Memory: virtual, contiguous, pool and system allocations.
+- [x] Files: `\Device\CdRom0` mapped to an extracted-disc folder,
+      `\Device\Harddisk0\PartitionN` to `hdd/PartitionN`, symbolic links.
+- [x] `XeLoadSection` / `XeUnloadSection`, data exports, non-volatile
+      settings, DbgPrint.
+- [x] Controllers: XAPI's input functions replaced (one neutral gamepad).
+- **Status:** the native build runs `mainCRTStartup`, XAPI init, the C++
+  static initializers and Forza's own startup: about 20,000 kernel calls,
+  D:/T:/U: mounted, `TitleImage.xbx` written, devices initialised. It
+  stops in `Direct3D_CreateDevice`, where D3D asks for the GPU's
+  interrupt vector. That is phase 4's job.
+- [ ] The Z: utility drive (`XMountUtilityDrive`), the crypto used for
+      saves, the remaining kernel imports as the game reaches them.
 
 ## Phase 4: graphics
 

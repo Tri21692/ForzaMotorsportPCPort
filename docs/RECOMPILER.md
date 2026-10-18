@@ -67,7 +67,16 @@ Not modelled yet:
 | integer core | 81.6% | 62.4% |
 | + SSE1 | 88.3% | 72.1% |
 | + x87 | 98.7% | 96.9% |
-| + MMX, `RCL`/`RCR`, `CMPXCHG8B`, `RDTSC` | **99.0%** (17,292 of 17,462) | **97.8%** |
+| + MMX, `RCL`/`RCR`, `CMPXCHG8B`, `RDTSC` | 99.0% (17,292 of 17,462) | 97.8% |
+| + pointer-only functions found (see below) | **99.1%** (of ~25,300) | **96.7%** |
+
+The last row has more functions because discovery got stricter and wider
+at once: immediates and data in every section (code sections included)
+that point at plausible code now become function starts, and every
+candidate must survive a plausibility walk (no `AAA`/`LES`/`IN`, no jump
+into the middle of an instruction). Functions reached only through a
+pointer, such as callbacks handed to the kernel, were what stopped the
+first boots.
 
 What's left is code that should never be translated:
 - privileged instructions (`IN`/`OUT`/`CLI`/`STI`/`WBINVD`/`IRETD`) inside
@@ -111,12 +120,14 @@ Two suites:
   the flags that instruction defines, and `.org` fails the build if a case
   outgrows its 256-byte slot. **Result: 473 forms, 13,573 cases, 0
   mismatches.**
-- **`TestForzaDifferential`** needs `FORZA_XBE`. It runs every Forza leaf
-  function that translates fully and calls nothing, except those using
-  x87 transcendentals (see below). **Result: 3,390 functions, 4,715
-  compared cases, 0 mismatches.** The other random cases fault on the
+- **`TestForzaDifferential`** needs `FORZA_XBE`. It runs every Forza
+  function that translates fully, including call chains whose callees are
+  all testable, except those that call the kernel, call indirectly, use
+  `fs:`, `RDTSC` or x87 transcendentals (see below). **Result: 5,021
+  functions (1,636 of them calling others), 6,241 compared cases, 0
+  mismatches.** The other random cases fault on the
   reference CPU, usually on a random pointer, and are skipped. The run
-  takes about 8 minutes.
+  takes about 13 minutes.
 
 Build tooling the suites need: gcc, GNU `as`/`objcopy`, and Python with
 `unicorn` (`XBRT_PYTHON` picks the interpreter). `XBRT_KEEP=dir` keeps the

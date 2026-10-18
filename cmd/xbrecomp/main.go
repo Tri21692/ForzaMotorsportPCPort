@@ -52,12 +52,14 @@ func main() {
 		}
 		syms = append(syms, sigdb.Scan(f, db)...)
 	}
-	names := map[uint32]string{}
+	names, vars := map[uint32]string{}, map[uint32]string{}
 	var seeds []uint32
 	for _, m := range syms {
 		if m.Kind == sigdb.Function {
 			names[m.Addr] = m.Name
 			seeds = append(seeds, m.Addr)
+		} else if f.SectionAt(m.Addr) != nil {
+			vars[m.Addr] = m.Name // a real global, not a derived struct offset
 		}
 	}
 	p := analysis.Analyze(f, seeds...)
@@ -66,7 +68,7 @@ func main() {
 		funcs = append(funcs, va)
 	}
 
-	t := &recomp.Translator{P: p, F: f, Names: names}
+	t := &recomp.Translator{P: p, F: f, Names: names, Vars: vars}
 	files, out := t.Program(funcs, 500)
 	report(out, *top)
 

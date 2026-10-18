@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -59,23 +60,50 @@ var usesMMX = regexp.MustCompile(`xb_mmw\(`)
 // cannot be checked against it (see docs/RECOMPILER.md).
 var noReference = regexp.MustCompile(`/\* [0-9A-F]{8}  (fsin|fcos|fsincos|fptan|fpatan|fyl2x|fyl2xp1|f2xm1|fprem|fprem1)\b`)
 
-// leafFuncs picks functions the translator fully handles that call nothing
-// and use no fs: segment, so they run in the harness on their own.
-func leafFuncs(tr *recomp.Translator, p *analysis.Program) map[uint32]recomp.Func {
-	out := map[uint32]recomp.Func{}
+// testableFuncs picks functions whose whole call tree the translator
+// fully handles and that stay inside game code: no kernel or indirect
+// calls, no fs: segment, nothing the reference CPU cannot judge. Calls
+// between them are allowed, so call/ret, tail calls and stack arguments
+// are exercised on real code. The second result is how many make calls.
+func testableFuncs(tr *recomp.Translator, p *analysis.Program) (map[uint32]recomp.Func, int) {
+	cand := map[uint32]recomp.Func{}
+	callees := map[uint32][]uint32{}
 	for va, fn := range p.Funcs {
-		if len(fn.Calls)+len(fn.TailCalls)+len(fn.KernelCalls)+fn.IndirectCalls+fn.Unresolved > 0 || fn.BadDecode {
+		if len(fn.KernelCalls)+fn.IndirectCalls+fn.Unresolved > 0 || fn.BadDecode {
 			continue
 		}
 		code := tr.Function(va)
 		if len(code.Unsupported) > 0 || strings.Contains(code.Code, "fs_base") || strings.Contains(code.Code, "xb_call_indirect") ||
-			strings.Contains(code.Code, "xb_kernel") || strings.Contains(code.Code, "xb_rdtsc") ||
-			len(otherFunc.FindAllString(code.Code, -1)) != 1 || noReference.MatchString(code.Code) {
+			strings.Contains(code.Code, "xb_kernel") || strings.Contains(code.Code, "xb_rdtsc") || noReference.MatchString(code.Code) {
 			continue
 		}
-		out[va] = code
+		cand[va] = code
+		for _, name := range otherFunc.FindAllString(code.Code, -1) {
+			if t, err := strconv.ParseUint(name[2:], 16, 32); err == nil && uint32(t) != va {
+				callees[va] = append(callees[va], uint32(t))
+			}
+		}
 	}
-	return out
+	// Drop functions that reach anything untestable, until nothing changes.
+	for changed := true; changed; {
+		changed = false
+		for va := range cand {
+			for _, t := range callees[va] {
+				if _, ok := cand[t]; !ok {
+					delete(cand, va)
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	calling := 0
+	for va := range cand {
+		if len(callees[va]) > 0 {
+			calling++
+		}
+	}
+	return cand, calling
 }
 
 type caseResult struct {
@@ -266,8 +294,8 @@ func TestForzaDifferential(t *testing.T) {
 	}
 	p := analysis.Analyze(f)
 	tr := &recomp.Translator{P: p, F: f}
-	funcs := leafFuncs(tr, p)
-	t.Logf("%d fully translated leaf functions", len(funcs))
+	funcs, calling := testableFuncs(tr, p)
+	t.Logf("%d testable functions, %d of them calling others", len(funcs), calling)
 	compared, bad := runDiff(t, f, funcs, 4)
 	report(t, compared, bad)
 	if compared < len(funcs) {
@@ -319,7 +347,7 @@ func TestEdgeDifferential(t *testing.T) {
 	}
 	p := analysis.Analyze(f, seeds...)
 	tr := &recomp.Translator{P: p, F: f}
-	funcs := leafFuncs(tr, p)
+	funcs, _ := testableFuncs(tr, p)
 	if len(funcs) != cases {
 		for _, va := range seeds {
 			if _, ok := funcs[va]; !ok {

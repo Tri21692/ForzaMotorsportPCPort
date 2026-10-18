@@ -41,8 +41,8 @@ func testImage() []byte {
 	at(0x11050, 0x33, 0xC0, 0xC3)
 	// 11060: never referenced, but has a standard prologue
 	at(0x11060, 0x55, 0x8B, 0xEC, 0x5D, 0xC3)
-	// 11070: referenced by a single pointer only, so not trusted
-	at(0x11070, 0xB8, 1, 0, 0, 0, 0xC3)
+	// 11070: referenced by a single pointer, but aaa is not plausible code
+	at(0x11070, 0x37, 0xC3)
 
 	rdata := xbetest.Thunks(187)
 	rdata = xbetest.Le32(rdata, 0x11040)
