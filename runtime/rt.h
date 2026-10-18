@@ -223,6 +223,7 @@ int rt_display_focused(void);           /* the game's window has the keyboard */
 void rt_apu_init(void);
 void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
 void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
+void nv2a_log_stats(void); /* likewise: the GPU stats line every 5 s at log level 1 */
 void rt_thread_dump(void); /* every guest thread's state, to stderr; with rt_gil held */
 uint32_t rt_apu_read(uint32_t off, int bytes);
 void rt_apu_write(uint32_t off, int bytes, uint32_t v);

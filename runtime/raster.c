@@ -32,8 +32,11 @@
  * level 2 lists each new combination of pixel state once.
  */
 #include <math.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "rt.h"
 #include "nv2a.h"
@@ -703,79 +706,115 @@ static Pt project(const Vertex *v) {
     return r;
 }
 
-static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
+/* State that holds for a whole draw: the surfaces, the texture stages, depth
+ * and blending. Methods do not change in the middle of a Begin/End. */
+typedef struct {
+    int bpp, sx, sy, cx0, cw, cy0, ch;
+    uint32_t base, pitch;
+    int mode[4];
+    Texture *tex[4];
+    int ztest, zbpp;
+    uint32_t zbase, zpitch, zfunc, zwrite;
+    float zmax;
+    int blend;
+    uint32_t sf, df, eq, wm;
+    float cc[4];
+} DrawState;
+
+typedef struct {
+    Pt a, b, c;
+    int x0, x1, y0, y1;
+    float inv;
+} Tri;
+
+static int draw_state(DrawState *d) {
     uint32_t fmt = K(SET_SURFACE_FORMAT), color = fmt & 15, type = (fmt >> 8) & 15, aa = (fmt >> 12) & 15;
-    int bpp = (color >= 4 && color <= 8) ? 4 : (color >= 1 && color <= 3) ? 2 : 0;
-    if (type != 1 || !bpp) {
+    d->bpp = (color >= 4 && color <= 8) ? 4 : (color >= 1 && color <= 3) ? 2 : 0;
+    if (type != 1 || !d->bpp) {
         static uint32_t last;
         if (rt_log_level && last != fmt) rt_log("raster: surface format %x not drawn (offset %08x)\n", fmt, K(SET_SURFACE_COLOR_OFFSET));
         last = fmt;
-        return;
+        return 0;
     }
-    int sx = (aa == 1 || aa == 2) ? 2 : 1, sy = aa == 2 ? 2 : 1;
-    int cx0 = (int)(K(SET_SURFACE_CLIP_HORIZONTAL) & 0xFFFF) * sx, cw = (int)(K(SET_SURFACE_CLIP_HORIZONTAL) >> 16) * sx;
-    int cy0 = (int)(K(SET_SURFACE_CLIP_VERTICAL) & 0xFFFF) * sy, ch = (int)(K(SET_SURFACE_CLIP_VERTICAL) >> 16) * sy;
-    uint32_t pitch = K(SET_SURFACE_PITCH) & 0xFFFF;
-    uint32_t base = dma_base(SET_CONTEXT_DMA_COLOR) + K(SET_SURFACE_COLOR_OFFSET);
-    if (!pitch || (uint32_t)(cx0 + cw) * (uint32_t)bpp > pitch) return;
-
-    Pt a = project(va), b = project(vb), c = project(vc);
-    a.x *= sx, b.x *= sx, c.x *= sx, a.y *= sy, b.y *= sy, c.y *= sy; /* logical pixels to samples */
-    float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (fabsf(area) < 1e-6f) return;
-    int x0 = (int)floorf(fminf(a.x, fminf(b.x, c.x))), x1 = (int)ceilf(fmaxf(a.x, fmaxf(b.x, c.x)));
-    int y0 = (int)floorf(fminf(a.y, fminf(b.y, c.y))), y1 = (int)ceilf(fmaxf(a.y, fmaxf(b.y, c.y)));
-    if (x0 < cx0) x0 = cx0;
-    if (y0 < cy0) y0 = cy0;
-    if (x1 > cx0 + cw) x1 = cx0 + cw;
-    if (y1 > cy0 + ch) y1 = cy0 + ch;
-    if (x0 >= x1 || y0 >= y1) return;
+    d->sx = (aa == 1 || aa == 2) ? 2 : 1, d->sy = aa == 2 ? 2 : 1;
+    d->cx0 = (int)(K(SET_SURFACE_CLIP_HORIZONTAL) & 0xFFFF) * d->sx, d->cw = (int)(K(SET_SURFACE_CLIP_HORIZONTAL) >> 16) * d->sx;
+    d->cy0 = (int)(K(SET_SURFACE_CLIP_VERTICAL) & 0xFFFF) * d->sy, d->ch = (int)(K(SET_SURFACE_CLIP_VERTICAL) >> 16) * d->sy;
+    d->pitch = K(SET_SURFACE_PITCH) & 0xFFFF;
+    d->base = dma_base(SET_CONTEXT_DMA_COLOR) + K(SET_SURFACE_COLOR_OFFSET);
+    if (!d->pitch || (uint32_t)(d->cx0 + d->cw) * (uint32_t)d->bpp > d->pitch) return 0;
 
     /* Texture stages: SET_SHADER_STAGE_PROGRAM has five bits of mode per
-     * stage: 0 off, 1-3 sample a texture (2D, 3D, cube; all read as 2D
-     * here), 4 pass the texture coordinate through as the colour. */
+     * stage: 0 off, 1-3 sample a texture (2D, 3D, cube), 4 pass the
+     * texture coordinate through as the colour. */
     uint32_t prog = K(SET_SHADER_STAGE_PROGRAM);
-    int mode[4];
-    Texture *tex[4] = {NULL, NULL, NULL, NULL};
     for (int i = 0; i < 4; i++) {
-        mode[i] = (int)(prog >> (5 * i)) & 31;
-        if (!prog && i == 0 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) mode[i] = 1;
-        if (mode[i] >= 1 && mode[i] <= 3 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) tex[i] = texture(i);
+        d->mode[i] = (int)(prog >> (5 * i)) & 31;
+        d->tex[i] = NULL;
+        if (!prog && i == 0 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) d->mode[i] = 1;
+        if (d->mode[i] >= 1 && d->mode[i] <= 3 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) d->tex[i] = texture(i);
     }
     if (rt_log_level >= 2) { /* each new combination of pixel state, once */
         static uint32_t seen[256][8];
         static int nseen;
         uint32_t key[8] = {K(SET_TEXTURE_FORMAT), K(SET_COMBINER_CONTROL), K(SET_COMBINER_COLOR_ICW), K(SET_COMBINER_COLOR_OCW),
-                           K(SET_COMBINER_ALPHA_ICW), K(SET_COMBINER_SPECULAR_FOG_CW0), K(SET_COMBINER_SPECULAR_FOG_CW1), prog | (uint32_t)(tex[0] != NULL) << 30 | K(SET_BLEND_ENABLE) << 31};
+                           K(SET_COMBINER_ALPHA_ICW), K(SET_COMBINER_SPECULAR_FOG_CW0), K(SET_COMBINER_SPECULAR_FOG_CW1),
+                           prog | (uint32_t)(d->tex[0] != NULL) << 30 | K(SET_BLEND_ENABLE) << 31};
         int found = 0;
         for (int i = 0; i < nseen; i++) found |= !memcmp(seen[i], key, sizeof key);
         if (!found && nseen < 256) {
             memcpy(seen[nseen++], key, sizeof key);
-            rt_log("draw state: texfmt %08x ctl %x cicw %08x cocw %08x aicw %08x fc %08x %08x en/tex/blend %x blend %x %x alpha %x ref %x c=%.2f,%.2f,%.2f,%.2f\n", key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7],
-                   K(SET_BLEND_FUNC_SFACTOR), K(SET_BLEND_FUNC_DFACTOR), K(SET_ALPHA_TEST_ENABLE), K(SET_ALPHA_REF), a.c[0], a.c[1], a.c[2], a.c[3]);
-            rt_log("   mode %x, attr3 fmt %08x v3 %.2f %.2f %.2f %.2f, attr4 fmt %08x\n", K(SET_TRANSFORM_EXECUTION_MODE),
-                   K(SET_VERTEX_DATA_ARRAY_FORMAT + 12), va->a[3][0], va->a[3][1], va->a[3][2], va->a[3][3], K(SET_VERTEX_DATA_ARRAY_FORMAT + 16));
+            rt_log("draw state: texfmt %08x ctl %x cicw %08x cocw %08x aicw %08x fc %08x %08x prog/tex/blend %x blend %x %x alpha %x ref %x\n",
+                   key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7], K(SET_BLEND_FUNC_SFACTOR), K(SET_BLEND_FUNC_DFACTOR),
+                   K(SET_ALPHA_TEST_ENABLE), K(SET_ALPHA_REF));
         }
     }
     /* The depth buffer: same sample grid as the colour buffer. */
-    uint32_t zfmt = (fmt >> 4) & 15, zpitch = K(SET_SURFACE_PITCH) >> 16;
-    int zbpp = zfmt == 1 ? 2 : zfmt == 2 ? 4 : 0;
-    int ztest = K(SET_DEPTH_TEST_ENABLE) && zbpp && zpitch && (uint32_t)(cx0 + cw) * (uint32_t)zbpp <= zpitch;
-    uint32_t zbase = ztest ? dma_base(SET_CONTEXT_DMA_ZETA) + K(SET_SURFACE_ZETA_OFFSET) : 0;
-    uint32_t zfunc = K(SET_DEPTH_FUNC), zwrite = ztest && K(SET_DEPTH_MASK);
-    float zmax = zbpp == 2 ? 65535.0f : 16777215.0f;
+    uint32_t zfmt = (fmt >> 4) & 15;
+    d->zpitch = K(SET_SURFACE_PITCH) >> 16;
+    d->zbpp = zfmt == 1 ? 2 : zfmt == 2 ? 4 : 0;
+    d->ztest = K(SET_DEPTH_TEST_ENABLE) && d->zbpp && d->zpitch && (uint32_t)(d->cx0 + d->cw) * (uint32_t)d->zbpp <= d->zpitch;
+    d->zbase = d->ztest ? dma_base(SET_CONTEXT_DMA_ZETA) + K(SET_SURFACE_ZETA_OFFSET) : 0;
+    d->zfunc = K(SET_DEPTH_FUNC), d->zwrite = d->ztest && K(SET_DEPTH_MASK);
+    d->zmax = d->zbpp == 2 ? 65535.0f : 16777215.0f;
 
-    int blend = K(SET_BLEND_ENABLE) != 0;
-    uint32_t sf = K(SET_BLEND_FUNC_SFACTOR), df = K(SET_BLEND_FUNC_DFACTOR), eq = K(SET_BLEND_EQUATION), mask = K(SET_COLOR_MASK);
+    d->blend = K(SET_BLEND_ENABLE) != 0;
+    d->sf = K(SET_BLEND_FUNC_SFACTOR), d->df = K(SET_BLEND_FUNC_DFACTOR), d->eq = K(SET_BLEND_EQUATION);
+    uint32_t mask = K(SET_COLOR_MASK);
     if (!mask) mask = 0x01010101u;
+    d->wm = (mask & 1 ? 0x000000FFu : 0) | (mask & 0x100 ? 0x0000FF00u : 0) | (mask & 0x10000 ? 0x00FF0000u : 0) |
+            (mask & 0x1000000 ? 0xFF000000u : 0);
     uint32_t bc = K(SET_BLEND_COLOR);
-    float cc[4] = {(bc >> 16 & 255) / 255.0f, (bc >> 8 & 255) / 255.0f, (bc & 255) / 255.0f, (bc >> 24) / 255.0f};
-    float inv = 1.0f / area;
+    d->cc[0] = (bc >> 16 & 255) / 255.0f, d->cc[1] = (bc >> 8 & 255) / 255.0f, d->cc[2] = (bc & 255) / 255.0f, d->cc[3] = (bc >> 24) / 255.0f;
+    return 1;
+}
 
-    for (int y = y0; y < y1; y++) {
-        uint8_t *row = phys(base + (uint32_t)y * pitch);
+/* Projects a triangle and clips its bounding box; 0 if nothing is drawn. */
+static int setup_tri(const DrawState *d, Tri *t, const Vertex *va, const Vertex *vb, const Vertex *vc) {
+    Pt a = project(va), b = project(vb), c = project(vc);
+    a.x *= d->sx, b.x *= d->sx, c.x *= d->sx, a.y *= d->sy, b.y *= d->sy, c.y *= d->sy; /* logical pixels to samples */
+    float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (fabsf(area) < 1e-6f || area != area) return 0;
+    float fx0 = fminf(a.x, fminf(b.x, c.x)), fx1 = fmaxf(a.x, fmaxf(b.x, c.x));
+    float fy0 = fminf(a.y, fminf(b.y, c.y)), fy1 = fmaxf(a.y, fmaxf(b.y, c.y));
+    if (fx1 < d->cx0 || fy1 < d->cy0 || fx0 > d->cx0 + d->cw || fy0 > d->cy0 + d->ch) return 0;
+    int x0 = fx0 < d->cx0 ? d->cx0 : (int)floorf(fx0), x1 = fx1 > d->cx0 + d->cw ? d->cx0 + d->cw : (int)ceilf(fx1);
+    int y0 = fy0 < d->cy0 ? d->cy0 : (int)floorf(fy0), y1 = fy1 > d->cy0 + d->ch ? d->cy0 + d->ch : (int)ceilf(fy1);
+    if (x0 >= x1 || y0 >= y1) return 0;
+    t->a = a, t->b = b, t->c = c;
+    t->x0 = x0, t->x1 = x1, t->y0 = y0, t->y1 = y1;
+    t->inv = 1.0f / area;
+    return 1;
+}
+
+/* Fills the rows y of a triangle with y % step == first. */
+static void fill(const DrawState *d, const Tri *t, int first, int step) {
+    const Pt a = t->a, b = t->b, c = t->c;
+    float inv = t->inv;
+    int y0 = t->y0 + ((first - t->y0 % step) % step + step) % step;
+    for (int y = y0; y < t->y1; y += step) {
+        uint8_t *row = phys(d->base + (uint32_t)y * d->pitch);
         float py = (float)y + 0.5f;
-        for (int x = x0; x < x1; x++) {
+        for (int x = t->x0; x < t->x1; x++) {
             float px = (float)x + 0.5f;
             float w0 = ((b.x - px) * (c.y - py) - (b.y - py) * (c.x - px)) * inv;
             float w1 = ((c.x - px) * (a.y - py) - (c.y - py) * (a.x - px)) * inv;
@@ -783,15 +822,15 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
             if (w0 < 0 || w1 < 0 || w2 < 0) continue;
             uint8_t *zp = NULL;
             uint32_t zv = 0;
-            if (ztest) {
+            if (d->ztest) {
                 float z = a.z * w0 + b.z * w1 + c.z * w2;
-                zv = (uint32_t)fminf(fmaxf(z, 0), zmax);
-                zp = phys(zbase + (uint32_t)y * zpitch) + x * zbpp;
+                zv = (uint32_t)fminf(fmaxf(z, 0), d->zmax);
+                zp = phys(d->zbase + (uint32_t)y * d->zpitch) + x * d->zbpp;
                 uint32_t old;
-                if (zbpp == 2) { uint16_t o16; memcpy(&o16, zp, 2); old = o16; }
+                if (d->zbpp == 2) { uint16_t o16; memcpy(&o16, zp, 2); old = o16; }
                 else { memcpy(&old, zp, 4); old >>= 8; }
                 int pass;
-                switch (zfunc) {
+                switch (d->zfunc) {
                 case 0x200: pass = 0; break;
                 case 0x201: pass = zv < old; break;
                 case 0x202: pass = zv == old; break;
@@ -812,15 +851,16 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
             for (int k = 0; k < 4; k++) s1[k] = a.c1[k] * p0 + b.c1[k] * p1 + c.c1[k] * p2;
             float tv[4][4] = {{0}};
             for (int i = 0; i < 4; i++) {
-                if (!mode[i] || (mode[i] != 4 && !tex[i])) continue;
+                const Texture *tx = d->tex[i];
+                if (!d->mode[i] || (d->mode[i] != 4 && !tx)) continue;
                 float q[4];
                 for (int k = 0; k < 4; k++) q[k] = a.tc[i][k] * p0 + b.tc[i][k] * p1 + c.tc[i][k] * p2;
-                if (mode[i] == 4) {
+                if (d->mode[i] == 4) {
                     for (int k = 0; k < 4; k++) tv[i][k] = fminf(fmaxf(q[k], 0), 1);
-                } else if (tex[i]->depth) { /* a shadow map: compare, as xemu does */
+                } else if (tx->depth) { /* a shadow map: compare, as xemu does */
                     float qw = q[3] != 0 ? q[3] : 1;
-                    uint32_t d = sample(tex[i], i, q[0] / qw, q[1] / qw);
-                    float r = mode[i] == 2 ? fminf(fmaxf(q[2] / qw, 0), (float)tex[i]->depth) : 0, dv = (float)d;
+                    uint32_t dd = sample(tx, i, q[0] / qw, q[1] / qw);
+                    float r = d->mode[i] == 2 ? fminf(fmaxf(q[2] / qw, 0), (float)tx->depth) : 0, dv = (float)dd;
                     int lit;
                     switch (K(SET_SHADOW_DEPTH_FUNC) & 7) {
                     case 0: lit = 0; break;
@@ -833,48 +873,103 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
                     default: lit = 1;
                     }
                     for (int k = 0; k < 4; k++) tv[i][k] = lit ? 1 : 0;
-                } else if (tex[i]->cube) {
-                    argb(sample_cube(tex[i], q[0], q[1], q[2]), tv[i]);
+                } else if (tx->cube) {
+                    argb(sample_cube(tx, q[0], q[1], q[2]), tv[i]);
                 } else {
                     if (q[3] != 0 && q[3] != 1) q[0] /= q[3], q[1] /= q[3]; /* projective */
-                    argb(sample(tex[i], i, q[0], q[1]), tv[i]);
+                    argb(sample(tx, i, q[0], q[1]), tv[i]);
                 }
             }
-            combine(s, s1, tv, mode[0] != 0, s);
+            combine(s, s1, tv, d->mode[0] != 0, s);
             if (!alpha_pass(s[3])) continue;
             uint32_t dst;
-            if (bpp == 4) memcpy(&dst, row + x * 4, 4);
+            if (d->bpp == 4) memcpy(&dst, row + x * 4, 4);
             else { uint16_t d16; memcpy(&d16, row + x * 2, 2); dst = rgb565(d16, 255); }
-            float d[4] = {(dst >> 16 & 255) / 255.0f, (dst >> 8 & 255) / 255.0f, (dst & 255) / 255.0f, (dst >> 24) / 255.0f};
+            float dc[4] = {(dst >> 16 & 255) / 255.0f, (dst >> 8 & 255) / 255.0f, (dst & 255) / 255.0f, (dst >> 24) / 255.0f};
             float o[4];
             for (int k = 0; k < 4; k++) {
                 float v = s[k];
-                if (blend) {
-                    float fs = blend_factor(sf, k, s, d, cc), fd = blend_factor(df, k, s, d, cc);
-                    if (eq == 0x800A) v = s[k] * fs - d[k] * fd;
-                    else if (eq == 0x800B) v = d[k] * fd - s[k] * fs;
-                    else if (eq == 0x8007) v = fminf(s[k], d[k]);
-                    else if (eq == 0x8008) v = fmaxf(s[k], d[k]);
-                    else v = s[k] * fs + d[k] * fd;
+                if (d->blend) {
+                    float fs = blend_factor(d->sf, k, s, dc, d->cc), fd = blend_factor(d->df, k, s, dc, d->cc);
+                    if (d->eq == 0x800A) v = s[k] * fs - dc[k] * fd;
+                    else if (d->eq == 0x800B) v = dc[k] * fd - s[k] * fs;
+                    else if (d->eq == 0x8007) v = fminf(s[k], dc[k]);
+                    else if (d->eq == 0x8008) v = fmaxf(s[k], dc[k]);
+                    else v = s[k] * fs + dc[k] * fd;
                 }
                 o[k] = v < 0 ? 0 : v > 1 ? 1 : v;
             }
             uint32_t out = (uint32_t)(o[3] * 255 + 0.5f) << 24 | (uint32_t)(o[0] * 255 + 0.5f) << 16 | (uint32_t)(o[1] * 255 + 0.5f) << 8 |
                            (uint32_t)(o[2] * 255 + 0.5f);
-            uint32_t wm = (mask & 1 ? 0x000000FFu : 0) | (mask & 0x100 ? 0x0000FF00u : 0) | (mask & 0x10000 ? 0x00FF0000u : 0) |
-                          (mask & 0x1000000 ? 0xFF000000u : 0);
-            out = (dst & ~wm) | (out & wm);
-            if (bpp == 4) memcpy(row + x * 4, &out, 4);
+            out = (dst & ~d->wm) | (out & d->wm);
+            if (d->bpp == 4) memcpy(row + x * 4, &out, 4);
             else {
                 uint16_t o16 = (uint16_t)((out >> 8 & 0xF800) | (out >> 5 & 0x07E0) | (out >> 3 & 0x001F));
                 memcpy(row + x * 2, &o16, 2);
             }
-            if (zwrite) {
-                if (zbpp == 2) { uint16_t z16 = (uint16_t)zv; memcpy(zp, &z16, 2); }
+            if (d->zwrite) {
+                if (d->zbpp == 2) { uint16_t z16 = (uint16_t)zv; memcpy(zp, &z16, 2); }
                 else { uint32_t old; memcpy(&old, zp, 4); old = (old & 0xFF) | zv << 8; memcpy(zp, &old, 4); } /* stencil kept */
             }
         }
     }
+}
+
+/* ---- filling in parallel ----
+ * Worker thread w fills the rows y % workers == w of every triangle of a
+ * draw, in order. A pixel is only ever touched by one thread, in the order
+ * the triangles came, so blending and depth come out as if drawn one by
+ * one. XBRT_RASTER_THREADS sets the count (default: the host's cores less
+ * four, at most 16; 1 fills on the device thread alone). */
+static int workers = -1;
+static pthread_t worker_threads[16];
+static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t pool_go = PTHREAD_COND_INITIALIZER, pool_done = PTHREAD_COND_INITIALIZER;
+static unsigned pool_job;
+static int pool_left;
+static const DrawState *pool_state;
+static const Tri *pool_tris;
+static int pool_ntris;
+
+static void *worker_main(void *arg) {
+    int w = (int)(intptr_t)arg;
+    unsigned seen = 0;
+    pthread_mutex_lock(&pool_lock);
+    for (;;) {
+        while (pool_job == seen) pthread_cond_wait(&pool_go, &pool_lock);
+        seen = pool_job;
+        pthread_mutex_unlock(&pool_lock);
+        for (int i = 0; i < pool_ntris; i++) fill(pool_state, &pool_tris[i], w, workers);
+        pthread_mutex_lock(&pool_lock);
+        if (--pool_left == 0) pthread_cond_signal(&pool_done);
+    }
+    return NULL;
+}
+
+static void start_workers(void) {
+    const char *e = getenv("XBRT_RASTER_THREADS");
+    long cores = 1;
+#ifdef _WIN32
+    cores = pthread_num_processors_np();
+#else
+    cores = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    workers = e && atoi(e) > 0 ? atoi(e) : (int)(cores > 8 ? cores - 4 : cores > 2 ? cores - 1 : 1);
+    if (workers > 16) workers = 16;
+    if (workers > 1)
+        for (int i = 0; i < workers; i++) pthread_create(&worker_threads[i], NULL, worker_main, (void *)(intptr_t)i);
+    rt_log("raster: %d fill thread%s\n", workers, workers == 1 ? "" : "s");
+}
+
+static Tri *tris;
+static int ntris, tris_cap;
+
+static void add_tri(const DrawState *d, const Vertex *va, const Vertex *vb, const Vertex *vc) {
+    if (ntris == tris_cap) {
+        tris_cap = tris_cap ? tris_cap * 2 : 1024;
+        tris = realloc(tris, (size_t)tris_cap * sizeof *tris);
+    }
+    if (setup_tri(d, &tris[ntris], va, vb, vc)) ntris++;
 }
 
 static void draw(void) {
@@ -883,15 +978,33 @@ static void draw(void) {
         nv2a.skipped++;
         return;
     }
+    DrawState d;
+    if (!draw_state(&d)) return;
+    if (workers < 0) start_workers();
     Vertex *v = verts;
     int n = nverts;
+    ntris = 0;
     switch (prim) {
-    case 5: for (int i = 0; i + 2 < n; i += 3) triangle(&v[i], &v[i + 1], &v[i + 2]); break;
-    case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? triangle(&v[i + 1], &v[i], &v[i + 2]) : triangle(&v[i], &v[i + 1], &v[i + 2]); break;
-    case 7: case 10: for (int i = 1; i + 1 < n; i++) triangle(&v[0], &v[i], &v[i + 1]); break;
-    case 8: for (int i = 0; i + 3 < n; i += 4) triangle(&v[i], &v[i + 1], &v[i + 2]), triangle(&v[i], &v[i + 2], &v[i + 3]); break;
-    case 9: for (int i = 0; i + 3 < n; i += 2) triangle(&v[i], &v[i + 1], &v[i + 3]), triangle(&v[i], &v[i + 3], &v[i + 2]); break;
+    case 5: for (int i = 0; i + 2 < n; i += 3) add_tri(&d, &v[i], &v[i + 1], &v[i + 2]); break;
+    case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? add_tri(&d, &v[i + 1], &v[i], &v[i + 2]) : add_tri(&d, &v[i], &v[i + 1], &v[i + 2]); break;
+    case 7: case 10: for (int i = 1; i + 1 < n; i++) add_tri(&d, &v[0], &v[i], &v[i + 1]); break;
+    case 8: for (int i = 0; i + 3 < n; i += 4) add_tri(&d, &v[i], &v[i + 1], &v[i + 2]), add_tri(&d, &v[i], &v[i + 2], &v[i + 3]); break;
+    case 9: for (int i = 0; i + 3 < n; i += 2) add_tri(&d, &v[i], &v[i + 1], &v[i + 3]), add_tri(&d, &v[i], &v[i + 3], &v[i + 2]); break;
     }
+    if (!ntris) return;
+    long pixels = 0;
+    for (int i = 0; i < ntris; i++) pixels += (long)(tris[i].x1 - tris[i].x0) * (tris[i].y1 - tris[i].y0) / 2;
+    if (workers <= 1 || pixels < 4096) {
+        for (int i = 0; i < ntris; i++) fill(&d, &tris[i], 0, 1);
+        return;
+    }
+    pthread_mutex_lock(&pool_lock);
+    pool_state = &d, pool_tris = tris, pool_ntris = ntris;
+    pool_left = workers;
+    pool_job++;
+    pthread_cond_broadcast(&pool_go);
+    while (pool_left) pthread_cond_wait(&pool_done, &pool_lock);
+    pthread_mutex_unlock(&pool_lock);
 }
 
 static void emit(void) {

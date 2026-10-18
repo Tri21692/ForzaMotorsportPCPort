@@ -279,7 +279,7 @@ static int run_pushbuf(void) {
     static int tracing = -1;
     if (tracing < 0) tracing = getenv("XBRT_PB_TRACE") != NULL;
     int guard = 0;
-    while (guard++ < 1 << 22) {
+    while (guard++ < 1 << 16) { /* then back to the device loop, which raises vertical blanks */
         REG(PFIFO_CACHE1_DMA_GET) = get;
         REG(USER_DMA_GET) = get;
         put = REG(PFIFO_CACHE1_DMA_PUT);
@@ -466,7 +466,7 @@ static void *device_main(void *arg) {
                     rt_log("nv2a: RAM dumped to %s\n", path);
                 }
             }
-            if (rt_log_level && nv2a.vblanks % 300 == 0)
+            if (0)
                 rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
                        "PATT_COLOR0 %08x, intr %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
                        nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR));
@@ -500,4 +500,16 @@ void rt_nv2a_init(void) {
     rt_cond_init(&kick);
     pthread_t h;
     pthread_create(&h, NULL, device_main, NULL);
+}
+
+/* The stats line, every 5 seconds at log level 1; from the DPC thread, so it
+ * keeps coming while the device thread is busy. */
+void nv2a_log_stats(void) {
+    static uint64_t next;
+    uint64_t t = now_ns();
+    if (!rt_log_level || t < next) return;
+    next = t + 5000000000ull;
+    rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
+           "PATT_COLOR0 %08x, intr %08x, scanout %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
+           nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR), REG(PCRTC_START));
 }
