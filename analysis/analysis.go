@@ -68,6 +68,8 @@ type Program struct {
 	Code   map[string]bool   // sections that hold code
 	Owner  map[uint32]uint32 // instruction start -> function that owns it
 	Rounds int
+
+	a *analyzer
 }
 
 // Sorted returns the functions in address order.
@@ -103,7 +105,7 @@ func Analyze(f *xbe.File, seeds ...uint32) *Program {
 		a.scanPrologues(owner)
 		a.scanDataRefs(owner)
 		if len(a.starts) == before {
-			p.Funcs, p.Owner = funcs, owner
+			p.Funcs, p.Owner, p.a = funcs, owner, a
 			return p
 		}
 	}
@@ -374,4 +376,84 @@ func (a *analyzer) scanDataRefs(owner map[uint32]uint32) {
 		}
 		flush()
 	}
+}
+
+// Inst is one decoded instruction at its address.
+type Inst struct {
+	Addr uint32
+	x86asm.Inst
+}
+
+// Next is the address just after the instruction.
+func (in Inst) Next() uint32 { return in.Addr + uint32(in.Len) }
+
+// Body is everything reachable from a function's entry without passing
+// through another function's entry: the code a translator must emit for it.
+type Body struct {
+	Start  uint32
+	Insts  []Inst              // in address order
+	Tables map[uint32][]uint32 // jmp address -> switch table targets
+	Bad    []uint32            // addresses that would not decode
+}
+
+// Body walks a function the way discovery does, but ignores ownership.
+// Code that several functions share (MSVC merges common tails) appears in
+// each of them, which a translator needs because it cannot jump between
+// host functions.
+func (p *Program) Body(start uint32) Body {
+	a := p.a
+	b := Body{Start: start, Tables: map[uint32][]uint32{}}
+	seen := map[uint32]bool{}
+	work := []uint32{start}
+	for len(work) > 0 {
+		va := work[len(work)-1]
+		work = work[:len(work)-1]
+	path:
+		for !seen[va] {
+			if va != start {
+				if _, isFunc := a.starts[va]; isFunc {
+					break // tail call; the translator emits it as a call
+				}
+			}
+			in, ok := a.decode(va)
+			if !ok {
+				b.Bad = append(b.Bad, va)
+				break
+			}
+			seen[va] = true
+			b.Insts = append(b.Insts, Inst{Addr: va, Inst: in})
+			next := va + uint32(in.Len)
+			switch in.Op {
+			case x86asm.RET, x86asm.IRET, x86asm.HLT, x86asm.UD2, x86asm.INT:
+				break path
+			case x86asm.JMP:
+				if t, ok := relTarget(in, next); ok {
+					if a.f.SectionAt(t) == a.f.SectionAt(start) {
+						work = append(work, t)
+					}
+				} else if _, ok := a.thunkRef(in); !ok {
+					if targets := a.jumpTable(in, start); len(targets) > 0 {
+						b.Tables[va] = targets
+						work = append(work, targets...)
+					}
+				}
+				break path
+			default:
+				if isCondBranch(in.Op) {
+					if t, ok := relTarget(in, next); ok {
+						work = append(work, t)
+					}
+				}
+			}
+			va = next
+		}
+	}
+	sort.Slice(b.Insts, func(i, j int) bool { return b.Insts[i].Addr < b.Insts[j].Addr })
+	return b
+}
+
+// IsFunc reports whether va is a discovered function start.
+func (p *Program) IsFunc(va uint32) bool {
+	_, ok := p.a.starts[va]
+	return ok
 }

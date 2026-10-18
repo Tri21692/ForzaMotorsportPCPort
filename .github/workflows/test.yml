@@ -12,6 +12,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Unicorn is the reference CPU for the recompiler's differential
+      # test (recomp/difftest_test.go); gcc and binutils come with the runner.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install unicorn==2.1.1
       - run: go vet ./...
       - run: test -z "$(gofmt -l .)"
       - run: go test ./...
