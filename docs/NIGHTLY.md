@@ -59,7 +59,7 @@ textures, blending) into the 1280x480 anti-aliased back buffer at
 (0x01b14000 and 0x019e8000) that PCRTC_START flips between. Screenshots
 show the background art, bars, button icons and dialog boxes.
 
-**Text is missing.** Fonts (`Fontsll\Arial_16.xpr`, `Fonts\Euro\*`),
+**Text is missing.** Fonts (`Fonts\all\Arial_16.xpr`, `Fonts\Euro\*`),
 string tables (`Loc\EN\*.str`) and `Euro.SXWad` all load, and the
 512x128 DXT5 font atlas decodes correctly (check with
 `XBRT_TEX_DUMP=tex`). But every quad drawn with the atlas (format
