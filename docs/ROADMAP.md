@@ -109,15 +109,15 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
       delivered in alertable waits, the file system cache calls.
 - [x] APU registers DSOUND waits on (`apu.c`), networking as "no cable"
       (`hle_net.c`).
-- **Status:** with the player's extracted disc, the game boots, shows
-  the disclaimer and splash screens, installs and verifies its archives
-  on the cache drives, starts DSOUND (with the AC'97 controller and a
-  stand-in for the DSP's command handling), builds its font cache, loads
-  the front end, polls the controller every frame, and opens the attract
-  movie. The Bink player then calls a decoding routine it has not set up
-  yet. See [NIGHTLY.md](NIGHTLY.md) for the current lead.
-- [ ] The crypto used for saves, the remaining kernel imports as the game
-      reaches them.
+- [x] Directory listings, fibers (one host thread per fiber, sharing the
+      guest thread), the CPU's identity (cpuid, EFLAGS.ID), save signing
+      crypto (SHA-1, HMAC, RC4; the console's keys are zeroed, so saves
+      stay on this machine).
+- **Status:** with the player's extracted disc, the game boots through
+  the install, the movies and its saves into the front end, and runs its
+  menus (about 3 frames a second, nothing on screen yet). See
+  [NIGHTLY.md](NIGHTLY.md) for what is next.
+- [ ] The remaining kernel imports as the game reaches them.
 
 ## Phase 4: graphics (in progress)
 

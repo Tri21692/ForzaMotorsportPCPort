@@ -59,6 +59,31 @@ uint64_t xb_rdtsc(XbCtx *c) {
     return rt_now_100ns() * 733 / 10; /* a 733 MHz Pentium III */
 }
 
+/* cpuid as the Xbox's CPU answers it: a GenuineIntel Pentium III
+ * (family 6, model 8) with FPU, TSC, CMOV, MMX, FXSR and SSE, and its
+ * 128 KB L2 cache. Code picks routines from this (Bink and the C runtime
+ * test for MMX), so it must not see the host's CPU. */
+void xb_cpuid(XbCtx *c) {
+    uint32_t leaf = c->eax;
+    c->eax = c->ebx = c->ecx = c->edx = 0;
+    switch (leaf) {
+    case 0:
+        c->eax = 2;           /* highest leaf */
+        c->ebx = 0x756E6547u; /* "Genu" */
+        c->edx = 0x49656E69u; /* "ineI" */
+        c->ecx = 0x6C65746Eu; /* "ntel" */
+        break;
+    case 1:
+        c->eax = 0x0000068Au;  /* family 6, model 8, stepping 10 */
+        c->edx = 0x0383F9FFu;  /* FPU..PGE, CMOV, PAT, PSE36, MMX, FXSR, SSE */
+        break;
+    case 2:
+        c->eax = 0x03020101u; /* TLB and L1 descriptors */
+        c->edx = 0x0C040841u; /* L1 caches, 128 KB L2 */
+        break;
+    }
+}
+
 /* ---- XBE loading ---- */
 
 static uint8_t *read_file(const char *path, size_t *n) {
@@ -127,6 +152,8 @@ int main(int argc, char **argv) {
     rt_mem_init();
     load_xbe(path);
     rt_kernel_init();
+    rt_fibers_init();
+    rt_crypto_init();
     rt_files_init();
     rt_hw_init();
     rt_nv2a_init();

@@ -8,6 +8,7 @@
  * Names match case-insensitively, as on the Xbox's FATX and disc file
  * systems.
  */
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -621,6 +622,87 @@ uint32_t k_file_IoQueryVolumeInformation(XbCtx *c) {
     if (!n) return 0xC0000004u;
     if (ARG(4)) xb_wr32(ARG(4), n);
     return STATUS_SUCCESS;
+}
+
+/* ---- directory listings ---- */
+
+typedef struct {
+    DIR *d;
+    char host[1200];
+    char mask[256];
+} Listing;
+
+/* FATX and the disc match names case-insensitively; * and ? as in Win32. */
+static int mask_match(const char *m, const char *s) {
+    for (; *m; m++, s++) {
+        if (*m == '*') {
+            for (const char *t = s;; t++) {
+                if (mask_match(m + 1, t)) return 1;
+                if (!*t) return 0;
+            }
+        }
+        if (!*s) return 0;
+        if (*m != '?' && tolower((unsigned char)*m) != tolower((unsigned char)*s)) return 0;
+    }
+    return !*s;
+}
+
+void rt_listing_free(void *p) {
+    Listing *l = p;
+    if (!l) return;
+    if (l->d) closedir(l->d);
+    free(l);
+}
+
+/* NtQueryDirectoryFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock*,
+ *                      FileInformation, Length, FileInformationClass,
+ *                      FileMask (OBJECT_STRING*), RestartScan)
+ * One entry per call, as XAPI's FindFirstFile/FindNextFile use it. The
+ * mask is taken on the first call or a restart. FileDirectoryInformation
+ * (class 1): NextEntryOffset, FileIndex, four times, EndOfFile,
+ * AllocationSize, FileAttributes, FileNameLength, then the name in 8-bit
+ * characters, as on the Xbox. */
+uint32_t k_file_NtQueryDirectoryFile(XbCtx *c) {
+    RtObject *o = rt_handle_get(ARG(0));
+    if (!o || o->type != OBJ_DIR) return STATUS_INVALID_HANDLE;
+    uint32_t out = ARG(5), len = ARG(6), cls = ARG(7), mask = ARG(8), restart = ARG(9) & 0xFF;
+    if (cls != 1) rt_fatal(c, "NtQueryDirectoryFile: class %u not implemented", cls);
+    Listing *l = o->dir;
+    int first = !l || restart;
+    if (!l) {
+        l = calloc(1, sizeof *l);
+        o->dir = l;
+        if (!host_path(o->path, l->host, sizeof l->host)) return STATUS_OBJECT_PATH_NOT_FOUND;
+    }
+    if (first) {
+        if (l->d) closedir(l->d);
+        l->d = opendir(l->host);
+        if (mask && xb_rd16(mask)) snprintf(l->mask, sizeof l->mask, "%.*s", xb_rd16(mask), rt_str(xb_rd32(mask + 4)));
+        else snprintf(l->mask, sizeof l->mask, "*");
+    }
+    struct dirent *e;
+    while (l->d && (e = readdir(l->d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !mask_match(l->mask, e->d_name)) continue;
+        uint32_t n = (uint32_t)strlen(e->d_name);
+        if (len < 64 + n) return 0x80000005u; /* STATUS_BUFFER_OVERFLOW */
+        char full[1500];
+        snprintf(full, sizeof full, "%s/%s", l->host, e->d_name);
+        struct stat st = {0};
+        stat(full, &st);
+        memset(xb_mem + out, 0, 64);
+        for (int i = 0; i < 4; i++) xb_wr64(out + 8 + 8 * i, 0x01C4F00000000000ull);
+        xb_wr64(out + 40, (uint64_t)st.st_size);
+        xb_wr64(out + 48, ((uint64_t)st.st_size + 0xFFF) & ~0xFFFull);
+        xb_wr32(out + 56, S_ISDIR(st.st_mode) ? 0x10 : 0x80);
+        xb_wr32(out + 60, n);
+        memcpy(xb_mem + out + 64, e->d_name, n);
+        io_status(ARG(4), STATUS_SUCCESS, 64 + n);
+        rt_log("  listing %s: %s\n", o->path, e->d_name);
+        return STATUS_SUCCESS;
+    }
+    uint32_t r = first ? 0xC000000Fu /* STATUS_NO_SUCH_FILE */ : STATUS_NO_MORE_FILES;
+    io_status(ARG(4), r, 0);
+    return r;
 }
 
 /* NtQueryFullAttributesFile(ObjectAttributes*, FILE_NETWORK_OPEN_INFORMATION*) */

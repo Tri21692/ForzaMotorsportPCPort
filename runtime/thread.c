@@ -73,6 +73,7 @@ void rt_handle_close(uint32_t h) {
     if (!o) return;
     if (--o->refs > 0) return;
     if (o->fd >= 0 && o->type == OBJ_FILE) close(o->fd);
+    if (o->type == OBJ_DIR) rt_listing_free(o->dir);
     if (o->delete_on_close) rt_file_delete(o->path);
     free(o->path);
     free(o->host);

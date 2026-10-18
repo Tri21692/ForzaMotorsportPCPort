@@ -6565,3 +6565,49 @@ f_mmx_resets_top:
     fldz
     ret
 .org f_mmx_resets_top + 256
+.balign 256
+# 473: cvtps2pi
+f_cvtps2pi:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    cvtps2pi mm2, xmm1
+    cvttps2pi mm3, qword ptr [esi+24]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_cvtps2pi + 256
+.balign 256
+# 474: cvtpi2ps
+f_cvtpi2ps:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    cvtpi2ps xmm2, mm1
+    cvtpi2ps xmm3, qword ptr [esi+24]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_cvtpi2ps + 256

@@ -50,41 +50,29 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 - The installer manifest is the `BKGDINST` section (37 files, 4 MB zlib
   chunks with SHA-1s).
 
-## Current lead (2026-10-18, afternoon)
+## Current lead (2026-10-18, evening)
 
-The game now gets through its main loop's start-up, polls the
-controller, and opens the attract movie (`D:\MEDIA\FrontEnd\AttractVideo.bik`).
-The Bink decode thread starts (created suspended, then resumed), then:
+No boot blocker: the game runs its front end. In a 400 s run it shows
+the attract and intro movies, reads and creates its saves (U:), starts a
+fiber for the front end, and renders menus: ~150 draws a frame, about
+3 frames a second, rescanning the save folder every ~12 s. Nothing
+reaches the screen yet: the GPU model keeps state but draws nothing, and
+there is no window.
 
-```
-xbrt: indirect call to 00000000, which is not a translated function (return address 003b43c6)
-```
-
-At `0x3B43B8`/`0x3B43C0` (in `sub_003B4010`, section BINK) Bink calls
-through function pointers at `0x5E6FC8` and `0x5E6FF0` (zero-initialised
-data). Those are installed by `sub_003B3990`, `sub_003B3AF0` and
-`sub_003B3B80` (which choose between `0x3B3670`/`0x3B3740`,
-`0x3B3810`/`0x3B38D0` and `0x3B3A70`/`0x3B3AB0` from a bit-reader state
-word at `[0x5E6FFC]`). They are not CPU-feature dispatch. `sub_003B3B80`
-is called from `sub_003B4010` itself (at `0x3B40FE`) and from
-`sub_003B4490`. Next: find out whether `sub_003B3B80` ran before the
-failing call (break on `rt_kernel` calls nearby, or add a temporary
-`XBRT_LOG` line to the translated function), and whether the path to
-`0x3B43B8` skipped it legitimately (then something else should have set
-the pointers: look for other writers, including through `[0x5E6FFC]`) or
-because a branch went the wrong way (a translation bug: a differential
-test of `sub_003B4010` against Unicorn would show it).
-
-Startup is slow under the runtime: the audio banks (TireSkids,
-RoadNoise, Collisions) take from ~17 s to ~97 s, and the movie opens at
-~124 s. Allow `timeout 200` or more for runs.
+So the work moves from boot blockers to what the next section lists.
+When a run stops on a new `xbrt:` error or stall, fix that first.
 
 ## Next after that
 
-1. Whatever the game hits next (keep fixing in boot order).
-2. Pace flips to the vertical blank (they run ~500/s).
-3. A window, and presenting the front buffer.
-4. Drawing: see the phase 4 list in [ROADMAP.md](ROADMAP.md).
+1. Speed: 3 fps in the menus. Profile where host time goes (gdb
+   samples of the main thread, or a build with `-O2` for the generated
+   code: `make OPT=-O2`) before changing anything.
+2. Pace flips to the vertical blank (D3D's presentation interval).
+3. A window (SDL is not installed here; plain Win32/GDI needs
+   nothing new), presenting the front buffer, and CLEAR_SURFACE filling
+   the colour buffer, so the clear colours show.
+4. Drawing: see the phase 4 list in [ROADMAP.md](ROADMAP.md). The front
+   end is mostly 2D (textured quads), a good first target.
 
 ## Log
 
@@ -98,3 +86,9 @@ RoadNoise, Collisions) take from ~17 s to ~97 s, and the movie opens at
   mailbox acknowledged (effects not run); MmLockUnlock*; threads created
   suspended plus NtResumeThread/NtSuspendThread; MMIO range widened to
   everything from 0xFD000000. The game now reaches the attract movie.
+- 2026-10-18 (interactive, evening): CPU detection (pushfd/popfd keep
+  AC/ID, cpuid answers as the Xbox's Pentium III), so Bink finds MMX;
+  CVTPS2PI/CVTTPS2PI/CVTPI2PS; the video overlay's STOP register; the
+  directory listing (NtQueryDirectoryFile); fibers (SwitchToFiber on
+  host threads, MmCreate/DeleteKernelStack); SHA-1, HMAC and RC4 for save
+  signing. The game now runs its front end; no boot blocker left.

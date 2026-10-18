@@ -67,6 +67,9 @@
 #define PGRAPH_TRAPPED_ADDR 0x400704
 #define PGRAPH_TRAPPED_DATA_LOW 0x400708
 
+#define PVIDEO_BUFFER 0x008700 /* video overlay: buffers queued for display */
+#define PVIDEO_STOP 0x008704
+
 #define PCRTC_INTR_0 0x600100
 #define PCRTC_INTR_EN_0 0x600140
 #define PCRTC_START 0x600800
@@ -164,6 +167,8 @@ uint32_t xb_mmio_read(uint32_t a, int bytes) {
         return (uint32_t)(ptimer() << 5);
     case PTIMER_TIME_1:
         return (uint32_t)(ptimer() >> 27) & 0x1FFFFFFF;
+    case PVIDEO_STOP:
+        return 0;
     case USER_DMA_GET:
         return REG(PFIFO_CACHE1_DMA_GET);
     }
@@ -229,6 +234,9 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
     case PTIMER_TIME_0:
     case PTIMER_TIME_1:
         break; /* nobody sets the clock */
+    case PVIDEO_STOP: /* bit 0 tears the overlay down, as xemu has it; D3D waits for the buffers to drain */
+        if (v & 1) REG(PVIDEO_BUFFER) = 0;
+        break;
     default:
         REG(off) = v;
     }

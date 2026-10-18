@@ -10,7 +10,7 @@ graphics, audio and input. See [docs/ROADMAP.md](docs/ROADMAP.md).
 **Status: phases 3 and 4, the runtime and graphics.** The recompiled game
 builds as a native Linux or Windows program. With the player's extracted
 disc it boots, installs its archives to the hard disk cache, starts its
-sound engine and reaches its main loop, reading the controller, all
+sound engine, plays its movies and runs its front-end menus, all
 through the real D3D and DSOUND down to models of the GPU and APU.
 Nothing is drawn on screen yet. What exists today:
 

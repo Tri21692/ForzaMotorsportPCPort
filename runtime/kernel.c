@@ -746,6 +746,7 @@ extern uint32_t k_file_NtQuerySymbolicLinkObject(XbCtx *c);
 extern uint32_t k_file_IoQueryVolumeInformation(XbCtx *c);
 extern uint32_t k_file_NtFsControlFile(XbCtx *c);
 extern uint32_t k_file_NtDeviceIoControlFile(XbCtx *c);
+extern uint32_t k_file_NtQueryDirectoryFile(XbCtx *c);
 
 void xb_kernel(XbCtx *c, uint32_t ordinal) {
     const XbKernelInfo *k = rt_kernel_info(ordinal);
@@ -898,6 +899,7 @@ void rt_kernel_init(void) {
     handlers[76] = k_file_IoQueryVolumeInformation;
     handlers[200] = k_file_NtFsControlFile;
     handlers[196] = k_file_NtDeviceIoControlFile;
+    handlers[207] = k_file_NtQueryDirectoryFile;
 
     /* Fill the XBE's kernel thunk table: functions get fake addresses that
      * xb_call_indirect recognises, variables get real storage. */

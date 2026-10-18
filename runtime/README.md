@@ -59,6 +59,8 @@ partition.
 | `apu.c` | the audio processor's registers, the AC'97 controller, and a stand-in for the GP DSP's command handling (nothing is played yet) |
 | `hle_input.c` | XAPI's controller functions, replaced, read from XInput or the keyboard |
 | `hle_net.c` | XNet and Winsock startup, replaced: a console with no network cable |
+| `hle_fiber.c` | XAPI's SwitchToFiber, replaced: each fiber on its own host thread; fiber stacks |
+| `crypto.c` | the kernel's SHA-1, HMAC and RC4 (save signing) |
 
 ## The GPU
 

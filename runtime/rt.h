@@ -26,6 +26,7 @@
 #undef STATUS_INVALID_HANDLE
 #undef STATUS_INVALID_PARAMETER
 #undef STATUS_NO_MEMORY
+#undef STATUS_USER_APC
 #endif
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_TIMEOUT 0x00000102u
@@ -183,6 +184,8 @@ int rt_run_user_apcs(XbCtx *c);
 
 /* ---- kernel exports (kernel.c) ---- */
 void rt_kernel_init(void);
+void rt_fibers_init(void); /* hle_fiber.c: fiber stacks */
+void rt_crypto_init(void); /* crypto.c: the Xc* exports */
 /* Other files add handlers for their part of the kernel. A handler reads
  * its arguments from the guest stack and returns EAX; see kernel.c. */
 typedef uint32_t (*RtHandler)(XbCtx *c);
@@ -229,5 +232,6 @@ const char *rt_object_name(uint32_t obj_attr, char *out, size_t n);
 uint32_t rt_file_object(uint32_t h);
 uint32_t rt_file_handle(uint32_t file_object);
 void rt_file_delete(const char *xbox_path); /* when its last handle closes */
+void rt_listing_free(void *listing);       /* a directory handle's listing cursor */
 
 #endif

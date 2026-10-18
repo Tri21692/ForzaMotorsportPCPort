@@ -55,6 +55,7 @@ typedef struct XbCtx {
     uint32_t ftop;     /* x87 TOP */
     uint16_t fcw;      /* x87 control word, mirrored into the host FPU */
     uint16_t fsw;      /* x87 status word: condition codes C0-C3 */
+    uint32_t eflags_sys; /* EFLAGS bits only pushfd/popfd see: AC (18) and ID (21), which CPU detection toggles */
 } XbCtx;
 
 extern uint8_t *xb_mem;
@@ -249,6 +250,7 @@ void xb_call_indirect(XbCtx *c, uint32_t target); /* call through a pointer */
 void xb_kernel(XbCtx *c, uint32_t ordinal);       /* xboxkrnl.exe import */
 void xb_trap(XbCtx *c, uint32_t addr, const char *why) __attribute__((noreturn));
 uint64_t xb_rdtsc(XbCtx *c);                       /* the game's view of the CPU clock */
+void xb_cpuid(XbCtx *c);                           /* cpuid: eax (and ecx) in, eax/ebx/ecx/edx out */
 uint32_t xb_io_in(XbCtx *c, uint32_t port, int bytes); /* port I/O */
 void xb_io_out(XbCtx *c, uint32_t port, int bytes, uint32_t v);
 
