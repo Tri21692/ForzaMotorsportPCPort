@@ -11,6 +11,12 @@
  * Pentium III rounds twice) and never with -ffast-math, which breaks the
  * NaN and signed-zero behaviour the SSE translation relies on.
  * -fno-math-errno lets sqrtf compile to a single sqrtss.
+ *
+ * x87 code is translated to long double, which gcc and clang on x86-64
+ * implement with the x87 unit itself, so arithmetic matches the Pentium
+ * III exactly provided the host FPU control word equals the game's (see
+ * xb_fpu_setcw). This requires a compiler whose long double is the 80-bit
+ * x87 format: gcc or clang, not MSVC.
  */
 #ifndef XBRT_H
 #define XBRT_H
@@ -31,6 +37,10 @@ typedef struct XbCtx {
     uint32_t fs_base; /* guest address the fs segment starts at */
     XbVec xmm[8];
     uint32_t mxcsr;   /* only stored and reloaded; rounding is the default */
+    long double st[8]; /* x87 physical registers R0-R7; ST(i) is st[(ftop + i) & 7] */
+    uint32_t ftop;     /* x87 TOP */
+    uint16_t fcw;      /* x87 control word, mirrored into the host FPU */
+    uint16_t fsw;      /* x87 status word: condition codes C0-C3 */
 } XbCtx;
 
 extern uint8_t *xb_mem;
@@ -57,6 +67,110 @@ static inline uint32_t xb_f2i_trunc(float f) {
 static inline uint32_t xb_f2i_round(float f) {
     return (f >= -2147483648.0f && f < 2147483648.0f) ? (uint32_t)(int32_t)__builtin_rintf(f) : 0x80000000u;
 }
+
+/* ---- x87 ---- */
+
+#define XB_ST(i) (c->st[(c->ftop + (i)) & 7])
+
+static inline void xb_fpush(XbCtx *c, long double v) { c->ftop = (c->ftop - 1) & 7; c->st[c->ftop] = v; }
+static inline void xb_fpop(XbCtx *c) { c->ftop = (c->ftop + 1) & 7; }
+
+static inline double xb_rdd(uint32_t a) { double v; memcpy(&v, xb_mem + a, 8); return v; }
+static inline void xb_wrd(uint32_t a, double v) { memcpy(xb_mem + a, &v, 8); }
+static inline long double xb_rdt(uint32_t a) { long double v = 0; memcpy(&v, xb_mem + a, 10); return v; }
+static inline void xb_wrt(uint32_t a, long double v) { memcpy(xb_mem + a, &v, 10); }
+
+/* Load the game's control word into the host FPU: precision and rounding
+ * then apply to every long double operation, as they did on the Xbox. */
+static inline void xb_fpu_setcw(XbCtx *c, uint16_t cw) {
+    c->fcw = cw;
+    __asm__ volatile("fldcw %0" : : "m"(cw));
+}
+
+/* Store as the x87 does, with the current rounding mode; NaN and
+ * out-of-range values give the "integer indefinite" value. */
+static inline int16_t xb_fist16(long double v) { int16_t r; __asm__("fists %0" : "=m"(r) : "t"(v)); return r; }
+static inline int32_t xb_fist32(long double v) { int32_t r; __asm__("fistl %0" : "=m"(r) : "t"(v)); return r; }
+static inline int64_t xb_fist64(long double v) {
+    int64_t r;
+    long double t = v;
+    __asm__("fistpll %0" : "=m"(r) : "t"(t) : "st");
+    return r;
+}
+
+/* One-operand x87 instructions run as themselves, so results match the
+ * hardware rather than libm. */
+#define XB_X87_UNARY(name, insn) \
+    static inline long double name(long double x) { __asm__(insn : "+t"(x)); return x; }
+XB_X87_UNARY(xb_fsqrt, "fsqrt")
+XB_X87_UNARY(xb_frndint, "frndint")
+XB_X87_UNARY(xb_fsin, "fsin")
+XB_X87_UNARY(xb_fcos, "fcos")
+XB_X87_UNARY(xb_f2xm1, "f2xm1")
+
+#define XB_X87_CONST(name, insn) \
+    static inline long double name(void) { long double x; __asm__(insn : "=t"(x)); return x; }
+XB_X87_CONST(xb_fldpi, "fldpi")
+XB_X87_CONST(xb_fldl2e, "fldl2e")
+XB_X87_CONST(xb_fldl2t, "fldl2t")
+XB_X87_CONST(xb_fldlg2, "fldlg2")
+XB_X87_CONST(xb_fldln2, "fldln2")
+
+/* st0 op st1 -> result left in st1 after a pop (fpatan, fyl2x, fyl2xp1). */
+#define XB_X87_BINPOP(name, insn) \
+    static inline long double name(long double st1, long double st0) { \
+        long double r; __asm__(insn : "=t"(r) : "0"(st0), "u"(st1) : "st(1)"); return r; }
+XB_X87_BINPOP(xb_fpatan, "fpatan")
+XB_X87_BINPOP(xb_fyl2x, "fyl2x")
+XB_X87_BINPOP(xb_fyl2xp1, "fyl2xp1")
+
+/* fptan: tangent of st0; the instruction then pushes 1.0, which the
+ * caller does. */
+static inline long double xb_fptan(long double x) {
+    long double one, r;
+    __asm__("fptan" : "=t"(one), "=u"(r) : "0"(x));
+    (void)one;
+    return r;
+}
+
+/* fscale: st0 * 2^trunc(st1), st1 unchanged. */
+static inline long double xb_fscale(long double st0, long double st1) {
+    __asm__("fscale" : "+t"(st0) : "u"(st1));
+    return st0;
+}
+
+/* fprem/fprem1: partial remainder; C2 set means the reduction is not done. */
+static inline long double xb_fprem(XbCtx *c, long double st0, long double st1, int ieee) {
+    uint16_t sw;
+    if (ieee)
+        __asm__("fprem1\n\tfnstsw %1" : "+t"(st0), "=am"(sw) : "u"(st1));
+    else
+        __asm__("fprem\n\tfnstsw %1" : "+t"(st0), "=am"(sw) : "u"(st1));
+    c->fsw = (c->fsw & ~0x4700) | (sw & 0x4700);
+    return st0;
+}
+
+/* Condition codes from a comparison: C0 less, C3 equal, all three unordered. */
+static inline void xb_fcom(XbCtx *c, long double a, long double b) {
+    uint16_t cc = (a != a || b != b) ? 0x4500 : a < b ? 0x0100 : a == b ? 0x4000 : 0;
+    c->fsw = (c->fsw & ~0x4700) | cc;
+}
+
+/* fxam: classify st0. Empty registers are not tracked and read as values. */
+static inline void xb_fxam(XbCtx *c, long double x) {
+    uint16_t cc;
+    switch (__builtin_fpclassify(0, 1, 2, 3, 4, x)) { /* nan inf normal subnormal zero */
+    case 0: cc = 0x0100; break;          /* NaN: C0 */
+    case 1: cc = 0x0500; break;          /* infinity: C2 C0 */
+    case 2: cc = 0x0400; break;          /* normal: C2 */
+    case 3: cc = 0x4400; break;          /* denormal: C3 C2 */
+    default: cc = 0x4000; break;         /* zero: C3 */
+    }
+    if (__builtin_signbit(x)) cc |= 0x0200; /* C1: sign */
+    c->fsw = (c->fsw & ~0x4700) | cc;
+}
+
+static inline uint16_t xb_fnstsw(XbCtx *c) { return (uint16_t)((c->fsw & ~0x3800) | ((c->ftop & 7) << 11)); }
 
 static inline void xb_push(XbCtx *c, uint32_t v) { c->esp -= 4; xb_wr32(c->esp, v); }
 static inline uint32_t xb_pop(XbCtx *c) { uint32_t v = xb_rd32(c->esp); c->esp += 4; return v; }

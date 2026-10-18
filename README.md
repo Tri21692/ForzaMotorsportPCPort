@@ -21,7 +21,13 @@ graphics, audio and input. See [docs/ROADMAP.md](docs/ROADMAP.md).
   including ports of its hand-written scans. C runtime helpers are matched
   with our own patterns. On Forza that's 530 symbols. All 507 the original
   C implementation reports for this XBE come out at the same addresses.
-- Four tools: `xbeinfo`, `xbemap`, `xbedis` and `xbesyms`.
+- `recomp` translates the game's x86 to C: integer, SSE1 and x87, with
+  x87 kept bit-exact by running it on the host's own x87 unit. **98.7% of
+  Forza's functions translate fully.** Correctness is checked by
+  differential testing against the Unicorn CPU emulator: 348 edge-case
+  instruction forms pass with 0 mismatches. See
+  [docs/RECOMPILER.md](docs/RECOMPILER.md).
+- Five tools: `xbeinfo`, `xbemap`, `xbedis`, `xbesyms` and `xbrecomp`.
 
 ## You need your own copy
 
@@ -40,6 +46,7 @@ go run ./cmd/xbeinfo -kernel default.xbe    # plus all 159 kernel imports
 go run ./cmd/xbemap -o forza.map default.xbe
 go run ./cmd/xbedis default.xbe 0x268EB5    # disassemble one function
 go run ./cmd/xbesyms default.xbe            # list named library symbols
+go run ./cmd/xbrecomp -o out/ default.xbe   # translate everything to C
 ```
 
 `xbemap` prints per-section coverage and writes a map with one line per
@@ -69,6 +76,9 @@ go test ./...                                   # synthetic data, no game needed
 FORZA_XBE=/path/to/default.xbe go test ./...    # also check the real game
 FORZA_XBE=... XBSDB=~/XbSymbolDatabase go test ./...   # and the signatures
 ```
+
+The recompiler's differential tests also need gcc, GNU binutils and Python
+with `pip install unicorn`. They skip without them.
 
 The real-game tests guard discovery quality, so a change that drops
 coverage or brings back false function starts fails them.

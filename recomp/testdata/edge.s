@@ -2136,3 +2136,1416 @@ f_rcpss:
 f_rsqrtps:
     rsqrtps xmm2, xmm3
     ret
+.balign 256
+# 248: fld_fstp_m32
+f_fld_fstp_m32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fstp dword ptr [esi+64]
+    ret
+.balign 256
+# 249: fld_fst_m64
+f_fld_fst_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fst qword ptr [esi+64]
+    ret
+.balign 256
+# 250: fld_m80_roundtrip
+f_fld_m80_roundtrip:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fstp tbyte ptr [esi+64]
+    fld tbyte ptr [esi+64]
+    ret
+.balign 256
+# 251: fld_st
+f_fld_st:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fld st(1)
+    fst st(2)
+    ret
+.balign 256
+# 252: fild16
+f_fild16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fild word ptr [esi]
+    ret
+.balign 256
+# 253: fistp16
+f_fistp16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fistp word ptr [esi+64]
+    ret
+.balign 256
+# 254: fild32
+f_fild32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fild dword ptr [esi]
+    ret
+.balign 256
+# 255: fistp32
+f_fistp32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fistp dword ptr [esi+64]
+    ret
+.balign 256
+# 256: fild64
+f_fild64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fild qword ptr [esi]
+    ret
+.balign 256
+# 257: fistp64
+f_fistp64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fistp qword ptr [esi+64]
+    ret
+.balign 256
+# 258: fist16_32
+f_fist16_32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fist word ptr [esi+64]
+    fist dword ptr [esi+68]
+    ret
+.balign 256
+# 259: fadd_m32
+f_fadd_m32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fadd dword ptr [esi+4]
+    ret
+.balign 256
+# 260: fadd_m64
+f_fadd_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fadd qword ptr [esi+8]
+    ret
+.balign 256
+# 261: fadd_st0_sti
+f_fadd_st0_sti:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fadd st(0), st(1)
+    ret
+.balign 256
+# 262: fadd_sti_st0
+f_fadd_sti_st0:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fadd st(1), st(0)
+    ret
+.balign 256
+# 263: faddp
+f_faddp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    faddp st(1), st(0)
+    ret
+.balign 256
+# 264: fiadd16
+f_fiadd16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fiadd word ptr [esi+4]
+    ret
+.balign 256
+# 265: fiadd32
+f_fiadd32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fiadd dword ptr [esi+4]
+    ret
+.balign 256
+# 266: fsub_m32
+f_fsub_m32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fsub dword ptr [esi+4]
+    ret
+.balign 256
+# 267: fsub_m64
+f_fsub_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fsub qword ptr [esi+8]
+    ret
+.balign 256
+# 268: fsub_st0_sti
+f_fsub_st0_sti:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fsub st(0), st(1)
+    ret
+.balign 256
+# 269: fsub_sti_st0
+f_fsub_sti_st0:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fsub st(1), st(0)
+    ret
+.balign 256
+# 270: fsubp
+f_fsubp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fsubp st(1), st(0)
+    ret
+.balign 256
+# 271: fisub16
+f_fisub16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fisub word ptr [esi+4]
+    ret
+.balign 256
+# 272: fisub32
+f_fisub32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fisub dword ptr [esi+4]
+    ret
+.balign 256
+# 273: fsubr_m32
+f_fsubr_m32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fsubr dword ptr [esi+4]
+    ret
+.balign 256
+# 274: fsubr_m64
+f_fsubr_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fsubr qword ptr [esi+8]
+    ret
+.balign 256
+# 275: fsubr_st0_sti
+f_fsubr_st0_sti:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fsubr st(0), st(1)
+    ret
+.balign 256
+# 276: fsubr_sti_st0
+f_fsubr_sti_st0:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fsubr st(1), st(0)
+    ret
+.balign 256
+# 277: fsubrp
+f_fsubrp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fsubrp st(1), st(0)
+    ret
+.balign 256
+# 278: fisubr16
+f_fisubr16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fisubr word ptr [esi+4]
+    ret
+.balign 256
+# 279: fisubr32
+f_fisubr32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fisubr dword ptr [esi+4]
+    ret
+.balign 256
+# 280: fmul_m32
+f_fmul_m32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fmul dword ptr [esi+4]
+    ret
+.balign 256
+# 281: fmul_m64
+f_fmul_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fmul qword ptr [esi+8]
+    ret
+.balign 256
+# 282: fmul_st0_sti
+f_fmul_st0_sti:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fmul st(0), st(1)
+    ret
+.balign 256
+# 283: fmul_sti_st0
+f_fmul_sti_st0:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fmul st(1), st(0)
+    ret
+.balign 256
+# 284: fmulp
+f_fmulp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fmulp st(1), st(0)
+    ret
+.balign 256
+# 285: fimul16
+f_fimul16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fimul word ptr [esi+4]
+    ret
+.balign 256
+# 286: fimul32
+f_fimul32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fimul dword ptr [esi+4]
+    ret
+.balign 256
+# 287: fdiv_m32
+f_fdiv_m32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fdiv dword ptr [esi+4]
+    ret
+.balign 256
+# 288: fdiv_m64
+f_fdiv_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fdiv qword ptr [esi+8]
+    ret
+.balign 256
+# 289: fdiv_st0_sti
+f_fdiv_st0_sti:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fdiv st(0), st(1)
+    ret
+.balign 256
+# 290: fdiv_sti_st0
+f_fdiv_sti_st0:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fdiv st(1), st(0)
+    ret
+.balign 256
+# 291: fdivp
+f_fdivp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fdivp st(1), st(0)
+    ret
+.balign 256
+# 292: fidiv16
+f_fidiv16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fidiv word ptr [esi+4]
+    ret
+.balign 256
+# 293: fidiv32
+f_fidiv32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fidiv dword ptr [esi+4]
+    ret
+.balign 256
+# 294: fdivr_m32
+f_fdivr_m32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fdivr dword ptr [esi+4]
+    ret
+.balign 256
+# 295: fdivr_m64
+f_fdivr_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld qword ptr [esi]
+    fdivr qword ptr [esi+8]
+    ret
+.balign 256
+# 296: fdivr_st0_sti
+f_fdivr_st0_sti:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fdivr st(0), st(1)
+    ret
+.balign 256
+# 297: fdivr_sti_st0
+f_fdivr_sti_st0:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fdivr st(1), st(0)
+    ret
+.balign 256
+# 298: fdivrp
+f_fdivrp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fdivrp st(1), st(0)
+    ret
+.balign 256
+# 299: fidivr16
+f_fidivr16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fidivr word ptr [esi+4]
+    ret
+.balign 256
+# 300: fidivr32
+f_fidivr32:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fidivr dword ptr [esi+4]
+    ret
+.balign 256
+# 301: fchs
+f_fchs:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fchs
+    ret
+.balign 256
+# 302: fabs
+f_fabs:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fabs
+    ret
+.balign 256
+# 303: fsqrt
+f_fsqrt:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fsqrt
+    ret
+.balign 256
+# 304: frndint
+f_frndint:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    frndint
+    ret
+.balign 256
+# 305: fscale
+f_fscale:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fild word ptr [esi]
+    fld dword ptr [esi+4]
+    fscale
+    ret
+.balign 256
+# 306: fxch
+f_fxch:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fld dword ptr [esi+8]
+    fxch st(2)
+    ret
+.balign 256
+# 307: fldz
+f_fldz:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fldz
+    ret
+.balign 256
+# 308: fld1
+f_fld1:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld1
+    ret
+.balign 256
+# 309: fldpi
+f_fldpi:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fldpi
+    ret
+.balign 256
+# 310: fldl2e
+f_fldl2e:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fldl2e
+    ret
+.balign 256
+# 311: fldl2t
+f_fldl2t:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fldl2t
+    ret
+.balign 256
+# 312: fldlg2
+f_fldlg2:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fldlg2
+    ret
+.balign 256
+# 313: fldln2
+f_fldln2:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fldln2
+    ret
+.balign 256
+# 314: fcom_st
+f_fcom_st:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fcom st(1)
+    fnstsw ax
+    ret
+.balign 256
+# 315: fcom_m64
+f_fcom_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fcom qword ptr [esi+8]
+    fnstsw ax
+    ret
+.balign 256
+# 316: fcomp_st
+f_fcomp_st:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fcomp st(1)
+    fnstsw ax
+    ret
+.balign 256
+# 317: fcomp_m64
+f_fcomp_m64:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fcomp qword ptr [esi+8]
+    fnstsw ax
+    ret
+.balign 256
+# 318: fucom_st
+f_fucom_st:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fucom st(1)
+    fnstsw ax
+    ret
+.balign 256
+# 319: fucomp_st
+f_fucomp_st:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fucomp st(1)
+    fnstsw ax
+    ret
+.balign 256
+# 320: fcompp
+f_fcompp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fcompp
+    fnstsw ax
+    sahf
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0xD5
+    mov dword ptr [esp-4], 0
+    ret
+.balign 256
+# 321: fucompp
+f_fucompp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fucompp
+    fnstsw ax
+    ret
+.balign 256
+# 322: ficom
+f_ficom:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    ficom dword ptr [esi+4]
+    fnstsw ax
+    ret
+.balign 256
+# 323: ficomp16
+f_ficomp16:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    ficomp word ptr [esi+4]
+    fnstsw ax
+    ret
+.balign 256
+# 324: ftst
+f_ftst:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    ftst
+    fnstsw ax
+    ret
+.balign 256
+# 325: fxam
+f_fxam:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fxam
+    fnstsw ax
+    ret
+.balign 256
+# 326: fxam_zero
+f_fxam_zero:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fldz
+    fchs
+    fxam
+    fnstsw word ptr [esi]
+    ret
+.balign 256
+# 327: fcomi
+f_fcomi:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fcomi st(0), st(1)
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x45
+    mov dword ptr [esp-4], 0
+    ret
+.balign 256
+# 328: fcomip
+f_fcomip:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fcomip st(0), st(1)
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x45
+    mov dword ptr [esp-4], 0
+    ret
+.balign 256
+# 329: fucomi
+f_fucomi:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fucomi st(0), st(1)
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x45
+    mov dword ptr [esp-4], 0
+    ret
+.balign 256
+# 330: fucomip
+f_fucomip:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fucomip st(0), st(1)
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x45
+    mov dword ptr [esp-4], 0
+    ret
+.balign 256
+# 331: fcmovb
+f_fcmovb:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmovb st(0), st(1)
+    ret
+.balign 256
+# 332: fcmove
+f_fcmove:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmove st(0), st(1)
+    ret
+.balign 256
+# 333: fcmovbe
+f_fcmovbe:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmovbe st(0), st(1)
+    ret
+.balign 256
+# 334: fcmovu
+f_fcmovu:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmovu st(0), st(1)
+    ret
+.balign 256
+# 335: fcmovnb
+f_fcmovnb:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmovnb st(0), st(1)
+    ret
+.balign 256
+# 336: fcmovne
+f_fcmovne:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmovne st(0), st(1)
+    ret
+.balign 256
+# 337: fcmovnbe
+f_fcmovnbe:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmovnbe st(0), st(1)
+    ret
+.balign 256
+# 338: fcmovnu
+f_fcmovnu:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    cmp eax, ebx
+    fcmovnu st(0), st(1)
+    ret
+.balign 256
+# 339: fnstcw_fldcw
+f_fnstcw_fldcw:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fnstcw word ptr [esi]
+    fldcw word ptr [esi]
+    fnstcw word ptr [esi+2]
+    ret
+.balign 256
+# 340: rc_round_down
+f_rc_round_down:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    mov word ptr [esp-8], 0x077F
+    fldcw word ptr [esp-8]
+    fld qword ptr [esi]
+    fdiv qword ptr [esi+8]
+    fist dword ptr [esi+64]
+    fst dword ptr [esi+68]
+    frndint
+    mov word ptr [esp-8], 0x037F
+    fldcw word ptr [esp-8]
+    ret
+.balign 256
+# 341: rc_round_up
+f_rc_round_up:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    mov word ptr [esp-8], 0x0B7F
+    fldcw word ptr [esp-8]
+    fld qword ptr [esi]
+    fdiv qword ptr [esi+8]
+    fist dword ptr [esi+64]
+    fst dword ptr [esi+68]
+    frndint
+    mov word ptr [esp-8], 0x037F
+    fldcw word ptr [esp-8]
+    ret
+.balign 256
+# 342: rc_truncate
+f_rc_truncate:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    mov word ptr [esp-8], 0x0F7F
+    fldcw word ptr [esp-8]
+    fld qword ptr [esi]
+    fdiv qword ptr [esi+8]
+    fist dword ptr [esi+64]
+    fst dword ptr [esi+68]
+    frndint
+    mov word ptr [esp-8], 0x037F
+    fldcw word ptr [esp-8]
+    ret
+.balign 256
+# 343: pc_double
+f_pc_double:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    mov word ptr [esp-8], 0x027F
+    fldcw word ptr [esp-8]
+    fld qword ptr [esi]
+    fmul qword ptr [esi+8]
+    fadd qword ptr [esi+16]
+    mov word ptr [esp-8], 0x037F
+    fldcw word ptr [esp-8]
+    ret
+.balign 256
+# 344: pc_single
+f_pc_single:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    mov word ptr [esp-8], 0x007F
+    fldcw word ptr [esp-8]
+    fld qword ptr [esi]
+    fmul qword ptr [esi+8]
+    fadd qword ptr [esi+16]
+    mov word ptr [esp-8], 0x037F
+    fldcw word ptr [esp-8]
+    ret
+.balign 256
+# 345: fninit
+f_fninit:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fninit
+    fnstcw word ptr [esi]
+    fnstsw word ptr [esi+2]
+    ret
+.balign 256
+# 346: fincstp
+f_fincstp:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fincstp
+    fdecstp
+    fdecstp
+    ret
+.balign 256
+# 347: fnstsw_top
+f_fnstsw_top:
+    or dword ptr [esi], 0x00400000
+    or dword ptr [esi+4], 0x00400000
+    or dword ptr [esi+8], 0x00400000
+    or dword ptr [esi+4], 0x00080000
+    or dword ptr [esi+12], 0x00080000
+    or dword ptr [esi+20], 0x00080000
+    or dword ptr [esi+16], 0x00400000
+    fld dword ptr [esi]
+    fld dword ptr [esi+4]
+    fnstsw ax
+    ret

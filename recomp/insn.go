@@ -248,7 +248,7 @@ func (g *gen) inst(in analysis.Inst) {
 	op := in.Op
 	a0, a1, a2 := in.Args[0], in.Args[1], in.Args[2]
 
-	if g.sse(in) {
+	if g.sse(in) || g.x87(in) {
 		return
 	}
 

@@ -127,6 +127,76 @@ case("mxcsr", ["mov dword ptr [esp-8], 0x1F80", "ldmxcsr dword ptr [esp-8]", "st
 case("rcpss", ["rcpss xmm0, xmm1"], None)
 case("rsqrtps", ["rsqrtps xmm2, xmm3"], None)
 
+# x87. Operands come from random memory at esi, read as floats, doubles and
+# integers (quiet NaN, infinity and denormals included). Results are left
+# on the register stack and stored, so both are compared.
+#
+# Where Unicorn (QEMU 5) is no reference for the real x87, cases stay out:
+# - transcendentals (fsin, fcos, fptan, fpatan, fyl2x, f2xm1) and partial
+#   remainders (fprem, fprem1), which it computes through host doubles;
+# - signaling NaN loads, which a real x87 quiets and Unicorn does not.
+#   QUIET sets the quiet bit of every float and double input first.
+F, D = "dword ptr", "qword ptr"
+QUIET = ["or dword ptr [esi], 0x00400000", "or dword ptr [esi+4], 0x00400000", "or dword ptr [esi+8], 0x00400000",
+         "or dword ptr [esi+4], 0x00080000", "or dword ptr [esi+12], 0x00080000", "or dword ptr [esi+20], 0x00080000",
+         "or dword ptr [esi+16], 0x00400000"]
+
+
+def fcase(name, body, mask):
+    case(name, QUIET + body, mask)
+
+
+fcase("fld_fstp_m32", [f"fld {F} [esi]", f"fstp {F} [esi+64]"], None)
+fcase("fld_fst_m64", [f"fld {D} [esi]", f"fst {D} [esi+64]"], None)
+fcase("fld_m80_roundtrip", [f"fld {D} [esi]", "fstp tbyte ptr [esi+64]", "fld tbyte ptr [esi+64]"], None)
+fcase("fld_st", [f"fld {F} [esi]", f"fld {F} [esi+4]", "fld st(1)", "fst st(2)"], None)
+for w, m in [("16", "word ptr"), ("32", F), ("64", D)]:
+    fcase(f"fild{w}", [f"fild {m} [esi]"], None)
+    fcase(f"fistp{w}", [f"fld {F} [esi]", f"fistp {m} [esi+64]"], None)
+fcase("fist16_32", [f"fld {D} [esi]", "fist word ptr [esi+64]", f"fist {F} [esi+68]"], None)
+for op in ["fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr"]:
+    fcase(op + "_m32", [f"fld {F} [esi]", f"{op} {F} [esi+4]"], None)
+    fcase(op + "_m64", [f"fld {D} [esi]", f"{op} {D} [esi+8]"], None)
+    fcase(op + "_st0_sti", [f"fld {F} [esi]", f"fld {F} [esi+4]", f"{op} st(0), st(1)"], None)
+    fcase(op + "_sti_st0", [f"fld {F} [esi]", f"fld {F} [esi+4]", f"{op} st(1), st(0)"], None)
+    fcase(op + "p", [f"fld {F} [esi]", f"fld {F} [esi+4]", f"{op}p st(1), st(0)"], None)
+    iop = "fi" + op[1:]
+    fcase(iop + "16", [f"fld {F} [esi]", f"{iop} word ptr [esi+4]"], None)
+    fcase(iop + "32", [f"fld {F} [esi]", f"{iop} {F} [esi+4]"], None)
+for op in ["fchs", "fabs", "fsqrt", "frndint"]:
+    fcase(op, [f"fld {F} [esi]", op], None)
+fcase("fscale", [f"fild word ptr [esi]", f"fld {F} [esi+4]", "fscale"], None)
+fcase("fxch", [f"fld {F} [esi]", f"fld {F} [esi+4]", f"fld {F} [esi+8]", "fxch st(2)"], None)
+for k in ["fldz", "fld1", "fldpi", "fldl2e", "fldl2t", "fldlg2", "fldln2"]:
+    fcase(k, [k], None)
+for op in ["fcom", "fcomp", "fucom", "fucomp"]:
+    fcase(op + "_st", [f"fld {F} [esi]", f"fld {F} [esi+4]", f"{op} st(1)", "fnstsw ax"], None)
+    if not op.startswith("fucom"):  # fucom has no memory form
+        fcase(op + "_m64", [f"fld {F} [esi]", f"{op} {D} [esi+8]", "fnstsw ax"], None)
+fcase("fcompp", [f"fld {F} [esi]", f"fld {F} [esi+4]", "fcompp", "fnstsw ax", "sahf"], 0xD5)
+fcase("fucompp", [f"fld {F} [esi]", f"fld {F} [esi+4]", "fucompp", "fnstsw ax"], None)
+fcase("ficom", [f"fld {F} [esi]", f"ficom {F} [esi+4]", "fnstsw ax"], None)
+fcase("ficomp16", [f"fld {F} [esi]", "ficomp word ptr [esi+4]", "fnstsw ax"], None)
+fcase("ftst", [f"fld {F} [esi]", "ftst", "fnstsw ax"], None)
+fcase("fxam", [f"fld {F} [esi]", "fxam", "fnstsw ax"], None)
+fcase("fxam_zero", ["fldz", "fchs", "fxam", "fnstsw word ptr [esi]"], None)
+for op in ["fcomi", "fcomip", "fucomi", "fucomip"]:
+    fcase(op, [f"fld {F} [esi]", f"fld {F} [esi+4]", f"{op} st(0), st(1)"], 0x45)
+for cc in ["b", "e", "be", "u", "nb", "ne", "nbe", "nu"]:
+    fcase(f"fcmov{cc}", [f"fld {F} [esi]", f"fld {F} [esi+4]", "cmp eax, ebx", f"fcmov{cc} st(0), st(1)"], None)
+fcase("fnstcw_fldcw", ["fnstcw word ptr [esi]", "fldcw word ptr [esi]", "fnstcw word ptr [esi+2]"], None)
+for cw, what in [(0x077F, "round_down"), (0x0B7F, "round_up"), (0x0F7F, "truncate")]:
+    fcase(f"rc_{what}", [f"mov word ptr [esp-8], 0x{cw:04X}", "fldcw word ptr [esp-8]", f"fld {D} [esi]",
+                        f"fdiv {D} [esi+8]", f"fist {F} [esi+64]", f"fst {F} [esi+68]", "frndint",
+                        "mov word ptr [esp-8], 0x037F", "fldcw word ptr [esp-8]"], None)
+for cw, what in [(0x027F, "double"), (0x007F, "single")]:
+    fcase(f"pc_{what}", [f"mov word ptr [esp-8], 0x{cw:04X}", "fldcw word ptr [esp-8]", f"fld {D} [esi]",
+                        f"fmul {D} [esi+8]", f"fadd {D} [esi+16]", "mov word ptr [esp-8], 0x037F",
+                        "fldcw word ptr [esp-8]"], None)
+fcase("fninit", [f"fld {F} [esi]", "fninit", "fnstcw word ptr [esi]", "fnstsw word ptr [esi+2]"], None)
+fcase("fincstp", [f"fld {F} [esi]", "fincstp", "fdecstp", "fdecstp"], None)
+fcase("fnstsw_top", [f"fld {F} [esi]", f"fld {F} [esi+4]", "fnstsw ax"], None)
+
 out = [".intel_syntax noprefix", ".code32", ".text",
        "# Generated by mkedge.py: one function per instruction form, each",
        "# 256 bytes apart. A function runs its body, stores EFLAGS (masked",

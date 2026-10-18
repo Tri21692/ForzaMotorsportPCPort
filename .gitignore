@@ -11,3 +11,6 @@ game/
 /xbeinfo
 /xbemap
 *.exe
+
+# Python bytecode from the test helpers
+__pycache__/

@@ -7,8 +7,10 @@
  * usage: harness image.bin < cases
  *   image.bin: records of (u32 guest address, u32 length, bytes)
  *   each case line: func_index eax ecx edx ebx ebp esi edi seed
- * output per case: "ok eax ecx edx ebx esp ebp esi edi memcrc xmmcrc" or
- * "trap ADDR why". A case gets half a second; the reference CPU stops
+ * output per case: "ok eax ecx edx ebx esp ebp esi edi memcrc xmmcrc fpu" or
+ * "trap ADDR why", where fpu is the x87 TOP and a CRC of the eight physical
+ * registers. Condition codes are left out: Intel leaves them undefined
+ * after most instructions, and cases that need them store them with fnstsw. A case gets 0.2 s; the reference CPU stops
  * after 2M instructions, so a case that runs longer is never compared.
  *
  * Keep the memory layout and fill in sync with unicorn_ref.py.
@@ -110,6 +112,11 @@ static uint32_t crc32_update(uint32_t h, const uint8_t *p, uint32_t n) {
     return h ^ 0xFFFFFFFFu;
 }
 
+static void done(void) {
+    fflush(stdout);
+    _exit(0);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "usage: harness image.bin < cases\n");
@@ -146,10 +153,13 @@ int main(int argc, char **argv) {
     uint32_t r[7], seed;
     while (scanf("%u %x %x %x %x %x %x %x %x", &idx, &r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6], &seed) == 9) {
         fflush(stdout);
-        /* Each case runs in a child so its writes cannot leak into the next. */
+        /* Each case runs in a child so its writes cannot leak into the next.
+         * Children leave through done(): exit() would also flush the
+         * inherited stdin and, when stdin is a file, seek the shared offset
+         * back, making the parent read old cases again. */
         pid_t pid = fork();
         if (pid == 0) {
-            struct itimerval budget = {{0, 0}, {0, 500000}};
+            struct itimerval budget = {{0, 0}, {0, 200000}};
             setitimer(ITIMER_REAL, &budget, NULL);
             xs = seed ? seed : 1;
             fill(SCRATCH_BASE, SCRATCH_SIZE);
@@ -158,22 +168,26 @@ int main(int argc, char **argv) {
             for (int i = 0; i < 8; i++)
                 for (int k = 0; k < 4; k++) c.xmm[i].u[k] = rand_float_bits();
             c.mxcsr = 0x1F80; /* power-on default */
+            xb_fpu_setcw(&c, 0x037F); /* x87 power-on: 64-bit precision, nearest */
             c.eax = r[0]; c.ecx = r[1]; c.edx = r[2]; c.ebx = r[3];
             c.ebp = r[4]; c.esi = r[5]; c.edi = r[6];
             c.esp = STACK_BASE + STACK_SIZE - 0x1000;
             xb_push(&c, RETURN_SENTINEL);
             if (idx >= test_func_count) {
                 printf("trap 0 bad index\n");
-                exit(0);
+                done();
             }
             if (setjmp(trap_jmp)) {
                 printf("trap %08x %s\n", trap_addr, trap_why);
-                exit(0);
+                done();
             }
             test_funcs[idx](&c);
-            printf("ok %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n", c.eax, c.ecx, c.edx, c.ebx,
-                   c.esp, c.ebp, c.esi, c.edi, hash_ranges(), crc32_update(0, (const uint8_t *)c.xmm, sizeof c.xmm));
-            exit(0);
+            uint8_t fregs[80];
+            for (int i = 0; i < 8; i++) memcpy(fregs + 10 * i, &c.st[i], 10);
+            printf("ok %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %u/%08x\n", c.eax, c.ecx, c.edx, c.ebx,
+                   c.esp, c.ebp, c.esi, c.edi, hash_ranges(), crc32_update(0, (const uint8_t *)c.xmm, sizeof c.xmm),
+                   c.ftop, crc32_update(0, fregs, sizeof fregs));
+            done();
         }
         int status;
         waitpid(pid, &status, 0);

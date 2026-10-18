@@ -17,6 +17,7 @@ from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_32, UC_PROT_ALL
 from unicorn.x86_const import (UC_X86_REG_CR0, UC_X86_REG_CR4, UC_X86_REG_EAX, UC_X86_REG_EBP,
                                UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDI, UC_X86_REG_EDX,
                                UC_X86_REG_EFLAGS, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ESP,
+                               UC_X86_REG_FP0, UC_X86_REG_FPCW, UC_X86_REG_FPSW, UC_X86_REG_FPTAG,
                                UC_X86_REG_MXCSR, UC_X86_REG_XMM0, UC_X86_REG_XMM1, UC_X86_REG_XMM2,
                                UC_X86_REG_XMM3, UC_X86_REG_XMM4, UC_X86_REG_XMM5, UC_X86_REG_XMM6,
                                UC_X86_REG_XMM7)
@@ -143,6 +144,13 @@ def main():
         for reg, v in zip(XMMS, fills[seed][2]):
             uc.reg_write(reg, v)
         uc.reg_write(UC_X86_REG_MXCSR, 0x1F80)
+        # x87 power-on state; Unicorn otherwise starts with a zero control
+        # word (24-bit precision, exceptions unmasked).
+        uc.reg_write(UC_X86_REG_FPCW, 0x037F)
+        uc.reg_write(UC_X86_REG_FPSW, 0)
+        uc.reg_write(UC_X86_REG_FPTAG, 0xFFFF)
+        for i in range(8):
+            uc.reg_write(UC_X86_REG_FP0 + i, (0, 0))
 
         esp = STACK_BASE + STACK_SIZE - 0x1000 - 4
         uc.mem_write(esp, struct.pack("<I", RETURN_SENTINEL))
@@ -164,7 +172,11 @@ def main():
         chunks = [bytes(uc.mem_read(SCRATCH_BASE, SCRATCH_SIZE)), bytes(uc.mem_read(STACK_BASE, STACK_SIZE))]
         chunks += [bytes(uc.mem_read(va, n)) for va, n in writable]
         xmm = b"".join(uc.reg_read(r).to_bytes(16, "little") for r in XMMS)
-        print("ok " + " ".join("%08x" % v for v in out) + " %08x %08x" % (crc(chunks), zlib.crc32(xmm)), flush=True)
+        fsw = uc.reg_read(UC_X86_REG_FPSW)
+        fregs = b"".join(m.to_bytes(8, "little") + e.to_bytes(2, "little")
+                         for m, e in (uc.reg_read(UC_X86_REG_FP0 + i) for i in range(8)))
+        fpu = "%u/%08x" % ((fsw >> 11) & 7, zlib.crc32(fregs))
+        print("ok " + " ".join("%08x" % v for v in out) + " %08x %08x %s" % (crc(chunks), zlib.crc32(xmm), fpu), flush=True)
 
 
 if __name__ == "__main__":

@@ -46,19 +46,30 @@ Result: 530 named library symbols. Still open but not blocking: the rest
 of LIBC (printf family, heap, file I/O), which can be named as the
 recompiler runs into them.
 
-## Phase 2: static recompiler (x86 → C)
+## Phase 2: static recompiler (x86 → C) (in progress)
 
-- Emit one C function per discovered function. Registers and flags live in a
-  context struct, and memory goes through a flat block mapped at the Xbox
-  addresses (base `0x10000`), so pointers in the game stay valid.
-- Indirect calls and jumps go through a lookup table from Xbox address to
-  host function. Misses log and trap, which tells us what discovery missed.
-- x87 FPU (a stack machine with 80-bit registers, which the physics code
-  uses heavily), SSE1 and MMX (Bink). Getting x87 precision right matters
-  for a driving sim; replays and physics can drift on 64-bit doubles.
-- Calls into replaced libraries become calls into the runtime.
-- Test by running small functions natively and recompiled side by side, and
-  later by comparing traces against xemu.
+Design and test details are in [RECOMPILER.md](RECOMPILER.md).
+
+- [x] One C function per discovered function: registers in a context
+      struct, memory as a flat 4 GB space at the Xbox addresses, flags as
+      locals the compiler prunes, `goto`/tail calls/`switch` for control
+      flow.
+- [x] Integer core, SSE1, and x87 as 80-bit `long double` on the host x87,
+      with the game's control word mirrored. **98.7% of Forza's functions
+      translate fully**, and all of the generated C compiles.
+- [x] Differential testing against Unicorn: 348 edge-case instruction
+      forms (10,930 cases, 0 mismatches, run in CI) plus every fully
+      translated Forza leaf function.
+- [ ] MMX (Bink, WMA), `RDTSC`, `CMPXCHG8B`, `RCL`/`RCR`.
+- [ ] The 48 jumps that leave their function: find what discovery
+      missed.
+- [ ] Differential tests for functions that call others: link call
+      chains into the harness.
+- [ ] x87 tag word and exception flags, MXCSR rounding mode, if the game
+      turns out to depend on them.
+- [ ] Size and speed: the output is 141 MB of C. Emit flags only where
+      some later instruction can read them, and cache memory addresses
+      that repeat.
 
 ## Phase 3: runtime (HLE kernel)
 

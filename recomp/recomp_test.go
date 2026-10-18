@@ -38,8 +38,8 @@ func program(t *testing.T) (*recomp.Translator, *analysis.Program) {
 	tbl = xbetest.Le32(tbl, 0x11022)
 	at(0x11024, tbl...)
 	at(0x11030, 0xFF, 0xFF, 0xFF, 0xFF)
-	// 11040: an x87 load, not supported yet; then ret 4
-	at(0x11040, 0xD9, 0x44, 0x24, 0x04, 0xC2, 0x04, 0x00)
+	// 11040: rdtsc, not supported yet; then ret 4
+	at(0x11040, 0x0F, 0x31, 0xC2, 0x04, 0x00)
 
 	f, err := xbe.Parse(xbetest.Image{
 		Title: "Recomp", Entry: 0x11000, Thunk: 0x20000,
@@ -83,12 +83,12 @@ func TestControlFlow(t *testing.T) {
 		t.Error("label emitted for an address nothing jumps to")
 	}
 
-	x87 := tr.Function(0x11040)
-	if x87.Unsupported["x87 FLD"] != 1 || !strings.Contains(x87.Code, `xb_trap(c, 0x00011040, "unsupported: x87 FLD");`) {
-		t.Errorf("x87 FLD not trapped: %v\n%s", x87.Unsupported, x87.Code)
+	un := tr.Function(0x11040)
+	if un.Unsupported["RDTSC"] != 1 || !strings.Contains(un.Code, `xb_trap(c, 0x00011040, "unsupported: RDTSC");`) {
+		t.Errorf("RDTSC not trapped: %v\n%s", un.Unsupported, un.Code)
 	}
-	if !strings.Contains(x87.Code, "c->esp += 8; return;") {
-		t.Errorf("ret 4 not translated:\n%s", x87.Code)
+	if !strings.Contains(un.Code, "c->esp += 8; return;") {
+		t.Errorf("ret 4 not translated:\n%s", un.Code)
 	}
 }
 
