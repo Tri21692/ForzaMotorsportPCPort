@@ -560,6 +560,9 @@ func (g *gen) inst(in analysis.Inst) {
 		if imm, ok := a0.(x86asm.Imm); ok {
 			n = uint32(imm)
 		}
+		if g.t.Trace[g.body.Start] {
+			g.line("xb_trace_leave(c, 0x%08X);", g.body.Start)
+		}
 		g.line("c->esp += %d; return;", 4+n)
 		return
 	case x86asm.JECXZ:

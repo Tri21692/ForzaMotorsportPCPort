@@ -31,6 +31,8 @@ first build takes a while.
 | `XBRT_HDD` | the hard disk; `PartitionN` folders inside it | `./hdd` |
 | `XBRT_LOG` | `1` logs every kernel call, `2` more | quiet |
 | `XBRT_AUTOPRESS` | `1` taps START and A every two seconds | off |
+| `XBRT_INPUT_SCRIPT` | a file of timed button presses (format in `hle_input.c`; example in `tools/input`) | off |
+| `XBRT_LOG_FROM` | with `XBRT_LOG`, start logging only after this many seconds | 0 |
 | `XBRT_WINDOW` | `0` runs without a window (Windows shows one) | on |
 | `XBRT_SCREENSHOT` | a folder to save the picture to as BMP files | off |
 | `XBRT_SCREENSHOT_EVERY` | seconds between screenshots | 5 |

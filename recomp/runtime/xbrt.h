@@ -249,6 +249,9 @@ extern const unsigned xb_kernel_info_count;
 void xb_call_indirect(XbCtx *c, uint32_t target); /* call through a pointer */
 void xb_kernel(XbCtx *c, uint32_t ordinal);       /* xboxkrnl.exe import */
 void xb_trap(XbCtx *c, uint32_t addr, const char *why) __attribute__((noreturn));
+/* Debugging: functions named to xbrecomp -trace call these. */
+void xb_trace_enter(XbCtx *c, uint32_t fn);
+void xb_trace_leave(XbCtx *c, uint32_t fn);
 uint64_t xb_rdtsc(XbCtx *c);                       /* the game's view of the CPU clock */
 void xb_cpuid(XbCtx *c);                           /* cpuid: eax (and ecx) in, eax/ebx/ecx/edx out */
 uint32_t xb_io_in(XbCtx *c, uint32_t port, int bytes); /* port I/O */

@@ -44,6 +44,9 @@ type Translator struct {
 	// registers (the XDK's drivers). Their loads and stores go through
 	// xb_hw_*, which hands the GPU's register range to the runtime.
 	HW map[string]bool
+	// Trace lists functions to instrument for debugging: they call
+	// xb_trace_enter on entry and xb_trace_leave at each ret.
+	Trace map[uint32]bool
 }
 
 var hwAccess = strings.NewReplacer(
@@ -109,6 +112,9 @@ func (t *Translator) Function(va uint32) Func {
 	fmt.Fprintf(&code, "/* %08X%s */\nXB_WEAK void %s(XbCtx *c) {\n", va, name, CName(va))
 	code.WriteString("    uint32_t cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;\n")
 	code.WriteString("    (void)cf; (void)zf; (void)sf; (void)of; (void)pf; (void)af;\n")
+	if t.Trace[va] {
+		fmt.Fprintf(&code, "    xb_trace_enter(c, 0x%08X);\n", va)
+	}
 	body := labelMark.ReplaceAllStringFunc(g.w.String(), func(m string) string {
 		va, _ := strconv.ParseUint(m[3:11], 16, 32)
 		return g.label(uint32(va))

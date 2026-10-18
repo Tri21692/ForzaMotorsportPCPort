@@ -560,8 +560,9 @@ func (a *analyzer) scanPrologues(owner map[uint32]uint32) {
 // skipped: those are SEH scope-table handlers and similar labels.
 //
 // Generosity is safe here: a false start only adds translated code that
-// never runs, and even one inside a real function stays correct, because a
-// jump to it becomes a tail call into the same code.
+// never runs, and one inside a real function stays correct because Body
+// walks through it when the code before falls into it (live flags and
+// all), and a jump to it becomes a tail call into the same code.
 func (a *analyzer) scanDataRefs(owner map[uint32]uint32) {
 	isCode := func(v uint32) bool {
 		s := a.f.SectionAt(v)
@@ -639,23 +640,34 @@ type Body struct {
 // Code that several functions share (MSVC merges common tails) appears in
 // each of them, which a translator needs because it cannot jump between
 // host functions.
+//
+// Another function's entry ends the walk only where an unconditional jump
+// leads to it: a tail call, after which no flags are live. Code that falls
+// through into a known start, or branches to one conditionally, keeps
+// going through it, because the flags it computed may still be read there
+// and a host call would lose them. (A data reference can make a false
+// start out of a label inside a function: Forza's profile saving went
+// wrong at one, 0x7B649, which tests flags set before it.)
 func (p *Program) Body(start uint32) Body {
 	a := p.a
 	b := Body{Start: start, Tables: map[uint32][]uint32{}}
 	seen := map[uint32]bool{}
 	work := []uint32{start}
+	viaJmp := map[uint32]bool{}       // reached by an unconditional jump
 	branchHist := map[uint32]recent{} // the path so far, at each branch target
 	for len(work) > 0 {
 		va := work[len(work)-1]
 		work = work[:len(work)-1]
 		hist := branchHist[va]
+		first := true
 	path:
 		for !seen[va] {
-			if va != start {
+			if va != start && first && viaJmp[va] {
 				if _, isFunc := a.starts[va]; isFunc {
 					break // tail call; the translator emits it as a call
 				}
 			}
+			first = false
 			in, ok := a.decode(va)
 			if !ok {
 				b.Bad = append(b.Bad, va)
@@ -671,11 +683,15 @@ func (p *Program) Body(start uint32) Body {
 				if t, ok := relTarget(in, next); ok {
 					if a.f.SectionAt(t) == a.f.SectionAt(start) {
 						work = append(work, t)
+						viaJmp[t] = true
 					}
 				} else if _, ok := a.thunkRef(in); !ok {
 					if targets := a.jumpTable(in, &hist, start); len(targets) > 0 {
 						b.Tables[va] = targets
 						work = append(work, targets...)
+						for _, t := range targets {
+							viaJmp[t] = true
+						}
 					}
 				}
 				break path

@@ -367,6 +367,16 @@ uint32_t k_file_NtWriteFile(XbCtx *c) {
     return STATUS_SUCCESS;
 }
 
+/* NtFlushBuffersFile(FileHandle, IoStatusBlock*): XAPI's FlushFileBuffers,
+ * which saves call before closing. Writes already reach the host file
+ * system, which keeps them across a crash of this process. */
+uint32_t k_file_NtFlushBuffersFile(XbCtx *c) {
+    RtObject *o = rt_handle_get(ARG(0));
+    if (!o || o->type != OBJ_FILE) return STATUS_INVALID_HANDLE;
+    io_status(ARG(1), STATUS_SUCCESS, 0);
+    return STATUS_SUCCESS;
+}
+
 /* NtFsControlFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock*,
  *                 FsControlCode, InputBuffer, InputLength, OutputBuffer, OutputLength)
  * XAPI dismounts and locks a cache partition before formatting it. Host

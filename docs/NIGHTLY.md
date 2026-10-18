@@ -50,20 +50,24 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 - The installer manifest is the `BKGDINST` section (37 files, 4 MB zlib
   chunks with SHA-1s).
 
-## Current lead (2026-10-18, evening)
+## Current lead (2026-10-18, night)
 
-The front end draws, text included: `runtime/raster.c` rasterises Kelvin
-primitives in software (vertex programs interpreted, register
-combiners, four texture stages, blending) into the 1280x480
-anti-aliased back buffer, and D3D's downsample pass copies it to the
-front buffers that PCRTC_START flips between. Screenshots show the
-profile screens, dialog boxes and the on-screen keyboard, readable.
+The game reaches its **main menu** with a new profile (Arcade Race,
+Career, Multiplayer, Time Trials, Free Run, Options), driven by
+`tools/input/new-profile.txt`:
 
-`XBRT_AUTOPRESS=1` taps START and A every two seconds, so an unattended
-run ends up looping on "Cannot create profile" ('Default' is taken).
-Next, drive further into the game: create a profile with a scripted
-input sequence (an `XBRT_INPUT_SCRIPT` of timed buttons would do), then
-see what the main menu, garage and a race need.
+    XBRT_INPUT_SCRIPT=../tools/input/new-profile.txt XBRT_WINDOW=0 \
+      XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=3 XBRT_HDD=hdd \
+      timeout 130 ../runtime/forza.exe <default.xbe>
+
+Once a profile exists, the next boot goes a different way (the profile
+select lists it), so write a second script for that state rather than
+deleting saves. Saves live in `run/hdd/Partition1/UDATA/4d53006e`; the
+broken ones from before the fix below are in `run/savebak`.
+
+Next: Arcade Race, through car and track selection to a race. Expect the
+race itself to need depth buffers, swizzled render targets and much more
+speed (the rasteriser runs everything on one CPU core).
 
 ## Next after that
 
@@ -103,6 +107,19 @@ see what the main menu, garage and a race need.
   four stages and the pass-through mode, menus have their text. New
   debugging aids: `XBRT_TEX_DUMP`, `XBRT_RAM_DUMP=<file>:<seconds>`,
   user APCs and pixel-state combinations logged at level 2.
+- 2026-10-18 (interactive, night): profile saving and the main menu.
+  "Unable to save player profile" came from the recompiler, not the
+  runtime: a data reference had made a false function start at
+  0x7B649, the instruction after a `cmp` in the save routine, and the
+  generated code reached it through a host call, so the `jnz` there read
+  fresh flags and took the failure path. `analysis.Body` now walks
+  through a known start that code falls into or branches to
+  conditionally (3,198 functions in Forza do), stopping only where a
+  `jmp` reaches it. Also: NtFlushBuffersFile, `XBRT_INPUT_SCRIPT` for
+  timed button presses, `XBRT_LOG_FROM` to log only late in a run, and
+  `xbrecomp -trace a,b,...` to make chosen functions log their arguments
+  and results (it rewrites only changed C files, so a rebuild with a
+  trace takes about a minute).
 - 2026-10-18 (interactive, evening): CPU detection (pushfd/popfd keep
   AC/ID, cpuid answers as the Xbox's Pentium III), so Bink finds MMX;
   CVTPS2PI/CVTTPS2PI/CVTPI2PS; the video overlay's STOP register; the

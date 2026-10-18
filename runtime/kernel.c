@@ -745,6 +745,7 @@ extern uint32_t k_file_NtOpenSymbolicLinkObject(XbCtx *c);
 extern uint32_t k_file_NtQuerySymbolicLinkObject(XbCtx *c);
 extern uint32_t k_file_IoQueryVolumeInformation(XbCtx *c);
 extern uint32_t k_file_NtFsControlFile(XbCtx *c);
+extern uint32_t k_file_NtFlushBuffersFile(XbCtx *c);
 extern uint32_t k_file_NtDeviceIoControlFile(XbCtx *c);
 extern uint32_t k_file_NtQueryDirectoryFile(XbCtx *c);
 
@@ -898,6 +899,7 @@ void rt_kernel_init(void) {
     handlers[215] = k_file_NtQuerySymbolicLinkObject;
     handlers[76] = k_file_IoQueryVolumeInformation;
     handlers[200] = k_file_NtFsControlFile;
+    handlers[198] = k_file_NtFlushBuffersFile;
     handlers[196] = k_file_NtDeviceIoControlFile;
     handlers[207] = k_file_NtQueryDirectoryFile;
 

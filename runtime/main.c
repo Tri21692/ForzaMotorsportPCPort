@@ -2,6 +2,7 @@
  *
  * usage: forza [path/to/default.xbe]
  *   XBRT_LOG=1   log kernel calls (2: also memory and files)
+ *   XBRT_LOG_FROM=<seconds>  start logging only then
  *   XBRT_DISC    directory holding the extracted disc (default: the XBE's)
  *   XBRT_HDD     directory for the hard disk partitions (default: ./hdd)
  */
@@ -141,9 +142,44 @@ static void load_xbe(const char *path) {
     rt_log("loaded %s: entry %08x, kernel thunks %08x, TLS %u bytes\n", path, e, k, rt_image.tls_size);
 }
 
+/* Functions built with xbrecomp -trace call these: one line per call and
+ * per return. Arguments that point at text show it. */
+static void trace_arg(char *out, size_t n, uint32_t v) {
+    int len = 0;
+    if (v >= 0x10000 && v < 0x08000000)
+        while (len < 60 && xb_mem[v + len] >= 0x20 && xb_mem[v + len] < 0x7F) len++;
+    if (len >= 3 && !xb_mem[v + len]) snprintf(out, n, "%08x \"%.*s\"", v, len, (const char *)xb_mem + v);
+    else snprintf(out, n, "%08x", v);
+}
+
+void xb_trace_enter(XbCtx *c, uint32_t fn) {
+    char a[5][80];
+    for (int i = 0; i < 5; i++) trace_arg(a[i], sizeof a[i], xb_rd32(c->esp + 4 + 4 * i));
+    char e[80];
+    trace_arg(e, sizeof e, c->ecx);
+    fprintf(stderr, "[%10.3f] trace %08x from %08x: ecx %s; %s, %s, %s, %s, %s\n", rt_now_100ns() / 1e7, fn, xb_rd32(c->esp), e,
+            a[0], a[1], a[2], a[3], a[4]);
+}
+
+void xb_trace_leave(XbCtx *c, uint32_t fn) {
+    fprintf(stderr, "[%10.3f] trace %08x returns %08x\n", rt_now_100ns() / 1e7, fn, c->eax);
+}
+
+static int log_deferred;  /* XBRT_LOG's level, held back until XBRT_LOG_FROM */
+static double log_from;
+
+void rt_log_tick(void) {
+    if (log_deferred && rt_now_100ns() >= (uint64_t)(log_from * 1e7)) {
+        rt_log_level = log_deferred, log_deferred = 0;
+        rt_log("logging from here on (XBRT_LOG_FROM)\n");
+    }
+}
+
 int main(int argc, char **argv) {
     const char *env = getenv("XBRT_LOG");
     rt_log_level = env ? atoi(env) : 0;
+    const char *from = getenv("XBRT_LOG_FROM");
+    if (from && atof(from) > 0 && rt_log_level) log_from = atof(from), log_deferred = rt_log_level, rt_log_level = 0;
 #ifdef _WIN32
     timeBeginPeriod(1); /* 1 ms sleeps, as the DPC thread and waits expect */
 #endif

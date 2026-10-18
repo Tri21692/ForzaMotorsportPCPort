@@ -8,6 +8,8 @@
  * Each replacement is a stdcall function: it reads its arguments from the
  * guest stack and pops them, as the code it replaces would.
  */
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -115,11 +117,96 @@ static int pc_pad(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
 static void keyboard(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) { (void)buttons, (void)analog, (void)thumbs; }
 #endif
 
+/* ---- scripted input ----
+ * XBRT_INPUT_SCRIPT=<file> plays buttons at set times, for runs nobody
+ * drives. One step per line, '#' starts a comment:
+ *   <seconds> <button>[+<button>...] [hold seconds, default 0.3]
+ *   <seconds> auto <seconds>      tap START and A every 2 s until then
+ * Times count from start-up. Buttons: A B X Y BLACK WHITE LT RT START
+ * BACK UP DOWN LEFT RIGHT. Steps happen in file order; a step whose time
+ * has passed waits for the one before it to finish. */
+typedef struct {
+    double at, hold, until; /* until > 0: an auto window */
+    uint16_t buttons;
+    uint8_t analog;         /* bit i: analog button i fully pressed */
+} Step;
+
+static Step *steps;
+static int nsteps;
+
+static void load_script(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) rt_fatal(NULL, "XBRT_INPUT_SCRIPT: cannot open %s", path);
+    static const struct { const char *name; uint16_t button; int analog; } names[] = {
+        {"A", 0, A_A}, {"B", 0, A_B}, {"X", 0, A_X}, {"Y", 0, A_Y}, {"BLACK", 0, A_BLACK}, {"WHITE", 0, A_WHITE},
+        {"LT", 0, A_LT}, {"RT", 0, A_RT}, {"UP", 0x1, -1}, {"DOWN", 0x2, -1}, {"LEFT", 0x4, -1}, {"RIGHT", 0x8, -1},
+        {"START", 0x10, -1}, {"BACK", 0x20, -1},
+    };
+    char line[256];
+    int n = 0;
+    while (fgets(line, sizeof line, f)) {
+        n++;
+        char *hash = strchr(line, '#');
+        if (hash) *hash = 0;
+        double at, extra = 0;
+        char what[128];
+        int got = sscanf(line, "%lf %127s %lf", &at, what, &extra);
+        if (got < 2) continue;
+        Step st = {at, got == 3 ? extra : 0.3, 0, 0, 0};
+        if (!strcmp(what, "auto")) {
+            st.until = extra;
+        } else {
+            for (char *tok = strtok(what, "+"); tok; tok = strtok(NULL, "+")) {
+                size_t i;
+                for (i = 0; i < sizeof names / sizeof names[0]; i++)
+                    if (!strcmp(tok, names[i].name)) break;
+                if (i == sizeof names / sizeof names[0]) rt_fatal(NULL, "XBRT_INPUT_SCRIPT line %d: no button %s", n, tok);
+                st.buttons |= names[i].button;
+                if (names[i].analog >= 0) st.analog |= (uint8_t)(1 << names[i].analog);
+            }
+        }
+        steps = realloc(steps, (size_t)(nsteps + 1) * sizeof *steps);
+        steps[nsteps++] = st;
+    }
+    fclose(f);
+    rt_log("input: %d scripted steps from %s\n", nsteps, path);
+}
+
+/* What the script holds down now. */
+static void scripted(uint16_t *buttons, uint8_t analog[8]) {
+    static int next;             /* the step being played */
+    static double started = -1;  /* when it began */
+    double now = rt_now_100ns() / 1e7;
+    while (next < nsteps) {
+        Step *st = &steps[next];
+        if (started < 0) {
+            if (now < st->at) return;
+            started = now;
+            rt_log("input: step %d at %.1f s\n", next + 1, now);
+        }
+        if (st->until > 0) {
+            if (now >= st->until) { next++, started = -1; continue; }
+            if (fmod(now, 2.0) < 0.2) *buttons |= 0x10, analog[A_A] = 255;
+            return;
+        }
+        if (now < started + st->hold) {
+            *buttons |= st->buttons;
+            for (int i = 0; i < 8; i++)
+                if (st->analog & (1 << i)) analog[i] = 255;
+            return;
+        }
+        next++, started = -1;
+        return; /* release for at least one poll between steps */
+    }
+}
+
 static void host_pad(uint32_t pad) {
     static int autopress = -1;
     if (autopress < 0) {
         const char *e = getenv("XBRT_AUTOPRESS");
         autopress = e && atoi(e);
+        const char *script = getenv("XBRT_INPUT_SCRIPT");
+        if (script && *script) load_script(script);
     }
     uint16_t buttons = 0;
     uint8_t analog[8] = {0};
@@ -129,6 +216,7 @@ static void host_pad(uint32_t pad) {
         buttons |= 0x10;
         analog[A_A] = 255;
     }
+    scripted(&buttons, analog);
     set_pad(pad, buttons, analog, thumbs);
 }
 

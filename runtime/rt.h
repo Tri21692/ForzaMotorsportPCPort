@@ -219,6 +219,7 @@ int rt_display_focused(void);           /* the game's window has the keyboard */
 /* ---- the audio processor (apu.c) ---- */
 void rt_apu_init(void);
 void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
+void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
 uint32_t rt_apu_read(uint32_t off, int bytes);
 void rt_apu_write(uint32_t off, int bytes, uint32_t v);
 uint32_t rt_aci_read(uint32_t off, int bytes);

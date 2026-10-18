@@ -114,10 +114,9 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
       crypto (SHA-1, HMAC, RC4; the console's keys are zeroed, so saves
       stay on this machine).
 - **Status:** with the player's extracted disc, the game boots through
-  the install, the movies and its saves into the front end, and runs its
-  menus (about 3 frames a second). The movies and the loading screen
-  show in a window; the menus need the GPU to draw. See
-  [NIGHTLY.md](NIGHTLY.md) for what is next.
+  the install, the movies and its saves into the front end, creates and
+  saves a profile and reaches the main menu (about 3 frames a second),
+  all drawn. See [NIGHTLY.md](NIGHTLY.md) for what is next.
 - [ ] The remaining kernel imports as the game reaches them.
 
 ## Phase 4: graphics (in progress)
@@ -136,10 +135,17 @@ boundary is smaller and fixed instead.
       into PGRAPH 0x400B10, NOP notifies trapped to the ISR.
 - [x] A window and screenshots: the scanned-out front buffer with the
       video overlay composited, so Bink movies play; colour clears.
+- [x] A software rasteriser (`runtime/raster.c`) for the front end:
+      inline and array vertices, vertex programs interpreted, the
+      transform constants the fixed-function methods load, register
+      combiners, four texture stages (swizzled, linear, palettised, DXT;
+      pass-through mode), blending, anti-aliased surfaces. The menus
+      draw, text included.
 - [ ] Pace flips to the vertical blank (they run at ~500 a second now).
-- [ ] Render Kelvin methods on the PC: surfaces, vertex arrays and
-      inline vertices, vertex programs and register combiners translated
-      to shaders, swizzled textures. Present the front buffer.
+- [ ] Depth and stencil, swizzled render targets, filtering, lighting and
+      texgen: what a race will need.
+- [ ] Move drawing to the PC's GPU (vertex programs and register
+      combiners translated to shaders) for speed.
 
 Earlier notes, from when the plan was to replace the API:
 
