@@ -15,11 +15,14 @@
  *             the fixed-function methods load into the transform constants).
  *             Either way the result is in pixels, which an anti-aliased
  *             surface multiplies into samples. No lighting or texgen yet.
- *   texture   stage 0: swizzled and linear formats, 32 and 16 bit, 8-bit
- *             palettes, DXT1/3/5; point sampling, wrap or clamp. Linear
+ *   texture   four stages, each off, sampling a texture (swizzled and
+ *             linear formats, 32 and 16 bit, 8-bit palettes, DXT1/3/5; point
+ *             sampling, wrap or clamp; 3D and cube maps read as 2D) or
+ *             passing its texture coordinate through as a colour (Forza's
+ *             text uses that to pick a channel of its glyph cache). Linear
  *             (LU_IMAGE) textures take texel coordinates, the rest 0..1.
  *   colour    the register combiners (general stages and the final
- *             combiner); alpha test; blending; colour write mask.
+ *             combiner) over T0-T3; alpha test; blending; colour write mask.
  *   surface   linear colour buffers, 32 or 16 bit. No depth or stencil.
  *
  * XBRT_TEX_DUMP=<folder> saves every texture as it is decoded, and log
@@ -77,6 +80,8 @@
 #define SET_TEXTURE_IMAGE_RECT 0x1B1C
 #define SET_TEXTURE_PALETTE 0x1B20
 #define SET_TRANSFORM_EXECUTION_MODE 0x1E94
+
+#define KT(m) K((m) + 0x40 * (uint32_t)(i)) /* texture stage i's copy of a texture method */
 
 enum { ATTR_POS = 0, ATTR_DIFFUSE = 3, ATTR_TEX0 = 9, NATTR = 16 };
 
@@ -188,22 +193,23 @@ static void dump_texture(const Texture *t, uint32_t offset, uint32_t fmt) {
     fclose(f);
 }
 
-static Texture *texture(void) {
-    uint32_t fmt = K(SET_TEXTURE_FORMAT), color = (fmt >> 8) & 0xFF;
-    uint32_t key[6] = {K(SET_TEXTURE_OFFSET), fmt, K(SET_TEXTURE_CONTROL1), K(SET_TEXTURE_IMAGE_RECT), K(SET_TEXTURE_PALETTE), generation};
+/* Stage i's texture, decoded to A8R8G8B8 (cached until the next flip). */
+static Texture *texture(int i) {
+    uint32_t fmt = KT(SET_TEXTURE_FORMAT), color = (fmt >> 8) & 0xFF;
+    uint32_t key[6] = {KT(SET_TEXTURE_OFFSET), fmt, KT(SET_TEXTURE_CONTROL1), KT(SET_TEXTURE_IMAGE_RECT), KT(SET_TEXTURE_PALETTE), generation};
     for (int i = 0; i < 64; i++)
         if (cache[i].texels && !memcmp(cache[i].key, key, sizeof key)) return &cache[i];
 
     int linear = (color >= 0x10 && color <= 0x20) || color == 0x24 || color == 0x25 || color >= 0x2E;
     int w, h;
     if (linear) {
-        w = (int)(K(SET_TEXTURE_IMAGE_RECT) >> 16), h = (int)(K(SET_TEXTURE_IMAGE_RECT) & 0xFFFF);
+        w = (int)(KT(SET_TEXTURE_IMAGE_RECT) >> 16), h = (int)(KT(SET_TEXTURE_IMAGE_RECT) & 0xFFFF);
     } else {
         w = 1 << ((fmt >> 20) & 15), h = 1 << ((fmt >> 24) & 15);
     }
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return NULL;
-    uint32_t base = dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + K(SET_TEXTURE_OFFSET);
-    uint32_t pitch = K(SET_TEXTURE_CONTROL1) >> 16;
+    uint32_t base = dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + KT(SET_TEXTURE_OFFSET);
+    uint32_t pitch = KT(SET_TEXTURE_CONTROL1) >> 16;
     const uint8_t *src = phys(base);
     if (src + (size_t)w * h * 4 > xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE && !(color >= 0x0C && color <= 0x0F)) return NULL;
 
@@ -217,7 +223,7 @@ static Texture *texture(void) {
 
     uint32_t pal[256] = {0};
     if (color == 0x0B) {
-        uint32_t p = K(SET_TEXTURE_PALETTE);
+        uint32_t p = KT(SET_TEXTURE_PALETTE);
         uint32_t pbase = dma_base((p & 1) ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + (p & ~63u);
         memcpy(pal, phys(pbase), sizeof pal);
     }
@@ -275,9 +281,9 @@ static int wrap(int c, int n, int mode) {
     return c < 0 ? 0 : c >= n ? n - 1 : c; /* clamp */
 }
 
-static uint32_t sample(const Texture *t, float s, float tt) {
+static uint32_t sample(const Texture *t, int i, float s, float tt) {
     if (!t->linear) s *= (float)t->w, tt *= (float)t->h;
-    uint32_t addr = K(SET_TEXTURE_ADDRESS);
+    uint32_t addr = KT(SET_TEXTURE_ADDRESS);
     int x = wrap((int)floorf(s), t->w, (int)(addr & 15)), y = wrap((int)floorf(tt), t->h, (int)((addr >> 8) & 15));
     return t->texels[y * t->w + x];
 }
@@ -336,6 +342,7 @@ static void run_program(const Vertex *in, VshOut *out) {
     int a0 = 0;
     memset(out, 0, sizeof *out);
     out->o[O_D0][3] = out->o[O_D1][3] = 1;
+    for (int i = 0; i < 4; i++) out->o[O_T0 + i][3] = 1;
     for (uint32_t slot = K(SET_TRANSFORM_PROGRAM_START); slot < 136; slot++) {
         const uint32_t *t = program[slot];
         uint32_t mac = field(t, 1, 21, 4), ilu = field(t, 1, 25, 3);
@@ -555,13 +562,13 @@ static void stage(Comb *cb, uint32_t icw, uint32_t ocw, int alpha, int mux_msb) 
     if (!alpha && dcd && (flags & 0x40)) cb->r[dcd][3] = cd[2];
 }
 
-/* The fragment colour from the interpolated diffuse colour and texel. */
-static void combine(const float v0[4], uint32_t texel, int textured, float out[4]) {
+/* The fragment colour from the interpolated diffuse colour and T0-T3. */
+static void combine(const float v0[4], const float tv[4][4], int t0_used, float out[4]) {
     Comb cb;
     memset(&cb, 0, sizeof cb);
     memcpy(cb.r[4], v0, sizeof cb.r[4]);
-    if (textured) argb(texel, cb.r[8]);
-    cb.r[12][3] = textured ? cb.r[8][3] : 1; /* R0.a starts as T0.a */
+    memcpy(cb.r[8], tv, 4 * sizeof cb.r[8]);
+    cb.r[12][3] = t0_used ? cb.r[8][3] : 1; /* R0.a starts as T0.a */
     uint32_t ctl = K(SET_COMBINER_CONTROL);
     int stages = (int)(ctl & 0xFF), mux_msb = (ctl >> 8) & 1;
     if (stages > 8) stages = 8;
@@ -607,7 +614,7 @@ static int alpha_pass(float a) {
 }
 
 typedef struct {
-    float x, y, c[4], s, t;
+    float x, y, c[4], tc[4][4]; /* position, diffuse, texture coordinates 0-3 */
 } Pt;
 
 static Pt project(const Vertex *v) {
@@ -617,7 +624,7 @@ static Pt project(const Vertex *v) {
         Pt r;
         r.x = o.o[O_POS][0], r.y = o.o[O_POS][1];
         for (int k = 0; k < 4; k++) r.c[k] = o.o[O_D0][k] != o.o[O_D0][k] ? 1 : fminf(fmaxf(o.o[O_D0][k], 0), 1);
-        r.s = o.o[O_T0][0], r.t = o.o[O_T0][1];
+        memcpy(r.tc, o.o[O_T0], sizeof r.tc);
         return r;
     }
     const uint32_t *m = &nv2a.kelvin[SET_COMPOSITE_MATRIX / 4];
@@ -629,7 +636,7 @@ static Pt project(const Vertex *v) {
     r.x = o[0] / w + f32(K(SET_VIEWPORT_OFFSET));
     r.y = o[1] / w + f32(K(SET_VIEWPORT_OFFSET + 4));
     memcpy(r.c, v->a[ATTR_DIFFUSE], sizeof r.c);
-    r.s = v->a[ATTR_TEX0][0], r.t = v->a[ATTR_TEX0][1];
+    memcpy(r.tc, v->a[ATTR_TEX0], sizeof r.tc);
     return r;
 }
 
@@ -661,12 +668,22 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
     if (y1 > cy0 + ch) y1 = cy0 + ch;
     if (x0 >= x1 || y0 >= y1) return;
 
-    Texture *tex = (K(SET_TEXTURE_CONTROL0) >> 30) & 1 ? texture() : NULL;
+    /* Texture stages: SET_SHADER_STAGE_PROGRAM has five bits of mode per
+     * stage: 0 off, 1-3 sample a texture (2D, 3D, cube; all read as 2D
+     * here), 4 pass the texture coordinate through as the colour. */
+    uint32_t prog = K(SET_SHADER_STAGE_PROGRAM);
+    int mode[4];
+    Texture *tex[4] = {NULL, NULL, NULL, NULL};
+    for (int i = 0; i < 4; i++) {
+        mode[i] = (int)(prog >> (5 * i)) & 31;
+        if (!prog && i == 0 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) mode[i] = 1;
+        if (mode[i] >= 1 && mode[i] <= 3 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) tex[i] = texture(i);
+    }
     if (rt_log_level >= 2) { /* each new combination of pixel state, once */
         static uint32_t seen[256][8];
         static int nseen;
         uint32_t key[8] = {K(SET_TEXTURE_FORMAT), K(SET_COMBINER_CONTROL), K(SET_COMBINER_COLOR_ICW), K(SET_COMBINER_COLOR_OCW),
-                           K(SET_COMBINER_ALPHA_ICW), K(SET_COMBINER_SPECULAR_FOG_CW0), K(SET_COMBINER_SPECULAR_FOG_CW1), (K(SET_TEXTURE_CONTROL0) >> 30 & 1) | (tex != NULL) << 1 | K(SET_BLEND_ENABLE) << 2};
+                           K(SET_COMBINER_ALPHA_ICW), K(SET_COMBINER_SPECULAR_FOG_CW0), K(SET_COMBINER_SPECULAR_FOG_CW1), prog | (uint32_t)(tex[0] != NULL) << 30 | K(SET_BLEND_ENABLE) << 31};
         int found = 0;
         for (int i = 0; i < nseen; i++) found |= !memcmp(seen[i], key, sizeof key);
         if (!found && nseen < 256) {
@@ -695,8 +712,19 @@ static void triangle(const Vertex *va, const Vertex *vb, const Vertex *vc) {
             if (w0 < 0 || w1 < 0 || w2 < 0) continue;
             float s[4];
             for (int k = 0; k < 4; k++) s[k] = a.c[k] * w0 + b.c[k] * w1 + c.c[k] * w2;
-            uint32_t t = tex ? sample(tex, a.s * w0 + b.s * w1 + c.s * w2, a.t * w0 + b.t * w1 + c.t * w2) : 0;
-            combine(s, t, tex != NULL, s);
+            float tv[4][4] = {{0}};
+            for (int i = 0; i < 4; i++) {
+                if (!mode[i] || (mode[i] != 4 && !tex[i])) continue;
+                float q[4];
+                for (int k = 0; k < 4; k++) q[k] = a.tc[i][k] * w0 + b.tc[i][k] * w1 + c.tc[i][k] * w2;
+                if (mode[i] == 4) {
+                    for (int k = 0; k < 4; k++) tv[i][k] = fminf(fmaxf(q[k], 0), 1);
+                } else {
+                    if (q[3] != 0 && q[3] != 1) q[0] /= q[3], q[1] /= q[3]; /* projective */
+                    argb(sample(tex[i], i, q[0], q[1]), tv[i]);
+                }
+            }
+            combine(s, tv, mode[0] != 0, s);
             if (!alpha_pass(s[3])) continue;
             uint32_t dst;
             if (bpp == 4) memcpy(&dst, row + x * 4, 4);

@@ -52,24 +52,18 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 
 ## Current lead (2026-10-18, evening)
 
-The menus draw: `runtime/raster.c` rasterises Kelvin primitives in
-software (vertex programs interpreted, register combiners, stage 0
-textures, blending) into the 1280x480 anti-aliased back buffer at
-0x01c40000, and D3D's downsample pass copies it to the front buffers
-(0x01b14000 and 0x019e8000) that PCRTC_START flips between. Screenshots
-show the background art, bars, button icons and dialog boxes.
+The front end draws, text included: `runtime/raster.c` rasterises Kelvin
+primitives in software (vertex programs interpreted, register
+combiners, four texture stages, blending) into the 1280x480
+anti-aliased back buffer, and D3D's downsample pass copies it to the
+front buffers that PCRTC_START flips between. Screenshots show the
+profile screens, dialog boxes and the on-screen keyboard, readable.
 
-**Text is missing.** Fonts (`Fonts\all\Arial_16.xpr`, `Fonts\Euro\*`),
-string tables (`Loc\EN\*.str`) and `Euro.SXWad` all load, and the
-512x128 DXT5 font atlas decodes correctly (check with
-`XBRT_TEX_DUMP=tex`). But every quad drawn with the atlas (format
-07910f29) has texcoords (1,1), and the glyph quads collapse to a point:
-runs of identical positions, about ten per string. Boxes drawn with the
-atlas's solid texel are fine. So glyph metrics come out zero on the CPU
-side, before D3D: find the game's text draw (callers of
-`D3DDevice_SetVertexData2f`, 0x3BACA0) and check where the glyph
-rectangle comes from (the .xpr glyph table, or float conversion in the
-recompiled code).
+`XBRT_AUTOPRESS=1` taps START and A every two seconds, so an unattended
+run ends up looping on "Cannot create profile" ('Default' is taken).
+Next, drive further into the game: create a profile with a scripted
+input sequence (an `XBRT_INPUT_SCRIPT` of timed buttons would do), then
+see what the main menu, garage and a race need.
 
 ## Next after that
 
@@ -77,8 +71,8 @@ recompiled code).
    samples of the main thread, or a build with `-O2` for the generated
    code: `make OPT=-O2`) before changing anything.
 2. Pace flips to the vertical blank (D3D's presentation interval).
-3. Drawing: texture stages 1-3 (two menu states use T1), depth and
-   stencil, swizzled render targets, lighting. See the phase 4 list in
+3. Drawing: depth and stencil, swizzled render targets, lighting and
+   texgen, filtering (everything is point sampled), 3D and cube maps. See the phase 4 list in
    [ROADMAP.md](ROADMAP.md).
 
 ## Log
@@ -99,6 +93,16 @@ recompiled code).
   anti-aliasing scale, register combiners (the downsample pass was black
   because texture times diffuse is not what its combiners say). Menus
   draw, without text.
+- 2026-10-18 (interactive, night): text. Forza's text is rendered from a
+  glyph cache (a 512x512 palettised texture with four glyph layers in
+  its R, G, B and A channels; glyphs come from `Z:\fontcache`, which
+  the game unpacks from `euro.SXWad` with zlib, read on demand through
+  ReadFileEx). Each glyph quad picks its layer with a dot product
+  against texture stage 1 in pass-through mode, whose "texture" is the
+  texture coordinate itself. The rasteriser only had stage 0; with all
+  four stages and the pass-through mode, menus have their text. New
+  debugging aids: `XBRT_TEX_DUMP`, `XBRT_RAM_DUMP=<file>:<seconds>`,
+  user APCs and pixel-state combinations logged at level 2.
 - 2026-10-18 (interactive, evening): CPU detection (pushfd/popfd keep
   AC/ID, cpuid answers as the Xbox's Pentium III), so Bink finds MMX;
   CVTPS2PI/CVTTPS2PI/CVTPI2PS; the video overlay's STOP register; the

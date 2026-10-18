@@ -35,6 +35,8 @@ first build takes a while.
 | `XBRT_SCREENSHOT` | a folder to save the picture to as BMP files | off |
 | `XBRT_SCREENSHOT_EVERY` | seconds between screenshots | 5 |
 | `XBRT_TEX_DUMP` | a folder to save every decoded texture to, as BMP | off |
+| `XBRT_RAM_DUMP` | `<file>:<seconds>` saves the 64 MB of RAM once | off |
+| `XBRT_GPU_DUMP` | `<file>:<first flip>:<flips>` logs every GPU method | off |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1
 (shoulder buttons are WHITE and BLACK); without one, the keyboard

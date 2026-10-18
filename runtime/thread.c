@@ -105,6 +105,7 @@ void rt_queue_user_apc(uint32_t routine, uint32_t context, uint32_t iosb) {
     t->apc[t->napc].context = context;
     t->apc[t->napc].iosb = iosb;
     t->napc++;
+    if (rt_log_level >= 2) rt_log("user APC queued for thread %08x: %08x(%08x, %08x), %d pending\n", t->kthread, routine, context, iosb, t->napc);
 }
 
 int rt_run_user_apcs(XbCtx *c) {
@@ -113,6 +114,7 @@ int rt_run_user_apcs(XbCtx *c) {
     while (t && t->napc) {
         uint32_t routine = t->apc[0].routine, context = t->apc[0].context, iosb = t->apc[0].iosb;
         memmove(t->apc, t->apc + 1, --t->napc * sizeof t->apc[0]);
+        if (rt_log_level >= 2) rt_log("user APC runs on thread %08x: %08x(%08x, %08x)\n", t->kthread, routine, context, iosb);
         rt_guest_call(c, routine, 3, context, iosb, 0);
         ran++;
     }

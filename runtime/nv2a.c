@@ -378,6 +378,19 @@ static void *device_main(void *arg) {
             next_vblank += 16683333; /* 59.94 Hz */
             if (t > next_vblank) next_vblank = t + 16683333;
             nv2a.vblanks++;
+            { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
+                static const char *spec;
+                static int checked;
+                if (!checked) checked = 1, spec = getenv("XBRT_RAM_DUMP");
+                const char *colon = spec ? strrchr(spec, ':') : NULL;
+                if (colon && nv2a.vblanks == (uint32_t)(atof(colon + 1) * 60)) {
+                    char path[1024];
+                    snprintf(path, sizeof path, "%.*s", (int)(colon - spec), spec);
+                    FILE *f = fopen(path, "wb");
+                    if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
+                    rt_log("nv2a: RAM dumped to %s\n", path);
+                }
+            }
             if (rt_log_level && nv2a.vblanks % 300 == 0)
                 rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps\n", nv2a.vblanks,
                        nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears, nv2a.traps);
