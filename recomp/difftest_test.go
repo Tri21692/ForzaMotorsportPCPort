@@ -48,6 +48,12 @@ func tools(t *testing.T) (python string) {
 
 var otherFunc = regexp.MustCompile(`\bf_[0-9A-F]{8}\b`)
 
+// usesMMX matches MMX instructions. On an MMX write the hardware sets the
+// aliased x87 register's exponent to all ones and Unicorn leaves it 0, so
+// for these functions the x87 register field is not compared; their MMX
+// values still are, through memory and the other registers.
+var usesMMX = regexp.MustCompile(`xb_mmw\(`)
+
 // noReference matches x87 instructions Unicorn computes through host
 // double precision rather than as the x87 does, so a function using them
 // cannot be checked against it (see docs/RECOMPILER.md).
@@ -185,11 +191,22 @@ func runDiff(t *testing.T, f *xbe.File, funcs map[uint32]recomp.Func, perFunc in
 			continue // the real CPU could not finish this case either
 		}
 		compared++
-		if cOut[i] != uOut[i] {
+		c, u := cOut[i], uOut[i]
+		if usesMMX.MatchString(funcs[owners[i]].Code) {
+			c, u = dropLastField(c), dropLastField(u)
+		}
+		if c != u {
 			bad = append(bad, caseResult{fn: owners[i], in: inputs[i], c: cOut[i], u: uOut[i]})
 		}
 	}
 	return compared, bad
+}
+
+func dropLastField(s string) string {
+	if i := strings.LastIndexByte(s, ' '); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // imageBlob serializes the XBE as loaded: header page and every section,

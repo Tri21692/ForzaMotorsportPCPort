@@ -25,8 +25,8 @@ graphics, audio and input. See [docs/ROADMAP.md](docs/ROADMAP.md).
   with x87 kept bit-exact by running it on the host's own x87 unit. **99.0%
   of Forza's functions translate fully.** Correctness is checked by
   differential testing against the Unicorn CPU emulator: 473 edge-case
-  instruction forms pass with 0 mismatches, and so do Forza's own
-  functions. See [docs/RECOMPILER.md](docs/RECOMPILER.md).
+  instruction forms pass with 0 mismatches, and so do 3,390 of Forza's own
+  functions (4,715 cases). See [docs/RECOMPILER.md](docs/RECOMPILER.md).
 - Five tools: `xbeinfo`, `xbemap`, `xbedis`, `xbesyms` and `xbrecomp`.
 
 ## You need your own copy

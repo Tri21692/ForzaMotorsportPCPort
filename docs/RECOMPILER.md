@@ -112,7 +112,11 @@ Two suites:
   outgrows its 256-byte slot. **Result: 473 forms, 13,573 cases, 0
   mismatches.**
 - **`TestForzaDifferential`** needs `FORZA_XBE`. It runs every Forza leaf
-  function that translates fully and calls nothing.
+  function that translates fully and calls nothing, except those using
+  x87 transcendentals (see below). **Result: 3,390 functions, 4,715
+  compared cases, 0 mismatches.** The other random cases fault on the
+  reference CPU, usually on a random pointer, and are skipped. The run
+  takes about 8 minutes.
 
 Build tooling the suites need: gcc, GNU `as`/`objcopy`, and Python with
 `unicorn` (`XBRT_PYTHON` picks the interpreter). `XBRT_KEEP=dir` keeps the
@@ -132,8 +136,12 @@ The edge suite steers around these, and each one is commented in
   host double precision, so its results aren't the x87's. They are not in
   the edge suite, and the Forza test skips functions that use them.
 - **MMX writes.** A real CPU sets the aliased x87 register's exponent to
-  all ones, and QEMU 5 leaves it 0. MMX edge cases store their results
-  and then overwrite the x87 registers, so only defined state compares.
+  all ones (Intel SDM §9.5.1), and QEMU 5 leaves it 0. MMX edge cases
+  store their results and then overwrite the x87 registers. For Forza
+  functions that use MMX, the x87 register field is left out of the
+  comparison; their MMX values still compare through memory and
+  registers. Checked by hand on Forza's Bink code: every 64-bit MMX value
+  matches, and only the exponent field differs.
 - **Initial state.** Unicorn starts with x87 control word 0 (24-bit
   precision, exceptions unmasked) and IF clear. The harness sets the
   power-on values (`0x037F`, IF=1) on both sides.
