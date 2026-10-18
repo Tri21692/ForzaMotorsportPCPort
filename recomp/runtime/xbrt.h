@@ -170,6 +170,33 @@ static inline void xb_fxam(XbCtx *c, long double x) {
     c->fsw = (c->fsw & ~0x4700) | cc;
 }
 
+/* ---- MMX ----
+ * MMX registers alias the x87 registers: MMi is the low 64 bits of
+ * physical register Ri, a write sets Ri's exponent field to all ones, and
+ * every MMX instruction resets TOP to 0. This is modelled as the hardware
+ * does it, so code that mixes MMX and x87 behaves the same. */
+typedef union XbMM {
+    uint64_t q;
+    uint32_t d[2];
+    int32_t sd[2];
+    uint16_t w[4];
+    int16_t sw[4];
+    uint8_t b[8];
+    int8_t sb[8];
+} XbMM;
+
+static inline uint64_t xb_mmr(XbCtx *c, int i) { uint64_t v; memcpy(&v, &c->st[i], 8); return v; }
+static inline void xb_mmw(XbCtx *c, int i, uint64_t v) {
+    uint16_t e = 0xFFFF;
+    memcpy(&c->st[i], &v, 8);
+    memcpy((uint8_t *)&c->st[i] + 8, &e, 2);
+}
+
+static inline int8_t xb_sat_s8(int32_t v) { return v > 127 ? 127 : v < -128 ? -128 : (int8_t)v; }
+static inline uint8_t xb_sat_u8(int32_t v) { return v > 255 ? 255 : v < 0 ? 0 : (uint8_t)v; }
+static inline int16_t xb_sat_s16(int32_t v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)v; }
+static inline uint16_t xb_sat_u16(int32_t v) { return v > 65535 ? 65535 : v < 0 ? 0 : (uint16_t)v; }
+
 static inline uint16_t xb_fnstsw(XbCtx *c) { return (uint16_t)((c->fsw & ~0x3800) | ((c->ftop & 7) << 11)); }
 
 static inline void xb_push(XbCtx *c, uint32_t v) { c->esp -= 4; xb_wr32(c->esp, v); }
@@ -182,5 +209,6 @@ static inline uint32_t xb_parity(uint32_t v) { return !__builtin_parity(v & 0xFF
 void xb_call_indirect(XbCtx *c, uint32_t target); /* call through a pointer */
 void xb_kernel(XbCtx *c, uint32_t ordinal);       /* xboxkrnl.exe import */
 void xb_trap(XbCtx *c, uint32_t addr, const char *why) __attribute__((noreturn));
+uint64_t xb_rdtsc(XbCtx *c);                       /* the game's view of the CPU clock */
 
 #endif

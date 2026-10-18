@@ -15,6 +15,7 @@ f_add32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_add32 + 256
 .balign 256
 # 1: add16
 f_add16:
@@ -25,6 +26,7 @@ f_add16:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_add16 + 256
 .balign 256
 # 2: add8
 f_add8:
@@ -35,6 +37,7 @@ f_add8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_add8 + 256
 .balign 256
 # 3: add8h
 f_add8h:
@@ -45,6 +48,7 @@ f_add8h:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_add8h + 256
 .balign 256
 # 4: add_mem
 f_add_mem:
@@ -55,6 +59,7 @@ f_add_mem:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_add_mem + 256
 .balign 256
 # 5: add_imm8
 f_add_imm8:
@@ -64,6 +69,7 @@ f_add_imm8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_add_imm8 + 256
 .balign 256
 # 6: sub32
 f_sub32:
@@ -74,6 +80,7 @@ f_sub32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sub32 + 256
 .balign 256
 # 7: sub16
 f_sub16:
@@ -84,6 +91,7 @@ f_sub16:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sub16 + 256
 .balign 256
 # 8: sub8
 f_sub8:
@@ -94,6 +102,7 @@ f_sub8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sub8 + 256
 .balign 256
 # 9: sub8h
 f_sub8h:
@@ -104,6 +113,7 @@ f_sub8h:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sub8h + 256
 .balign 256
 # 10: sub_mem
 f_sub_mem:
@@ -114,6 +124,7 @@ f_sub_mem:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sub_mem + 256
 .balign 256
 # 11: sub_imm8
 f_sub_imm8:
@@ -123,6 +134,7 @@ f_sub_imm8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sub_imm8 + 256
 .balign 256
 # 12: adc32
 f_adc32:
@@ -133,6 +145,7 @@ f_adc32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_adc32 + 256
 .balign 256
 # 13: adc16
 f_adc16:
@@ -143,6 +156,7 @@ f_adc16:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_adc16 + 256
 .balign 256
 # 14: adc8
 f_adc8:
@@ -153,6 +167,7 @@ f_adc8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_adc8 + 256
 .balign 256
 # 15: adc8h
 f_adc8h:
@@ -163,6 +178,7 @@ f_adc8h:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_adc8h + 256
 .balign 256
 # 16: adc_mem
 f_adc_mem:
@@ -173,6 +189,7 @@ f_adc_mem:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_adc_mem + 256
 .balign 256
 # 17: adc_imm8
 f_adc_imm8:
@@ -182,6 +199,7 @@ f_adc_imm8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_adc_imm8 + 256
 .balign 256
 # 18: sbb32
 f_sbb32:
@@ -192,6 +210,7 @@ f_sbb32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sbb32 + 256
 .balign 256
 # 19: sbb16
 f_sbb16:
@@ -202,6 +221,7 @@ f_sbb16:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sbb16 + 256
 .balign 256
 # 20: sbb8
 f_sbb8:
@@ -212,6 +232,7 @@ f_sbb8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sbb8 + 256
 .balign 256
 # 21: sbb8h
 f_sbb8h:
@@ -222,6 +243,7 @@ f_sbb8h:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sbb8h + 256
 .balign 256
 # 22: sbb_mem
 f_sbb_mem:
@@ -232,6 +254,7 @@ f_sbb_mem:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sbb_mem + 256
 .balign 256
 # 23: sbb_imm8
 f_sbb_imm8:
@@ -241,6 +264,7 @@ f_sbb_imm8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sbb_imm8 + 256
 .balign 256
 # 24: cmp32
 f_cmp32:
@@ -251,6 +275,7 @@ f_cmp32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmp32 + 256
 .balign 256
 # 25: cmp16
 f_cmp16:
@@ -261,6 +286,7 @@ f_cmp16:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmp16 + 256
 .balign 256
 # 26: cmp8
 f_cmp8:
@@ -271,6 +297,7 @@ f_cmp8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmp8 + 256
 .balign 256
 # 27: cmp8h
 f_cmp8h:
@@ -281,6 +308,7 @@ f_cmp8h:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmp8h + 256
 .balign 256
 # 28: cmp_mem
 f_cmp_mem:
@@ -291,6 +319,7 @@ f_cmp_mem:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmp_mem + 256
 .balign 256
 # 29: cmp_imm8
 f_cmp_imm8:
@@ -300,6 +329,7 @@ f_cmp_imm8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmp_imm8 + 256
 .balign 256
 # 30: and32
 f_and32:
@@ -309,6 +339,7 @@ f_and32:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_and32 + 256
 .balign 256
 # 31: and8
 f_and8:
@@ -318,6 +349,7 @@ f_and8:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_and8 + 256
 .balign 256
 # 32: or32
 f_or32:
@@ -327,6 +359,7 @@ f_or32:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_or32 + 256
 .balign 256
 # 33: or8
 f_or8:
@@ -336,6 +369,7 @@ f_or8:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_or8 + 256
 .balign 256
 # 34: xor32
 f_xor32:
@@ -345,6 +379,7 @@ f_xor32:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_xor32 + 256
 .balign 256
 # 35: xor8
 f_xor8:
@@ -354,6 +389,7 @@ f_xor8:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_xor8 + 256
 .balign 256
 # 36: test32
 f_test32:
@@ -363,6 +399,7 @@ f_test32:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_test32 + 256
 .balign 256
 # 37: test8
 f_test8:
@@ -372,6 +409,7 @@ f_test8:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_test8 + 256
 .balign 256
 # 38: inc32
 f_inc32:
@@ -382,6 +420,7 @@ f_inc32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_inc32 + 256
 .balign 256
 # 39: inc8
 f_inc8:
@@ -392,6 +431,7 @@ f_inc8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_inc8 + 256
 .balign 256
 # 40: dec32
 f_dec32:
@@ -402,6 +442,7 @@ f_dec32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_dec32 + 256
 .balign 256
 # 41: dec8
 f_dec8:
@@ -412,6 +453,7 @@ f_dec8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_dec8 + 256
 .balign 256
 # 42: neg32
 f_neg32:
@@ -421,6 +463,7 @@ f_neg32:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_neg32 + 256
 .balign 256
 # 43: neg8
 f_neg8:
@@ -430,6 +473,7 @@ f_neg8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_neg8 + 256
 .balign 256
 # 44: not32
 f_not32:
@@ -439,6 +483,7 @@ f_not32:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_not32 + 256
 .balign 256
 # 45: shl_cl
 f_shl_cl:
@@ -448,6 +493,7 @@ f_shl_cl:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shl_cl + 256
 .balign 256
 # 46: shl_1
 f_shl_1:
@@ -457,6 +503,7 @@ f_shl_1:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_shl_1 + 256
 .balign 256
 # 47: shl_imm
 f_shl_imm:
@@ -466,6 +513,7 @@ f_shl_imm:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shl_imm + 256
 .balign 256
 # 48: shl8_cl
 f_shl8_cl:
@@ -476,6 +524,7 @@ f_shl8_cl:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shl8_cl + 256
 .balign 256
 # 49: shl16_imm
 f_shl16_imm:
@@ -485,6 +534,7 @@ f_shl16_imm:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shl16_imm + 256
 .balign 256
 # 50: shr_cl
 f_shr_cl:
@@ -494,6 +544,7 @@ f_shr_cl:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shr_cl + 256
 .balign 256
 # 51: shr_1
 f_shr_1:
@@ -503,6 +554,7 @@ f_shr_1:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_shr_1 + 256
 .balign 256
 # 52: shr_imm
 f_shr_imm:
@@ -512,6 +564,7 @@ f_shr_imm:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shr_imm + 256
 .balign 256
 # 53: shr8_cl
 f_shr8_cl:
@@ -522,6 +575,7 @@ f_shr8_cl:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shr8_cl + 256
 .balign 256
 # 54: shr16_imm
 f_shr16_imm:
@@ -531,6 +585,7 @@ f_shr16_imm:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shr16_imm + 256
 .balign 256
 # 55: sar_cl
 f_sar_cl:
@@ -540,6 +595,7 @@ f_sar_cl:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_sar_cl + 256
 .balign 256
 # 56: sar_1
 f_sar_1:
@@ -549,6 +605,7 @@ f_sar_1:
     and dword ptr [esp-64], 0x8C5
     mov dword ptr [esp-4], 0
     ret
+.org f_sar_1 + 256
 .balign 256
 # 57: sar_imm
 f_sar_imm:
@@ -558,6 +615,7 @@ f_sar_imm:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_sar_imm + 256
 .balign 256
 # 58: sar8_cl
 f_sar8_cl:
@@ -568,6 +626,7 @@ f_sar8_cl:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_sar8_cl + 256
 .balign 256
 # 59: sar16_imm
 f_sar16_imm:
@@ -577,6 +636,7 @@ f_sar16_imm:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_sar16_imm + 256
 .balign 256
 # 60: rol_cl
 f_rol_cl:
@@ -586,6 +646,7 @@ f_rol_cl:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_rol_cl + 256
 .balign 256
 # 61: rol_1
 f_rol_1:
@@ -595,6 +656,7 @@ f_rol_1:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_rol_1 + 256
 .balign 256
 # 62: rol8_cl
 f_rol8_cl:
@@ -604,6 +666,7 @@ f_rol8_cl:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_rol8_cl + 256
 .balign 256
 # 63: ror_cl
 f_ror_cl:
@@ -613,6 +676,7 @@ f_ror_cl:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_ror_cl + 256
 .balign 256
 # 64: ror_1
 f_ror_1:
@@ -622,6 +686,7 @@ f_ror_1:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_ror_1 + 256
 .balign 256
 # 65: ror8_cl
 f_ror8_cl:
@@ -631,6 +696,7 @@ f_ror8_cl:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_ror8_cl + 256
 .balign 256
 # 66: shld_cl
 f_shld_cl:
@@ -640,6 +706,7 @@ f_shld_cl:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shld_cl + 256
 .balign 256
 # 67: shrd_imm
 f_shrd_imm:
@@ -649,6 +716,7 @@ f_shrd_imm:
     and dword ptr [esp-64], 0xC5
     mov dword ptr [esp-4], 0
     ret
+.org f_shrd_imm + 256
 .balign 256
 # 68: imul2
 f_imul2:
@@ -658,6 +726,7 @@ f_imul2:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_imul2 + 256
 .balign 256
 # 69: imul3
 f_imul3:
@@ -667,6 +736,7 @@ f_imul3:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_imul3 + 256
 .balign 256
 # 70: imul16
 f_imul16:
@@ -676,6 +746,7 @@ f_imul16:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_imul16 + 256
 .balign 256
 # 71: imul1
 f_imul1:
@@ -685,6 +756,7 @@ f_imul1:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_imul1 + 256
 .balign 256
 # 72: mul32
 f_mul32:
@@ -694,6 +766,7 @@ f_mul32:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_mul32 + 256
 .balign 256
 # 73: mul8
 f_mul8:
@@ -703,6 +776,7 @@ f_mul8:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_mul8 + 256
 .balign 256
 # 74: mul16
 f_mul16:
@@ -712,6 +786,7 @@ f_mul16:
     and dword ptr [esp-64], 0x801
     mov dword ptr [esp-4], 0
     ret
+.org f_mul16 + 256
 .balign 256
 # 75: div32
 f_div32:
@@ -719,6 +794,7 @@ f_div32:
     or ebx, 1
     div ebx
     ret
+.org f_div32 + 256
 .balign 256
 # 76: idiv32
 f_idiv32:
@@ -726,6 +802,7 @@ f_idiv32:
     or ebx, 1
     idiv ebx
     ret
+.org f_idiv32 + 256
 .balign 256
 # 77: div8
 f_div8:
@@ -733,6 +810,7 @@ f_div8:
     or bl, 0x80
     div bl
     ret
+.org f_div8 + 256
 .balign 256
 # 78: idiv16
 f_idiv16:
@@ -740,6 +818,7 @@ f_idiv16:
     or bx, 1
     idiv bx
     ret
+.org f_idiv16 + 256
 .balign 256
 # 79: bt_reg
 f_bt_reg:
@@ -749,6 +828,7 @@ f_bt_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_bt_reg + 256
 .balign 256
 # 80: bt_imm
 f_bt_imm:
@@ -758,6 +838,7 @@ f_bt_imm:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_bt_imm + 256
 .balign 256
 # 81: bt_mem_reg
 f_bt_mem_reg:
@@ -768,6 +849,7 @@ f_bt_mem_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_bt_mem_reg + 256
 .balign 256
 # 82: bts_reg
 f_bts_reg:
@@ -777,6 +859,7 @@ f_bts_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_bts_reg + 256
 .balign 256
 # 83: bts_imm
 f_bts_imm:
@@ -786,6 +869,7 @@ f_bts_imm:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_bts_imm + 256
 .balign 256
 # 84: bts_mem_reg
 f_bts_mem_reg:
@@ -796,6 +880,7 @@ f_bts_mem_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_bts_mem_reg + 256
 .balign 256
 # 85: btr_reg
 f_btr_reg:
@@ -805,6 +890,7 @@ f_btr_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_btr_reg + 256
 .balign 256
 # 86: btr_imm
 f_btr_imm:
@@ -814,6 +900,7 @@ f_btr_imm:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_btr_imm + 256
 .balign 256
 # 87: btr_mem_reg
 f_btr_mem_reg:
@@ -824,6 +911,7 @@ f_btr_mem_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_btr_mem_reg + 256
 .balign 256
 # 88: btc_reg
 f_btc_reg:
@@ -833,6 +921,7 @@ f_btc_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_btc_reg + 256
 .balign 256
 # 89: btc_imm
 f_btc_imm:
@@ -842,6 +931,7 @@ f_btc_imm:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_btc_imm + 256
 .balign 256
 # 90: btc_mem_reg
 f_btc_mem_reg:
@@ -852,6 +942,7 @@ f_btc_mem_reg:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_btc_mem_reg + 256
 .balign 256
 # 91: bsf
 f_bsf:
@@ -862,6 +953,7 @@ f_bsf:
     and dword ptr [esp-64], 0x40
     mov dword ptr [esp-4], 0
     ret
+.org f_bsf + 256
 .balign 256
 # 92: bsr
 f_bsr:
@@ -871,6 +963,7 @@ f_bsr:
     and dword ptr [esp-64], 0x40
     mov dword ptr [esp-4], 0
     ret
+.org f_bsr + 256
 .balign 256
 # 93: bswap
 f_bswap:
@@ -880,6 +973,7 @@ f_bswap:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_bswap + 256
 .balign 256
 # 94: xadd
 f_xadd:
@@ -889,6 +983,7 @@ f_xadd:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_xadd + 256
 .balign 256
 # 95: cmpxchg
 f_cmpxchg:
@@ -898,6 +993,7 @@ f_cmpxchg:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmpxchg + 256
 .balign 256
 # 96: cmpxchg_eq
 f_cmpxchg_eq:
@@ -908,6 +1004,7 @@ f_cmpxchg_eq:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_cmpxchg_eq + 256
 .balign 256
 # 97: xchg_mem
 f_xchg_mem:
@@ -917,6 +1014,7 @@ f_xchg_mem:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_xchg_mem + 256
 .balign 256
 # 98: cbw
 f_cbw:
@@ -926,6 +1024,7 @@ f_cbw:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cbw + 256
 .balign 256
 # 99: cwde
 f_cwde:
@@ -935,6 +1034,7 @@ f_cwde:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cwde + 256
 .balign 256
 # 100: cdq
 f_cdq:
@@ -944,6 +1044,7 @@ f_cdq:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cdq + 256
 .balign 256
 # 101: cwd
 f_cwd:
@@ -953,6 +1054,7 @@ f_cwd:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cwd + 256
 .balign 256
 # 102: movsx8
 f_movsx8:
@@ -962,6 +1064,7 @@ f_movsx8:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_movsx8 + 256
 .balign 256
 # 103: movsx16
 f_movsx16:
@@ -971,6 +1074,7 @@ f_movsx16:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_movsx16 + 256
 .balign 256
 # 104: movzx8h
 f_movzx8h:
@@ -980,6 +1084,7 @@ f_movzx8h:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_movzx8h + 256
 .balign 256
 # 105: lea
 f_lea:
@@ -989,6 +1094,7 @@ f_lea:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_lea + 256
 .balign 256
 # 106: sahf
 f_sahf:
@@ -998,6 +1104,7 @@ f_sahf:
     and dword ptr [esp-64], 0xD5
     mov dword ptr [esp-4], 0
     ret
+.org f_sahf + 256
 .balign 256
 # 107: lahf
 f_lahf:
@@ -1008,6 +1115,7 @@ f_lahf:
     and dword ptr [esp-64], 0xD5
     mov dword ptr [esp-4], 0
     ret
+.org f_lahf + 256
 .balign 256
 # 108: seto
 f_seto:
@@ -1018,6 +1126,7 @@ f_seto:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_seto + 256
 .balign 256
 # 109: cmovo
 f_cmovo:
@@ -1028,6 +1137,7 @@ f_cmovo:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovo + 256
 .balign 256
 # 110: jo
 f_jo:
@@ -1041,6 +1151,7 @@ f_jo:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jo + 256
 .balign 256
 # 111: setno
 f_setno:
@@ -1051,6 +1162,7 @@ f_setno:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setno + 256
 .balign 256
 # 112: cmovno
 f_cmovno:
@@ -1061,6 +1173,7 @@ f_cmovno:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovno + 256
 .balign 256
 # 113: jno
 f_jno:
@@ -1074,6 +1187,7 @@ f_jno:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jno + 256
 .balign 256
 # 114: setb
 f_setb:
@@ -1084,6 +1198,7 @@ f_setb:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setb + 256
 .balign 256
 # 115: cmovb
 f_cmovb:
@@ -1094,6 +1209,7 @@ f_cmovb:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovb + 256
 .balign 256
 # 116: jb
 f_jb:
@@ -1107,6 +1223,7 @@ f_jb:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jb + 256
 .balign 256
 # 117: setae
 f_setae:
@@ -1117,6 +1234,7 @@ f_setae:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setae + 256
 .balign 256
 # 118: cmovae
 f_cmovae:
@@ -1127,6 +1245,7 @@ f_cmovae:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovae + 256
 .balign 256
 # 119: jae
 f_jae:
@@ -1140,6 +1259,7 @@ f_jae:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jae + 256
 .balign 256
 # 120: sete
 f_sete:
@@ -1150,6 +1270,7 @@ f_sete:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_sete + 256
 .balign 256
 # 121: cmove
 f_cmove:
@@ -1160,6 +1281,7 @@ f_cmove:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmove + 256
 .balign 256
 # 122: je
 f_je:
@@ -1173,6 +1295,7 @@ f_je:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_je + 256
 .balign 256
 # 123: setne
 f_setne:
@@ -1183,6 +1306,7 @@ f_setne:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setne + 256
 .balign 256
 # 124: cmovne
 f_cmovne:
@@ -1193,6 +1317,7 @@ f_cmovne:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovne + 256
 .balign 256
 # 125: jne
 f_jne:
@@ -1206,6 +1331,7 @@ f_jne:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jne + 256
 .balign 256
 # 126: setbe
 f_setbe:
@@ -1216,6 +1342,7 @@ f_setbe:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setbe + 256
 .balign 256
 # 127: cmovbe
 f_cmovbe:
@@ -1226,6 +1353,7 @@ f_cmovbe:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovbe + 256
 .balign 256
 # 128: jbe
 f_jbe:
@@ -1239,6 +1367,7 @@ f_jbe:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jbe + 256
 .balign 256
 # 129: seta
 f_seta:
@@ -1249,6 +1378,7 @@ f_seta:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_seta + 256
 .balign 256
 # 130: cmova
 f_cmova:
@@ -1259,6 +1389,7 @@ f_cmova:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmova + 256
 .balign 256
 # 131: ja
 f_ja:
@@ -1272,6 +1403,7 @@ f_ja:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_ja + 256
 .balign 256
 # 132: sets
 f_sets:
@@ -1282,6 +1414,7 @@ f_sets:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_sets + 256
 .balign 256
 # 133: cmovs
 f_cmovs:
@@ -1292,6 +1425,7 @@ f_cmovs:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovs + 256
 .balign 256
 # 134: js
 f_js:
@@ -1305,6 +1439,7 @@ f_js:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_js + 256
 .balign 256
 # 135: setns
 f_setns:
@@ -1315,6 +1450,7 @@ f_setns:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setns + 256
 .balign 256
 # 136: cmovns
 f_cmovns:
@@ -1325,6 +1461,7 @@ f_cmovns:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovns + 256
 .balign 256
 # 137: jns
 f_jns:
@@ -1338,6 +1475,7 @@ f_jns:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jns + 256
 .balign 256
 # 138: setp
 f_setp:
@@ -1348,6 +1486,7 @@ f_setp:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setp + 256
 .balign 256
 # 139: cmovp
 f_cmovp:
@@ -1358,6 +1497,7 @@ f_cmovp:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovp + 256
 .balign 256
 # 140: jp
 f_jp:
@@ -1371,6 +1511,7 @@ f_jp:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jp + 256
 .balign 256
 # 141: setnp
 f_setnp:
@@ -1381,6 +1522,7 @@ f_setnp:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setnp + 256
 .balign 256
 # 142: cmovnp
 f_cmovnp:
@@ -1391,6 +1533,7 @@ f_cmovnp:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovnp + 256
 .balign 256
 # 143: jnp
 f_jnp:
@@ -1404,6 +1547,7 @@ f_jnp:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jnp + 256
 .balign 256
 # 144: setl
 f_setl:
@@ -1414,6 +1558,7 @@ f_setl:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setl + 256
 .balign 256
 # 145: cmovl
 f_cmovl:
@@ -1424,6 +1569,7 @@ f_cmovl:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovl + 256
 .balign 256
 # 146: jl
 f_jl:
@@ -1437,6 +1583,7 @@ f_jl:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jl + 256
 .balign 256
 # 147: setge
 f_setge:
@@ -1447,6 +1594,7 @@ f_setge:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setge + 256
 .balign 256
 # 148: cmovge
 f_cmovge:
@@ -1457,6 +1605,7 @@ f_cmovge:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovge + 256
 .balign 256
 # 149: jge
 f_jge:
@@ -1470,6 +1619,7 @@ f_jge:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jge + 256
 .balign 256
 # 150: setle
 f_setle:
@@ -1480,6 +1630,7 @@ f_setle:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setle + 256
 .balign 256
 # 151: cmovle
 f_cmovle:
@@ -1490,6 +1641,7 @@ f_cmovle:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovle + 256
 .balign 256
 # 152: jle
 f_jle:
@@ -1503,6 +1655,7 @@ f_jle:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jle + 256
 .balign 256
 # 153: setg
 f_setg:
@@ -1513,6 +1666,7 @@ f_setg:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_setg + 256
 .balign 256
 # 154: cmovg
 f_cmovg:
@@ -1523,6 +1677,7 @@ f_cmovg:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_cmovg + 256
 .balign 256
 # 155: jg
 f_jg:
@@ -1536,6 +1691,7 @@ f_jg:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jg + 256
 .balign 256
 # 156: rep_movsb
 f_rep_movsb:
@@ -1549,6 +1705,7 @@ f_rep_movsb:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_rep_movsb + 256
 .balign 256
 # 157: rep_movsd
 f_rep_movsd:
@@ -1561,6 +1718,7 @@ f_rep_movsd:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_rep_movsd + 256
 .balign 256
 # 158: rep_stosd
 f_rep_stosd:
@@ -1573,6 +1731,7 @@ f_rep_stosd:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_rep_stosd + 256
 .balign 256
 # 159: rep_stosb_back
 f_rep_stosb_back:
@@ -1586,6 +1745,7 @@ f_rep_stosb_back:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_rep_stosb_back + 256
 .balign 256
 # 160: repne_scasb
 f_repne_scasb:
@@ -1599,6 +1759,7 @@ f_repne_scasb:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_repne_scasb + 256
 .balign 256
 # 161: repe_cmpsb
 f_repe_cmpsb:
@@ -1611,6 +1772,7 @@ f_repe_cmpsb:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_repe_cmpsb + 256
 .balign 256
 # 162: lodsd
 f_lodsd:
@@ -1621,6 +1783,7 @@ f_lodsd:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_lodsd + 256
 .balign 256
 # 163: loop
 f_loop:
@@ -1635,6 +1798,7 @@ f_loop:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_loop + 256
 .balign 256
 # 164: jecxz
 f_jecxz:
@@ -1648,6 +1812,7 @@ f_jecxz:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_jecxz + 256
 .balign 256
 # 165: pushad_popad
 f_pushad_popad:
@@ -1660,6 +1825,7 @@ f_pushad_popad:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_pushad_popad + 256
 .balign 256
 # 166: leave
 f_leave:
@@ -1673,6 +1839,7 @@ f_leave:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_leave + 256
 .balign 256
 # 167: push_esp_rel
 f_push_esp_rel:
@@ -1683,6 +1850,7 @@ f_push_esp_rel:
     and dword ptr [esp-64], 0x0
     mov dword ptr [esp-4], 0
     ret
+.org f_push_esp_rel + 256
 .balign 256
 # 168: sub_reg8
 f_sub_reg8:
@@ -1694,6 +1862,7 @@ f_sub_reg8:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_sub_reg8 + 256
 .balign 256
 # 169: rol16
 f_rol16:
@@ -1703,6 +1872,7 @@ f_rol16:
     and dword ptr [esp-64], 0x1
     mov dword ptr [esp-4], 0
     ret
+.org f_rol16 + 256
 .balign 256
 # 170: adc_chain
 f_adc_chain:
@@ -1714,355 +1884,532 @@ f_adc_chain:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_adc_chain + 256
 .balign 256
-# 171: addss
+# 171: rcl_cl
+f_rcl_cl:
+    bt edx, 0
+    rcl eax, cl
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x1
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcl_cl + 256
+.balign 256
+# 172: rcl_1
+f_rcl_1:
+    bt edx, 0
+    rcl ebx, 1
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x801
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcl_1 + 256
+.balign 256
+# 173: rcl8_cl
+f_rcl8_cl:
+    bt edx, 1
+    rcl al, cl
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x1
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcl8_cl + 256
+.balign 256
+# 174: rcl16_imm
+f_rcl16_imm:
+    bt edx, 2
+    rcl bx, 9
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x1
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcl16_imm + 256
+.balign 256
+# 175: rcr_cl
+f_rcr_cl:
+    bt edx, 0
+    rcr eax, cl
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x1
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcr_cl + 256
+.balign 256
+# 176: rcr_1
+f_rcr_1:
+    bt edx, 0
+    rcr ebx, 1
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x801
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcr_1 + 256
+.balign 256
+# 177: rcr8_cl
+f_rcr8_cl:
+    bt edx, 1
+    rcr al, cl
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x1
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcr8_cl + 256
+.balign 256
+# 178: rcr16_imm
+f_rcr16_imm:
+    bt edx, 2
+    rcr bx, 9
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x1
+    mov dword ptr [esp-4], 0
+    ret
+.org f_rcr16_imm + 256
+.balign 256
+# 179: cmpxchg8b
+f_cmpxchg8b:
+    cmpxchg8b qword ptr [esi]
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x40
+    mov dword ptr [esp-4], 0
+    ret
+.org f_cmpxchg8b + 256
+.balign 256
+# 180: cmpxchg8b_eq
+f_cmpxchg8b_eq:
+    mov eax, dword ptr [esi]
+    mov edx, dword ptr [esi+4]
+    cmpxchg8b qword ptr [esi]
+    pushfd
+    pop dword ptr [esp-64]
+    and dword ptr [esp-64], 0x40
+    mov dword ptr [esp-4], 0
+    ret
+.org f_cmpxchg8b_eq + 256
+.balign 256
+# 181: addss
 f_addss:
     addss xmm0, xmm1
     ret
+.org f_addss + 256
 .balign 256
-# 172: addss_mem
+# 182: addss_mem
 f_addss_mem:
     addss xmm2, dword ptr [esi]
     ret
+.org f_addss_mem + 256
 .balign 256
-# 173: subss
+# 183: subss
 f_subss:
     subss xmm0, xmm1
     ret
+.org f_subss + 256
 .balign 256
-# 174: subss_mem
+# 184: subss_mem
 f_subss_mem:
     subss xmm2, dword ptr [esi]
     ret
+.org f_subss_mem + 256
 .balign 256
-# 175: mulss
+# 185: mulss
 f_mulss:
     mulss xmm0, xmm1
     ret
+.org f_mulss + 256
 .balign 256
-# 176: mulss_mem
+# 186: mulss_mem
 f_mulss_mem:
     mulss xmm2, dword ptr [esi]
     ret
+.org f_mulss_mem + 256
 .balign 256
-# 177: divss
+# 187: divss
 f_divss:
     divss xmm0, xmm1
     ret
+.org f_divss + 256
 .balign 256
-# 178: divss_mem
+# 188: divss_mem
 f_divss_mem:
     divss xmm2, dword ptr [esi]
     ret
+.org f_divss_mem + 256
 .balign 256
-# 179: minss
+# 189: minss
 f_minss:
     minss xmm0, xmm1
     ret
+.org f_minss + 256
 .balign 256
-# 180: minss_mem
+# 190: minss_mem
 f_minss_mem:
     minss xmm2, dword ptr [esi]
     ret
+.org f_minss_mem + 256
 .balign 256
-# 181: maxss
+# 191: maxss
 f_maxss:
     maxss xmm0, xmm1
     ret
+.org f_maxss + 256
 .balign 256
-# 182: maxss_mem
+# 192: maxss_mem
 f_maxss_mem:
     maxss xmm2, dword ptr [esi]
     ret
+.org f_maxss_mem + 256
 .balign 256
-# 183: sqrtss
+# 193: sqrtss
 f_sqrtss:
     sqrtss xmm0, xmm1
     ret
+.org f_sqrtss + 256
 .balign 256
-# 184: sqrtss_mem
+# 194: sqrtss_mem
 f_sqrtss_mem:
     sqrtss xmm2, dword ptr [esi]
     ret
+.org f_sqrtss_mem + 256
 .balign 256
-# 185: addps
+# 195: addps
 f_addps:
     addps xmm3, xmm4
     ret
+.org f_addps + 256
 .balign 256
-# 186: addps_mem
+# 196: addps_mem
 f_addps_mem:
     and esi, -16
     addps xmm5, xmmword ptr [esi]
     ret
+.org f_addps_mem + 256
 .balign 256
-# 187: subps
+# 197: subps
 f_subps:
     subps xmm3, xmm4
     ret
+.org f_subps + 256
 .balign 256
-# 188: subps_mem
+# 198: subps_mem
 f_subps_mem:
     and esi, -16
     subps xmm5, xmmword ptr [esi]
     ret
+.org f_subps_mem + 256
 .balign 256
-# 189: mulps
+# 199: mulps
 f_mulps:
     mulps xmm3, xmm4
     ret
+.org f_mulps + 256
 .balign 256
-# 190: mulps_mem
+# 200: mulps_mem
 f_mulps_mem:
     and esi, -16
     mulps xmm5, xmmword ptr [esi]
     ret
+.org f_mulps_mem + 256
 .balign 256
-# 191: divps
+# 201: divps
 f_divps:
     divps xmm3, xmm4
     ret
+.org f_divps + 256
 .balign 256
-# 192: divps_mem
+# 202: divps_mem
 f_divps_mem:
     and esi, -16
     divps xmm5, xmmword ptr [esi]
     ret
+.org f_divps_mem + 256
 .balign 256
-# 193: minps
+# 203: minps
 f_minps:
     minps xmm3, xmm4
     ret
+.org f_minps + 256
 .balign 256
-# 194: minps_mem
+# 204: minps_mem
 f_minps_mem:
     and esi, -16
     minps xmm5, xmmword ptr [esi]
     ret
+.org f_minps_mem + 256
 .balign 256
-# 195: maxps
+# 205: maxps
 f_maxps:
     maxps xmm3, xmm4
     ret
+.org f_maxps + 256
 .balign 256
-# 196: maxps_mem
+# 206: maxps_mem
 f_maxps_mem:
     and esi, -16
     maxps xmm5, xmmword ptr [esi]
     ret
+.org f_maxps_mem + 256
 .balign 256
-# 197: sqrtps
+# 207: sqrtps
 f_sqrtps:
     sqrtps xmm3, xmm4
     ret
+.org f_sqrtps + 256
 .balign 256
-# 198: sqrtps_mem
+# 208: sqrtps_mem
 f_sqrtps_mem:
     and esi, -16
     sqrtps xmm5, xmmword ptr [esi]
     ret
+.org f_sqrtps_mem + 256
 .balign 256
-# 199: andps
+# 209: andps
 f_andps:
     andps xmm3, xmm4
     ret
+.org f_andps + 256
 .balign 256
-# 200: andps_mem
+# 210: andps_mem
 f_andps_mem:
     and esi, -16
     andps xmm5, xmmword ptr [esi]
     ret
+.org f_andps_mem + 256
 .balign 256
-# 201: andnps
+# 211: andnps
 f_andnps:
     andnps xmm3, xmm4
     ret
+.org f_andnps + 256
 .balign 256
-# 202: andnps_mem
+# 212: andnps_mem
 f_andnps_mem:
     and esi, -16
     andnps xmm5, xmmword ptr [esi]
     ret
+.org f_andnps_mem + 256
 .balign 256
-# 203: orps
+# 213: orps
 f_orps:
     orps xmm3, xmm4
     ret
+.org f_orps + 256
 .balign 256
-# 204: orps_mem
+# 214: orps_mem
 f_orps_mem:
     and esi, -16
     orps xmm5, xmmword ptr [esi]
     ret
+.org f_orps_mem + 256
 .balign 256
-# 205: xorps
+# 215: xorps
 f_xorps:
     xorps xmm3, xmm4
     ret
+.org f_xorps + 256
 .balign 256
-# 206: xorps_mem
+# 216: xorps_mem
 f_xorps_mem:
     and esi, -16
     xorps xmm5, xmmword ptr [esi]
     ret
+.org f_xorps_mem + 256
 .balign 256
-# 207: movss_rr
+# 217: movss_rr
 f_movss_rr:
     movss xmm0, xmm7
     ret
+.org f_movss_rr + 256
 .balign 256
-# 208: movss_load
+# 218: movss_load
 f_movss_load:
     movss xmm1, dword ptr [esi+4]
     ret
+.org f_movss_load + 256
 .balign 256
-# 209: movss_store
+# 219: movss_store
 f_movss_store:
     movss dword ptr [esi+8], xmm2
     ret
+.org f_movss_store + 256
 .balign 256
-# 210: movaps_load
+# 220: movaps_load
 f_movaps_load:
     and esi, -16
     movaps xmm3, xmmword ptr [esi]
     ret
+.org f_movaps_load + 256
 .balign 256
-# 211: movaps_store
+# 221: movaps_store
 f_movaps_store:
     and esi, -16
     movaps xmmword ptr [esi+16], xmm4
     ret
+.org f_movaps_store + 256
 .balign 256
-# 212: movups
+# 222: movups
 f_movups:
     movups xmm5, xmmword ptr [esi+3]
     movups xmmword ptr [esi+37], xmm6
     ret
+.org f_movups + 256
 .balign 256
-# 213: movlps_movhps
+# 223: movlps_movhps
 f_movlps_movhps:
     movlps xmm0, qword ptr [esi]
     movhps qword ptr [esi+8], xmm1
     movhps xmm2, qword ptr [esi+16]
     ret
+.org f_movlps_movhps + 256
 .balign 256
-# 214: movhlps_movlhps
+# 224: movhlps_movlhps
 f_movhlps_movlhps:
     movhlps xmm3, xmm4
     movlhps xmm5, xmm6
     ret
+.org f_movhlps_movlhps + 256
 .balign 256
-# 215: shufps_00
+# 225: shufps_00
 f_shufps_00:
     shufps xmm1, xmm2, 0x00
     ret
+.org f_shufps_00 + 256
 .balign 256
-# 216: shufps_1b
+# 226: shufps_1b
 f_shufps_1b:
     shufps xmm1, xmm2, 0x1B
     ret
+.org f_shufps_1b + 256
 .balign 256
-# 217: shufps_e4
+# 227: shufps_e4
 f_shufps_e4:
     shufps xmm1, xmm2, 0xE4
     ret
+.org f_shufps_e4 + 256
 .balign 256
-# 218: shufps_4e
+# 228: shufps_4e
 f_shufps_4e:
     shufps xmm1, xmm2, 0x4E
     ret
+.org f_shufps_4e + 256
 .balign 256
-# 219: unpcklps
+# 229: unpcklps
 f_unpcklps:
     unpcklps xmm0, xmm1
     ret
+.org f_unpcklps + 256
 .balign 256
-# 220: unpckhps
+# 230: unpckhps
 f_unpckhps:
     unpckhps xmm2, xmm3
     ret
+.org f_unpckhps + 256
 .balign 256
-# 221: cmpps_0
+# 231: cmpps_0
 f_cmpps_0:
     cmpps xmm4, xmm5, 0
     ret
+.org f_cmpps_0 + 256
 .balign 256
-# 222: cmpss_0
+# 232: cmpss_0
 f_cmpss_0:
     cmpss xmm6, xmm7, 0
     ret
+.org f_cmpss_0 + 256
 .balign 256
-# 223: cmpps_1
+# 233: cmpps_1
 f_cmpps_1:
     cmpps xmm4, xmm5, 1
     ret
+.org f_cmpps_1 + 256
 .balign 256
-# 224: cmpss_1
+# 234: cmpss_1
 f_cmpss_1:
     cmpss xmm6, xmm7, 1
     ret
+.org f_cmpss_1 + 256
 .balign 256
-# 225: cmpps_2
+# 235: cmpps_2
 f_cmpps_2:
     cmpps xmm4, xmm5, 2
     ret
+.org f_cmpps_2 + 256
 .balign 256
-# 226: cmpss_2
+# 236: cmpss_2
 f_cmpss_2:
     cmpss xmm6, xmm7, 2
     ret
+.org f_cmpss_2 + 256
 .balign 256
-# 227: cmpps_3
+# 237: cmpps_3
 f_cmpps_3:
     cmpps xmm4, xmm5, 3
     ret
+.org f_cmpps_3 + 256
 .balign 256
-# 228: cmpss_3
+# 238: cmpss_3
 f_cmpss_3:
     cmpss xmm6, xmm7, 3
     ret
+.org f_cmpss_3 + 256
 .balign 256
-# 229: cmpps_4
+# 239: cmpps_4
 f_cmpps_4:
     cmpps xmm4, xmm5, 4
     ret
+.org f_cmpps_4 + 256
 .balign 256
-# 230: cmpss_4
+# 240: cmpss_4
 f_cmpss_4:
     cmpss xmm6, xmm7, 4
     ret
+.org f_cmpss_4 + 256
 .balign 256
-# 231: cmpps_5
+# 241: cmpps_5
 f_cmpps_5:
     cmpps xmm4, xmm5, 5
     ret
+.org f_cmpps_5 + 256
 .balign 256
-# 232: cmpss_5
+# 242: cmpss_5
 f_cmpss_5:
     cmpss xmm6, xmm7, 5
     ret
+.org f_cmpss_5 + 256
 .balign 256
-# 233: cmpps_6
+# 243: cmpps_6
 f_cmpps_6:
     cmpps xmm4, xmm5, 6
     ret
+.org f_cmpps_6 + 256
 .balign 256
-# 234: cmpss_6
+# 244: cmpss_6
 f_cmpss_6:
     cmpss xmm6, xmm7, 6
     ret
+.org f_cmpss_6 + 256
 .balign 256
-# 235: cmpps_7
+# 245: cmpps_7
 f_cmpps_7:
     cmpps xmm4, xmm5, 7
     ret
+.org f_cmpps_7 + 256
 .balign 256
-# 236: cmpss_7
+# 246: cmpss_7
 f_cmpss_7:
     cmpss xmm6, xmm7, 7
     ret
+.org f_cmpss_7 + 256
 .balign 256
-# 237: comiss
+# 247: comiss
 f_comiss:
     comiss xmm0, xmm1
     pushfd
@@ -2070,8 +2417,9 @@ f_comiss:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_comiss + 256
 .balign 256
-# 238: comiss_self
+# 248: comiss_self
 f_comiss_self:
     comiss xmm2, xmm2
     pushfd
@@ -2079,8 +2427,9 @@ f_comiss_self:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_comiss_self + 256
 .balign 256
-# 239: ucomiss
+# 249: ucomiss
 f_ucomiss:
     ucomiss xmm0, xmm1
     pushfd
@@ -2088,8 +2437,9 @@ f_ucomiss:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_ucomiss + 256
 .balign 256
-# 240: ucomiss_self
+# 250: ucomiss_self
 f_ucomiss_self:
     ucomiss xmm2, xmm2
     pushfd
@@ -2097,47 +2447,55 @@ f_ucomiss_self:
     and dword ptr [esp-64], 0x8D5
     mov dword ptr [esp-4], 0
     ret
+.org f_ucomiss_self + 256
 .balign 256
-# 241: cvtsi2ss
+# 251: cvtsi2ss
 f_cvtsi2ss:
     cvtsi2ss xmm0, eax
     cvtsi2ss xmm1, dword ptr [esi]
     ret
+.org f_cvtsi2ss + 256
 .balign 256
-# 242: cvttss2si
+# 252: cvttss2si
 f_cvttss2si:
     cvttss2si eax, xmm1
     cvttss2si ebx, dword ptr [esi]
     ret
+.org f_cvttss2si + 256
 .balign 256
-# 243: cvtss2si
+# 253: cvtss2si
 f_cvtss2si:
     cvtss2si eax, xmm2
     ret
+.org f_cvtss2si + 256
 .balign 256
-# 244: movmskps
+# 254: movmskps
 f_movmskps:
     movmskps eax, xmm3
     ret
+.org f_movmskps + 256
 .balign 256
-# 245: mxcsr
+# 255: mxcsr
 f_mxcsr:
     mov dword ptr [esp-8], 0x1F80
     ldmxcsr dword ptr [esp-8]
     stmxcsr dword ptr [esp-12]
     ret
+.org f_mxcsr + 256
 .balign 256
-# 246: rcpss
+# 256: rcpss
 f_rcpss:
     rcpss xmm0, xmm1
     ret
+.org f_rcpss + 256
 .balign 256
-# 247: rsqrtps
+# 257: rsqrtps
 f_rsqrtps:
     rsqrtps xmm2, xmm3
     ret
+.org f_rsqrtps + 256
 .balign 256
-# 248: fld_fstp_m32
+# 258: fld_fstp_m32
 f_fld_fstp_m32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2149,8 +2507,9 @@ f_fld_fstp_m32:
     fld dword ptr [esi]
     fstp dword ptr [esi+64]
     ret
+.org f_fld_fstp_m32 + 256
 .balign 256
-# 249: fld_fst_m64
+# 259: fld_fst_m64
 f_fld_fst_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2162,8 +2521,9 @@ f_fld_fst_m64:
     fld qword ptr [esi]
     fst qword ptr [esi+64]
     ret
+.org f_fld_fst_m64 + 256
 .balign 256
-# 250: fld_m80_roundtrip
+# 260: fld_m80_roundtrip
 f_fld_m80_roundtrip:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2176,8 +2536,9 @@ f_fld_m80_roundtrip:
     fstp tbyte ptr [esi+64]
     fld tbyte ptr [esi+64]
     ret
+.org f_fld_m80_roundtrip + 256
 .balign 256
-# 251: fld_st
+# 261: fld_st
 f_fld_st:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2191,8 +2552,9 @@ f_fld_st:
     fld st(1)
     fst st(2)
     ret
+.org f_fld_st + 256
 .balign 256
-# 252: fild16
+# 262: fild16
 f_fild16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2203,8 +2565,9 @@ f_fild16:
     or dword ptr [esi+16], 0x00400000
     fild word ptr [esi]
     ret
+.org f_fild16 + 256
 .balign 256
-# 253: fistp16
+# 263: fistp16
 f_fistp16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2216,8 +2579,9 @@ f_fistp16:
     fld dword ptr [esi]
     fistp word ptr [esi+64]
     ret
+.org f_fistp16 + 256
 .balign 256
-# 254: fild32
+# 264: fild32
 f_fild32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2228,8 +2592,9 @@ f_fild32:
     or dword ptr [esi+16], 0x00400000
     fild dword ptr [esi]
     ret
+.org f_fild32 + 256
 .balign 256
-# 255: fistp32
+# 265: fistp32
 f_fistp32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2241,8 +2606,9 @@ f_fistp32:
     fld dword ptr [esi]
     fistp dword ptr [esi+64]
     ret
+.org f_fistp32 + 256
 .balign 256
-# 256: fild64
+# 266: fild64
 f_fild64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2253,8 +2619,9 @@ f_fild64:
     or dword ptr [esi+16], 0x00400000
     fild qword ptr [esi]
     ret
+.org f_fild64 + 256
 .balign 256
-# 257: fistp64
+# 267: fistp64
 f_fistp64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2266,8 +2633,9 @@ f_fistp64:
     fld dword ptr [esi]
     fistp qword ptr [esi+64]
     ret
+.org f_fistp64 + 256
 .balign 256
-# 258: fist16_32
+# 268: fist16_32
 f_fist16_32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2280,8 +2648,9 @@ f_fist16_32:
     fist word ptr [esi+64]
     fist dword ptr [esi+68]
     ret
+.org f_fist16_32 + 256
 .balign 256
-# 259: fadd_m32
+# 269: fadd_m32
 f_fadd_m32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2293,8 +2662,9 @@ f_fadd_m32:
     fld dword ptr [esi]
     fadd dword ptr [esi+4]
     ret
+.org f_fadd_m32 + 256
 .balign 256
-# 260: fadd_m64
+# 270: fadd_m64
 f_fadd_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2306,8 +2676,9 @@ f_fadd_m64:
     fld qword ptr [esi]
     fadd qword ptr [esi+8]
     ret
+.org f_fadd_m64 + 256
 .balign 256
-# 261: fadd_st0_sti
+# 271: fadd_st0_sti
 f_fadd_st0_sti:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2320,8 +2691,9 @@ f_fadd_st0_sti:
     fld dword ptr [esi+4]
     fadd st(0), st(1)
     ret
+.org f_fadd_st0_sti + 256
 .balign 256
-# 262: fadd_sti_st0
+# 272: fadd_sti_st0
 f_fadd_sti_st0:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2334,8 +2706,9 @@ f_fadd_sti_st0:
     fld dword ptr [esi+4]
     fadd st(1), st(0)
     ret
+.org f_fadd_sti_st0 + 256
 .balign 256
-# 263: faddp
+# 273: faddp
 f_faddp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2348,8 +2721,9 @@ f_faddp:
     fld dword ptr [esi+4]
     faddp st(1), st(0)
     ret
+.org f_faddp + 256
 .balign 256
-# 264: fiadd16
+# 274: fiadd16
 f_fiadd16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2361,8 +2735,9 @@ f_fiadd16:
     fld dword ptr [esi]
     fiadd word ptr [esi+4]
     ret
+.org f_fiadd16 + 256
 .balign 256
-# 265: fiadd32
+# 275: fiadd32
 f_fiadd32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2374,8 +2749,9 @@ f_fiadd32:
     fld dword ptr [esi]
     fiadd dword ptr [esi+4]
     ret
+.org f_fiadd32 + 256
 .balign 256
-# 266: fsub_m32
+# 276: fsub_m32
 f_fsub_m32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2387,8 +2763,9 @@ f_fsub_m32:
     fld dword ptr [esi]
     fsub dword ptr [esi+4]
     ret
+.org f_fsub_m32 + 256
 .balign 256
-# 267: fsub_m64
+# 277: fsub_m64
 f_fsub_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2400,8 +2777,9 @@ f_fsub_m64:
     fld qword ptr [esi]
     fsub qword ptr [esi+8]
     ret
+.org f_fsub_m64 + 256
 .balign 256
-# 268: fsub_st0_sti
+# 278: fsub_st0_sti
 f_fsub_st0_sti:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2414,8 +2792,9 @@ f_fsub_st0_sti:
     fld dword ptr [esi+4]
     fsub st(0), st(1)
     ret
+.org f_fsub_st0_sti + 256
 .balign 256
-# 269: fsub_sti_st0
+# 279: fsub_sti_st0
 f_fsub_sti_st0:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2428,8 +2807,9 @@ f_fsub_sti_st0:
     fld dword ptr [esi+4]
     fsub st(1), st(0)
     ret
+.org f_fsub_sti_st0 + 256
 .balign 256
-# 270: fsubp
+# 280: fsubp
 f_fsubp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2442,8 +2822,9 @@ f_fsubp:
     fld dword ptr [esi+4]
     fsubp st(1), st(0)
     ret
+.org f_fsubp + 256
 .balign 256
-# 271: fisub16
+# 281: fisub16
 f_fisub16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2455,8 +2836,9 @@ f_fisub16:
     fld dword ptr [esi]
     fisub word ptr [esi+4]
     ret
+.org f_fisub16 + 256
 .balign 256
-# 272: fisub32
+# 282: fisub32
 f_fisub32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2468,8 +2850,9 @@ f_fisub32:
     fld dword ptr [esi]
     fisub dword ptr [esi+4]
     ret
+.org f_fisub32 + 256
 .balign 256
-# 273: fsubr_m32
+# 283: fsubr_m32
 f_fsubr_m32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2481,8 +2864,9 @@ f_fsubr_m32:
     fld dword ptr [esi]
     fsubr dword ptr [esi+4]
     ret
+.org f_fsubr_m32 + 256
 .balign 256
-# 274: fsubr_m64
+# 284: fsubr_m64
 f_fsubr_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2494,8 +2878,9 @@ f_fsubr_m64:
     fld qword ptr [esi]
     fsubr qword ptr [esi+8]
     ret
+.org f_fsubr_m64 + 256
 .balign 256
-# 275: fsubr_st0_sti
+# 285: fsubr_st0_sti
 f_fsubr_st0_sti:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2508,8 +2893,9 @@ f_fsubr_st0_sti:
     fld dword ptr [esi+4]
     fsubr st(0), st(1)
     ret
+.org f_fsubr_st0_sti + 256
 .balign 256
-# 276: fsubr_sti_st0
+# 286: fsubr_sti_st0
 f_fsubr_sti_st0:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2522,8 +2908,9 @@ f_fsubr_sti_st0:
     fld dword ptr [esi+4]
     fsubr st(1), st(0)
     ret
+.org f_fsubr_sti_st0 + 256
 .balign 256
-# 277: fsubrp
+# 287: fsubrp
 f_fsubrp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2536,8 +2923,9 @@ f_fsubrp:
     fld dword ptr [esi+4]
     fsubrp st(1), st(0)
     ret
+.org f_fsubrp + 256
 .balign 256
-# 278: fisubr16
+# 288: fisubr16
 f_fisubr16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2549,8 +2937,9 @@ f_fisubr16:
     fld dword ptr [esi]
     fisubr word ptr [esi+4]
     ret
+.org f_fisubr16 + 256
 .balign 256
-# 279: fisubr32
+# 289: fisubr32
 f_fisubr32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2562,8 +2951,9 @@ f_fisubr32:
     fld dword ptr [esi]
     fisubr dword ptr [esi+4]
     ret
+.org f_fisubr32 + 256
 .balign 256
-# 280: fmul_m32
+# 290: fmul_m32
 f_fmul_m32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2575,8 +2965,9 @@ f_fmul_m32:
     fld dword ptr [esi]
     fmul dword ptr [esi+4]
     ret
+.org f_fmul_m32 + 256
 .balign 256
-# 281: fmul_m64
+# 291: fmul_m64
 f_fmul_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2588,8 +2979,9 @@ f_fmul_m64:
     fld qword ptr [esi]
     fmul qword ptr [esi+8]
     ret
+.org f_fmul_m64 + 256
 .balign 256
-# 282: fmul_st0_sti
+# 292: fmul_st0_sti
 f_fmul_st0_sti:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2602,8 +2994,9 @@ f_fmul_st0_sti:
     fld dword ptr [esi+4]
     fmul st(0), st(1)
     ret
+.org f_fmul_st0_sti + 256
 .balign 256
-# 283: fmul_sti_st0
+# 293: fmul_sti_st0
 f_fmul_sti_st0:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2616,8 +3009,9 @@ f_fmul_sti_st0:
     fld dword ptr [esi+4]
     fmul st(1), st(0)
     ret
+.org f_fmul_sti_st0 + 256
 .balign 256
-# 284: fmulp
+# 294: fmulp
 f_fmulp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2630,8 +3024,9 @@ f_fmulp:
     fld dword ptr [esi+4]
     fmulp st(1), st(0)
     ret
+.org f_fmulp + 256
 .balign 256
-# 285: fimul16
+# 295: fimul16
 f_fimul16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2643,8 +3038,9 @@ f_fimul16:
     fld dword ptr [esi]
     fimul word ptr [esi+4]
     ret
+.org f_fimul16 + 256
 .balign 256
-# 286: fimul32
+# 296: fimul32
 f_fimul32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2656,8 +3052,9 @@ f_fimul32:
     fld dword ptr [esi]
     fimul dword ptr [esi+4]
     ret
+.org f_fimul32 + 256
 .balign 256
-# 287: fdiv_m32
+# 297: fdiv_m32
 f_fdiv_m32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2669,8 +3066,9 @@ f_fdiv_m32:
     fld dword ptr [esi]
     fdiv dword ptr [esi+4]
     ret
+.org f_fdiv_m32 + 256
 .balign 256
-# 288: fdiv_m64
+# 298: fdiv_m64
 f_fdiv_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2682,8 +3080,9 @@ f_fdiv_m64:
     fld qword ptr [esi]
     fdiv qword ptr [esi+8]
     ret
+.org f_fdiv_m64 + 256
 .balign 256
-# 289: fdiv_st0_sti
+# 299: fdiv_st0_sti
 f_fdiv_st0_sti:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2696,8 +3095,9 @@ f_fdiv_st0_sti:
     fld dword ptr [esi+4]
     fdiv st(0), st(1)
     ret
+.org f_fdiv_st0_sti + 256
 .balign 256
-# 290: fdiv_sti_st0
+# 300: fdiv_sti_st0
 f_fdiv_sti_st0:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2710,8 +3110,9 @@ f_fdiv_sti_st0:
     fld dword ptr [esi+4]
     fdiv st(1), st(0)
     ret
+.org f_fdiv_sti_st0 + 256
 .balign 256
-# 291: fdivp
+# 301: fdivp
 f_fdivp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2724,8 +3125,9 @@ f_fdivp:
     fld dword ptr [esi+4]
     fdivp st(1), st(0)
     ret
+.org f_fdivp + 256
 .balign 256
-# 292: fidiv16
+# 302: fidiv16
 f_fidiv16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2737,8 +3139,9 @@ f_fidiv16:
     fld dword ptr [esi]
     fidiv word ptr [esi+4]
     ret
+.org f_fidiv16 + 256
 .balign 256
-# 293: fidiv32
+# 303: fidiv32
 f_fidiv32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2750,8 +3153,9 @@ f_fidiv32:
     fld dword ptr [esi]
     fidiv dword ptr [esi+4]
     ret
+.org f_fidiv32 + 256
 .balign 256
-# 294: fdivr_m32
+# 304: fdivr_m32
 f_fdivr_m32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2763,8 +3167,9 @@ f_fdivr_m32:
     fld dword ptr [esi]
     fdivr dword ptr [esi+4]
     ret
+.org f_fdivr_m32 + 256
 .balign 256
-# 295: fdivr_m64
+# 305: fdivr_m64
 f_fdivr_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2776,8 +3181,9 @@ f_fdivr_m64:
     fld qword ptr [esi]
     fdivr qword ptr [esi+8]
     ret
+.org f_fdivr_m64 + 256
 .balign 256
-# 296: fdivr_st0_sti
+# 306: fdivr_st0_sti
 f_fdivr_st0_sti:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2790,8 +3196,9 @@ f_fdivr_st0_sti:
     fld dword ptr [esi+4]
     fdivr st(0), st(1)
     ret
+.org f_fdivr_st0_sti + 256
 .balign 256
-# 297: fdivr_sti_st0
+# 307: fdivr_sti_st0
 f_fdivr_sti_st0:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2804,8 +3211,9 @@ f_fdivr_sti_st0:
     fld dword ptr [esi+4]
     fdivr st(1), st(0)
     ret
+.org f_fdivr_sti_st0 + 256
 .balign 256
-# 298: fdivrp
+# 308: fdivrp
 f_fdivrp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2818,8 +3226,9 @@ f_fdivrp:
     fld dword ptr [esi+4]
     fdivrp st(1), st(0)
     ret
+.org f_fdivrp + 256
 .balign 256
-# 299: fidivr16
+# 309: fidivr16
 f_fidivr16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2831,8 +3240,9 @@ f_fidivr16:
     fld dword ptr [esi]
     fidivr word ptr [esi+4]
     ret
+.org f_fidivr16 + 256
 .balign 256
-# 300: fidivr32
+# 310: fidivr32
 f_fidivr32:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2844,8 +3254,9 @@ f_fidivr32:
     fld dword ptr [esi]
     fidivr dword ptr [esi+4]
     ret
+.org f_fidivr32 + 256
 .balign 256
-# 301: fchs
+# 311: fchs
 f_fchs:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2857,8 +3268,9 @@ f_fchs:
     fld dword ptr [esi]
     fchs
     ret
+.org f_fchs + 256
 .balign 256
-# 302: fabs
+# 312: fabs
 f_fabs:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2870,8 +3282,9 @@ f_fabs:
     fld dword ptr [esi]
     fabs
     ret
+.org f_fabs + 256
 .balign 256
-# 303: fsqrt
+# 313: fsqrt
 f_fsqrt:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2883,8 +3296,9 @@ f_fsqrt:
     fld dword ptr [esi]
     fsqrt
     ret
+.org f_fsqrt + 256
 .balign 256
-# 304: frndint
+# 314: frndint
 f_frndint:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2896,8 +3310,9 @@ f_frndint:
     fld dword ptr [esi]
     frndint
     ret
+.org f_frndint + 256
 .balign 256
-# 305: fscale
+# 315: fscale
 f_fscale:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2910,8 +3325,9 @@ f_fscale:
     fld dword ptr [esi+4]
     fscale
     ret
+.org f_fscale + 256
 .balign 256
-# 306: fxch
+# 316: fxch
 f_fxch:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2925,8 +3341,9 @@ f_fxch:
     fld dword ptr [esi+8]
     fxch st(2)
     ret
+.org f_fxch + 256
 .balign 256
-# 307: fldz
+# 317: fldz
 f_fldz:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2937,8 +3354,9 @@ f_fldz:
     or dword ptr [esi+16], 0x00400000
     fldz
     ret
+.org f_fldz + 256
 .balign 256
-# 308: fld1
+# 318: fld1
 f_fld1:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2949,8 +3367,9 @@ f_fld1:
     or dword ptr [esi+16], 0x00400000
     fld1
     ret
+.org f_fld1 + 256
 .balign 256
-# 309: fldpi
+# 319: fldpi
 f_fldpi:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2961,8 +3380,9 @@ f_fldpi:
     or dword ptr [esi+16], 0x00400000
     fldpi
     ret
+.org f_fldpi + 256
 .balign 256
-# 310: fldl2e
+# 320: fldl2e
 f_fldl2e:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2973,8 +3393,9 @@ f_fldl2e:
     or dword ptr [esi+16], 0x00400000
     fldl2e
     ret
+.org f_fldl2e + 256
 .balign 256
-# 311: fldl2t
+# 321: fldl2t
 f_fldl2t:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2985,8 +3406,9 @@ f_fldl2t:
     or dword ptr [esi+16], 0x00400000
     fldl2t
     ret
+.org f_fldl2t + 256
 .balign 256
-# 312: fldlg2
+# 322: fldlg2
 f_fldlg2:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -2997,8 +3419,9 @@ f_fldlg2:
     or dword ptr [esi+16], 0x00400000
     fldlg2
     ret
+.org f_fldlg2 + 256
 .balign 256
-# 313: fldln2
+# 323: fldln2
 f_fldln2:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3009,8 +3432,9 @@ f_fldln2:
     or dword ptr [esi+16], 0x00400000
     fldln2
     ret
+.org f_fldln2 + 256
 .balign 256
-# 314: fcom_st
+# 324: fcom_st
 f_fcom_st:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3024,8 +3448,9 @@ f_fcom_st:
     fcom st(1)
     fnstsw ax
     ret
+.org f_fcom_st + 256
 .balign 256
-# 315: fcom_m64
+# 325: fcom_m64
 f_fcom_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3038,8 +3463,9 @@ f_fcom_m64:
     fcom qword ptr [esi+8]
     fnstsw ax
     ret
+.org f_fcom_m64 + 256
 .balign 256
-# 316: fcomp_st
+# 326: fcomp_st
 f_fcomp_st:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3053,8 +3479,9 @@ f_fcomp_st:
     fcomp st(1)
     fnstsw ax
     ret
+.org f_fcomp_st + 256
 .balign 256
-# 317: fcomp_m64
+# 327: fcomp_m64
 f_fcomp_m64:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3067,8 +3494,9 @@ f_fcomp_m64:
     fcomp qword ptr [esi+8]
     fnstsw ax
     ret
+.org f_fcomp_m64 + 256
 .balign 256
-# 318: fucom_st
+# 328: fucom_st
 f_fucom_st:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3082,8 +3510,9 @@ f_fucom_st:
     fucom st(1)
     fnstsw ax
     ret
+.org f_fucom_st + 256
 .balign 256
-# 319: fucomp_st
+# 329: fucomp_st
 f_fucomp_st:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3097,8 +3526,9 @@ f_fucomp_st:
     fucomp st(1)
     fnstsw ax
     ret
+.org f_fucomp_st + 256
 .balign 256
-# 320: fcompp
+# 330: fcompp
 f_fcompp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3117,8 +3547,9 @@ f_fcompp:
     and dword ptr [esp-64], 0xD5
     mov dword ptr [esp-4], 0
     ret
+.org f_fcompp + 256
 .balign 256
-# 321: fucompp
+# 331: fucompp
 f_fucompp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3132,8 +3563,9 @@ f_fucompp:
     fucompp
     fnstsw ax
     ret
+.org f_fucompp + 256
 .balign 256
-# 322: ficom
+# 332: ficom
 f_ficom:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3146,8 +3578,9 @@ f_ficom:
     ficom dword ptr [esi+4]
     fnstsw ax
     ret
+.org f_ficom + 256
 .balign 256
-# 323: ficomp16
+# 333: ficomp16
 f_ficomp16:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3160,8 +3593,9 @@ f_ficomp16:
     ficomp word ptr [esi+4]
     fnstsw ax
     ret
+.org f_ficomp16 + 256
 .balign 256
-# 324: ftst
+# 334: ftst
 f_ftst:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3174,8 +3608,9 @@ f_ftst:
     ftst
     fnstsw ax
     ret
+.org f_ftst + 256
 .balign 256
-# 325: fxam
+# 335: fxam
 f_fxam:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3188,8 +3623,9 @@ f_fxam:
     fxam
     fnstsw ax
     ret
+.org f_fxam + 256
 .balign 256
-# 326: fxam_zero
+# 336: fxam_zero
 f_fxam_zero:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3203,8 +3639,9 @@ f_fxam_zero:
     fxam
     fnstsw word ptr [esi]
     ret
+.org f_fxam_zero + 256
 .balign 256
-# 327: fcomi
+# 337: fcomi
 f_fcomi:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3221,8 +3658,9 @@ f_fcomi:
     and dword ptr [esp-64], 0x45
     mov dword ptr [esp-4], 0
     ret
+.org f_fcomi + 256
 .balign 256
-# 328: fcomip
+# 338: fcomip
 f_fcomip:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3239,8 +3677,9 @@ f_fcomip:
     and dword ptr [esp-64], 0x45
     mov dword ptr [esp-4], 0
     ret
+.org f_fcomip + 256
 .balign 256
-# 329: fucomi
+# 339: fucomi
 f_fucomi:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3257,8 +3696,9 @@ f_fucomi:
     and dword ptr [esp-64], 0x45
     mov dword ptr [esp-4], 0
     ret
+.org f_fucomi + 256
 .balign 256
-# 330: fucomip
+# 340: fucomip
 f_fucomip:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3275,8 +3715,9 @@ f_fucomip:
     and dword ptr [esp-64], 0x45
     mov dword ptr [esp-4], 0
     ret
+.org f_fucomip + 256
 .balign 256
-# 331: fcmovb
+# 341: fcmovb
 f_fcmovb:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3290,8 +3731,9 @@ f_fcmovb:
     cmp eax, ebx
     fcmovb st(0), st(1)
     ret
+.org f_fcmovb + 256
 .balign 256
-# 332: fcmove
+# 342: fcmove
 f_fcmove:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3305,8 +3747,9 @@ f_fcmove:
     cmp eax, ebx
     fcmove st(0), st(1)
     ret
+.org f_fcmove + 256
 .balign 256
-# 333: fcmovbe
+# 343: fcmovbe
 f_fcmovbe:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3320,8 +3763,9 @@ f_fcmovbe:
     cmp eax, ebx
     fcmovbe st(0), st(1)
     ret
+.org f_fcmovbe + 256
 .balign 256
-# 334: fcmovu
+# 344: fcmovu
 f_fcmovu:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3335,8 +3779,9 @@ f_fcmovu:
     cmp eax, ebx
     fcmovu st(0), st(1)
     ret
+.org f_fcmovu + 256
 .balign 256
-# 335: fcmovnb
+# 345: fcmovnb
 f_fcmovnb:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3350,8 +3795,9 @@ f_fcmovnb:
     cmp eax, ebx
     fcmovnb st(0), st(1)
     ret
+.org f_fcmovnb + 256
 .balign 256
-# 336: fcmovne
+# 346: fcmovne
 f_fcmovne:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3365,8 +3811,9 @@ f_fcmovne:
     cmp eax, ebx
     fcmovne st(0), st(1)
     ret
+.org f_fcmovne + 256
 .balign 256
-# 337: fcmovnbe
+# 347: fcmovnbe
 f_fcmovnbe:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3380,8 +3827,9 @@ f_fcmovnbe:
     cmp eax, ebx
     fcmovnbe st(0), st(1)
     ret
+.org f_fcmovnbe + 256
 .balign 256
-# 338: fcmovnu
+# 348: fcmovnu
 f_fcmovnu:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3395,8 +3843,9 @@ f_fcmovnu:
     cmp eax, ebx
     fcmovnu st(0), st(1)
     ret
+.org f_fcmovnu + 256
 .balign 256
-# 339: fnstcw_fldcw
+# 349: fnstcw_fldcw
 f_fnstcw_fldcw:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3409,8 +3858,9 @@ f_fnstcw_fldcw:
     fldcw word ptr [esi]
     fnstcw word ptr [esi+2]
     ret
+.org f_fnstcw_fldcw + 256
 .balign 256
-# 340: rc_round_down
+# 350: rc_round_down
 f_rc_round_down:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3429,8 +3879,9 @@ f_rc_round_down:
     mov word ptr [esp-8], 0x037F
     fldcw word ptr [esp-8]
     ret
+.org f_rc_round_down + 256
 .balign 256
-# 341: rc_round_up
+# 351: rc_round_up
 f_rc_round_up:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3449,8 +3900,9 @@ f_rc_round_up:
     mov word ptr [esp-8], 0x037F
     fldcw word ptr [esp-8]
     ret
+.org f_rc_round_up + 256
 .balign 256
-# 342: rc_truncate
+# 352: rc_truncate
 f_rc_truncate:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3469,8 +3921,9 @@ f_rc_truncate:
     mov word ptr [esp-8], 0x037F
     fldcw word ptr [esp-8]
     ret
+.org f_rc_truncate + 256
 .balign 256
-# 343: pc_double
+# 353: pc_double
 f_pc_double:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3487,8 +3940,9 @@ f_pc_double:
     mov word ptr [esp-8], 0x037F
     fldcw word ptr [esp-8]
     ret
+.org f_pc_double + 256
 .balign 256
-# 344: pc_single
+# 354: pc_single
 f_pc_single:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3505,8 +3959,9 @@ f_pc_single:
     mov word ptr [esp-8], 0x037F
     fldcw word ptr [esp-8]
     ret
+.org f_pc_single + 256
 .balign 256
-# 345: fninit
+# 355: fninit
 f_fninit:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3520,8 +3975,9 @@ f_fninit:
     fnstcw word ptr [esi]
     fnstsw word ptr [esi+2]
     ret
+.org f_fninit + 256
 .balign 256
-# 346: fincstp
+# 356: fincstp
 f_fincstp:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3535,8 +3991,9 @@ f_fincstp:
     fdecstp
     fdecstp
     ret
+.org f_fincstp + 256
 .balign 256
-# 347: fnstsw_top
+# 357: fnstsw_top
 f_fnstsw_top:
     or dword ptr [esi], 0x00400000
     or dword ptr [esi+4], 0x00400000
@@ -3549,3 +4006,2562 @@ f_fnstsw_top:
     fld dword ptr [esi+4]
     fnstsw ax
     ret
+.org f_fnstsw_top + 256
+.balign 256
+# 358: paddb
+f_paddb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddb + 256
+.balign 256
+# 359: paddb_mem
+f_paddb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddb_mem + 256
+.balign 256
+# 360: paddw
+f_paddw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddw + 256
+.balign 256
+# 361: paddw_mem
+f_paddw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddw_mem + 256
+.balign 256
+# 362: paddd
+f_paddd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddd mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddd + 256
+.balign 256
+# 363: paddd_mem
+f_paddd_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddd mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddd_mem + 256
+.balign 256
+# 364: psubb
+f_psubb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubb + 256
+.balign 256
+# 365: psubb_mem
+f_psubb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubb_mem + 256
+.balign 256
+# 366: psubw
+f_psubw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubw + 256
+.balign 256
+# 367: psubw_mem
+f_psubw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubw_mem + 256
+.balign 256
+# 368: psubd
+f_psubd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubd mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubd + 256
+.balign 256
+# 369: psubd_mem
+f_psubd_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubd mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubd_mem + 256
+.balign 256
+# 370: paddsb
+f_paddsb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddsb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddsb + 256
+.balign 256
+# 371: paddsb_mem
+f_paddsb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddsb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddsb_mem + 256
+.balign 256
+# 372: paddsw
+f_paddsw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddsw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddsw + 256
+.balign 256
+# 373: paddsw_mem
+f_paddsw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddsw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddsw_mem + 256
+.balign 256
+# 374: psubsb
+f_psubsb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubsb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubsb + 256
+.balign 256
+# 375: psubsb_mem
+f_psubsb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubsb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubsb_mem + 256
+.balign 256
+# 376: psubsw
+f_psubsw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubsw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubsw + 256
+.balign 256
+# 377: psubsw_mem
+f_psubsw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubsw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubsw_mem + 256
+.balign 256
+# 378: paddusb
+f_paddusb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddusb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddusb + 256
+.balign 256
+# 379: paddusb_mem
+f_paddusb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddusb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddusb_mem + 256
+.balign 256
+# 380: paddusw
+f_paddusw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddusw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddusw + 256
+.balign 256
+# 381: paddusw_mem
+f_paddusw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    paddusw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_paddusw_mem + 256
+.balign 256
+# 382: psubusb
+f_psubusb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubusb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubusb + 256
+.balign 256
+# 383: psubusb_mem
+f_psubusb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubusb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubusb_mem + 256
+.balign 256
+# 384: psubusw
+f_psubusw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubusw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubusw + 256
+.balign 256
+# 385: psubusw_mem
+f_psubusw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psubusw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psubusw_mem + 256
+.balign 256
+# 386: pmullw
+f_pmullw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmullw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmullw + 256
+.balign 256
+# 387: pmullw_mem
+f_pmullw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmullw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmullw_mem + 256
+.balign 256
+# 388: pmulhw
+f_pmulhw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmulhw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmulhw + 256
+.balign 256
+# 389: pmulhw_mem
+f_pmulhw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmulhw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmulhw_mem + 256
+.balign 256
+# 390: pmulhuw
+f_pmulhuw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmulhuw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmulhuw + 256
+.balign 256
+# 391: pmulhuw_mem
+f_pmulhuw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmulhuw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmulhuw_mem + 256
+.balign 256
+# 392: pmaddwd
+f_pmaddwd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmaddwd mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmaddwd + 256
+.balign 256
+# 393: pmaddwd_mem
+f_pmaddwd_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmaddwd mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmaddwd_mem + 256
+.balign 256
+# 394: pcmpeqb
+f_pcmpeqb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpeqb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpeqb + 256
+.balign 256
+# 395: pcmpeqb_mem
+f_pcmpeqb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpeqb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpeqb_mem + 256
+.balign 256
+# 396: pcmpeqw
+f_pcmpeqw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpeqw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpeqw + 256
+.balign 256
+# 397: pcmpeqw_mem
+f_pcmpeqw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpeqw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpeqw_mem + 256
+.balign 256
+# 398: pcmpeqd
+f_pcmpeqd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpeqd mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpeqd + 256
+.balign 256
+# 399: pcmpeqd_mem
+f_pcmpeqd_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpeqd mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpeqd_mem + 256
+.balign 256
+# 400: pcmpgtb
+f_pcmpgtb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpgtb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpgtb + 256
+.balign 256
+# 401: pcmpgtb_mem
+f_pcmpgtb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpgtb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpgtb_mem + 256
+.balign 256
+# 402: pcmpgtw
+f_pcmpgtw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpgtw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpgtw + 256
+.balign 256
+# 403: pcmpgtw_mem
+f_pcmpgtw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpgtw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpgtw_mem + 256
+.balign 256
+# 404: pcmpgtd
+f_pcmpgtd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpgtd mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpgtd + 256
+.balign 256
+# 405: pcmpgtd_mem
+f_pcmpgtd_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pcmpgtd mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pcmpgtd_mem + 256
+.balign 256
+# 406: pavgb
+f_pavgb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pavgb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pavgb + 256
+.balign 256
+# 407: pavgb_mem
+f_pavgb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pavgb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pavgb_mem + 256
+.balign 256
+# 408: pavgw
+f_pavgw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pavgw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pavgw + 256
+.balign 256
+# 409: pavgw_mem
+f_pavgw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pavgw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pavgw_mem + 256
+.balign 256
+# 410: pmaxsw
+f_pmaxsw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmaxsw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmaxsw + 256
+.balign 256
+# 411: pmaxsw_mem
+f_pmaxsw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmaxsw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmaxsw_mem + 256
+.balign 256
+# 412: pminsw
+f_pminsw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pminsw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pminsw + 256
+.balign 256
+# 413: pminsw_mem
+f_pminsw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pminsw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pminsw_mem + 256
+.balign 256
+# 414: pmaxub
+f_pmaxub:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmaxub mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmaxub + 256
+.balign 256
+# 415: pmaxub_mem
+f_pmaxub_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmaxub mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmaxub_mem + 256
+.balign 256
+# 416: pminub
+f_pminub:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pminub mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pminub + 256
+.balign 256
+# 417: pminub_mem
+f_pminub_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pminub mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pminub_mem + 256
+.balign 256
+# 418: pand
+f_pand:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pand mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pand + 256
+.balign 256
+# 419: pand_mem
+f_pand_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pand mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pand_mem + 256
+.balign 256
+# 420: pandn
+f_pandn:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pandn mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pandn + 256
+.balign 256
+# 421: pandn_mem
+f_pandn_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pandn mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pandn_mem + 256
+.balign 256
+# 422: por
+f_por:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    por mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_por + 256
+.balign 256
+# 423: por_mem
+f_por_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    por mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_por_mem + 256
+.balign 256
+# 424: pxor
+f_pxor:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pxor mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pxor + 256
+.balign 256
+# 425: pxor_mem
+f_pxor_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pxor mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pxor_mem + 256
+.balign 256
+# 426: punpcklbw
+f_punpcklbw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpcklbw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpcklbw + 256
+.balign 256
+# 427: punpcklbw_mem
+f_punpcklbw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpcklbw mm1, dword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpcklbw_mem + 256
+.balign 256
+# 428: punpcklwd
+f_punpcklwd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpcklwd mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpcklwd + 256
+.balign 256
+# 429: punpcklwd_mem
+f_punpcklwd_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpcklwd mm1, dword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpcklwd_mem + 256
+.balign 256
+# 430: punpckldq
+f_punpckldq:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckldq mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckldq + 256
+.balign 256
+# 431: punpckldq_mem
+f_punpckldq_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckldq mm1, dword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckldq_mem + 256
+.balign 256
+# 432: punpckhbw
+f_punpckhbw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckhbw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckhbw + 256
+.balign 256
+# 433: punpckhbw_mem
+f_punpckhbw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckhbw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckhbw_mem + 256
+.balign 256
+# 434: punpckhwd
+f_punpckhwd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckhwd mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckhwd + 256
+.balign 256
+# 435: punpckhwd_mem
+f_punpckhwd_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckhwd mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckhwd_mem + 256
+.balign 256
+# 436: punpckhdq
+f_punpckhdq:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckhdq mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckhdq + 256
+.balign 256
+# 437: punpckhdq_mem
+f_punpckhdq_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    punpckhdq mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_punpckhdq_mem + 256
+.balign 256
+# 438: packsswb
+f_packsswb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    packsswb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_packsswb + 256
+.balign 256
+# 439: packsswb_mem
+f_packsswb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    packsswb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_packsswb_mem + 256
+.balign 256
+# 440: packuswb
+f_packuswb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    packuswb mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_packuswb + 256
+.balign 256
+# 441: packuswb_mem
+f_packuswb_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    packuswb mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_packuswb_mem + 256
+.balign 256
+# 442: packssdw
+f_packssdw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    packssdw mm0, mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_packssdw + 256
+.balign 256
+# 443: packssdw_mem
+f_packssdw_mem:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    packssdw mm1, qword ptr [esi+16]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_packssdw_mem + 256
+.balign 256
+# 444: psllw_imm
+f_psllw_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psllw mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psllw_imm + 256
+.balign 256
+# 445: psllw_big
+f_psllw_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psllw mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psllw_big + 256
+.balign 256
+# 446: psllw_reg
+f_psllw_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    psllw mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psllw_reg + 256
+.balign 256
+# 447: pslld_imm
+f_pslld_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pslld mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pslld_imm + 256
+.balign 256
+# 448: pslld_big
+f_pslld_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pslld mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pslld_big + 256
+.balign 256
+# 449: pslld_reg
+f_pslld_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    pslld mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pslld_reg + 256
+.balign 256
+# 450: psllq_imm
+f_psllq_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psllq mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psllq_imm + 256
+.balign 256
+# 451: psllq_big
+f_psllq_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psllq mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psllq_big + 256
+.balign 256
+# 452: psllq_reg
+f_psllq_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    psllq mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psllq_reg + 256
+.balign 256
+# 453: psrlw_imm
+f_psrlw_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrlw mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrlw_imm + 256
+.balign 256
+# 454: psrlw_big
+f_psrlw_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrlw mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrlw_big + 256
+.balign 256
+# 455: psrlw_reg
+f_psrlw_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    psrlw mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrlw_reg + 256
+.balign 256
+# 456: psrld_imm
+f_psrld_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrld mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrld_imm + 256
+.balign 256
+# 457: psrld_big
+f_psrld_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrld mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrld_big + 256
+.balign 256
+# 458: psrld_reg
+f_psrld_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    psrld mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrld_reg + 256
+.balign 256
+# 459: psrlq_imm
+f_psrlq_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrlq mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrlq_imm + 256
+.balign 256
+# 460: psrlq_big
+f_psrlq_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrlq mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrlq_big + 256
+.balign 256
+# 461: psrlq_reg
+f_psrlq_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    psrlq mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrlq_reg + 256
+.balign 256
+# 462: psraw_imm
+f_psraw_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psraw mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psraw_imm + 256
+.balign 256
+# 463: psraw_big
+f_psraw_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psraw mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psraw_big + 256
+.balign 256
+# 464: psraw_reg
+f_psraw_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    psraw mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psraw_reg + 256
+.balign 256
+# 465: psrad_imm
+f_psrad_imm:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrad mm0, 5
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrad_imm + 256
+.balign 256
+# 466: psrad_big
+f_psrad_big:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    psrad mm1, 40
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrad_big + 256
+.balign 256
+# 467: psrad_reg
+f_psrad_reg:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    mov eax, ecx
+    and eax, 0x7F
+    movd mm2, eax
+    psrad mm0, mm2
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_psrad_reg + 256
+.balign 256
+# 468: pshufw
+f_pshufw:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pshufw mm2, mm0, 0x1B
+    pshufw mm3, qword ptr [esi+8], 0xE4
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pshufw + 256
+.balign 256
+# 469: movd
+f_movd:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    movd mm2, ecx
+    movd eax, mm0
+    movd dword ptr [esi+32], mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_movd + 256
+.balign 256
+# 470: movq_store
+f_movq_store:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    movq qword ptr [esi+40], mm0
+    movntq qword ptr [esi+48], mm1
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_movq_store + 256
+.balign 256
+# 471: pmovmskb
+f_pmovmskb:
+    movq mm0, qword ptr [esi]
+    movq mm1, qword ptr [esi+8]
+    pmovmskb eax, mm0
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_pmovmskb + 256
+.balign 256
+# 472: mmx_resets_top
+f_mmx_resets_top:
+    fld1
+    fld1
+    movq mm0, qword ptr [esi]
+    movq qword ptr [esi+64], mm0
+    movq qword ptr [esi+72], mm1
+    movq qword ptr [esi+80], mm2
+    movq qword ptr [esi+88], mm3
+    fnstsw word ptr [esi+96]
+    emms
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    fldz
+    ret
+.org f_mmx_resets_top + 256

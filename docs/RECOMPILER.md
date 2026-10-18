@@ -29,7 +29,9 @@ see [Building the output](#building-the-output).
 A function's body is everything reachable from its entry without passing
 through another function's entry (`analysis.Body`). Tails that MSVC shares
 between functions are duplicated into each one, since C cannot jump between
-functions.
+functions. Such a tail can sit below the entry, so a function starts with a
+`goto` to its entry whenever the entry is not its lowest address. A jump
+back to the entry is a loop, never a recursive call.
 
 ### Floating point
 
@@ -46,6 +48,11 @@ functions.
   x87 register stack lives in `XbCtx`, because MSVC returns `float`/`double`
   in ST(0) across calls.
 
+- **MMX** (Bink, WMA) aliases the x87 registers as the hardware does.
+  MMi is the low 64 bits of physical register Ri, a write sets Ri's
+  exponent field to all ones, and every MMX instruction resets TOP to 0.
+  Code that mixes MMX and x87 therefore behaves as on the Xbox.
+
 Not modelled yet:
 - the x87 tag word (FXAM never reports "empty") and x87 exception flags;
 - the MXCSR rounding mode and flush-to-zero bits (MXCSR is stored and
@@ -59,16 +66,19 @@ Not modelled yet:
 |---|---|---|
 | integer core | 81.6% | 62.4% |
 | + SSE1 | 88.3% | 72.1% |
-| + x87 | **98.7%** (17,188 of 17,417) | **96.9%** |
+| + x87 | 98.7% | 96.9% |
+| + MMX, `RCL`/`RCR`, `CMPXCHG8B`, `RDTSC` | **99.0%** (17,292 of 17,462) | **97.8%** |
 
-What's left:
-- MMX, used by Bink and WMA.
-- `RDTSC`, `CMPXCHG8B` and `RCL`/`RCR`.
-- Privileged instructions inside the D3D/DSOUND driver code, which phase
-  4/5 replaces anyway.
-- Bytes that discovery mistook for code (`AAA`, `LES`, `INTO`…).
-- 48 jumps that leave the function they're in, which are discovery gaps to
-  look into.
+What's left is code that should never be translated:
+- privileged instructions (`IN`/`OUT`/`CLI`/`STI`/`WBINVD`/`IRETD`) inside
+  the D3D and DSOUND driver code, which phases 4 and 5 replace;
+- bytes that discovery mistook for code (`AAA`, `LES`, `INTO`, `ENTER`…),
+  most of them from data references that only look like functions. These
+  include the ~50 "jumps outside function", such as a "function" that is
+  just `jz` to itself.
+
+`RDTSC` calls the runtime's `xb_rdtsc`, so the runtime controls what time
+the game sees.
 
 ## Testing: differential against a reference CPU
 
@@ -96,9 +106,10 @@ Two suites:
   `mkedge.py`, has 348 functions, one per instruction form: every ALU op
   at every width with both carry states, shifts and rotates with all
   counts, mul/div, bit ops, string ops with REP prefixes in both
-  directions, all 16 conditions as jcc/setcc/cmov, and SSE1 and x87
-  including rounding and precision control. Each case saves EFLAGS masked
-  to the flags that instruction defines. **Result: 10,930 cases, 0
+  directions, all 16 conditions as jcc/setcc/cmov, SSE1, x87 including
+  rounding and precision control, and MMX. Each case saves EFLAGS masked to
+  the flags that instruction defines, and `.org` fails the build if a case
+  outgrows its 256-byte slot. **Result: 473 forms, 13,573 cases, 0
   mismatches.**
 - **`TestForzaDifferential`** needs `FORZA_XBE`. It runs every Forza leaf
   function that translates fully and calls nothing.
@@ -119,15 +130,26 @@ The edge suite steers around these, and each one is commented in
   quiet first.
 - **Transcendentals and `fprem`/`fprem1`.** QEMU computes these through
   host double precision, so its results aren't the x87's. They are not in
-  the edge suite.
+  the edge suite, and the Forza test skips functions that use them.
+- **MMX writes.** A real CPU sets the aliased x87 register's exponent to
+  all ones, and QEMU 5 leaves it 0. MMX edge cases store their results
+  and then overwrite the x87 registers, so only defined state compares.
 - **Initial state.** Unicorn starts with x87 control word 0 (24-bit
   precision, exceptions unmasked) and IF clear. The harness sets the
   power-on values (`0x037F`, IF=1) on both sides.
 
-Mismatches found during development were all in the harness, never the
-translator: the IF bit, raw EFLAGS left on the stack by `pushfd`, and a
-`fork`/`exit` interaction that re-read input files. They are fixed, and
-noted in the code where they could come back.
+What the differential tests found:
+
+- **A real translator bug, found by the Forza test.** Functions whose
+  shared tail sits below their entry started executing at the tail. In
+  Forza that's 3 of 3,391 leaf functions, among them the CRT's `strchr`.
+  It's fixed, with a unit test (`TestEntryNotFirst`).
+- **Harness bugs:** the IF bit, raw EFLAGS left on the stack by `pushfd`,
+  and a `fork`/`exit` interaction that re-read input files. They're fixed,
+  and noted in the code where they could come back.
+- **Unicorn deviations**, listed above. Each one was traced to the
+  hardware definition, and in each case our translation follows the
+  hardware.
 
 ## Building the output
 

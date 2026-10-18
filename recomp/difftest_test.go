@@ -48,6 +48,11 @@ func tools(t *testing.T) (python string) {
 
 var otherFunc = regexp.MustCompile(`\bf_[0-9A-F]{8}\b`)
 
+// noReference matches x87 instructions Unicorn computes through host
+// double precision rather than as the x87 does, so a function using them
+// cannot be checked against it (see docs/RECOMPILER.md).
+var noReference = regexp.MustCompile(`/\* [0-9A-F]{8}  (fsin|fcos|fsincos|fptan|fpatan|fyl2x|fyl2xp1|f2xm1|fprem|fprem1)\b`)
+
 // leafFuncs picks functions the translator fully handles that call nothing
 // and use no fs: segment, so they run in the harness on their own.
 func leafFuncs(tr *recomp.Translator, p *analysis.Program) map[uint32]recomp.Func {
@@ -58,7 +63,8 @@ func leafFuncs(tr *recomp.Translator, p *analysis.Program) map[uint32]recomp.Fun
 		}
 		code := tr.Function(va)
 		if len(code.Unsupported) > 0 || strings.Contains(code.Code, "fs_base") || strings.Contains(code.Code, "xb_call_indirect") ||
-			strings.Contains(code.Code, "xb_kernel") || len(otherFunc.FindAllString(code.Code, -1)) != 1 {
+			strings.Contains(code.Code, "xb_kernel") || strings.Contains(code.Code, "xb_rdtsc") ||
+			len(otherFunc.FindAllString(code.Code, -1)) != 1 || noReference.MatchString(code.Code) {
 			continue
 		}
 		out[va] = code

@@ -21,12 +21,12 @@ graphics, audio and input. See [docs/ROADMAP.md](docs/ROADMAP.md).
   including ports of its hand-written scans. C runtime helpers are matched
   with our own patterns. On Forza that's 530 symbols. All 507 the original
   C implementation reports for this XBE come out at the same addresses.
-- `recomp` translates the game's x86 to C: integer, SSE1 and x87, with
-  x87 kept bit-exact by running it on the host's own x87 unit. **98.7% of
-  Forza's functions translate fully.** Correctness is checked by
-  differential testing against the Unicorn CPU emulator: 348 edge-case
-  instruction forms pass with 0 mismatches. See
-  [docs/RECOMPILER.md](docs/RECOMPILER.md).
+- `recomp` translates the game's x86 to C: integer, SSE1, x87 and MMX,
+  with x87 kept bit-exact by running it on the host's own x87 unit. **99.0%
+  of Forza's functions translate fully.** Correctness is checked by
+  differential testing against the Unicorn CPU emulator: 473 edge-case
+  instruction forms pass with 0 mismatches, and so do Forza's own
+  functions. See [docs/RECOMPILER.md](docs/RECOMPILER.md).
 - Five tools: `xbeinfo`, `xbemap`, `xbedis`, `xbesyms` and `xbrecomp`.
 
 ## You need your own copy

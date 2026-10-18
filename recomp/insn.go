@@ -248,7 +248,7 @@ func (g *gen) inst(in analysis.Inst) {
 	op := in.Op
 	a0, a1, a2 := in.Args[0], in.Args[1], in.Args[2]
 
-	if g.sse(in) || g.x87(in) {
+	if g.sse(in) || g.x87(in) || g.mmx(in) {
 		return
 	}
 
@@ -332,6 +332,27 @@ func (g *gen) inst(in analysis.Inst) {
 
 	case x86asm.SHL, x86asm.SHR, x86asm.SAR, x86asm.ROL, x86asm.ROR:
 		if g.shift(op, a0, a1) {
+			return
+		}
+
+	case x86asm.RCL, x86asm.RCR:
+		if g.rotateCarry(op, a0, a1) {
+			return
+		}
+
+	case x86asm.RDTSC:
+		// The runtime decides what time the game sees.
+		g.line("{ uint64_t t = xb_rdtsc(c); c->eax = (uint32_t)t; c->edx = (uint32_t)(t >> 32); }")
+		return
+
+	case x86asm.CMPXCHG8B:
+		m, ok := a0.(x86asm.Mem)
+		if !ok {
+			break
+		}
+		if ad, ok := g.addr(m); ok {
+			g.line("{ uint32_t p = %s; uint64_t v = xb_rd64(p); if (v == ((uint64_t)c->edx << 32 | c->eax)) { zf = 1; xb_wr64(p, (uint64_t)c->ecx << 32 | c->ebx); }"+
+				" else { zf = 0; c->eax = (uint32_t)v; c->edx = (uint32_t)(v >> 32); } }", ad)
 			return
 		}
 
@@ -647,6 +668,29 @@ func (g *gen) shift(op x86asm.Op, dst, cnt x86asm.Arg) bool {
 	}
 	// A zero count changes nothing, flags included.
 	g.line("{ uint32_t a = %s, n = %s & 0x1Fu, r; if (n) { %s %s } }", a, n, body, w)
+	return true
+}
+
+// rotateCarry is RCL/RCR: a rotate through CF, so over bits+1 positions.
+func (g *gen) rotateCarry(op x86asm.Op, dst, cnt x86asm.Arg) bool {
+	bits := g.size(dst)
+	a, ok1 := g.read(dst, bits)
+	n, ok2 := g.read(cnt, 8)
+	w, ok3 := g.write(dst, bits, "r")
+	if !ok1 || !ok2 || !ok3 {
+		return false
+	}
+	wide := bits + 1
+	full := fmt.Sprintf("0x%XULL", uint64(1)<<wide-1)
+	var body string
+	if op == x86asm.RCL {
+		body = fmt.Sprintf("uint64_t t = (uint64_t)cf << %d | a; t = ((t << k) | (t >> (%d - k))) & %s; r = (uint32_t)t & %s; cf = (uint32_t)(t >> %d) & 1; of = ((r >> %d) & 1) ^ cf;",
+			bits, wide, full, mask(bits), bits, bits-1)
+	} else {
+		body = fmt.Sprintf("uint64_t t = (uint64_t)cf << %d | a; t = ((t >> k) | (t << (%d - k))) & %s; r = (uint32_t)t & %s; cf = (uint32_t)(t >> %d) & 1; of = ((r >> %d) ^ (r >> %d)) & 1;",
+			bits, wide, full, mask(bits), bits, bits-1, bits-2)
+	}
+	g.line("{ uint32_t a = %s, k = (%s & 0x1Fu) %% %d, r; if (k) { %s %s } }", a, n, wide, body, w)
 	return true
 }
 

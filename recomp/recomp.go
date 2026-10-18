@@ -70,6 +70,12 @@ func (t *Translator) Function(va uint32) Func {
 	}
 
 	var code strings.Builder
+	// Shared tails can sit below the entry, and instructions are emitted in
+	// address order, so the entry is not necessarily first.
+	if len(g.body.Insts) > 0 && g.body.Insts[0].Addr != va {
+		g.labels[va] = true
+		g.line("goto L_%08X;", va)
+	}
 	for i, in := range g.body.Insts {
 		g.cur = in
 		fmt.Fprintf(&g.w, "@@L%08X@@", in.Addr)
@@ -131,9 +137,10 @@ func (g *gen) unsupported(why string) {
 	g.line("xb_trap(c, 0x%08X, \"unsupported: %s\");", g.cur.Addr, why)
 }
 
-// jump is the statement that transfers control to target.
+// jump is the statement that transfers control to target. A jump back to
+// the function's own entry is a loop, not a recursive call.
 func (g *gen) jump(target uint32) string {
-	if g.in[target] && target != g.body.Start {
+	if g.in[target] {
 		g.labels[target] = true
 		return fmt.Sprintf("goto L_%08X;", target)
 	}

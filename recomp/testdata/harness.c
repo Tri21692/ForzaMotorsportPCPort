@@ -49,6 +49,7 @@ void xb_trap(XbCtx *c, uint32_t addr, const char *why) {
 }
 void xb_call_indirect(XbCtx *c, uint32_t target) { xb_trap(c, target, "indirect call"); }
 void xb_kernel(XbCtx *c, uint32_t ordinal) { xb_trap(c, ordinal, "kernel call"); }
+uint64_t xb_rdtsc(XbCtx *c) { xb_trap(c, 0, "rdtsc"); }
 
 /* Writable ranges hashed after each case: scratch, stack, then the image's
  * writable sections as listed in image.bin (flag bit 0 of the length). */

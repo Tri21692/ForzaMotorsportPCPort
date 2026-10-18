@@ -130,7 +130,7 @@ func (g *gen) sse(in analysis.Inst) bool {
 		}
 		return true
 
-	case x86asm.MOVAPS, x86asm.MOVUPS:
+	case x86asm.MOVAPS, x86asm.MOVUPS, x86asm.MOVNTPS:
 		if dIsXmm {
 			v, ok := g.vector(a1)
 			if !ok {

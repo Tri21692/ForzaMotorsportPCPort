@@ -54,15 +54,17 @@ Design and test details are in [RECOMPILER.md](RECOMPILER.md).
       struct, memory as a flat 4 GB space at the Xbox addresses, flags as
       locals the compiler prunes, `goto`/tail calls/`switch` for control
       flow.
-- [x] Integer core, SSE1, and x87 as 80-bit `long double` on the host x87,
-      with the game's control word mirrored. **98.7% of Forza's functions
-      translate fully**, and all of the generated C compiles.
-- [x] Differential testing against Unicorn: 348 edge-case instruction
-      forms (10,930 cases, 0 mismatches, run in CI) plus every fully
-      translated Forza leaf function.
-- [ ] MMX (Bink, WMA), `RDTSC`, `CMPXCHG8B`, `RCL`/`RCR`.
-- [ ] The 48 jumps that leave their function: find what discovery
-      missed.
+- [x] Integer core, SSE1, x87 as 80-bit `long double` on the host x87
+      with the game's control word mirrored, MMX aliased onto the x87
+      registers as on hardware. **99.0% of Forza's functions translate
+      fully**. The rest is driver code that gets replaced, plus misdecoded
+      data, and all of the generated C compiles.
+- [x] Differential testing against Unicorn: 473 edge-case instruction
+      forms (13,573 cases, 0 mismatches, run in CI) plus every fully
+      translated Forza leaf function. This caught one real bug (entry
+      ordering), now fixed.
+- [ ] Tighten data-reference discovery: its false starts cause the ~50
+      "jumps outside function".
 - [ ] Differential tests for functions that call others: link call
       chains into the harness.
 - [ ] x87 tag word and exception flags, MXCSR rounding mode, if the game
