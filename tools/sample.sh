@@ -3,7 +3,7 @@
 #
 #   tools/sample.sh <samples> <out.txt>
 #
-# Each sample attaches, prints "thread apply all bt 12" and detaches (about
+# Each sample attaches, prints "thread apply all bt 40" and detaches (about
 # a second each); samples are separated by "=====" lines. Host frames
 # named f_XXXXXXXX are guest functions. To see where the device thread
 # spends its time, count the innermost runtime frame of the stacks that
@@ -14,7 +14,7 @@ pid=$(tasklist //FI "IMAGENAME eq forza.exe" //FO CSV //NH | head -1 | cut -d, -
 : > "$2"
 i=0
 while [ "$i" -lt "$1" ]; do
-  gdb -q -batch -p "$pid" -ex "thread apply all bt 12" >> "$2" 2>/dev/null
+  gdb -q -batch -p "$pid" -ex "thread apply all bt 40" >> "$2" 2>/dev/null
   echo "=====" >> "$2"
   i=$((i + 1))
 done
