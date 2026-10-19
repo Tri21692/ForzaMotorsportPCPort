@@ -171,6 +171,11 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     car ends up: 170-230 s, baseline 19.9, exact heights 23.6, both
     25.3-27.6; later windows 25-32 depending on the scene (draws per
     frame range 600-1250).
+  - Then (profile again): the waits were `gl_complete` landing the shown
+    buffers' read-backs before every texture and every surface's hash
+    check. It now lands only those over the bytes in question and what
+    was issued before them (`gl_complete_range`): 25.3 -> 28.8 fps at the
+    start, 23.7 -> 26.6 in the forest section.
   - Beware when judging runs: `race.txt` holds the throttle and never
     steers, and the grid slot changes from run to run (4th to 8th). From
     the inner slots the car ends against the pit-lane pillar or the

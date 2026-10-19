@@ -303,9 +303,11 @@ static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size);
 static int gl_aliases(const GlSurf *a, const GlSurf *b);
 static int gl_span_hit(uint32_t a, uint32_t an, uint32_t b, uint32_t bn);
 static void gl_complete(void);
+static void gl_complete_range(uint32_t base, uint32_t size);
 
 static void gl_readback_one(GlSurf *s) {
-    gl_complete();
+    gl_complete_range(s->cbase, s->cpitch * (uint32_t)s->h); /* older colour on its way must not land over this */
+    if (s->ztex) gl_complete_range(s->zbase, s->zpitch * (uint32_t)s->h);
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     if (s->cdirty && gl_fits(s->cbase, s->cpitch, s->h)) { /* colour already read back, or on its way, is not read again */
         glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
@@ -408,9 +410,9 @@ typedef struct {
 static GlPending gl_pend[16];
 static int gl_npend;
 
-static void gl_complete(void) {
-    if (!gl_npend) return;
-    for (int i = 0; i < gl_npend; i++) {
+/* The first n read-backs on their way, in issue order, into RAM. */
+static void gl_complete_first(int n) {
+    for (int i = 0; i < n; i++) {
         GlPending *p = &gl_pend[i];
         glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
         const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, p->size, GL_MAP_READ_BIT);
@@ -419,7 +421,25 @@ static void gl_complete(void) {
         if (!p->s->cdirty) p->s->chash = hash_bytes(phys(p->base), p->size);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-    gl_npend = 0;
+    for (int i = n; i < gl_npend; i++) { /* the rest move up, keeping their buffers apart */
+        GlPending t = gl_pend[i - n];
+        gl_pend[i - n] = gl_pend[i], gl_pend[i] = t;
+    }
+    gl_npend -= n;
+}
+
+static void gl_complete(void) {
+    if (gl_npend) gl_complete_first(gl_npend);
+}
+
+/* Only those over these bytes, and whatever went before them: waiting for
+ * all of them before every texture and every surface's hash check was
+ * half the device thread in a race. */
+static void gl_complete_range(uint32_t base, uint32_t size) {
+    int last = -1;
+    for (int i = 0; i < gl_npend; i++)
+        if (gl_span_hit(gl_pend[i].base, gl_pend[i].size, base, size)) last = i;
+    if (last >= 0) gl_complete_first(last + 1);
 }
 
 /* A framebuffer's colour into a pixel buffer object, older colour over
@@ -507,13 +527,14 @@ static void gl_flip(void) {
  * on the GPU. Reading back everything whenever a texture was a render
  * target cost a third of the device thread. */
 static void gl_sync_range(uint32_t base, uint32_t size) {
-    gl_complete();
+    gl_complete_range(base, size);
     for (int i = 0; i < GL_SURFS; i++)
         if (gl_drew(&gl_surf[i], base, size)) gl_readback(&gl_surf[i]);
 }
 
 static void gl_upload_if_changed(GlSurf *s) {
-    gl_complete(); /* RAM as the GPU left it, before comparing */
+    gl_complete_range(s->cbase, s->cpitch * (uint32_t)s->h); /* RAM as the GPU left it, before comparing */
+    if (s->ztex) gl_complete_range(s->zbase, s->zpitch * (uint32_t)s->h);
     if (gl_fits(s->cbase, s->cpitch, s->h)) {
         uint64_t h = hash_bytes(phys(s->cbase), s->cpitch * (uint32_t)s->h);
         if (h != s->chash) {
