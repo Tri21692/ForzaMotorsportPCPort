@@ -40,6 +40,7 @@
     X(PFNGLTEXSTORAGE2DPROC, glTexStorage2D)                                                                                \
     X(PFNGLTEXSUBIMAGE2DPROC, glTexSubImage2D)                                                                              \
     X(PFNGLTEXPARAMETERIPROC, glTexParameteri)                                                                              \
+    X(PFNGLTEXPARAMETERFPROC, glTexParameterf)                                                                              \
     X(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers)                                                                          \
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)                                                                    \
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                                                                          \
@@ -66,6 +67,7 @@
     X(PFNGLUNIFORM1FPROC, glUniform1f)                                                                                      \
     X(PFNGLUNIFORM1FVPROC, glUniform1fv)                                                                                    \
     X(PFNGLUNIFORM2FVPROC, glUniform2fv)                                                                                    \
+    X(PFNGLUNIFORM3FVPROC, glUniform3fv)                                                                                    \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays)                                                                          \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)                                                                          \
     X(PFNGLGENBUFFERSPROC, glGenBuffers)                                                                                    \
@@ -109,6 +111,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glTexStorage2D p_glTexStorage2D
 #define glTexSubImage2D p_glTexSubImage2D
 #define glTexParameteri p_glTexParameteri
+#define glTexParameterf p_glTexParameterf
 #define glGenFramebuffers p_glGenFramebuffers
 #define glDeleteFramebuffers p_glDeleteFramebuffers
 #define glBindFramebuffer p_glBindFramebuffer
@@ -135,6 +138,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glUniform1f p_glUniform1f
 #define glUniform1fv p_glUniform1fv
 #define glUniform2fv p_glUniform2fv
+#define glUniform3fv p_glUniform3fv
 #define glGenVertexArrays p_glGenVertexArrays
 #define glBindVertexArray p_glBindVertexArray
 #define glGenBuffers p_glGenBuffers

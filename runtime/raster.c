@@ -61,6 +61,10 @@
 #define SET_DEPTH_FUNC 0x0354
 #define SET_DEPTH_MASK 0x035C
 #define SET_SHADOW_DEPTH_FUNC 0x1E6C
+#define SET_FOG_MODE 0x029C
+#define SET_FOG_ENABLE 0x02A4
+#define SET_FOG_COLOR 0x02A8
+#define SET_FOG_PARAMS 0x09C0
 #define SET_ALPHA_TEST_ENABLE 0x0300
 #define SET_BLEND_ENABLE 0x0304
 #define SET_ALPHA_FUNC 0x033C
@@ -91,6 +95,7 @@
 #define SET_TEXTURE_ADDRESS 0x1B08
 #define SET_TEXTURE_CONTROL0 0x1B0C
 #define SET_TEXTURE_CONTROL1 0x1B10
+#define SET_TEXTURE_FILTER 0x1B14
 #define SET_TEXTURE_IMAGE_RECT 0x1B1C
 #define SET_TEXTURE_PALETTE 0x1B20
 #define SET_TRANSFORM_EXECUTION_MODE 0x1E94
@@ -125,6 +130,8 @@ typedef struct {
     uint32_t gen;    /* the generation it was last known good in */
     int w, h, linear;
     int cube;         /* six faces, one after another in texels */
+    int levels;       /* mipmap levels decoded: each face is level 0, then 1, ... */
+    size_t face_texels; /* texels in one face, all its levels */
     uint32_t depth;   /* a depth texture: texels hold depth, up to this maximum */
     uint32_t *texels; /* A8R8G8B8 */
     uint32_t version; /* bumped at each decode */
@@ -298,16 +305,31 @@ static Texture *texture(int i) {
         t = &cache[cache_next];
         cache_next = (cache_next + 1) % 512;
     }
+    /* The GPU samples the game's own mipmaps; the software rasteriser only
+     * reads level 0, so it does not decode the rest. Linear textures have
+     * no mipmaps on the NV2A. */
+    int nl = rt_gl_on && !linear && levels > 1 ? levels : 1;
+    size_t face_texels = 0;
+    for (int l = 0; l < nl; l++) face_texels += (size_t)(w >> l > 1 ? w >> l : 1) * (size_t)(h >> l > 1 ? h >> l : 1);
     free(t->texels);
-    t->texels = malloc((size_t)w * h * 4 * faces);
+    t->texels = malloc(face_texels * 4 * faces);
     memcpy(t->key, key, sizeof key);
     t->hash = hash, t->gen = generation;
     t->version++;
     t->w = w, t->h = h, t->linear = linear, t->cube = cube;
+    t->levels = nl, t->face_texels = face_texels;
     t->depth = color == 0x2E ? 0xFFFFFF : color == 0x30 ? 0xFFFF : 0;
   for (int face = 0; face < faces; face++) {
-    const uint8_t *src = phys(base + (uint32_t)face * face_size);
-    uint32_t *o = t->texels + (size_t)face * w * h;
+   const uint8_t *fsrc = phys(base + (uint32_t)face * face_size);
+   uint32_t *fo = t->texels + (size_t)face * face_texels;
+   size_t soff = 0, ooff = 0;
+   for (int l = 0; l < nl; l++) {
+    /* The level's own size: w and h from here on are this level's. */
+    int w = t->w >> l > 1 ? t->w >> l : 1, h = t->h >> l > 1 ? t->h >> l : 1;
+    const uint8_t *src = fsrc + soff;
+    uint32_t *o = fo + ooff;
+    soff += dxt ? (size_t)((w + 3) / 4 * ((h + 3) / 4) * dxt_bytes) : (size_t)w * h * bpp;
+    ooff += (size_t)w * h;
 
     uint32_t pal[256] = {0};
     if (color == 0x0B) {
@@ -372,6 +394,7 @@ static Texture *texture(int i) {
             }
             o[y * w + x] = v;
         }
+   }
   }
     dump_texture(t, base, fmt);
     raster_t_decode += rt_now_100ns() - td0;
@@ -389,7 +412,7 @@ static uint32_t sample_cube(const Texture *t, float s, float tt, float r) {
     int x = (int)((sc / ma + 1) * 0.5f * (float)t->w), y = (int)((tc / ma + 1) * 0.5f * (float)t->h);
     x = x < 0 ? 0 : x >= t->w ? t->w - 1 : x;
     y = y < 0 ? 0 : y >= t->h ? t->h - 1 : y;
-    return t->texels[(size_t)face * t->w * t->h + (size_t)y * t->w + x];
+    return t->texels[(size_t)face * t->face_texels + (size_t)y * t->w + x];
 }
 
 static int wrap(int c, int n, int mode) {
@@ -679,11 +702,39 @@ static void stage(Comb *cb, uint32_t icw, uint32_t ocw, int alpha, int mux_msb) 
     if (!alpha && dcd && (flags & 0x40)) cb->r[dcd][3] = cd[2];
 }
 
+/* Fog, per vertex as the NV2A computes it (xemu, pgraph/glsl/vsh.c): a
+ * distance (a vertex program's oFog.x) through SET_FOG_MODE's curve with
+ * the two SET_FOG_PARAMS. D3D biases the parameters (linear by 1, the
+ * exponentials by 1.5, so that both sit in the hardware's range), which
+ * comes off again here. The combiners read the result as register 3's
+ * alpha, next to SET_FOG_COLOR. */
+static float fog_factor(float dist) {
+    if (!K(SET_FOG_ENABLE)) return 1;
+    float p0 = f32(K(SET_FOG_PARAMS)), p1 = f32(K(SET_FOG_PARAMS + 4)), f;
+    switch (K(SET_FOG_MODE)) {
+    case 0x0800: case 0x0802: f = p0 + exp2f(dist * p1 * 16.0f) - 1.5f; break;             /* EXP, EXP_ABS */
+    case 0x0801: case 0x0803: f = p0 + exp2f(-dist * dist * p1 * p1 * 32.0f) - 1.5f; break; /* EXP2, EXP2_ABS */
+    default: f = p0 + dist * p1 - 1.0f; break;                                             /* LINEAR, LINEAR_ABS */
+    }
+    switch (K(SET_FOG_MODE)) {
+    case 0x0802: case 0x0803: case 0x0804: f = fabsf(f); break;
+    }
+    return f != f ? 1 : f;
+}
+
+/* SET_FOG_COLOR's channels are ABGR, unlike the combiner constants. */
+static void fog_color(float o[3]) {
+    uint32_t v = K(SET_FOG_COLOR);
+    o[0] = (v & 255) / 255.0f, o[1] = (v >> 8 & 255) / 255.0f, o[2] = (v >> 16 & 255) / 255.0f;
+}
+
 /* The fragment colour from the interpolated diffuse (V0) and specular (V1)
  * colours and T0-T3. */
-static void combine(const float v0[4], const float v1[4], const float tv[4][4], int t0_used, float out[4]) {
+static void combine(const float v0[4], const float v1[4], const float tv[4][4], float fog, int t0_used, float out[4]) {
     Comb cb;
     memset(&cb, 0, sizeof cb);
+    fog_color(cb.r[3]);
+    cb.r[3][3] = fminf(fmaxf(fog, 0), 1);
     memcpy(cb.r[4], v0, sizeof cb.r[4]);
     memcpy(cb.r[5], v1, sizeof cb.r[5]);
     memcpy(cb.r[8], tv, 4 * sizeof cb.r[8]);
@@ -735,6 +786,7 @@ static int alpha_pass(float a) {
 typedef struct {
     float x, y, z, iw;          /* screen position, depth, 1/w */
     float c[4], c1[4], tc[4][4]; /* diffuse, specular, texture coordinates 0-3 */
+    float fog;                  /* fog factor: 1 none, 0 all fog colour */
 } Pt;
 
 static float inv_w(float w) { return fabsf(w) < 1e-20f ? 1 : 1 / w; }
@@ -749,6 +801,7 @@ static Pt project(const Vertex *v) {
         for (int k = 0; k < 4; k++) r.c[k] = o.o[O_D0][k] != o.o[O_D0][k] ? 1 : fminf(fmaxf(o.o[O_D0][k], 0), 1);
         for (int k = 0; k < 4; k++) r.c1[k] = o.o[O_D1][k] != o.o[O_D1][k] ? 0 : fminf(fmaxf(o.o[O_D1][k], 0), 1);
         memcpy(r.tc, o.o[O_T0], sizeof r.tc);
+        r.fog = fog_factor(o.o[O_FOG][0]);
         return r;
     }
     const uint32_t *m = &nv2a.kelvin[SET_COMPOSITE_MATRIX / 4];
@@ -764,6 +817,7 @@ static Pt project(const Vertex *v) {
     memcpy(r.c, v->a[ATTR_DIFFUSE], sizeof r.c);
     memcpy(r.c1, v->a[ATTR_DIFFUSE + 1], sizeof r.c1); /* specular */
     memcpy(r.tc, v->a[ATTR_TEX0], sizeof r.tc);
+    r.fog = 1; /* fixed-function fog (SET_FOG_GEN_MODE) is not modelled */
     return r;
 }
 
@@ -942,7 +996,7 @@ static void fill(const DrawState *d, const Tri *t, int first, int step) {
                     argb(sample(tx, i, q[0], q[1]), tv[i]);
                 }
             }
-            combine(s, s1, tv, d->mode[0] != 0, s);
+            combine(s, s1, tv, a.fog * p0 + b.fog * p1 + c.fog * p2, d->mode[0] != 0, s);
             if (!alpha_pass(s[3])) continue;
             uint32_t dst;
             if (d->bpp == 4) memcpy(&dst, row + x * 4, 4);

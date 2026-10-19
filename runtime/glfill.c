@@ -30,22 +30,26 @@ static const char *vs_src =
     "layout(location = 4) in vec4 a_t1;\n"
     "layout(location = 5) in vec4 a_t2;\n"
     "layout(location = 6) in vec4 a_t3;\n"
+    "layout(location = 7) in float a_fog;\n"
     "uniform vec2 u_size;\n"
     "uniform float u_zmax;\n"
     "out vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
+    "out float v_fog;\n"
     "void main() {\n"
     "    float w = a_pos.w != 0.0 ? 1.0 / a_pos.w : 1.0;\n"
     "    vec3 ndc = vec3(a_pos.x / u_size.x * 2.0 - 1.0, a_pos.y / u_size.y * 2.0 - 1.0,\n"
     "                    clamp(a_pos.z / u_zmax, 0.0, 1.0) * 2.0 - 1.0);\n"
     "    gl_Position = vec4(ndc * w, w);\n"
-    "    v_c0 = a_c0; v_c1 = a_c1; v_t0 = a_t0; v_t1 = a_t1; v_t2 = a_t2; v_t3 = a_t3;\n"
+    "    v_c0 = a_c0; v_c1 = a_c1; v_t0 = a_t0; v_t1 = a_t1; v_t2 = a_t2; v_t3 = a_t3; v_fog = a_fog;\n"
     "}\n";
 
 /* combine() from raster.c, in GLSL. */
 static const char *fs_src =
     "#version 430\n"
     "in vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
+    "in float v_fog;\n"
     "out vec4 o_color;\n"
+    "uniform vec3 u_fogc;\n"
     "uniform uint u_cicw[8], u_cocw[8], u_aicw[8], u_aocw[8];\n"
     "uniform vec4 u_c0[8], u_c1[8], u_fc0, u_fc1;\n"
     "uniform uint u_ctl, u_f0, u_f1;\n"
@@ -135,6 +139,7 @@ static const char *fs_src =
     "void main() {\n"
     "    for (int i = 0; i < 16; i++) R[i] = vec4(0.0);\n"
     "    E = vec3(0.0); F = vec3(0.0);\n"
+    "    R[3] = vec4(u_fogc, clamp(v_fog, 0.0, 1.0));\n"
     "    R[4] = v_c0; R[5] = v_c1;\n"
     "    R[8] = fetch(0, v_t0, u_tex0, u_cube0);\n"
     "    R[9] = fetch(1, v_t1, u_tex1, u_cube1);\n"
@@ -166,10 +171,12 @@ static const char *fs_src =
     "    o_color = o;\n"
     "}\n";
 
+#define GL_VERT 29 /* floats per vertex */
+
 static int gl_ready = -1; /* -1 not set up, 0 failed, 1 ready */
 static GLuint gl_prog, gl_vao, gl_vbo, gl_dummy2d, gl_dummycube;
 static GLint u_size, u_zmax, u_cicw, u_cocw, u_aicw, u_aocw, u_c0, u_c1, u_fc0, u_fc1, u_ctl, u_f0, u_f1;
-static GLint u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4];
+static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4];
 
 static GLuint compile(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
@@ -205,7 +212,7 @@ static int gl_setup(void) {
     LOC(u_size, "u_size"), LOC(u_zmax, "u_zmax"), LOC(u_cicw, "u_cicw"), LOC(u_cocw, "u_cocw"), LOC(u_aicw, "u_aicw");
     LOC(u_aocw, "u_aocw"), LOC(u_c0, "u_c0"), LOC(u_c1, "u_c1"), LOC(u_fc0, "u_fc0"), LOC(u_fc1, "u_fc1"), LOC(u_ctl, "u_ctl");
     LOC(u_f0, "u_f0"), LOC(u_f1, "u_f1"), LOC(u_mode, "u_mode"), LOC(u_kind, "u_kind"), LOC(u_scale, "u_scale");
-    LOC(u_dmax, "u_dmax"), LOC(u_shadow_func, "u_shadow_func"), LOC(u_alpha_func, "u_alpha_func"), LOC(u_alpha_ref, "u_alpha_ref");
+    LOC(u_dmax, "u_dmax"), LOC(u_shadow_func, "u_shadow_func"), LOC(u_alpha_func, "u_alpha_func"), LOC(u_alpha_ref, "u_alpha_ref"), LOC(u_fogc, "u_fogc");
     LOC(u_tex[0], "u_tex0"), LOC(u_tex[1], "u_tex1"), LOC(u_tex[2], "u_tex2"), LOC(u_tex[3], "u_tex3");
     LOC(u_cube[0], "u_cube0"), LOC(u_cube[1], "u_cube1"), LOC(u_cube[2], "u_cube2"), LOC(u_cube[3], "u_cube3");
 #undef LOC
@@ -215,8 +222,8 @@ static int gl_setup(void) {
     glBindVertexArray(gl_vao);
     glGenBuffers(1, &gl_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
-    for (int i = 0; i < 7; i++) {
-        glVertexAttribPointer((GLuint)i, 4, GL_FLOAT, GL_FALSE, 28 * sizeof(float), (void *)(uintptr_t)(i * 4 * sizeof(float)));
+    for (int i = 0; i < 8; i++) { /* position, two colours, four texture coordinates, fog */
+        glVertexAttribPointer((GLuint)i, i < 7 ? 4 : 1, GL_FLOAT, GL_FALSE, GL_VERT * sizeof(float), (void *)(uintptr_t)(i * 4 * sizeof(float)));
         glEnableVertexAttribArray((GLuint)i);
     }
     /* Something valid on every unit a shader might read. */
@@ -463,16 +470,40 @@ static GLuint gl_texture(Texture *t) {
         for (int i = 0; i < t->w * t->h; i++) f[i] = (float)t->texels[i];
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->w, t->h, GL_RED, GL_FLOAT, f);
         free(f);
-    } else {
-        glTexStorage2D(target, 1, GL_RGBA8, t->w, t->h);
-        for (int f = 0; f < (t->cube ? 6 : 1); f++)
-            glTexSubImage2D(t->cube ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + (GLenum)f : GL_TEXTURE_2D, 0, 0, 0, t->w, t->h, GL_BGRA,
-                            GL_UNSIGNED_INT_8_8_8_8_REV, t->texels + (size_t)f * t->w * t->h);
+    } else { /* with the game's own mipmaps, as texture() decoded them */
+        glTexStorage2D(target, t->levels, GL_RGBA8, t->w, t->h);
+        for (int f = 0; f < (t->cube ? 6 : 1); f++) {
+            const uint32_t *p = t->texels + (size_t)f * t->face_texels;
+            for (int l = 0; l < t->levels; l++) {
+                int lw = t->w >> l > 1 ? t->w >> l : 1, lh = t->h >> l > 1 ? t->h >> l : 1;
+                glTexSubImage2D(t->cube ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + (GLenum)f : GL_TEXTURE_2D, l, 0, 0, lw, lh, GL_BGRA,
+                                GL_UNSIGNED_INT_8_8_8_8_REV, p);
+                p += (size_t)lw * lh;
+            }
+        }
     }
     glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     t->gl_version = t->version;
     return t->gl;
+}
+
+/* SET_TEXTURE_FILTER: the LOD bias in bits 0-12 (signed, 8 fraction bits),
+ * the minifying filter in 16-21 and the magnifying one in 24-27, numbered
+ * as xemu reads them (NV_PGRAPH_TEXFILTER0): 1 nearest, 2 linear, 3-6 the
+ * four mipmap combinations in OpenGL's order, 7 (min) or 4 (mag) the
+ * Gaussian "convolution" filter, which linear stands in for. Depth
+ * textures stay point sampled: the shader compares each texel itself. */
+static void gl_filter(GLenum target, const Texture *t, uint32_t filt) {
+    static const GLint mins[8] = {GL_NEAREST, GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST,
+                                  GL_NEAREST_MIPMAP_LINEAR, GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR};
+    uint32_t mn = (filt >> 16) & 0x3F, mg = (filt >> 24) & 15;
+    GLint min = t->depth ? GL_NEAREST : mn < 8 ? mins[mn] : GL_LINEAR;
+    GLint mag = t->depth || mg <= 1 ? GL_NEAREST : GL_LINEAR;
+    int32_t bias = (int32_t)(filt << 19) >> 19;
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, min);
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, mag);
+    glTexParameterf(target, GL_TEXTURE_LOD_BIAS, (float)bias / 256.0f);
 }
 
 static GLint gl_wrap(uint32_t mode) {
@@ -489,6 +520,7 @@ static void gl_put(float *v, const Pt *p) {
     memcpy(v + 4, p->c, 4 * sizeof(float));
     memcpy(v + 8, p->c1, 4 * sizeof(float));
     memcpy(v + 12, p->tc, 16 * sizeof(float));
+    v[28] = p->fog;
 }
 
 static void gl_uniform_argb(GLint loc, uint32_t v) {
@@ -503,18 +535,18 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     GlSurf *s = gl_bind(d);
     glUseProgram(gl_prog);
 
-    if (n * 3 * 28 > gl_verts_cap) {
-        gl_verts_cap = n * 3 * 28 * 2;
+    if (n * 3 * GL_VERT > gl_verts_cap) {
+        gl_verts_cap = n * 3 * GL_VERT * 2;
         gl_verts = realloc(gl_verts, (size_t)gl_verts_cap * sizeof *gl_verts);
     }
     for (int i = 0; i < n; i++) {
-        gl_put(gl_verts + (i * 3 + 0) * 28, &tri[i].a);
-        gl_put(gl_verts + (i * 3 + 1) * 28, &tri[i].b);
-        gl_put(gl_verts + (i * 3 + 2) * 28, &tri[i].c);
+        gl_put(gl_verts + (i * 3 + 0) * GL_VERT, &tri[i].a);
+        gl_put(gl_verts + (i * 3 + 1) * GL_VERT, &tri[i].b);
+        gl_put(gl_verts + (i * 3 + 2) * GL_VERT, &tri[i].c);
     }
     glBindVertexArray(gl_vao);
     glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * 3 * 28 * sizeof(float), gl_verts, GL_STREAM_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * 3 * GL_VERT * sizeof(float), gl_verts, GL_STREAM_DRAW);
 
     float size[2] = {(float)s->w, (float)s->h};
     glUniform2fv(u_size, 1, size);
@@ -551,15 +583,20 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
             uint32_t addr = KT(SET_TEXTURE_ADDRESS);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_wrap(addr & 15));
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_wrap((addr >> 8) & 15));
+            gl_filter(GL_TEXTURE_2D, t, KT(SET_TEXTURE_FILTER));
         }
         glActiveTexture(GL_TEXTURE4 + (GLenum)i);
         glBindTexture(GL_TEXTURE_CUBE_MAP, t && t->cube ? gl_texture(t) : gl_dummycube);
+        if (t && t->cube) gl_filter(GL_TEXTURE_CUBE_MAP, t, KT(SET_TEXTURE_FILTER));
     }
     glActiveTexture(GL_TEXTURE0);
     glUniform1iv(u_mode, 4, mode), glUniform1iv(u_kind, 4, kind), glUniform2fv(u_scale, 4, scale), glUniform1fv(u_dmax, 4, dmax);
     glUniform1i(u_shadow_func, (GLint)(K(SET_SHADOW_DEPTH_FUNC) & 7));
     glUniform1i(u_alpha_func, K(SET_ALPHA_TEST_ENABLE) ? (GLint)K(SET_ALPHA_FUNC) : 0);
     glUniform1f(u_alpha_ref, (float)(K(SET_ALPHA_REF) & 255) / 255.0f);
+    float fogc[3];
+    fog_color(fogc);
+    glUniform3fv(u_fogc, 1, fogc);
 
     /* Fixed-function state: the NV2A uses OpenGL's own values. */
     if (d->blend) {
