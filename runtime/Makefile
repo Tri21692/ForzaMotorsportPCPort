@@ -37,6 +37,10 @@ build/%.o: %.c rt.h nv2a.h $(GEN)/xbrt.h $(GEN)/names.h
 	@mkdir -p build
 	$(CC) $(RTFLAGS) -c $< -o $@
 
+# Files #included by others, and the GL header.
+build/raster.o: glfill.c gl.h
+build/gl.o build/nv2a.o: gl.h
+
 clean:
 	rm -rf build forza forza.exe
 

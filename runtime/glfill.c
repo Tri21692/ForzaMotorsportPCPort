@@ -249,11 +249,13 @@ typedef struct {
     GLuint fbo, ctex, ztex;
     uint64_t chash, zhash; /* of RAM as the GPU last left it or saw it */
     int dirty;             /* the GPU has drawn since the last read-back */
+    int zdirty;            /* ... and written depth or stencil */
     int check;             /* RAM may have changed: compare hashes before the next draw */
     unsigned used;
 } GlSurf;
 
-static GlSurf gl_surf[16];
+#define GL_SURFS 32 /* a race frame draws to about 21 */
+static GlSurf gl_surf[GL_SURFS];
 static GlSurf *gl_cur;
 static unsigned gl_tick;
 
@@ -274,6 +276,9 @@ static int gl_fits(uint32_t base, uint32_t pitch, int h) {
     return (uint64_t)(base & (RT_PHYS_SIZE - 1)) + (uint64_t)pitch * (uint64_t)h <= RT_PHYS_SIZE;
 }
 
+static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size);
+static int gl_aliases(const GlSurf *a, const GlSurf *b);
+
 static void gl_readback(GlSurf *s) {
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     if (gl_fits(s->cbase, s->cpitch, s->h)) {
@@ -283,14 +288,20 @@ static void gl_readback(GlSurf *s) {
         else glReadPixels(0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, phys(s->cbase));
         s->chash = hash_bytes(phys(s->cbase), s->cpitch * (uint32_t)s->h);
     }
-    if (s->ztex && gl_fits(s->zbase, s->zpitch, s->h)) {
+    /* Depth only when something wrote it: Forza's 2D passes keep the depth
+     * mask on with no depth buffer (zeta offset 0), which made a 1.2 MB
+     * "depth buffer" at physical address 0 that was read back over RAM. */
+    if (s->ztex && s->zdirty && gl_fits(s->zbase, s->zpitch, s->h)) {
         glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->zpitch / (uint32_t)s->zbpp));
         if (s->zbpp == 4) glReadPixels(0, 0, s->w, s->h, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, phys(s->zbase));
         else glReadPixels(0, 0, s->w, s->h, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, phys(s->zbase));
         s->zhash = hash_bytes(phys(s->zbase), s->zpitch * (uint32_t)s->h);
     }
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    s->dirty = 0;
+    s->dirty = s->zdirty = 0;
+    /* Other framebuffers over the same bytes no longer hold what RAM does. */
+    for (int i = 0; i < GL_SURFS; i++)
+        if (&gl_surf[i] != s && gl_surf[i].fbo && gl_aliases(&gl_surf[i], s)) gl_surf[i].check = 1;
 }
 
 static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size) {
@@ -300,11 +311,29 @@ static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size) {
     return (lo < c1 && c0 < hi) || (s->ztex && lo < z1 && z0 < hi);
 }
 
+/* Has the GPU drawn into these bytes through this framebuffer since its
+ * last read-back? */
+static int gl_drew(const GlSurf *s, uint32_t base, uint32_t size) {
+    if (!s->fbo || !s->dirty) return 0;
+    uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + size;
+    uint32_t c0 = s->cbase & (RT_PHYS_SIZE - 1), c1 = c0 + s->cpitch * (uint32_t)s->h;
+    uint32_t z0 = s->zbase & (RT_PHYS_SIZE - 1), z1 = z0 + s->zpitch * (uint32_t)s->h;
+    return (lo < c1 && c0 < hi) || (s->zdirty && lo < z1 && z0 < hi);
+}
+
+/* Do two framebuffers cover some of the same bytes? Forza draws to the
+ * same buffer with and without a depth buffer, and its bloom passes draw
+ * into a quarter of a front buffer (320x240 at its start, 320x120 at row
+ * 240) between frames: each combination is a framebuffer of its own. */
+static int gl_aliases(const GlSurf *a, const GlSurf *b) {
+    return gl_overlaps(a, b->cbase, b->cpitch * (uint32_t)b->h) || (b->ztex && gl_overlaps(a, b->zbase, b->zpitch * (uint32_t)b->h));
+}
+
 /* Brings RAM up to date with what the GPU drew, on every surface it drew
  * to: switching surfaces does not read back, only something that can look
  * at RAM does (a texture over a surface, the CPU after a fence or a flip). */
 static void gl_sync(void) {
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < GL_SURFS; i++)
         if (gl_surf[i].fbo && gl_surf[i].dirty) gl_readback(&gl_surf[i]);
 }
 
@@ -314,13 +343,13 @@ static void gl_sync(void) {
  * them; hashing before every draw cost more than the drawing. */
 static void gl_sync_cpu(void) {
     gl_sync();
-    for (int i = 0; i < 16; i++) gl_surf[i].check = 1;
+    for (int i = 0; i < GL_SURFS; i++) gl_surf[i].check = 1;
 }
 
 /* Would reading these bytes see what the GPU has drawn but not read back? */
 static int gl_writes(uint32_t base, uint32_t size) {
-    for (int i = 0; i < 16; i++)
-        if (gl_surf[i].fbo && gl_surf[i].dirty && gl_overlaps(&gl_surf[i], base, size)) return 1;
+    for (int i = 0; i < GL_SURFS; i++)
+        if (gl_drew(&gl_surf[i], base, size)) return 1;
     return 0;
 }
 
@@ -367,7 +396,7 @@ static GlSurf *gl_bind(const DrawState *d) {
         s->zpitch != zpitch || s->w != w || s->h < h) {
         s = NULL;
         GlSurf *lru = &gl_surf[0];
-        for (int i = 0; i < 16 && !s; i++) {
+        for (int i = 0; i < GL_SURFS && !s; i++) {
             GlSurf *e = &gl_surf[i];
             if (e->fbo && e->cbase == d->base && e->cpitch == d->pitch && e->cfmt == cfmt && e->zbase == zbase && e->zfmt == zfmt &&
                 e->zpitch == zpitch && e->w == w && e->h >= h)
@@ -397,6 +426,16 @@ static GlSurf *gl_bind(const DrawState *d) {
                 fprintf(stderr, "xbrt: GL framebuffer for surface %08x (%dx%d, format %x/%x) is incomplete\n", d->base, w, h, cfmt, zfmt);
             s->chash = s->zhash = 1; /* never matches: upload */
             s->check = 1;
+        }
+        /* What another framebuffer over these bytes drew goes to RAM
+         * first, and from there into this one; otherwise the two are read
+         * back over each other at the next sync, in slot order rather than
+         * drawing order. */
+        for (int i = 0; i < GL_SURFS; i++) {
+            GlSurf *e = &gl_surf[i];
+            if (e != s && (gl_drew(e, s->cbase, s->cpitch * (uint32_t)s->h) ||
+                           (s->ztex && gl_drew(e, s->zbase, s->zpitch * (uint32_t)s->h))))
+                gl_readback(e);
         }
         gl_cur = s;
     }
@@ -453,6 +492,7 @@ static int gl_clear(uint32_t flags) {
     }
     glClear(bits);
     s->dirty = 1;
+    if (flags & 3) s->zdirty = 1;
     return 1;
 }
 
@@ -621,4 +661,5 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
 
     glDrawArrays(GL_TRIANGLES, 0, n * 3);
     s->dirty = 1;
+    if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1;
 }
