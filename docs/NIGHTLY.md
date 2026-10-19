@@ -233,6 +233,11 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     `XBRT_GL_RT_CUBE=0` turns them off (for Intel, which fell to 13 fps).
     `XBRT_GL_RT_SHOWN` is gone. A grey frame still turns up now and then
     (1 of 10 screenshots in that run): the car-shadow image on screen.
+  - `XBRT_RECORD=<file.mp4>` (with `XBRT_RECORD_FROM`, `XBRT_RECORD_FOR`
+    seconds and `XBRT_FFMPEG`): the picture at every vertical blank piped
+    into ffmpeg, H.264 at 59.94 fps, scaled 2x. `tools/input/race-fast.txt`
+    reaches the race on NVIDIA and starts driving at ~63 s; record from
+    55 s. Clips go in `clips/` (ignored: game footage is never pushed).
   - The input script's timings were made for ~30 fps: on NVIDIA the
     menus run far faster and `race.txt` sometimes ends in the pause menu.
   - Beware when judging runs: `race.txt` holds the throttle and never

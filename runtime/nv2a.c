@@ -489,6 +489,63 @@ void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
     if (rt_log_level >= 2) rt_log("nv2a: class %02x (subchannel %u) method %04x = %08x\n", nv2a.class_[subch], subch, method, arg);
 }
 
+/* ---- recording ----
+ * XBRT_RECORD=<file.mp4>: what the TV shows at every vertical blank, from
+ * XBRT_RECORD_FROM seconds (default 0) for XBRT_RECORD_FOR seconds (default
+ * 15), piped into ffmpeg (XBRT_FFMPEG, default "ffmpeg") as H.264 at 59.94
+ * fps, scaled 2x. Taken after the read-backs land, before D3D's handler can
+ * move the CRTC: the frame on screen during that blank. */
+static void record_vblank(void) {
+    static int state; /* 0 not set up, 1 waiting or recording, 2 done or off */
+    static FILE *pipe;
+    static double from, len;
+    static uint32_t px[640 * 480];
+    if (state == 2) return;
+    if (state == 0) {
+        const char *out = getenv("XBRT_RECORD");
+        if (!out || !*out) {
+            state = 2;
+            return;
+        }
+        from = getenv("XBRT_RECORD_FROM") ? atof(getenv("XBRT_RECORD_FROM")) : 0;
+        len = getenv("XBRT_RECORD_FOR") ? atof(getenv("XBRT_RECORD_FOR")) : 15;
+        state = 1;
+    }
+    double now = rt_now_100ns() / 1e7;
+    if (now < from) return;
+    if (!pipe) {
+        const char *ff = getenv("XBRT_FFMPEG");
+        char cmd[2048];
+        snprintf(cmd, sizeof cmd,
+                 "\"\"%s\" -loglevel error -y -f rawvideo -pix_fmt bgra -s 640x480 -r 60000/1001 -i - "
+                 "-vf scale=1280:960:flags=lanczos -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \"%s\"\"",
+                 ff && *ff ? ff : "ffmpeg", getenv("XBRT_RECORD"));
+#ifdef _WIN32
+        pipe = _popen(cmd, "wb");
+#else
+        pipe = popen(cmd, "w");
+#endif
+        if (!pipe) {
+            fprintf(stderr, "xbrt: XBRT_RECORD: cannot start ffmpeg\n");
+            state = 2;
+            return;
+        }
+        fprintf(stderr, "xbrt: recording to %s\n", getenv("XBRT_RECORD"));
+    }
+    if (now >= from + len) {
+#ifdef _WIN32
+        _pclose(pipe);
+#else
+        pclose(pipe);
+#endif
+        fprintf(stderr, "xbrt: recording finished\n");
+        state = 2;
+        return;
+    }
+    rt_display_compose(px);
+    fwrite(px, 4, 640 * 480, pipe);
+}
+
 /* ---- the device thread ---- */
 
 static void *device_main(void *arg) {
@@ -523,6 +580,7 @@ static void *device_main(void *arg) {
                        "PATT_COLOR0 %08x, intr %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
                        nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR));
             nv2a_raster_vblank(); /* before D3D's handler can point the CRTC at them */
+            record_vblank();
             REG(PCRTC_INTR_0) |= 1;
             update_irq();
         }

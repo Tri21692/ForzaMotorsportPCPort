@@ -16,3 +16,7 @@ hdd/
 
 # Python bytecode from the test helpers
 __pycache__/
+
+# Recorded gameplay (game content): never pushed
+clips/
+*.mp4
