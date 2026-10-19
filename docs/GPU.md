@@ -70,5 +70,7 @@ filters. Framebuffers over the same bytes exchange pixels on the GPU,
 and render targets are sampled where they were drawn. The shown buffers
 are read back without waiting (pixel buffer objects, at D3D's frame
 notifies, in RAM by the next vertical blank); nothing at flips, where a
-fence keeps at most two frames queued. Still read back synchronously:
-depth textures (shadow maps) and anything a non-linear texture overlaps.
+fence keeps at most two frames queued. Shadow maps are sampled where they
+were drawn and never reach RAM (nothing on the CPU reads them). Still read
+back synchronously: anything a non-linear texture overlaps, which in a
+race is now almost nothing. Race start: about 25 frames a second.

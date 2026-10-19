@@ -141,34 +141,36 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   anti-aliased 2x2 grid, the D24S8 layout). Compare the two paths'
   texels for one frame (read the GL depth texture back and diff it with
   texture()'s decode) before trying again.
-- **2026-10-19 (interactive): GPU shadow maps, found and fixed; still
-  opt-in, since they gain little.** `XBRT_GL_RT_DEPTH=1` samples a 24-bit
-  depth texture (format 0x2E) from the framebuffer whose depth it is
-  (shader kind 4: GL's 0..1 depth times 0xFFFFFF, rounded, then the same
-  compare as kind 3).
-  - What broke it, here and in the nightly's attempt: the 768x768 shadow
-    map at 02ad1000 (colour and depth at the same address) shares its
-    bytes with something of the CPU's. Sampled on the GPU it stayed dirty,
-    and later read-backs (`gl_sync`) wrote old shadow depth over those
-    bytes: the car flew off at 170+ mph with the world upside down, or
-    (with the depth not in RAM in time) yellow light shafts and dust and
-    a car stuck in the ground. Sampling only the 512x512 map at 029df800
-    on the GPU was fine; only 02ad1000 did this.
-  - Fix: at the first GPU sample after a draw, the depth goes into a
-    pixel buffer object and the framebuffer counts as clean, as the
-    software path's read-back left it (`gl_readback_depth_async`); the GPU
-    keeps sampling its own copy until the next depth write, or uploads
-    RAM if the CPU wrote it (hash check). While such a read-back is on its
-    way GET is not published (`nv2a_hold_get`: D3D's fences watch GET),
-    and semaphore releases land pending read-backs (`nv2a_raster_fence`).
-  - Also: a linear colour texture over a framebuffer is no longer sampled
-    from that framebuffer when depth drawn after it covers the bytes
-    (Forza reads the main depth buffer's memory, 01e98000, as a 720x480
-    A8R8G8B8 texture).
-  - Result: right picture, the car drives, but no real speed-up (9812
-    flips at 415 s against 10344 for the same build without it; draw
-    state 117 s against 130 s of device time): the ~25% seen before came
-    from the bug skipping work. Off by default.
+- **2026-10-19 (interactive): GPU shadow maps on by default; exact
+  framebuffer heights. Race start ~20 -> ~25-28 fps.**
+  - Profile (gdb samples, race): half the device thread waited in
+    synchronous `glReadPixels` for textures over GPU-drawn bytes, almost
+    all of it two textures once a frame: the track's 512x512 shadow map
+    (format 0x2E; 02a64800 or 029d5800, it moves), and a 64x64 Y8 cube
+    map at 01706000.
+  - The cube map was a false overlap: framebuffer heights were rounded up
+    to 16, so a 160x120 one at 016f3000 "covered" the cube's first 4 KB
+    (and its read-backs wrote 8 junk rows over it). Heights are now the
+    clip's.
+  - Shadow maps (format 0x2E) are sampled on the GPU from the framebuffer
+    whose depth they are (shader kind 4: GL's 0..1 depth times 0xFFFFFF,
+    rounded, then the same compare as kind 3), and are never read back:
+    they are marked clean with the hash of what RAM holds
+    (`gl_depth_stays`). Nothing on the CPU reads them. What broke the
+    earlier tries (and the nightly's) was the opposite: left dirty, the
+    768x768 map at 02ad1000 was read back later (`gl_sync`) over bytes the
+    CPU uses by then; the car flew off upside down at 170+ mph, or sat in
+    the ground under yellow light shafts. Reading its depth back
+    asynchronously, holding GET and landing it at semaphores was tried:
+    correct but no faster. `XBRT_GL_RT_DEPTH=0` goes back to RAM.
+  - A linear colour texture over a framebuffer is no longer sampled from
+    it when depth drawn after it covers the bytes (Forza reads the main
+    depth buffer's memory, 01e98000, as a 720x480 A8R8G8B8 texture).
+  - Measured as fps in fixed windows of the race (`tools/fps_windows.py`:
+    flips between the 5 s stats lines), since totals depend on where the
+    car ends up: 170-230 s, baseline 19.9, exact heights 23.6, both
+    25.3-27.6; later windows 25-32 depending on the scene (draws per
+    frame range 600-1250).
   - Beware when judging runs: `race.txt` holds the throttle and never
     steers, and the grid slot changes from run to run (4th to 8th). From
     the inner slots the car ends against the pit-lane pillar or the

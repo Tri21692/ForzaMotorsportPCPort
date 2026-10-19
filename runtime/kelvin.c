@@ -123,7 +123,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     case FLIP_STALL:
         return;
     case BACK_END_WRITE_SEMAPHORE_RELEASE: {
-        nv2a_raster_fence(); /* the GPU path reads back at flips, not at every fence; what is on its way lands */
+        nv2a_raster_flush(); /* the GPU path reads back at flips, not at every fence */
         uint32_t dma = nv2a_lookup(nv2a.kelvin[SET_CONTEXT_DMA_SEMAPHORE / 4]);
         uint32_t base = nv2a_dma_base(dma, NULL);
         if (base == ~0u) {

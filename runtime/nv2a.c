@@ -309,7 +309,8 @@ static int run_pushbuf(void) {
     if (tracing < 0) tracing = getenv("XBRT_PB_TRACE") != NULL;
     int guard = 0;
     while (guard++ < 1 << 16) { /* then back to the device loop, which raises vertical blanks */
-        if (!nv2a_hold_get) REG(PFIFO_CACHE1_DMA_GET) = get, REG(USER_DMA_GET) = get;
+        REG(PFIFO_CACHE1_DMA_GET) = get;
+        REG(USER_DMA_GET) = get;
         put = REG(PFIFO_CACHE1_DMA_PUT);
         if (get == put) break;
         uint32_t word = *(volatile uint32_t *)phys(base + get);
@@ -383,8 +384,7 @@ static int run_pushbuf(void) {
     }
     nv2a.method = method, nv2a.subch = subch, nv2a.count = count, nv2a.ni = ni;
     recent_pass[pass].end = get;
-    if (nv2a_hold_get) nv2a_raster_fence(); /* lands what held GET back */
-    else nv2a_raster_flush();
+    nv2a_raster_flush();
     REG(PFIFO_CACHE1_DMA_GET) = get;
     REG(USER_DMA_GET) = get;
     return !parked;

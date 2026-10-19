@@ -146,7 +146,7 @@ static Texture cache[512]; /* a race frame uses a few hundred textures */
 static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t color, int w, int h);
 static uint32_t draw_lo, draw_hi; /* the draw's colour buffer, which its textures must not be read from on the GPU */
 static uint32_t draw_zlo, draw_zhi; /* ... and its depth buffer */
-static int gl_rt_depth = -1;        /* XBRT_GL_RT_DEPTH=1: sample shadow maps from their framebuffer, not through RAM */
+static int gl_rt_depth = -1;        /* sample shadow maps from their framebuffer, not through RAM (XBRT_GL_RT_DEPTH=0: through RAM) */
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static void gl_sync_range(uint32_t base, uint32_t size);
 static void gl_sync_cpu(void);
@@ -947,7 +947,7 @@ static int draw_state(DrawState *d) {
         draw_zlo = (dma_base(SET_CONTEXT_DMA_ZETA) + K(SET_SURFACE_ZETA_OFFSET)) & (RT_PHYS_SIZE - 1);
         draw_zhi = draw_zlo + (K(SET_SURFACE_PITCH) >> 16) * (uint32_t)(d->cy0 + d->ch);
     }
-    if (gl_rt_depth < 0) gl_rt_depth = getenv("XBRT_GL_RT_DEPTH") && atoi(getenv("XBRT_GL_RT_DEPTH")); /* off by default: see docs/NIGHTLY.md */
+    if (gl_rt_depth < 0) gl_rt_depth = !getenv("XBRT_GL_RT_DEPTH") || atoi(getenv("XBRT_GL_RT_DEPTH"));
     for (int i = 0; i < 4; i++) {
         d->mode[i] = (int)(prog >> (5 * i)) & 31;
         d->tex[i] = NULL;
@@ -1273,13 +1273,6 @@ void nv2a_raster_flip(void) {
 }
 
 void nv2a_raster_vblank(void) {
-    if (rt_gl_on) gl_complete();
-}
-
-int nv2a_hold_get;
-
-void nv2a_raster_fence(void) {
-    nv2a_raster_flush();
     if (rt_gl_on) gl_complete();
 }
 
