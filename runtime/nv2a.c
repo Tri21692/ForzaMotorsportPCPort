@@ -110,12 +110,23 @@ static uint64_t start_ns;
 
 /* Look an object handle up in the hash table. A linear search finds the
  * same entry the hardware's hash would, and needs no hash. Returns the
- * object's offset in instance memory, or ~0. */
+ * object's offset in instance memory, or ~0. The entries found last are
+ * remembered, and used while they still hold the handle: draws look up
+ * their DMA objects many times each (every vertex attribute), and the
+ * search of a 4096-entry table was a few percent of the device thread. */
 uint32_t nv2a_lookup(uint32_t handle) {
+    static struct { uint32_t handle, e; } recent[16];
     uint32_t ramht = REG(PFIFO_RAMHT);
     uint32_t base = ((ramht >> 4) & 0x1F) << 12, size = 0x1000u << ((ramht >> 16) & 3);
-    for (uint32_t e = base; e < base + size; e += 8) {
-        if (RAMIN(e) == handle && (RAMIN(e + 4) & 0x80000000u)) return (RAMIN(e + 4) & 0xFFFF) << 4;
+    unsigned slot = (handle * 2654435761u) >> 28;
+    uint32_t e = recent[slot].e;
+    if (recent[slot].handle == handle && e >= base && e < base + size && RAMIN(e) == handle && (RAMIN(e + 4) & 0x80000000u))
+        return (RAMIN(e + 4) & 0xFFFF) << 4;
+    for (e = base; e < base + size; e += 8) {
+        if (RAMIN(e) == handle && (RAMIN(e + 4) & 0x80000000u)) {
+            recent[slot].handle = handle, recent[slot].e = e;
+            return (RAMIN(e + 4) & 0xFFFF) << 4;
+        }
     }
     return ~0u;
 }
