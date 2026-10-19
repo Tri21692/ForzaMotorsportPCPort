@@ -425,11 +425,16 @@ static void gl_present_vblank(uint32_t fb) {
     /* Only a buffer the GPU drew lately: a stale one would show an old picture. */
     static unsigned last_seq;
     static int same;
-    if (!s) return;
-    if (s->seq == last_seq) {
-        if (++same > 30) return;
-    } else {
+    if (s && s->seq == last_seq) {
+        if (++same > 30) s = NULL;
+    } else if (s) {
         last_seq = s->seq, same = 0;
+    }
+    if (!s) { /* RAM shows what is on screen now: the display goes back to it at once */
+        pthread_mutex_lock(&hi_lock);
+        hi_when = 0;
+        pthread_mutex_unlock(&hi_lock);
+        return;
     }
     int w = 640 * s->k, h = 480 * s->k;
     if (!hi_pbo) glGenBuffers(1, &hi_pbo);
@@ -444,11 +449,12 @@ static void gl_present_vblank(uint32_t fb) {
     hi_pend = 1, hi_pw = w, hi_ph = h, hi_pfb = fb;
 }
 
-/* The latest drawn-resolution picture of buffer fb, if there is a fresh one. */
+/* The latest drawn-resolution picture, if there is a fresh one. */
 int rt_gl_frame(uint32_t fb, uint32_t *out, int max_pixels, int *w, int *h) {
     int ok = 0;
     pthread_mutex_lock(&hi_lock);
-    if (hi_frame && hi_fb == (fb & (RT_PHYS_SIZE - 1)) && rt_now_100ns() - hi_when < 1000000 && hi_w * hi_h <= max_pixels) {
+    (void)fb; /* not compared: the copy is one blank late, and the buffers swap every frame */
+    if (hi_frame && hi_when && rt_now_100ns() - hi_when < 500000 && hi_w * hi_h <= max_pixels) {
         memcpy(out, hi_frame, (size_t)hi_w * hi_h * 4);
         *w = hi_w, *h = hi_h, ok = 1;
     }
