@@ -1016,6 +1016,19 @@ static void gl_filter(GLenum target, const Texture *t, uint32_t filt) {
     GLint min = t->depth ? GL_NEAREST : mn < 8 ? mins[mn] : GL_LINEAR;
     GLint mag = t->depth || mg <= 1 ? GL_NEAREST : GL_LINEAR;
     int32_t bias = (int32_t)(filt << 19) >> 19;
+    /* PC enhancements for mipmapped textures (XBRT_GL_ANISO=<1..16>, default
+     * 16; 1 turns both off): trilinear where the game asked for bilinear
+     * between mipmaps, and anisotropic filtering, which keeps the road and
+     * the verges sharp at grazing angles instead of smearing them. */
+    static float aniso = -1;
+    if (aniso < 0) {
+        aniso = getenv("XBRT_GL_ANISO") ? (float)atof(getenv("XBRT_GL_ANISO")) : 16.0f;
+        if (aniso < 1) aniso = 1;
+    }
+    if (aniso > 1 && !t->depth && t->levels > 1 && min != GL_NEAREST && min != GL_LINEAR) {
+        min = GL_LINEAR_MIPMAP_LINEAR;
+        glTexParameterf(target, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, aniso);
+    }
     glTexParameteri(target, GL_TEXTURE_MIN_FILTER, min);
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, mag);
     glTexParameterf(target, GL_TEXTURE_LOD_BIAS, (float)bias / 256.0f);

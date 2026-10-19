@@ -243,8 +243,10 @@ static void dxt_block(const uint8_t *b, int kind, uint32_t out[16]) {
 static void dump_texture(const Texture *t, uint32_t offset, uint32_t fmt) {
     static const char *dir;
     static int checked, count;
-    if (!checked) checked = 1, dir = getenv("XBRT_TEX_DUMP");
+    static double from;
+    if (!checked) checked = 1, dir = getenv("XBRT_TEX_DUMP"), from = getenv("XBRT_TEX_DUMP_FROM") ? atof(getenv("XBRT_TEX_DUMP_FROM")) : 0;
     if (!dir || !*dir || count >= 2000) return;
+    if (t->w * t->h < 64 || rt_now_100ns() / 1e7 < from) return; /* XBRT_TEX_DUMP_FROM=<seconds>; not the 1x1 colours */
     char path[1024];
     snprintf(path, sizeof path, "%s/tex_%04d_%08x_%08x_%dx%d.bmp", dir, count++, offset, fmt, t->w, t->h);
     FILE *f = fopen(path, "wb");
