@@ -126,6 +126,17 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   depth, comparing in the shader) is the next speed step; profile first.
 - With every read-back skipped (wrong pictures, as an experiment) the
   race ran at ~30 fps, so read-backs still cost about a third.
+- **Tried at the end, reverted:** sampling the shadow map from its
+  framebuffer's depth texture (texture kind 4 in the shader, normalised
+  depth times dmax; the only match was stage 1, the 768x768 map at
+  02ad1000 that is colour and depth at once, shadow compare GREATER),
+  together with keeping textures off the draw's own depth range. 11583
+  flips (from 8680) and ~28 fps in the race, but the scene was wrong:
+  the world upside down in the top half, the bottom half black, the car
+  and HUD fine. Not understood: suspect the depth-range exclusion
+  (it also sent colour render targets back through RAM), or the
+  shadow map's colour and depth sharing an address. Worth redoing in
+  two separate steps.
 - **Tried and failed:** reading back only the buffer PCRTC_START is
   pointed at (a request to the device thread from the vertical blank
   handler's register write) left the game stuck in boot with 100,000+
