@@ -97,23 +97,31 @@ void rt_display_compose(uint32_t *out) {
     overlay(out);
 }
 
+void rt_display_compose_best(uint32_t *out, int *w, int *h) {
+    int video = (REG(PVIDEO_BUFFER) & 1) && REG(PVIDEO_SIZE_IN) != 0xFFFFFFFFu; /* a movie through the overlay */
+    uint32_t fb = REG(PCRTC_START);
+    if (!video && fb && rt_gl_frame(fb, out, RT_DISPLAY_MAX, w, h)) return;
+    rt_display_compose(out);
+    *w = DISP_W, *h = DISP_H;
+}
+
 /* ---- screenshots: 24-bit BMP, bottom-up ---- */
 
 static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v, p[1] = (uint8_t)(v >> 8); }
 static void put32(uint8_t *p, uint32_t v) { put16(p, (uint16_t)v), put16(p + 2, (uint16_t)(v >> 16)); }
 
-static void save_bmp(const char *path, const uint32_t *px) {
+static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
     FILE *f = fopen(path, "wb");
     if (!f) return;
     uint8_t h[54] = {'B', 'M'};
-    uint32_t row = DISP_W * 3, size = 54 + row * DISP_H;
-    put32(h + 2, size), put32(h + 10, 54), put32(h + 14, 40), put32(h + 18, DISP_W), put32(h + 22, DISP_H);
-    put16(h + 26, 1), put16(h + 28, 24), put32(h + 34, row * DISP_H);
+    uint32_t row = (uint32_t)W * 3, size = 54 + row * (uint32_t)H;
+    put32(h + 2, size), put32(h + 10, 54), put32(h + 14, 40), put32(h + 18, (uint32_t)W), put32(h + 22, (uint32_t)H);
+    put16(h + 26, 1), put16(h + 28, 24), put32(h + 34, row * (uint32_t)H);
     fwrite(h, 1, 54, f);
     uint8_t *line = malloc(row);
-    for (int y = DISP_H - 1; y >= 0; y--) {
-        for (int x = 0; x < DISP_W; x++) {
-            uint32_t p = px[y * DISP_W + x];
+    for (int y = H - 1; y >= 0; y--) {
+        for (int x = 0; x < W; x++) {
+            uint32_t p = px[y * W + x];
             line[3 * x] = (uint8_t)p, line[3 * x + 1] = (uint8_t)(p >> 8), line[3 * x + 2] = (uint8_t)(p >> 16);
         }
         fwrite(line, 1, row, f);
@@ -127,14 +135,14 @@ static double shot_every = 5;
 static int shot_count;
 static uint64_t next_shot;
 
-static void maybe_screenshot(const uint32_t *px) {
+static void maybe_screenshot(const uint32_t *px, int w, int h) {
     if (!shot_dir) return;
     uint64_t now = rt_now_100ns();
     if (now < next_shot) return;
     next_shot = now + (uint64_t)(shot_every * 1e7);
     char path[1024];
     snprintf(path, sizeof path, "%s/shot_%04d_%06.1fs.bmp", shot_dir, shot_count++, now / 1e7);
-    save_bmp(path, px);
+    save_bmp(path, px, w, h);
 }
 
 /* ---- the window ---- */
@@ -143,7 +151,8 @@ static void maybe_screenshot(const uint32_t *px) {
 #include <windows.h>
 
 static HWND window;
-static uint32_t frame[DISP_W * DISP_H];
+static uint32_t frame[RT_DISPLAY_MAX];
+static int frame_w = DISP_W, frame_h = DISP_H;
 
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -154,16 +163,16 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         GetClientRect(hwnd, &r);
         BITMAPINFO bi = {0};
         bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-        bi.bmiHeader.biWidth = DISP_W, bi.bmiHeader.biHeight = -DISP_H; /* top-down */
+        bi.bmiHeader.biWidth = frame_w, bi.bmiHeader.biHeight = -frame_h; /* top-down */
         bi.bmiHeader.biPlanes = 1, bi.bmiHeader.biBitCount = 32, bi.bmiHeader.biCompression = BI_RGB;
         SetStretchBltMode(dc, HALFTONE);
-        StretchDIBits(dc, 0, 0, r.right, r.bottom, 0, 0, DISP_W, DISP_H, frame, &bi, DIB_RGB_COLORS, SRCCOPY);
+        StretchDIBits(dc, 0, 0, r.right, r.bottom, 0, 0, frame_w, frame_h, frame, &bi, DIB_RGB_COLORS, SRCCOPY);
         EndPaint(hwnd, &ps);
         return 0;
     }
     case WM_TIMER:
-        rt_display_compose(frame);
-        maybe_screenshot(frame);
+        rt_display_compose_best(frame, &frame_w, &frame_h);
+        maybe_screenshot(frame, frame_w, frame_h);
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     case WM_CLOSE:
@@ -201,10 +210,11 @@ int rt_display_focused(void) { return 1; }
 /* Without a window, screenshots come from a thread of their own. */
 static void *shot_main(void *arg) {
     (void)arg;
-    static uint32_t px[DISP_W * DISP_H];
+    static uint32_t px[RT_DISPLAY_MAX];
     for (;;) {
-        rt_display_compose(px);
-        maybe_screenshot(px);
+        int w, h;
+        rt_display_compose_best(px, &w, &h);
+        maybe_screenshot(px, w, h);
         struct timespec ts = {0, 100000000};
         nanosleep(&ts, NULL);
     }

@@ -149,6 +149,7 @@ static uint32_t draw_zlo, draw_zhi; /* ... and its depth buffer */
 static int gl_rt_depth = -1;        /* sample shadow maps from their framebuffer, not through RAM (XBRT_GL_RT_DEPTH=0: through RAM) */
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static void gl_sync_range(uint32_t base, uint32_t size);
+static void gl_present_vblank(uint32_t fb);
 static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int h, int cube);
 static uint32_t gl_sync_fmt; /* the texture format behind a gl_sync_range, for XBRT_GL_SYNC_LOG */
 static void gl_sync_cpu(void);
@@ -185,11 +186,23 @@ static uint64_t hash_bytes(const uint8_t *p, uint32_t n) {
 
 /* Morton order, as the NV2A swizzles: bits of x and y interleaved, x first,
  * until the smaller dimension runs out. */
+static uint32_t swizzle3(uint32_t x, uint32_t y, uint32_t z, int w, int h, int d);
 static uint32_t swizzle(uint32_t x, uint32_t y, int w, int h) {
     uint32_t r = 0, bit = 0;
     for (int s = 1; s < w || s < h; s <<= 1) {
         if (s < w) r |= ((x & s) ? 1u : 0u) << bit++;
         if (s < h) r |= ((y & s) ? 1u : 0u) << bit++;
+    }
+    return r;
+}
+
+/* ... and of a volume texture: x, y and z bits in turn. */
+static uint32_t swizzle3(uint32_t x, uint32_t y, uint32_t z, int w, int h, int d) {
+    uint32_t r = 0, bit = 0;
+    for (int s = 1; s < w || s < h || s < d; s <<= 1) {
+        if (s < w) r |= ((x & s) ? 1u : 0u) << bit++;
+        if (s < h) r |= ((y & s) ? 1u : 0u) << bit++;
+        if (s < d) r |= ((z & s) ? 1u : 0u) << bit++;
     }
     return r;
 }
@@ -295,12 +308,19 @@ static Texture *texture(int i) {
      * 128 bytes (xemu: NV2A_CUBEFACE_ALIGNMENT). */
     int cube = (fmt >> 2) & 1, faces = cube ? 6 : 1, levels = (int)((fmt >> 16) & 15);
     int dxt = color >= 0x0C && color <= 0x0F, dxt_bytes = color == 0x0C ? 8 : 16;
+    /* A volume texture (dimensionality 3, depth in bits 28-31): Forza's car
+     * bodies and lights have two slices. Only slice 0 is decoded and
+     * sampled as 2D. DXT volumes keep the slices of each 4x4 block together,
+     * up to four at a time (as xemu decodes them); decoded as 2D they came
+     * out in stripes and grids over the cars. */
+    int depth = ((fmt >> 4) & 15) == 3 ? 1 << ((fmt >> 28) & 15) : 1;
     int bpp = (color == 0x06 || color == 0x07 || color == 0x12 || color == 0x1E) ? 4
               : (color == 0x0B || color == 0x00 || color == 0x13 || color == 0x19 || color == 0x1F) ? 1 : 2;
     uint32_t face_size = 0;
     for (int l = 0; l < (levels ? levels : 1); l++) {
         int lw = w >> l > 1 ? w >> l : 1, lh = h >> l > 1 ? h >> l : 1;
-        face_size += dxt ? (uint32_t)((lw + 3) / 4 * ((lh + 3) / 4) * dxt_bytes) : (uint32_t)(lw * lh * bpp);
+        int ld = depth >> l > 1 ? depth >> l : 1;
+        face_size += (dxt ? (uint32_t)((lw + 3) / 4 * ((lh + 3) / 4) * dxt_bytes) : (uint32_t)(lw * lh * bpp)) * (uint32_t)ld;
     }
     face_size = (face_size + 127) & ~127u;
     if (base + (uint64_t)face_size * faces > (uint64_t)RT_PHYS_SIZE * 2 && !dxt && !linear) return NULL;
@@ -369,7 +389,8 @@ static Texture *texture(int i) {
     int w = t->w >> l > 1 ? t->w >> l : 1, h = t->h >> l > 1 ? t->h >> l : 1;
     const uint8_t *src = fsrc + soff;
     uint32_t *o = fo + ooff;
-    soff += dxt ? (size_t)((w + 3) / 4 * ((h + 3) / 4) * dxt_bytes) : (size_t)w * h * bpp;
+    int ld = depth >> l > 1 ? depth >> l : 1; /* this level's slices */
+    soff += (dxt ? (size_t)((w + 3) / 4 * ((h + 3) / 4) * dxt_bytes) : (size_t)w * h * bpp) * (size_t)ld;
     ooff += (size_t)w * h;
 
     uint32_t pal[256] = {0};
@@ -383,7 +404,7 @@ static Texture *texture(int i) {
         uint32_t blk[16];
         for (int by = 0; by < (h + 3) / 4; by++)
             for (int bx = 0; bx < (w + 3) / 4; bx++) {
-                dxt_block(src + ((size_t)by * ((w + 3) / 4) + bx) * bs, kind, blk);
+                dxt_block(src + ((size_t)by * ((w + 3) / 4) + bx) * (size_t)(ld < 4 ? ld : 4) * bs, kind, blk);
                 for (int i = 0; i < 16; i++) {
                     int x = bx * 4 + i % 4, y = by * 4 + i / 4;
                     if (x < w && y < h) o[y * w + x] = blk[i];
@@ -393,7 +414,7 @@ static Texture *texture(int i) {
     }
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
-            uint32_t i = linear ? 0 : swizzle((uint32_t)x, (uint32_t)y, w, h);
+            uint32_t i = linear ? 0 : ld > 1 ? swizzle3((uint32_t)x, (uint32_t)y, 0, w, h, ld) : swizzle((uint32_t)x, (uint32_t)y, w, h);
             uint32_t v;
             switch (color) {
             case 0x06: case 0x07: case 0x12: case 0x1E: { /* 32-bit */
@@ -1283,6 +1304,10 @@ void nv2a_raster_flip(void) {
 
 void nv2a_raster_vblank(void) {
     if (rt_gl_on) gl_complete();
+}
+
+void nv2a_raster_present(uint32_t fb) {
+    if (rt_gl_on) gl_present_vblank(fb);
 }
 
 #define SET_COLOR_CLEAR_VALUE 0x1D90

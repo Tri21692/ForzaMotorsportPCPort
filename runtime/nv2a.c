@@ -512,7 +512,8 @@ static void record_vblank(void) {
     static int state; /* 0 not set up, 1 waiting or recording, 2 done or off */
     static FILE *pipe;
     static double from, len;
-    static uint32_t px[640 * 480];
+    static uint32_t px[RT_DISPLAY_MAX], out[RT_DISPLAY_MAX];
+    static int rw, rh; /* the recording's size: twice 640x480, or the drawn resolution when larger */
     if (state == 2) return;
     if (state == 0) {
         const char *out = getenv("XBRT_RECORD");
@@ -529,10 +530,13 @@ static void record_vblank(void) {
     if (!pipe) {
         const char *ff = getenv("XBRT_FFMPEG");
         char cmd[2048];
+        int w, h;
+        rt_display_compose_best(px, &w, &h);
+        rw = w > 1280 ? w : 1280, rh = h > 960 ? h : 960;
         snprintf(cmd, sizeof cmd,
-                 "\"\"%s\" -loglevel error -y -f rawvideo -pix_fmt bgra -s 640x480 -r 60000/1001 -i - "
-                 "-vf scale=1280:960:flags=lanczos -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \"%s\"\"",
-                 ff && *ff ? ff : "ffmpeg", getenv("XBRT_RECORD"));
+                 "\"\"%s\" -loglevel error -y -f rawvideo -pix_fmt bgra -s %dx%d -r 60000/1001 -i - "
+                 "-c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \"%s\"\"",
+                 ff && *ff ? ff : "ffmpeg", rw, rh, getenv("XBRT_RECORD"));
 #ifdef _WIN32
         pipe = _popen(cmd, "wb");
 #else
@@ -555,8 +559,11 @@ static void record_vblank(void) {
         state = 2;
         return;
     }
-    rt_display_compose(px);
-    fwrite(px, 4, 640 * 480, pipe);
+    int w, h;
+    rt_display_compose_best(px, &w, &h);
+    for (int y = 0; y < rh; y++) /* nearest: the 640x480 picture (menus, movies) doubled */
+        for (int x = 0; x < rw; x++) out[y * rw + x] = px[(y * h / rh) * w + x * w / rw];
+    fwrite(out, 4, (size_t)rw * rh, pipe);
 }
 
 /* ---- the device thread ---- */
@@ -593,6 +600,7 @@ static void *device_main(void *arg) {
                        "PATT_COLOR0 %08x, intr %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
                        nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR));
             nv2a_raster_vblank(); /* before D3D's handler can point the CRTC at them */
+            nv2a_raster_present(REG(PCRTC_START));
             record_vblank();
             REG(PCRTC_INTR_0) |= 1;
             update_irq();

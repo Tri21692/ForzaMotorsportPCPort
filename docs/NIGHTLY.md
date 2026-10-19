@@ -267,6 +267,19 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     picture still reaches RAM at 640x480, so this is supersampling: clean
     edges, and the speckle on car paint (aliasing in the reflections) is
     mostly gone. No frame-rate cost on the RTX 5070 at the 60 fps cap.
+  - **Volume textures.** Forza's car textures (body, lights atlas: formats
+    with dimensionality 3, two slices; e.g. 19910f3a, 26610f3a, 28890f3a)
+    were decoded as 2D. DXT volumes store each 4x4 block's slices together
+    (up to four), so the two slices came out interleaved: striped
+    taillights, a blocky grid over the paint (what looked like speckled
+    reflections). Slice 0 is now decoded (block stride x slices; Morton
+    order over x, y, z for uncompressed ones) and level sizes count the
+    slices. Sampling the second slice (damage?) as a real 3D texture is
+    not done.
+  - The window, screenshots and recordings show the picture at the drawn
+    resolution (1280x960 at 2x): the shown buffer is read from its
+    framebuffer at each vertical blank (pixel buffer object, one blank
+    late), while the GPU keeps drawing it; RAM otherwise and for movies.
   - Still open: the cars' lower bodies are very dark (no reference yet to
     say whether that is right), taillight lenses look striped; presenting
     the picture at the higher resolution (window and recordings) needs the

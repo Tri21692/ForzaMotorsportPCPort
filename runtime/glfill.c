@@ -382,6 +382,80 @@ static void gl_up_done(GlSurf *s, GLbitfield bits) {
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
 }
 
+/* ---- presenting at the drawn resolution ----
+ * At each vertical blank the buffer the CRTC shows is read from its
+ * framebuffer at the size it was drawn (640k x 480k), into a pixel buffer
+ * object, and handed to the display one blank later (rt_gl_frame): the
+ * window, screenshots and recordings show the 2x picture instead of RAM's
+ * 640x480. Only while the GPU keeps drawing that buffer; otherwise (and
+ * for movies, which come through the video overlay) the display takes RAM. */
+static pthread_mutex_t hi_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t *hi_frame;
+static int hi_w, hi_h;
+static uint32_t hi_fb;
+static uint64_t hi_when;
+static GLuint hi_pbo;
+static int hi_pend, hi_pw, hi_ph;
+static uint32_t hi_pfb;
+
+static void gl_present_vblank(uint32_t fb) {
+    if (gl_ready <= 0) return;
+    if (hi_pend) {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, hi_pbo);
+        const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)hi_pw * hi_ph * 4, GL_MAP_READ_BIT);
+        if (m) {
+            pthread_mutex_lock(&hi_lock);
+            if (hi_w * hi_h < hi_pw * hi_ph) free(hi_frame), hi_frame = malloc((size_t)hi_pw * hi_ph * 4);
+            memcpy(hi_frame, m, (size_t)hi_pw * hi_ph * 4);
+            hi_w = hi_pw, hi_h = hi_ph, hi_fb = hi_pfb, hi_when = rt_now_100ns();
+            pthread_mutex_unlock(&hi_lock);
+        }
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        hi_pend = 0;
+    }
+    fb &= RT_PHYS_SIZE - 1;
+    GlSurf *s = NULL;
+    for (int i = 0; i < GL_SURFS; i++) {
+        GlSurf *e = &gl_surf[i];
+        if (e->fbo && e->k > 1 && e->bpp == 4 && !e->swz && (e->cbase & (RT_PHYS_SIZE - 1)) == fb && e->w == 640 && e->h >= 480 &&
+            (!s || e->seq > s->seq))
+            s = e;
+    }
+    /* Only a buffer the GPU drew lately: a stale one would show an old picture. */
+    static unsigned last_seq;
+    static int same;
+    if (!s) return;
+    if (s->seq == last_seq) {
+        if (++same > 30) return;
+    } else {
+        last_seq = s->seq, same = 0;
+    }
+    int w = 640 * s->k, h = 480 * s->k;
+    if (!hi_pbo) glGenBuffers(1, &hi_pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, hi_pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)w * h * 4, NULL, GL_STREAM_READ);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s->fbo);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+    hi_pend = 1, hi_pw = w, hi_ph = h, hi_pfb = fb;
+}
+
+/* The latest drawn-resolution picture of buffer fb, if there is a fresh one. */
+int rt_gl_frame(uint32_t fb, uint32_t *out, int max_pixels, int *w, int *h) {
+    int ok = 0;
+    pthread_mutex_lock(&hi_lock);
+    if (hi_frame && hi_fb == (fb & (RT_PHYS_SIZE - 1)) && rt_now_100ns() - hi_when < 1000000 && hi_w * hi_h <= max_pixels) {
+        memcpy(out, hi_frame, (size_t)hi_w * hi_h * 4);
+        *w = hi_w, *h = hi_h, ok = 1;
+    }
+    pthread_mutex_unlock(&hi_lock);
+    return ok;
+}
+
 /* A swizzled surface's colour to and from RAM, through a linear copy:
  * the NV2A writes it in Morton order, as textures read it (swizzle()). */
 static void gl_to_ram(GlSurf *s) {
