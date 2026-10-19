@@ -33,6 +33,7 @@
  */
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1231,6 +1232,7 @@ void nv2a_raster_sync(void) {
 #define SET_CLEAR_RECT_HORIZONTAL 0x1D98
 #define SET_CLEAR_RECT_VERTICAL 0x1D9C
 #include "glfill.c"
+#include "glvsh.c"
 
 /* CLEAR_SURFACE: on the GPU when it draws, else 0 and kelvin.c clears RAM. */
 int nv2a_raster_clear(uint32_t flags) {
@@ -1285,7 +1287,10 @@ static void draw(void) {
     bstates[st] = d;
     /* Each vertex once (strips and quads share them), on the workers when
      * there are enough to be worth it. */
-    if (mode == 2) vsh_decode();
+    if (mode == 2) {
+        vsh_decode();
+        if (rt_gl_on && gl_vsh_on() && gl_draw_vsh(&d, verts, n, prim)) return; /* the GPU runs the program */
+    }
     if (n > pts_cap) {
         pts_cap = n > 4096 ? n : 4096;
         pts = realloc(pts, (size_t)pts_cap * sizeof *pts);

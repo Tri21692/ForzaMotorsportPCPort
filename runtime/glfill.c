@@ -174,9 +174,30 @@ static const char *fs_src =
 #define GL_VERT 29 /* floats per vertex */
 
 static int gl_ready = -1; /* -1 not set up, 0 failed, 1 ready */
-static GLuint gl_prog, gl_vao, gl_vbo, gl_dummy2d, gl_dummycube;
+static GLuint gl_fs, gl_vao, gl_vbo, gl_dummy2d, gl_dummycube;
 static GLint u_size, u_zmax, u_cicw, u_cocw, u_aicw, u_aocw, u_c0, u_c1, u_fc0, u_fc1, u_ctl, u_f0, u_f1;
 static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4];
+
+/* A linked program and its uniforms' locations: the CPU path's vertex
+ * shader, or one made from a vertex program (glvsh.c), each with the one
+ * fragment shader. gl_use makes the u_* names above refer to its own. */
+static GLint *const gl_loc_var[] = {&u_size, &u_zmax, &u_cicw, &u_cocw, &u_aicw, &u_aocw, &u_c0, &u_c1, &u_fc0, &u_fc1,
+                                    &u_ctl, &u_f0, &u_f1, &u_fogc, &u_mode, &u_kind, &u_scale, &u_dmax, &u_shadow_func,
+                                    &u_alpha_func, &u_alpha_ref, &u_tex[0], &u_tex[1], &u_tex[2], &u_tex[3], &u_cube[0],
+                                    &u_cube[1], &u_cube[2], &u_cube[3]};
+static const char *const gl_loc_name[] = {"u_size", "u_zmax", "u_cicw", "u_cocw", "u_aicw", "u_aocw", "u_c0", "u_c1", "u_fc0",
+                                          "u_fc1", "u_ctl", "u_f0", "u_f1", "u_fogc", "u_mode", "u_kind", "u_scale", "u_dmax",
+                                          "u_shadow_func", "u_alpha_func", "u_alpha_ref", "u_tex0", "u_tex1", "u_tex2", "u_tex3",
+                                          "u_cube0", "u_cube1", "u_cube2", "u_cube3"};
+#define GL_NLOC (int)(sizeof gl_loc_var / sizeof gl_loc_var[0])
+
+typedef struct {
+    GLuint prog;
+    GLint loc[GL_NLOC];
+    GLint vc, sxy, fog; /* a vertex program's: constants, sample scale, fog */
+} GlProg;
+
+static GlProg gl_main, *gl_using;
 
 static GLuint compile(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
@@ -193,31 +214,42 @@ static GLuint compile(GLenum type, const char *src) {
     return s;
 }
 
-static int gl_setup(void) {
-    GLuint vs = compile(GL_VERTEX_SHADER, vs_src), fs = compile(GL_FRAGMENT_SHADER, fs_src);
-    if (!vs || !fs) return 0;
-    gl_prog = glCreateProgram();
-    glAttachShader(gl_prog, vs);
-    glAttachShader(gl_prog, fs);
-    glLinkProgram(gl_prog);
+/* Links vs with the fragment shader into p. */
+static int gl_link(GlProg *p, GLuint vs) {
+    p->prog = glCreateProgram();
+    glAttachShader(p->prog, vs);
+    glAttachShader(p->prog, gl_fs);
+    glLinkProgram(p->prog);
     GLint ok = 0;
-    glGetProgramiv(gl_prog, GL_LINK_STATUS, &ok);
+    glGetProgramiv(p->prog, GL_LINK_STATUS, &ok);
     if (!ok) {
         char log[4096];
-        glGetProgramInfoLog(gl_prog, sizeof log, NULL, log);
+        glGetProgramInfoLog(p->prog, sizeof log, NULL, log);
         fprintf(stderr, "xbrt: GL program does not link:\n%s\n", log);
         return 0;
     }
-#define LOC(v, n) v = glGetUniformLocation(gl_prog, n)
-    LOC(u_size, "u_size"), LOC(u_zmax, "u_zmax"), LOC(u_cicw, "u_cicw"), LOC(u_cocw, "u_cocw"), LOC(u_aicw, "u_aicw");
-    LOC(u_aocw, "u_aocw"), LOC(u_c0, "u_c0"), LOC(u_c1, "u_c1"), LOC(u_fc0, "u_fc0"), LOC(u_fc1, "u_fc1"), LOC(u_ctl, "u_ctl");
-    LOC(u_f0, "u_f0"), LOC(u_f1, "u_f1"), LOC(u_mode, "u_mode"), LOC(u_kind, "u_kind"), LOC(u_scale, "u_scale");
-    LOC(u_dmax, "u_dmax"), LOC(u_shadow_func, "u_shadow_func"), LOC(u_alpha_func, "u_alpha_func"), LOC(u_alpha_ref, "u_alpha_ref"), LOC(u_fogc, "u_fogc");
-    LOC(u_tex[0], "u_tex0"), LOC(u_tex[1], "u_tex1"), LOC(u_tex[2], "u_tex2"), LOC(u_tex[3], "u_tex3");
-    LOC(u_cube[0], "u_cube0"), LOC(u_cube[1], "u_cube1"), LOC(u_cube[2], "u_cube2"), LOC(u_cube[3], "u_cube3");
-#undef LOC
-    glUseProgram(gl_prog);
-    for (int i = 0; i < 4; i++) glUniform1i(u_tex[i], i), glUniform1i(u_cube[i], 4 + i); /* 2D on units 0-3, cubes on 4-7 */
+    for (int i = 0; i < GL_NLOC; i++) p->loc[i] = glGetUniformLocation(p->prog, gl_loc_name[i]);
+    p->vc = glGetUniformLocation(p->prog, "u_vc"), p->sxy = glGetUniformLocation(p->prog, "u_sxy");
+    p->fog = glGetUniformLocation(p->prog, "u_fog");
+    glUseProgram(p->prog);
+    gl_using = NULL;
+    for (int i = 0; i < 4; i++) /* 2D on units 0-3, cubes on 4-7 */
+        glUniform1i(p->loc[21 + i], i), glUniform1i(p->loc[25 + i], 4 + i);
+    return 1;
+}
+
+static void gl_use(GlProg *p) {
+    if (gl_using == p) return;
+    glUseProgram(p->prog);
+    for (int i = 0; i < GL_NLOC; i++) *gl_loc_var[i] = p->loc[i];
+    gl_using = p;
+}
+
+static int gl_setup(void) {
+    GLuint vs = compile(GL_VERTEX_SHADER, vs_src);
+    gl_fs = compile(GL_FRAGMENT_SHADER, fs_src);
+    if (!vs || !gl_fs || !gl_link(&gl_main, vs)) return 0;
+    gl_use(&gl_main);
     glGenVertexArrays(1, &gl_vao);
     glBindVertexArray(gl_vao);
     glGenBuffers(1, &gl_vbo);
@@ -655,11 +687,13 @@ static void gl_uniform_argb(GLint loc, uint32_t v) {
     glUniform4fv(loc, 1, f);
 }
 
+static void gl_frag_state(const DrawState *d, const GlSurf *s);
+
 static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     if (gl_ready < 0) gl_ready = gl_setup();
     if (!gl_ready || !n) return;
     GlSurf *s = gl_bind(d);
-    glUseProgram(gl_prog);
+    gl_use(&gl_main);
 
     if (n * 3 * GL_VERT > gl_verts_cap) {
         gl_verts_cap = n * 3 * GL_VERT * 2;
@@ -673,7 +707,16 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     glBindVertexArray(gl_vao);
     glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * 3 * GL_VERT * sizeof(float), gl_verts, GL_STREAM_DRAW);
+    gl_frag_state(d, s);
+    glDrawArrays(GL_TRIANGLES, 0, n * 3);
+    s->dirty = 1, s->seq = ++gl_seq;
+    if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1;
+}
 
+/* The program's uniforms for the pixel side (the combiners, the texture
+ * stages, alpha test, fog colour) and the fixed-function state, from the
+ * methods, for a draw to s. */
+static void gl_frag_state(const DrawState *d, const GlSurf *s) {
     float size[2] = {(float)s->w, (float)s->h};
     glUniform2fv(u_size, 1, size);
     glUniform1f(u_zmax, d->zmax);
@@ -744,8 +787,4 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     glDisable(GL_CULL_FACE);
     glEnable(GL_SCISSOR_TEST);
     glScissor(d->cx0, d->cy0, d->cw, d->ch);
-
-    glDrawArrays(GL_TRIANGLES, 0, n * 3);
-    s->dirty = 1, s->seq = ++gl_seq;
-    if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1;
 }

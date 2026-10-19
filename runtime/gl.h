@@ -77,6 +77,7 @@
     X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer)                                                                  \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray)                                                          \
     X(PFNGLDRAWARRAYSPROC, glDrawArrays)                                                                                    \
+    X(PFNGLDRAWELEMENTSPROC, glDrawElements)                                                                                \
     X(PFNGLDEBUGMESSAGECALLBACKPROC, glDebugMessageCallback)
 
 #define GL_DECLARE(type, name) extern type p_##name;
@@ -149,6 +150,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glVertexAttribPointer p_glVertexAttribPointer
 #define glEnableVertexAttribArray p_glEnableVertexAttribArray
 #define glDrawArrays p_glDrawArrays
+#define glDrawElements p_glDrawElements
 #define glDebugMessageCallback p_glDebugMessageCallback
 
 extern int rt_gl_on; /* XBRT_GPU=gl and the context came up */
