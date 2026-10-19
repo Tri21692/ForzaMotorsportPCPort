@@ -1240,6 +1240,11 @@ void nv2a_raster_sync(void) {
     if (rt_gl_on) gl_sync_cpu();
 }
 
+void nv2a_raster_sync_range(uint32_t base, uint32_t size) {
+    nv2a_raster_flush();
+    if (rt_gl_on) gl_sync_range(base, size);
+}
+
 #define SET_COLOR_CLEAR_VALUE 0x1D90
 #define SET_ZSTENCIL_CLEAR_VALUE 0x1D8C
 #define SET_CLEAR_RECT_HORIZONTAL 0x1D98

@@ -75,6 +75,10 @@
 #define PCRTC_INTR_EN_0 0x600140
 #define PCRTC_START 0x600800
 
+/* The buffers D3D has pointed the CRTC at: a trapped notify may make its
+ * vertical blank handler show one of them. */
+static uint32_t scanout[4];
+
 #define PRAMDAC_NVPLL 0x680500
 #define PRAMDAC_MPLL 0x680504
 #define PRAMDAC_VPLL 0x680508
@@ -252,6 +256,17 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
     case PTIMER_TIME_0:
     case PTIMER_TIME_1:
         break; /* nobody sets the clock */
+    case PCRTC_START: { /* remember the buffers scanned out (two or three, alternating) */
+        int i = 0;
+        while (i < 4 && scanout[i] && scanout[i] != v) i++;
+        if (i == 4) {
+            memmove(scanout, scanout + 1, 3 * sizeof *scanout);
+            i = 3;
+        }
+        scanout[i] = v;
+        REG(off) = v;
+        break;
+    }
     case PVIDEO_STOP: /* bit 0 tears the overlay down, as xemu has it; D3D waits for the buffers to drain */
         if (v & 1) REG(PVIDEO_BUFFER) = 0;
         break;
@@ -382,6 +397,18 @@ static int run_pushbuf(void) {
  * ISR). Layout as xemu has it; runs on the device thread. */
 static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
     nv2a_raster_flush();
+    /* D3D's notify after a frame's last draw into its front buffer tells
+     * the vertical blank handler that the frame can be shown, well before
+     * the frame's FLIP_INCREMENT_WRITE (shadow maps and the like for the
+     * next frame come in between). Drawing on the GPU reaches RAM at
+     * flips, so the CRTC could be pointed at a front buffer that RAM still
+     * held mid-frame: a frame's environment pass and its bloom passes in
+     * the top-left quarter, black, held for seconds during loads. What the
+     * GPU drew over the scanout buffers goes to RAM before the driver sees
+     * the notify, as it would have on the hardware. */
+    uint32_t size = (rt_display_pitch ? rt_display_pitch : 640 * 4) * 480;
+    for (int i = 0; i < 4; i++)
+        if (scanout[i]) nv2a_raster_sync_range(scanout[i], size);
     uint64_t t0 = rt_now_100ns();
     pthread_mutex_lock(&lock);
     uint32_t chid = (REG(PGRAPH_CTX_USER) >> 24) & 0x1F;
