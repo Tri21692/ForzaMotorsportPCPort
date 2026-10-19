@@ -141,8 +141,7 @@ typedef struct {
 
 static Texture cache[512]; /* a race frame uses a few hundred textures */
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
-static int gl_writes(uint32_t base, uint32_t size);    /* has the GPU drawn into them without reading back? */
-static void gl_sync(void);
+static void gl_sync_range(uint32_t base, uint32_t size);
 static void gl_sync_cpu(void);
 static int cache_next;
 static uint32_t generation; /* bumped when render targets may have changed what textures hold */
@@ -268,8 +267,11 @@ static Texture *texture(int i) {
     uint32_t size = linear ? (pitch ? pitch : (uint32_t)w * (uint32_t)bpp) * (uint32_t)h : face_size * (uint32_t)faces;
     if (size > RT_PHYS_SIZE) size = RT_PHYS_SIZE;
     if (batch_writes(base, size)) nv2a_raster_flush(); /* draw into it first */
-    if (rt_gl_on && gl_writes(base, size)) gl_sync();     /* the GPU drew into it */
+    if (rt_gl_on) gl_sync_range(base, size);              /* the GPU drew into it */
     uint64_t hash = 0x9E3779B97F4A7C15ull ^ size;
+    extern uint64_t raster_t_hash, raster_hash_bytes;
+    uint64_t th0 = rt_now_100ns();
+    raster_hash_bytes += size;
     {
         const uint8_t *p = phys(base);
         uint32_t n = size;
@@ -292,6 +294,7 @@ static Texture *texture(int i) {
             }
         }
     }
+    raster_t_hash += rt_now_100ns() - th0;
     if (hit && hit->hash == hash) {
         hit->gen = generation;
         return hit;
@@ -1138,7 +1141,7 @@ static int batch_writes(uint32_t base, uint32_t size) {
 }
 
 /* Where the device thread's time goes, in 100 ns units, for the stats line. */
-uint64_t raster_t_state, raster_t_setup, raster_t_fill, raster_t_decode, raster_n_decode;
+uint64_t raster_t_state, raster_t_setup, raster_t_fill, raster_t_decode, raster_n_decode, raster_t_hash, raster_hash_bytes;
 
 static void add_tri(int state, int ia, int ib, int ic) {
     if (ntris == tris_cap) {

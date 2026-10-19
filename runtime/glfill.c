@@ -250,14 +250,15 @@ typedef struct {
     uint64_t chash, zhash; /* of RAM as the GPU last left it or saw it */
     int dirty;             /* the GPU has drawn since the last read-back */
     int zdirty;            /* ... and written depth or stencil */
-    int check;             /* RAM may have changed: compare hashes before the next draw */
+    int check;             /* RAM may have changed: compare hashes before the next draw (only when not dirty) */
     unsigned used;
+    unsigned seq;          /* when it last drew, in gl_seq's order */
 } GlSurf;
 
 #define GL_SURFS 32 /* a race frame draws to about 21 */
 static GlSurf gl_surf[GL_SURFS];
 static GlSurf *gl_cur;
-static unsigned gl_tick;
+static unsigned gl_tick, gl_seq;
 
 static uint64_t hash_bytes(const uint8_t *p, uint32_t n) {
     uint64_t h = 0x9E3779B97F4A7C15ull ^ n;
@@ -279,7 +280,7 @@ static int gl_fits(uint32_t base, uint32_t pitch, int h) {
 static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size);
 static int gl_aliases(const GlSurf *a, const GlSurf *b);
 
-static void gl_readback(GlSurf *s) {
+static void gl_readback_one(GlSurf *s) {
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     if (gl_fits(s->cbase, s->cpitch, s->h)) {
         glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
@@ -299,9 +300,27 @@ static void gl_readback(GlSurf *s) {
     }
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     s->dirty = s->zdirty = 0;
-    /* Other framebuffers over the same bytes no longer hold what RAM does. */
+}
+
+/* Several framebuffers can cover the same bytes (gl_aliases); each one,
+ * when it is bound, takes in what the others drew since it last drew
+ * (gl_bind), so the one that drew last holds the newest picture of the
+ * bytes it covers. Read-backs therefore go oldest first: older drawing
+ * over the same bytes reaches RAM before this one does. Clean framebuffers
+ * over these bytes then compare RAM with their copy before they draw. */
+static void gl_readback(GlSurf *s) {
+    for (;;) {
+        GlSurf *older = NULL;
+        for (int i = 0; i < GL_SURFS; i++) {
+            GlSurf *e = &gl_surf[i];
+            if (e != s && e->fbo && e->dirty && e->seq < s->seq && gl_aliases(e, s) && (!older || e->seq < older->seq)) older = e;
+        }
+        if (!older) break;
+        gl_readback(older);
+    }
+    gl_readback_one(s);
     for (int i = 0; i < GL_SURFS; i++)
-        if (&gl_surf[i] != s && gl_surf[i].fbo && gl_aliases(&gl_surf[i], s)) gl_surf[i].check = 1;
+        if (&gl_surf[i] != s && gl_surf[i].fbo && !gl_surf[i].dirty && gl_aliases(&gl_surf[i], s)) gl_surf[i].check = 1;
 }
 
 static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size) {
@@ -334,7 +353,7 @@ static int gl_aliases(const GlSurf *a, const GlSurf *b) {
  * at RAM does (a texture over a surface, the CPU after a fence or a flip). */
 static void gl_sync(void) {
     for (int i = 0; i < GL_SURFS; i++)
-        if (gl_surf[i].fbo && gl_surf[i].dirty) gl_readback(&gl_surf[i]);
+        if (gl_surf[i].fbo && gl_surf[i].dirty) gl_readback(&gl_surf[i]); /* older ones over the same bytes first */
 }
 
 /* After a point where the CPU may write RAM (a fence, a notify, a flip) or
@@ -346,11 +365,13 @@ static void gl_sync_cpu(void) {
     for (int i = 0; i < GL_SURFS; i++) gl_surf[i].check = 1;
 }
 
-/* Would reading these bytes see what the GPU has drawn but not read back? */
-static int gl_writes(uint32_t base, uint32_t size) {
+/* RAM up to date in these bytes: the framebuffers that drew into them are
+ * read back (with older drawing over the same bytes first), the rest stay
+ * on the GPU. Reading back everything whenever a texture was a render
+ * target cost a third of the device thread. */
+static void gl_sync_range(uint32_t base, uint32_t size) {
     for (int i = 0; i < GL_SURFS; i++)
-        if (gl_drew(&gl_surf[i], base, size)) return 1;
-    return 0;
+        if (gl_drew(&gl_surf[i], base, size)) gl_readback(&gl_surf[i]);
 }
 
 static void gl_upload_if_changed(GlSurf *s) {
@@ -376,6 +397,49 @@ static void gl_upload_if_changed(GlSurf *s) {
         }
     }
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+}
+
+/* Can what e drew reach s by copying texels on the GPU? Only where the
+ * bytes line up: the same pitch and format, a whole number of rows apart,
+ * colour over colour and depth over depth. */
+static int gl_row_offset(uint32_t from, uint32_t to, uint32_t pitch, int *rows) {
+    int64_t d = (int64_t)(from & (RT_PHYS_SIZE - 1)) - (int64_t)(to & (RT_PHYS_SIZE - 1));
+    if (!pitch || d % pitch) return 0;
+    *rows = (int)(d / pitch);
+    return 1;
+}
+
+/* Do [a, a + an) and [b, b + bn) share bytes? */
+static int gl_span_hit(uint32_t a, uint32_t an, uint32_t b, uint32_t bn) {
+    a &= RT_PHYS_SIZE - 1, b &= RT_PHYS_SIZE - 1;
+    return an && bn && a < b + bn && b < a + an;
+}
+
+static int gl_can_copy(const GlSurf *e, const GlSurf *s) {
+    int dy;
+    uint32_t ec = e->cpitch * (uint32_t)e->h, ez = e->ztex && e->zdirty ? e->zpitch * (uint32_t)e->h : 0;
+    uint32_t sc = s->cpitch * (uint32_t)s->h, sz = s->ztex ? s->zpitch * (uint32_t)s->h : 0;
+    if (gl_span_hit(e->cbase, ec, s->cbase, sc) &&
+        (e->cpitch != s->cpitch || e->bpp != s->bpp || !gl_row_offset(e->cbase, s->cbase, s->cpitch, &dy)))
+        return 0;
+    if (gl_span_hit(e->cbase, ec, s->zbase, sz) || gl_span_hit(e->zbase, ez, s->cbase, sc)) return 0;
+    if (gl_span_hit(e->zbase, ez, s->zbase, sz) &&
+        (e->zpitch != s->zpitch || e->zbpp != s->zbpp || !gl_row_offset(e->zbase, s->zbase, s->zpitch, &dy)))
+        return 0;
+    return 1;
+}
+
+static void gl_copy_rows(GLuint from, int from_h, uint32_t from_base, GLuint to, int to_h, uint32_t to_base, uint32_t pitch, int w) {
+    int dy;
+    if (!gl_row_offset(from_base, to_base, pitch, &dy)) return;
+    int sy = dy < 0 ? -dy : 0, ty = dy > 0 ? dy : 0, rows = from_h - sy < to_h - ty ? from_h - sy : to_h - ty;
+    if (rows > 0) glCopyImageSubData(from, GL_TEXTURE_2D, 0, 0, sy, 0, to, GL_TEXTURE_2D, 0, 0, ty, 0, w, rows, 1);
+}
+
+static void gl_copy(const GlSurf *e, GlSurf *s) {
+    int w = e->w < s->w ? e->w : s->w;
+    gl_copy_rows(e->ctex, e->h, e->cbase, s->ctex, s->h, s->cbase, s->cpitch, w);
+    if (e->zdirty && e->ztex && s->ztex) gl_copy_rows(e->ztex, e->h, e->zbase, s->ztex, s->h, s->zbase, s->zpitch, w);
 }
 
 static void gl_free_surf(GlSurf *s) {
@@ -427,20 +491,42 @@ static GlSurf *gl_bind(const DrawState *d) {
             s->chash = s->zhash = 1; /* never matches: upload */
             s->check = 1;
         }
-        /* What another framebuffer over these bytes drew goes to RAM
-         * first, and from there into this one; otherwise the two are read
-         * back over each other at the next sync, in slot order rather than
-         * drawing order. */
+        gl_cur = s;
+        s->used = ++gl_tick;
+        if (s->check && !s->dirty) gl_upload_if_changed(s);
+        s->check = 0;
+        /* Then what other framebuffers over these bytes drew since this
+         * one last drew, oldest first: copied on the GPU where the bytes
+         * line up (Forza's bloom quarters of a front buffer, the same
+         * buffer with and without depth), else through RAM. */
+        GlSurf *newer[GL_SURFS];
+        int n = 0, copy = 1;
         for (int i = 0; i < GL_SURFS; i++) {
             GlSurf *e = &gl_surf[i];
-            if (e != s && (gl_drew(e, s->cbase, s->cpitch * (uint32_t)s->h) ||
-                           (s->ztex && gl_drew(e, s->zbase, s->zpitch * (uint32_t)s->h))))
-                gl_readback(e);
+            if (e != s && e->seq > s->seq &&
+                (gl_drew(e, s->cbase, s->cpitch * (uint32_t)s->h) || (s->ztex && gl_drew(e, s->zbase, s->zpitch * (uint32_t)s->h)))) {
+                newer[n++] = e;
+                copy &= gl_can_copy(e, s);
+            }
         }
-        gl_cur = s;
+        for (int i = 1; i < n; i++) /* by seq */
+            for (int j = i; j > 0 && newer[j - 1]->seq > newer[j]->seq; j--) {
+                GlSurf *t = newer[j];
+                newer[j] = newer[j - 1], newer[j - 1] = t;
+            }
+        if (copy) {
+            for (int i = 0; i < n; i++) gl_copy(newer[i], s);
+        } else if (n) {
+            for (int i = 0; i < n; i++)
+                if (newer[i]->dirty) gl_readback(newer[i]); /* s too, first, if it drew earlier */
+            if (s->dirty) gl_readback(s);
+            gl_upload_if_changed(s);
+            s->check = 0;
+        }
     }
     s->used = ++gl_tick;
-    if (s->check) gl_upload_if_changed(s), s->check = 0;
+    if (s->check && !s->dirty) gl_upload_if_changed(s);
+    s->check = 0;
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     glViewport(0, 0, s->w, s->h);
     return s;
@@ -491,7 +577,7 @@ static int gl_clear(uint32_t flags) {
         bits |= GL_STENCIL_BUFFER_BIT;
     }
     glClear(bits);
-    s->dirty = 1;
+    s->dirty = 1, s->seq = ++gl_seq;
     if (flags & 3) s->zdirty = 1;
     return 1;
 }
@@ -660,6 +746,6 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     glScissor(d->cx0, d->cy0, d->cw, d->ch);
 
     glDrawArrays(GL_TRIANGLES, 0, n * 3);
-    s->dirty = 1;
+    s->dirty = 1, s->seq = ++gl_seq;
     if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1;
 }

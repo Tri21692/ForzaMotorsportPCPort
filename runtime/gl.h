@@ -45,6 +45,7 @@
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)                                                                    \
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                                                                          \
     X(PFNGLFRAMEBUFFERTEXTURE2DPROC, glFramebufferTexture2D)                                                                \
+    X(PFNGLCOPYIMAGESUBDATAPROC, glCopyImageSubData)                                                                        \
     X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, glCheckFramebufferStatus)                                                            \
     X(PFNGLCREATESHADERPROC, glCreateShader)                                                                                \
     X(PFNGLDELETESHADERPROC, glDeleteShader)                                                                                \
@@ -116,6 +117,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glDeleteFramebuffers p_glDeleteFramebuffers
 #define glBindFramebuffer p_glBindFramebuffer
 #define glFramebufferTexture2D p_glFramebufferTexture2D
+#define glCopyImageSubData p_glCopyImageSubData
 #define glCheckFramebufferStatus p_glCheckFramebufferStatus
 #define glCreateShader p_glCreateShader
 #define glDeleteShader p_glDeleteShader

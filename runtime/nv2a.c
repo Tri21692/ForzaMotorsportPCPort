@@ -586,9 +586,9 @@ void nv2a_log_stats(void) {
     uint64_t t = now_ns();
     if ((!rt_log_level && !stats) || t < next) return;
     next = t + 5000000000ull;
-    extern uint64_t raster_t_state, raster_t_setup, raster_t_fill, raster_t_decode, raster_n_decode;
-    fprintf(stderr, "[%10.3f] nv2a: texture decodes %llu, %.1f s\n", rt_now_100ns() / 1e7, (unsigned long long)raster_n_decode,
-            raster_t_decode / 1e7);
+    extern uint64_t raster_t_state, raster_t_setup, raster_t_fill, raster_t_decode, raster_n_decode, raster_t_hash, raster_hash_bytes;
+    fprintf(stderr, "[%10.3f] nv2a: texture decodes %llu, %.1f s; texture checks hashed %llu MB, %.1f s\n", rt_now_100ns() / 1e7,
+            (unsigned long long)raster_n_decode, raster_t_decode / 1e7, (unsigned long long)(raster_hash_bytes >> 20), raster_t_hash / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: device thread: pusher %.1f s, of which draw state %.1f s, vertices %.1f s, filling %.1f s\n",
             rt_now_100ns() / 1e7, pusher_t_busy / 1e7, raster_t_state / 1e7, raster_t_setup / 1e7, raster_t_fill / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
