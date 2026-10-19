@@ -192,6 +192,47 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   - Seen at `XBRT_FPS=30`, not looked into yet: one screenshot per run
     near the start of lap 2 is grey and untextured (sky and ground flat
     grey, the car's shadow only).
+- **2026-10-19 afternoon (interactive): the NVIDIA GPU; car reflections
+  on the GPU.**
+  - The PC has an RTX 5070 Laptop GPU besides the Intel one, and OpenGL
+    ran on the Intel. `forza.exe` now exports `NvOptimusEnablement` (and
+    AMD's equivalent), so the drivers give it the fast GPU (Windows'
+    per-app graphics setting still overrides). Race at 60-88 fps where
+    Intel gave 27-29; with the 60 fps mod the race clock keeps real time.
+  - `XBRT_GL_SYNC_LOG=1` (kept): every 30 s, which texture made which
+    framebuffer wait for a read-back, with counts and time.
+  - Car reflections: a 256x256 texture and a 128x128 cube map, format
+    0x06 (swizzled A8R8G8B8), at the same bytes as pitch surfaces Forza
+    draws (with the swizzled size fields set). Read back and decoded as
+    swizzled they came out scrambled (the speckled car paint), and the
+    256x256 one was a wait for the GPU every frame (96 s of a race).
+    Now sampled from the framebuffer, as xemu does (`gl_rt_swizzled`):
+    27 -> 34 fps on Intel. Cube maps copy their six faces into a GL cube
+    texture; that took Intel to 13 fps, so it is off unless
+    `XBRT_GL_RT_CUBE=1` (not yet measured on NVIDIA). Real swizzled
+    surfaces (type 2) now swizzle on read-back and upload, and clear on
+    the GPU (the RAM clear skipped them).
+  - `GL_DEPTH_CLAMP`: the NV2A clamps depth; without it NVIDIA clipped
+    the sky (on the far plane) and left black patches above the horizon.
+  - Framebuffers over the same bytes now copy each other only the
+    rectangle they drew (bloom quarters drew 320 of 640 columns), and a
+    framebuffer takes from later ones even when those were read back.
+  - **Open, NVIDIA only:** black patches over part of the race picture
+    (often the right half or lower right, edges following geometry). Not
+    the shadow maps, the vertex programs, the swizzled path, feedback
+    loops (a draw sampling its own framebuffer now samples a copy), nor
+    the bloom quarters. It goes away when the shown buffers (019e8000,
+    01b14000) are not sampled from their framebuffers
+    (`XBRT_GL_RT_SHOWN=0`). Forza draws a car-shadow image into the
+    buffer not on screen (grey ground, dark car blobs) and projects it
+    from there; the framebuffer's texture and RAM held the same picture
+    when dumped, so the difference is in how it is sampled or when.
+    With `XBRT_GL_RT_SHOWN=0` that shadow image appears on screen in many
+    frames instead (the "grey frames", 6 of 15 screenshots; 1-2 of 15
+    otherwise), so the default stays sampling them. Both are probably
+    one bug about which buffer holds what when; next session's first job.
+  - The input script's timings were made for ~30 fps: on NVIDIA the
+    menus run far faster and `race.txt` sometimes ends in the pause menu.
   - Beware when judging runs: `race.txt` holds the throttle and never
     steers, and the grid slot changes from run to run (4th to 8th). From
     the inner slots the car ends against the pit-lane pillar or the

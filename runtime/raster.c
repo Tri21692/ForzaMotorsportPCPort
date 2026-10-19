@@ -149,6 +149,8 @@ static uint32_t draw_zlo, draw_zhi; /* ... and its depth buffer */
 static int gl_rt_depth = -1;        /* sample shadow maps from their framebuffer, not through RAM (XBRT_GL_RT_DEPTH=0: through RAM) */
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static void gl_sync_range(uint32_t base, uint32_t size);
+static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int h, int cube);
+static uint32_t gl_sync_fmt; /* the texture format behind a gl_sync_range, for XBRT_GL_SYNC_LOG */
 static void gl_sync_cpu(void);
 static void gl_sync_color_async(uint32_t base, uint32_t size);
 static void gl_flip(void);
@@ -266,6 +268,11 @@ static Texture *texture(int i) {
                                     (int)(KT(SET_TEXTURE_IMAGE_RECT) & 0xFFFF));
         if (rt) return rt;
     }
+    if (rt_gl_on && (color == 0x06 || color == 0x07) && ((fmt >> 16) & 15) == 1) { /* swizzled, one level: perhaps a render target */
+        Texture *rt = gl_rt_swizzled(i, dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + KT(SET_TEXTURE_OFFSET), color,
+                                     1 << ((fmt >> 20) & 15), 1 << ((fmt >> 24) & 15), (int)((fmt >> 2) & 1));
+        if (rt) return rt;
+    }
     uint32_t key[5] = {KT(SET_TEXTURE_OFFSET), fmt, KT(SET_TEXTURE_CONTROL1), KT(SET_TEXTURE_IMAGE_RECT), KT(SET_TEXTURE_PALETTE)};
     Texture *hit = NULL;
     for (int i = 0; i < 512 && !hit; i++)
@@ -303,7 +310,7 @@ static Texture *texture(int i) {
     uint32_t size = linear ? (pitch ? pitch : (uint32_t)w * (uint32_t)bpp) * (uint32_t)h : face_size * (uint32_t)faces;
     if (size > RT_PHYS_SIZE) size = RT_PHYS_SIZE;
     if (batch_writes(base, size)) nv2a_raster_flush(); /* draw into it first */
-    if (rt_gl_on) gl_sync_range(base, size);              /* the GPU drew into it */
+    if (rt_gl_on) gl_sync_fmt = fmt, gl_sync_range(base, size);              /* the GPU drew into it */
     uint64_t hash;
     extern uint64_t raster_t_hash, raster_hash_bytes;
     uint64_t th0 = rt_now_100ns();

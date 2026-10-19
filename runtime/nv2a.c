@@ -79,6 +79,13 @@
  * vertical blank handler show one of them. */
 static uint32_t scanout[4];
 
+/* Is this one of the buffers the CRTC has shown? */
+int nv2a_is_scanout(uint32_t base) {
+    for (int i = 0; i < 4; i++)
+        if (scanout[i] && ((scanout[i] ^ base) & (RT_PHYS_SIZE - 1)) == 0) return 1;
+    return 0;
+}
+
 #define PRAMDAC_NVPLL 0x680500
 #define PRAMDAC_MPLL 0x680504
 #define PRAMDAC_VPLL 0x680508

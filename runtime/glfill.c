@@ -270,6 +270,10 @@ static int gl_setup(void) {
     glTexStorage2D(GL_TEXTURE_CUBE_MAP, 1, GL_RGBA8, 1, 1);
     for (int f = 0; f < 6; f++)
         glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + (GLenum)f, 0, 0, 0, 1, 1, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, &black);
+    /* The NV2A clamps depth and does not clip at the near and far planes.
+     * Without this, geometry at the far plane (Forza's sky) sat on the clip
+     * boundary, and NVIDIA's GL dropped it: black patches over the sky. */
+    glEnable(GL_DEPTH_CLAMP);
     fprintf(stderr, "xbrt: drawing on the GPU\n");
     return 1;
 }
@@ -288,6 +292,8 @@ typedef struct {
     unsigned used;
     unsigned seq;          /* when it last drew, in gl_seq's order */
     int zgpu;              /* a shadow map sampled where it was drawn: its depth lives only on the GPU (gl_depth_stays) */
+    int swz;               /* a swizzled surface: its colour is in Morton order in RAM (gl_to_ram, gl_from_ram) */
+    int rx0, ry0, rx1, ry1; /* what it ever drew (clip rectangles, in its pixels): all another framebuffer takes from it */
 } GlSurf;
 
 #define GL_SURFS 32 /* a race frame draws to about 21 */
@@ -305,6 +311,35 @@ static int gl_span_hit(uint32_t a, uint32_t an, uint32_t b, uint32_t bn);
 static void gl_complete(void);
 static void gl_complete_range(uint32_t base, uint32_t size);
 
+/* A swizzled surface's colour to and from RAM, through a linear copy:
+ * the NV2A writes it in Morton order, as textures read it (swizzle()). */
+static void gl_to_ram(GlSurf *s) {
+    size_t n = (size_t)s->w * (size_t)s->h;
+    uint8_t *tmp = malloc(n * (size_t)s->bpp), *dst = phys(s->cbase);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    if (s->bpp == 4) glReadPixels(0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, tmp);
+    else glReadPixels(0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, tmp);
+    for (int y = 0; y < s->h; y++)
+        for (int x = 0; x < s->w; x++)
+            memcpy(dst + (size_t)swizzle((uint32_t)x, (uint32_t)y, s->w, s->h) * (size_t)s->bpp, tmp + ((size_t)y * (size_t)s->w + (size_t)x) * (size_t)s->bpp,
+                   (size_t)s->bpp);
+    free(tmp);
+}
+
+static void gl_from_ram(GlSurf *s) {
+    size_t n = (size_t)s->w * (size_t)s->h;
+    uint8_t *tmp = malloc(n * (size_t)s->bpp);
+    const uint8_t *src = phys(s->cbase);
+    for (int y = 0; y < s->h; y++)
+        for (int x = 0; x < s->w; x++)
+            memcpy(tmp + ((size_t)y * (size_t)s->w + (size_t)x) * (size_t)s->bpp, src + (size_t)swizzle((uint32_t)x, (uint32_t)y, s->w, s->h) * (size_t)s->bpp,
+                   (size_t)s->bpp);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    if (s->bpp == 4) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, tmp);
+    else glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, tmp);
+    free(tmp);
+}
+
 static void gl_readback_one(GlSurf *s) {
     gl_complete_range(s->cbase, s->cpitch * (uint32_t)s->h); /* older colour on its way must not land over this */
     if (s->ztex) gl_complete_range(s->zbase, s->zpitch * (uint32_t)s->h);
@@ -312,7 +347,8 @@ static void gl_readback_one(GlSurf *s) {
     if (s->cdirty && gl_fits(s->cbase, s->cpitch, s->h)) { /* colour already read back, or on its way, is not read again */
         glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        if (s->bpp == 4) glReadPixels(0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, phys(s->cbase));
+        if (s->swz) gl_to_ram(s);
+        else if (s->bpp == 4) glReadPixels(0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, phys(s->cbase));
         else glReadPixels(0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, phys(s->cbase));
         s->chash = hash_bytes(phys(s->cbase), s->cpitch * (uint32_t)s->h);
     }
@@ -445,6 +481,10 @@ static void gl_complete_range(uint32_t base, uint32_t size) {
 /* A framebuffer's colour into a pixel buffer object, older colour over
  * the same bytes first; its depth stays on the GPU. */
 static void gl_readback_color_async(GlSurf *s) {
+    if (s->swz) { /* never a shown buffer; it needs swizzling on the way */
+        gl_readback(s);
+        return;
+    }
     uint32_t c = s->cpitch * (uint32_t)s->h;
     for (;;) {
         GlSurf *older = NULL;
@@ -528,8 +568,36 @@ static void gl_flip(void) {
  * target cost a third of the device thread. */
 static void gl_sync_range(uint32_t base, uint32_t size) {
     gl_complete_range(base, size);
+    static int log = -1; /* XBRT_GL_SYNC_LOG=1: which texture made which framebuffer wait, every 30 s */
+    if (log < 0) log = getenv("XBRT_GL_SYNC_LOG") && atoi(getenv("XBRT_GL_SYNC_LOG"));
     for (int i = 0; i < GL_SURFS; i++)
-        if (gl_drew(&gl_surf[i], base, size)) gl_readback(&gl_surf[i]);
+        if (gl_drew(&gl_surf[i], base, size)) {
+            if (!log) {
+                gl_readback(&gl_surf[i]);
+                continue;
+            }
+            static struct { uint32_t base, size, cbase, zbase, fmt; int w, h, cd, zd; unsigned n; uint64_t t; } tab[64];
+            static int nt;
+            static uint64_t last;
+            GlSurf *e = &gl_surf[i];
+            int k = 0;
+            while (k < nt && !(tab[k].base == base && tab[k].size == size && tab[k].cbase == e->cbase && tab[k].zbase == e->zbase)) k++;
+            if (k == nt && nt < 64) {
+                tab[nt].base = base, tab[nt].size = size, tab[nt].cbase = e->cbase, tab[nt].zbase = e->zbase, tab[nt].w = e->w, tab[nt].h = e->h, tab[nt].fmt = gl_sync_fmt;
+                nt++;
+            }
+            int cd = e->cdirty, zd = e->zdirty;
+            uint64_t t0 = rt_now_100ns();
+            gl_readback(e);
+            if (k < 64) tab[k].n++, tab[k].t += rt_now_100ns() - t0, tab[k].cd += cd, tab[k].zd += zd;
+            if (t0 - last > 300000000ull) {
+                last = t0;
+                fprintf(stderr, "[%9.3f] gl sync log:\n", t0 / 1e7);
+                for (int j = 0; j < nt; j++)
+                    fprintf(stderr, "  texture %08x+%u (format %08x) waits for %dx%d at colour %08x depth %08x: %ux (colour %d, depth %d), %.2f s\n", tab[j].base,
+                            tab[j].size, tab[j].fmt, tab[j].w, tab[j].h, tab[j].cbase, tab[j].zbase, tab[j].n, tab[j].cd, tab[j].zd, tab[j].t / 1e7);
+            }
+        }
 }
 
 static void gl_upload_if_changed(GlSurf *s) {
@@ -541,7 +609,8 @@ static void gl_upload_if_changed(GlSurf *s) {
             glBindTexture(GL_TEXTURE_2D, s->ctex);
             glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            if (s->bpp == 4) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, phys(s->cbase));
+            if (s->swz) gl_from_ram(s);
+            else if (s->bpp == 4) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, phys(s->cbase));
             else glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, phys(s->cbase));
             s->chash = h;
         }
@@ -579,6 +648,9 @@ static int gl_can_copy(const GlSurf *e, const GlSurf *s) {
     int dy;
     uint32_t ec = e->cpitch * (uint32_t)e->h, ez = e->ztex && e->zdirty ? e->zpitch * (uint32_t)e->h : 0;
     uint32_t sc = s->cpitch * (uint32_t)s->h, sz = s->ztex ? s->zpitch * (uint32_t)s->h : 0;
+    if (gl_span_hit(e->cbase, ec, s->cbase, sc) && (e->swz || s->swz) &&
+        (e->swz != s->swz || e->cbase != s->cbase || e->w != s->w || e->h != s->h)) /* Morton order does not shift by rows */
+        return 0;
     if (gl_span_hit(e->cbase, ec, s->cbase, sc) &&
         (e->cpitch != s->cpitch || e->bpp != s->bpp || !gl_row_offset(e->cbase, s->cbase, s->cpitch, &dy)))
         return 0;
@@ -589,17 +661,41 @@ static int gl_can_copy(const GlSurf *e, const GlSurf *s) {
     return 1;
 }
 
-static void gl_copy_rows(GLuint from, int from_h, uint32_t from_base, GLuint to, int to_h, uint32_t to_base, uint32_t pitch, int w) {
+/* Copies the part of e that e drew (rx0..rx1, ry0..ry1) into s, where the
+ * bytes line up a whole number of rows apart. Whole rows, as before, put
+ * what a bloom quarter (left 320 columns of a 640-wide surface) never drew
+ * over the front buffer's right half: black on NVIDIA, where those texels
+ * were never written. */
+static void gl_copy_rows(const GlSurf *e, GLuint from, uint32_t from_base, GLuint to, int to_h, uint32_t to_base, uint32_t pitch, int w) {
     int dy;
     if (!gl_row_offset(from_base, to_base, pitch, &dy)) return;
-    int sy = dy < 0 ? -dy : 0, ty = dy > 0 ? dy : 0, rows = from_h - sy < to_h - ty ? from_h - sy : to_h - ty;
-    if (rows > 0) glCopyImageSubData(from, GL_TEXTURE_2D, 0, 0, sy, 0, to, GL_TEXTURE_2D, 0, 0, ty, 0, w, rows, 1);
+    int y0 = e->ry0 > (dy < 0 ? -dy : 0) ? e->ry0 : (dy < 0 ? -dy : 0), y1 = e->ry1 < e->h ? e->ry1 : e->h;
+    if (y1 + dy > to_h) y1 = to_h - dy;
+    int x1 = e->rx1 < w ? e->rx1 : w;
+    if (y1 > y0 && x1 > e->rx0)
+        glCopyImageSubData(from, GL_TEXTURE_2D, 0, e->rx0, y0, 0, to, GL_TEXTURE_2D, 0, e->rx0, y0 + dy, 0, x1 - e->rx0, y1 - y0, 1);
 }
 
 static void gl_copy(const GlSurf *e, GlSurf *s) {
     int w = e->w < s->w ? e->w : s->w;
-    gl_copy_rows(e->ctex, e->h, e->cbase, s->ctex, s->h, s->cbase, s->cpitch, w);
-    if (e->zdirty && e->ztex && s->ztex) gl_copy_rows(e->ztex, e->h, e->zbase, s->ztex, s->h, s->zbase, s->zpitch, w);
+    gl_copy_rows(e, e->ctex, e->cbase, s->ctex, s->h, s->cbase, s->cpitch, w);
+    if (e->zdirty && e->ztex && s->ztex) gl_copy_rows(e, e->ztex, e->zbase, s->ztex, s->h, s->zbase, s->zpitch, w);
+}
+
+/* A draw or clear into s over this rectangle (clipped to s). */
+static void gl_drawn(GlSurf *s, int x0, int y0, int x1, int y1) {
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > s->w) x1 = s->w;
+    if (y1 > s->h) y1 = s->h;
+    if (x1 <= x0 || y1 <= y0) return;
+    if (s->rx1 <= s->rx0) s->rx0 = x0, s->ry0 = y0, s->rx1 = x1, s->ry1 = y1;
+    else {
+        if (x0 < s->rx0) s->rx0 = x0;
+        if (y0 < s->ry0) s->ry0 = y0;
+        if (x1 > s->rx1) s->rx1 = x1;
+        if (y1 > s->ry1) s->ry1 = y1;
+    }
 }
 
 static void gl_free_surf(GlSurf *s) {
@@ -618,8 +714,12 @@ static void gl_take_newer(GlSurf *s) {
     int n = 0, copy = 1;
     for (int i = 0; i < GL_SURFS; i++) {
         GlSurf *e = &gl_surf[i];
-        if (e != s && e->seq > s->seq &&
-            (gl_drew(e, s->cbase, s->cpitch * (uint32_t)s->h) || (s->ztex && gl_drew(e, s->zbase, s->zpitch * (uint32_t)s->h)))) {
+        /* Read back or not: a framebuffer that drew later holds newer pixels
+         * than s, which (dirty itself) will not take them from RAM. Taking
+         * only the dirty ones left a front buffer's texture with texels
+         * nothing wrote: black patches on NVIDIA. */
+        if (e != s && e->fbo && e->seq > s->seq &&
+            (gl_overlaps(e, s->cbase, s->cpitch * (uint32_t)s->h) || (s->ztex && gl_overlaps(e, s->zbase, s->zpitch * (uint32_t)s->h)))) {
             newer[n++] = e;
             copy &= gl_can_copy(e, s);
         }
@@ -643,18 +743,20 @@ static void gl_take_newer(GlSurf *s) {
 static GlSurf *gl_bind(const DrawState *d) {
     uint32_t fmt = K(SET_SURFACE_FORMAT);
     uint32_t cfmt = fmt & 15, zfmt = d->ztest || K(SET_DEPTH_MASK) ? (fmt >> 4) & 15 : 0;
+    int swz = ((fmt >> 8) & 15) == 2;
     int w = (int)(d->pitch / (uint32_t)d->bpp), h = d->cy0 + d->ch; /* exact: rounded up to 16, a 160x120 one covered the cube map after it */
+    if (swz) w = 1 << ((fmt >> 16) & 15), h = 1 << ((fmt >> 24) & 15); /* the Morton order runs over the whole of it */
     uint32_t zbase = zfmt ? dma_base(SET_CONTEXT_DMA_ZETA) + K(SET_SURFACE_ZETA_OFFSET) : 0, zpitch = zfmt ? K(SET_SURFACE_PITCH) >> 16 : 0;
     if (zfmt && (zfmt > 2 || !zpitch || (uint32_t)w * (zfmt == 1 ? 2u : 4u) > zpitch)) zfmt = 0, zbase = 0, zpitch = 0;
     GlSurf *s = gl_cur;
     if (!s || s->cbase != d->base || s->cpitch != d->pitch || s->cfmt != cfmt || s->zbase != zbase || s->zfmt != zfmt ||
-        s->zpitch != zpitch || s->w != w || s->h < h) {
+        s->zpitch != zpitch || s->w != w || s->h < h || s->swz != swz) {
         s = NULL;
         GlSurf *lru = &gl_surf[0];
         for (int i = 0; i < GL_SURFS && !s; i++) {
             GlSurf *e = &gl_surf[i];
             if (e->fbo && e->cbase == d->base && e->cpitch == d->pitch && e->cfmt == cfmt && e->zbase == zbase && e->zfmt == zfmt &&
-                e->zpitch == zpitch && e->w == w && e->h >= h)
+                e->zpitch == zpitch && e->w == w && e->h >= h && e->swz == swz)
                 s = e;
             else if (e->used < lru->used)
                 lru = e;
@@ -665,7 +767,7 @@ static GlSurf *gl_bind(const DrawState *d) {
             gl_complete(); /* nothing on its way refers to the slot */
             gl_free_surf(s);
             s->cbase = d->base, s->cpitch = d->pitch, s->cfmt = cfmt, s->zbase = zbase, s->zfmt = zfmt, s->zpitch = zpitch;
-            s->w = w, s->h = h, s->bpp = d->bpp, s->zbpp = zfmt == 1 ? 2 : 4;
+            s->w = w, s->h = h, s->bpp = d->bpp, s->zbpp = zfmt == 1 ? 2 : 4, s->swz = swz;
             glGenTextures(1, &s->ctex);
             glBindTexture(GL_TEXTURE_2D, s->ctex);
             glTexStorage2D(GL_TEXTURE_2D, 1, d->bpp == 4 ? GL_RGBA8 : GL_RGB565, w, h);
@@ -740,6 +842,14 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
             s = e;
     }
     if (!s) return NULL;
+    /* The shown buffers too (Forza draws its car-shadow image in the one not
+     * on screen, then projects it). On NVIDIA this gives black patches in
+     * the race, not on Intel; XBRT_GL_RT_SHOWN=0 sends them through RAM,
+     * which cures that but puts the shadow image on screen in many more
+     * frames. Cause not found yet; see docs/NIGHTLY.md. */
+    static int shown = -1;
+    if (shown < 0) shown = !getenv("XBRT_GL_RT_SHOWN") || atoi(getenv("XBRT_GL_RT_SHOWN"));
+    if (!shown && nv2a_is_scanout(s->cbase)) return NULL;
     for (int k = 0; k < GL_SURFS; k++) { /* depth drawn over these bytes after their colour (or with it, as a shadow map's): through RAM */
         GlSurf *e = &gl_surf[k];
         if (e->fbo && e->ztex && e->zdirty && (e == s || e->seq > s->seq) && gl_span_hit(e->zbase, e->zpitch * (uint32_t)e->h, lo, hi - lo))
@@ -756,6 +866,65 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
     return t;
 }
 
+/* A swizzled A8R8G8B8/X8R8G8B8 texture over framebuffers the GPU drew
+ * (Forza's car reflections: a 256x256 one and a 128x128 cube map drawn
+ * face by face) is sampled from them, as xemu does: their image is the
+ * texture's. Forza draws them as pitch surfaces (with the swizzled size
+ * fields set), so read back through RAM they decoded scrambled: the
+ * speckled car paint. And reading them back each frame, waiting for the
+ * GPU every time, was most of what was left of the device thread's waits. A cube map needs all six faces as framebuffers; they are
+ * copied into a cube texture on the GPU. NULL: decode as usual. */
+static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int h, int cube) {
+    static Texture rt[4];
+    static struct { uint32_t base; int w; GLuint tex, from[6]; unsigned seq[6]; } cubes[8]; /* from, seq: what each face was copied from */
+    if (gl_ready < 0) gl_ready = gl_setup();
+    if (!gl_ready || w <= 0 || h <= 0) return NULL;
+    static int cubes_on = -1; /* XBRT_GL_RT_CUBE=1: cube maps too; copying the faces made the Intel GPU fall to ~13 fps */
+    if (cubes_on < 0) cubes_on = getenv("XBRT_GL_RT_CUBE") && atoi(getenv("XBRT_GL_RT_CUBE"));
+    if (cube && !cubes_on) return NULL;
+    uint32_t face = ((uint32_t)w * (uint32_t)h * 4 + 127) & ~127u;
+    uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + face * (cube ? 6u : 1u);
+    if ((lo < draw_hi && draw_lo < hi) || (lo < draw_zhi && draw_zlo < hi)) return NULL; /* GL cannot sample what it draws into */
+    GlSurf *f[6] = {0};
+    for (int k = 0; k < (cube ? 6 : 1); k++) {
+        for (int j = 0; j < GL_SURFS; j++) {
+            GlSurf *e = &gl_surf[j];
+            if (e->fbo && e->bpp == 4 && (e->cbase & (RT_PHYS_SIZE - 1)) == lo + face * (uint32_t)k && e->w == w && e->h == h &&
+                (!f[k] || e->seq > f[k]->seq))
+                f[k] = e;
+        }
+        if (!f[k]) return NULL;
+    }
+    for (int k = 0; k < (cube ? 6 : 1); k++) {
+        if (f[k]->check && !f[k]->dirty) gl_upload_if_changed(f[k]);
+        f[k]->check = 0;
+        gl_take_newer(f[k]);
+    }
+    Texture *t = &rt[i];
+    memset(t, 0, sizeof *t);
+    t->w = w, t->h = h, t->levels = 1, t->surface = 1, t->alpha_one = color == 0x07;
+    if (!cube) {
+        t->gl = f[0]->ctex;
+        return t;
+    }
+    int c = 0;
+    while (c < 8 && cubes[c].tex && !(cubes[c].base == lo && cubes[c].w == w)) c++;
+    if (c == 8) c = 0, glDeleteTextures(1, &cubes[0].tex), memset(&cubes[0], 0, sizeof cubes[0]);
+    if (!cubes[c].tex) {
+        glGenTextures(1, &cubes[c].tex);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubes[c].tex);
+        glTexStorage2D(GL_TEXTURE_CUBE_MAP, 1, GL_RGBA8, w, h);
+        cubes[c].base = lo, cubes[c].w = w;
+    }
+    for (int k = 0; k < 6; k++) /* only faces drawn since (every car draw samples it) */
+        if (cubes[c].from[k] != f[k]->ctex || cubes[c].seq[k] != f[k]->seq) {
+            glCopyImageSubData(f[k]->ctex, GL_TEXTURE_2D, 0, 0, 0, 0, cubes[c].tex, GL_TEXTURE_CUBE_MAP, 0, 0, 0, k, w, h, 1);
+            cubes[c].from[k] = f[k]->ctex, cubes[c].seq[k] = f[k]->seq;
+        }
+    t->cube = 1, t->gl = cubes[c].tex;
+    return t;
+}
+
 /* CLEAR_SURFACE on the GPU: the clear rectangle (inclusive, in samples on
  * an anti-aliased surface), the channels and depth/stencil it names, from
  * SET_COLOR_CLEAR_VALUE and SET_ZSTENCIL_CLEAR_VALUE. Returns 0 for a
@@ -767,7 +936,7 @@ static int gl_clear(uint32_t flags) {
     DrawState d;
     memset(&d, 0, sizeof d);
     d.bpp = (color >= 4 && color <= 8) ? 4 : (color == 3) ? 2 : 0;
-    if (type != 1 || !d.bpp) return 0;
+    if ((type != 1 && type != 2) || !d.bpp) return 0; /* 2: swizzled, which the RAM clear cannot do */
     d.sx = (aa == 1 || aa == 2) ? 2 : 1, d.sy = aa == 2 ? 2 : 1;
     d.cx0 = (int)(K(SET_SURFACE_CLIP_HORIZONTAL) & 0xFFFF) * d.sx, d.cw = (int)(K(SET_SURFACE_CLIP_HORIZONTAL) >> 16) * d.sx;
     d.cy0 = (int)(K(SET_SURFACE_CLIP_VERTICAL) & 0xFFFF) * d.sy, d.ch = (int)(K(SET_SURFACE_CLIP_VERTICAL) >> 16) * d.sy;
@@ -803,6 +972,7 @@ static int gl_clear(uint32_t flags) {
     glClear(bits);
     s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
     if (flags & 3) s->zdirty = 1, s->zgpu = 0;
+    gl_drawn(s, (int)x1 * d.sx, (int)y1 * d.sy, (int)(x2 + 1) * d.sx, (int)(y2 + 1) * d.sy);
     return 1;
 }
 
@@ -903,11 +1073,32 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     glDrawArrays(GL_TRIANGLES, 0, n * 3);
     s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
     if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1, s->zgpu = 0;
+    gl_drawn(s, d->cx0, d->cy0, d->cx0 + d->cw, d->cy0 + d->ch);
 }
 
 /* The program's uniforms for the pixel side (the combiners, the texture
  * stages, alpha test, fog colour) and the fixed-function state, from the
  * methods, for a draw to s. */
+/* A texture that is also attached to the framebuffer being drawn (another
+ * part of the same surface: Forza's bloom reads one band of a buffer while
+ * drawing into another) is a feedback loop, undefined in GL even when the
+ * texels and the pixels differ. Intel's driver gave the right picture;
+ * NVIDIA's gave black patches. Such a draw samples a copy instead. */
+static GLuint gl_unalias(int stage, GLuint tex, const GlSurf *s) {
+    static struct { GLuint tex; int w, h; GLenum fmt; } scratch[4];
+    if (!s || !tex || (tex != s->ctex && tex != s->ztex)) return tex;
+    GLenum fmt = tex == s->ctex ? (s->bpp == 4 ? GL_RGBA8 : GL_RGB565) : (s->zbpp == 4 ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT16);
+    if (!scratch[stage].tex || scratch[stage].w != s->w || scratch[stage].h != s->h || scratch[stage].fmt != fmt) {
+        if (scratch[stage].tex) glDeleteTextures(1, &scratch[stage].tex);
+        glGenTextures(1, &scratch[stage].tex);
+        glBindTexture(GL_TEXTURE_2D, scratch[stage].tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, fmt, s->w, s->h);
+        scratch[stage].w = s->w, scratch[stage].h = s->h, scratch[stage].fmt = fmt;
+    }
+    glCopyImageSubData(tex, GL_TEXTURE_2D, 0, 0, 0, 0, scratch[stage].tex, GL_TEXTURE_2D, 0, 0, 0, 0, s->w, s->h, 1);
+    return scratch[stage].tex;
+}
+
 static void gl_frag_state(const DrawState *d, const GlSurf *s) {
     float size[2] = {(float)s->w, (float)s->h};
     glUniform2fv(u_size, 1, size);
@@ -939,8 +1130,8 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         scale[2 * i + 1] = t && t->linear ? 1.0f / (float)t->h : 1.0f;
         dmax[i] = t ? (float)t->depth : 0;
         glActiveTexture(GL_TEXTURE0 + (GLenum)i);
-        glBindTexture(GL_TEXTURE_2D, t && !t->cube ? gl_texture(t) : gl_dummy2d);
-        if (t && t->surface && !t->depth) /* X8R8G8B8 over a framebuffer that keeps alpha */
+        glBindTexture(GL_TEXTURE_2D, t && !t->cube ? (t->surface ? gl_unalias(i, gl_texture(t), s) : gl_texture(t)) : gl_dummy2d);
+        if (t && t->surface && !t->depth && !t->cube) /* X8R8G8B8 over a framebuffer that keeps alpha */
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, t->alpha_one ? GL_ONE : GL_ALPHA);
         if (t && !t->cube) {
             uint32_t addr = KT(SET_TEXTURE_ADDRESS);

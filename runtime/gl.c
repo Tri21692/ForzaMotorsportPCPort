@@ -22,6 +22,13 @@ GL_FUNCTIONS(GL_DEFINE)
 #include <windows.h>
 #include <GL/wglext.h>
 
+/* On a laptop with two GPUs, these ask the NVIDIA (Optimus) and AMD
+ * (PowerXpress) drivers to give this program the fast one; otherwise
+ * OpenGL ran on the integrated GPU. Windows' per-app graphics setting
+ * still overrides them. */
+__declspec(dllexport) DWORD NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+
 static void *load(HMODULE gl, const char *name) {
     void *p = (void *)wglGetProcAddress(name);
     /* Some drivers return 1, 2, 3 or -1 instead of NULL for a miss. */
