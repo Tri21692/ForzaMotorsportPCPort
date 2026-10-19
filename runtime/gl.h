@@ -16,6 +16,8 @@
     X(PFNGLGETERRORPROC, glGetError)                                                                                        \
     X(PFNGLVIEWPORTPROC, glViewport)                                                                                        \
     X(PFNGLSCISSORPROC, glScissor)                                                                                          \
+    X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer)                                                                          \
+    X(PFNGLSTENCILMASKPROC, glStencilMask)                                                                                  \
     X(PFNGLENABLEPROC, glEnable)                                                                                            \
     X(PFNGLDISABLEPROC, glDisable)                                                                                          \
     X(PFNGLCLEARCOLORPROC, glClearColor)                                                                                    \
@@ -94,6 +96,8 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glGetError p_glGetError
 #define glViewport p_glViewport
 #define glScissor p_glScissor
+#define glBlitFramebuffer p_glBlitFramebuffer
+#define glStencilMask p_glStencilMask
 #define glEnable p_glEnable
 #define glDisable p_glDisable
 #define glClearColor p_glClearColor

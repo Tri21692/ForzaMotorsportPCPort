@@ -256,6 +256,21 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   using the logged start time). KeSynchronizeExecution implemented (DSOUND
   calls it). Without the low-pass filter Forza's wind/road noise voice
   (looped 16-bit PCM noise) was a full-band hiss over the whole race.
+- **2026-10-19 evening: picture polish (PC enhancements, on by default).**
+  - 16x anisotropic + trilinear filtering on mipmapped textures
+    (`XBRT_GL_ANISO=1` off): road and walls sharp at grazing angles.
+  - Render scale `XBRT_GL_SCALE=<1..4>`, default 2: every non-swizzled
+    framebuffer is k times its size on the GPU; read-backs blit (LINEAR for
+    colour, NEAREST for depth) into a 1x proxy framebuffer first, uploads
+    go to the proxy and are blitted up; copies between framebuffers,
+    scissors, viewport and the reflection cube map scale with k. The shown
+    picture still reaches RAM at 640x480, so this is supersampling: clean
+    edges, and the speckle on car paint (aliasing in the reflections) is
+    mostly gone. No frame-rate cost on the RTX 5070 at the 60 fps cap.
+  - Still open: the cars' lower bodies are very dark (no reference yet to
+    say whether that is right), taillight lenses look striped; presenting
+    the picture at the higher resolution (window and recordings) needs the
+    display to come from the GPU instead of RAM.
   - `XBRT_RECORD=<file.mp4>` (with `XBRT_RECORD_FROM`, `XBRT_RECORD_FOR`
     seconds and `XBRT_FFMPEG`): the picture at every vertical blank piped
     into ffmpeg, H.264 at 59.94 fps, scaled 2x. `tools/input/race-fast.txt`
