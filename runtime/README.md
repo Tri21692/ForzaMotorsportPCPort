@@ -33,6 +33,7 @@ first build takes a while.
 | `XBRT_AUTOPRESS` | `1` taps START and A every two seconds | off |
 | `XBRT_INPUT_SCRIPT` | a file of timed button presses (format in `hle_input.c`; example in `tools/input`) | off |
 | `XBRT_LOG_FROM` | with `XBRT_LOG`, start logging only after this many seconds | 0 |
+| `XBRT_GPU` | `gl` brings up OpenGL 4.3 on the device thread (docs/GPU.md; nothing draws through it yet) | software |
 | `XBRT_STATS` | `1` prints the GPU stats line every 5 s without logging kernel calls | off |
 | `XBRT_RASTER_THREADS` | threads that fill pixels | half the logical cores, at most 16 |
 | `XBRT_THREAD_DUMP` | seconds (comma-separated) at which to print every guest thread's registers, latest kernel call and stack | off |
@@ -68,6 +69,7 @@ partition.
 | `nv2a.c` | the GPU as its driver sees it: registers, push buffer, vblank |
 | `kelvin.c` | the GPU's 3D engine methods: state, clears, semaphores, notifies |
 | `raster.c` | drawing in software: vertices, vertex programs, textures, register combiners, blending |
+| `gl.c`, `gl.h` | the OpenGL context and function loader for drawing on the host GPU (docs/GPU.md) |
 | `apu.c` | the audio processor's registers, the AC'97 controller, and a stand-in for the GP DSP's command handling (nothing is played yet) |
 | `hle_input.c` | XAPI's controller functions, replaced, read from XInput or the keyboard |
 | `hle_net.c` | XNet and Winsock startup, replaced: a console with no network cable |

@@ -71,6 +71,15 @@ ceiling: the next real speed-up is drawing on the host GPU (vertex
 programs and register combiners translated to shaders; see ROADMAP
 phase 4), which is the large piece of work left.
 
+**The GPU backend has started** (docs/GPU.md). Step 1 is done:
+`XBRT_GPU=gl` makes an OpenGL 4.3 core context on the device thread
+(this PC: Intel Graphics, driver 32.0.101.8861) and passes a clear-and-read
+-back self-test. Next is step 2, hybrid mode: Kelvin draws into a GL
+framebuffer per surface, read back into RAM at flips, semaphores, notifies
+and surface changes, so everything else keeps working; then step 3, the
+vertex program and combiner shaders. Compare against the software
+rasteriser's screenshots at each step.
+
 Open bugs, in order:
 
 1. `XBRT_BATCH=1` (fills batched across draws) leaves the race view

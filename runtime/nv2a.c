@@ -22,6 +22,7 @@
 
 #include "rt.h"
 #include "nv2a.h"
+#include "gl.h"
 
 #define REG(off) (*(volatile uint32_t *)(xb_mem + RT_NV2A_BASE + (off)))
 #define RAMIN(off) (*(volatile uint32_t *)(xb_mem + RT_NV2A_BASE + 0x700000 + (off)))
@@ -448,6 +449,8 @@ void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
 
 static void *device_main(void *arg) {
     (void)arg;
+    const char *gpu = getenv("XBRT_GPU");
+    if (gpu && !strcmp(gpu, "gl")) rt_gl_init(); /* the context lives on this thread */
     uint64_t next_vblank = now_ns() + 16683333;
     pthread_mutex_lock(&lock);
     for (;;) {

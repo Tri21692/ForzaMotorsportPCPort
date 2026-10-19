@@ -18,12 +18,12 @@ RTFLAGS = -O2 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=off -I$(GEN) 
 ifeq ($(OS),Windows_NT)
 EXE = .exe
 OSFLAGS = -Wa,-mbig-obj -D_FILE_OFFSET_BITS=64
-OSLIBS = -lwinmm -lgdi32
+OSLIBS = -lwinmm -lgdi32 -lopengl32
 endif
 
 GEN_SRC = $(wildcard $(GEN)/*.c)
 GEN_OBJ = $(patsubst $(GEN)/%.c,build/gen/%.o,$(GEN_SRC))
-RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c hle_input.c hle_net.c hle_fiber.c crypto.c display.c raster.c
+RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c hle_input.c hle_net.c hle_fiber.c crypto.c display.c raster.c gl.c
 RT_OBJ = $(patsubst %.c,build/%.o,$(RT_SRC))
 
 forza$(EXE): $(GEN_OBJ) $(RT_OBJ)
