@@ -115,8 +115,9 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
       stay on this machine).
 - **Status:** with the player's extracted disc, the game boots through
   the install, the movies and its saves into the front end, creates and
-  saves a profile and reaches the main menu (about 3 frames a second),
-  all drawn. See [NIGHTLY.md](NIGHTLY.md) for what is next.
+  saves a profile, and races: with `XBRT_GPU=gl` a race on Maple Valley
+  runs at 16-21 frames a second, all drawn; no sound yet. See
+  [NIGHTLY.md](NIGHTLY.md) for what is next.
 - [ ] The remaining kernel imports as the game reaches them.
 
 ## Phase 4: graphics (in progress)
@@ -142,10 +143,13 @@ boundary is smaller and fixed instead.
       pass-through mode), blending, anti-aliased surfaces. The menus
       draw, text included.
 - [ ] Pace flips to the vertical blank (they run at ~500 a second now).
-- [ ] Depth and stencil, swizzled render targets, filtering, lighting and
-      texgen: what a race will need.
-- [ ] Move drawing to the PC's GPU (vertex programs and register
-      combiners translated to shaders) for speed.
+- [x] Depth, swizzled and cube textures, shadow maps, filtering and
+      mipmaps (GPU path), fog: what the race uses so far.
+- [ ] Stencil, fixed-function fog and lighting, texgen.
+- [x] Drawing on the PC's GPU (`XBRT_GPU=gl`, docs/GPU.md): register
+      combiners as one fragment shader, vertex programs translated to
+      GLSL, render targets sampled where they were drawn.
+- [ ] Keep framebuffers on the GPU across flips; batch draws.
 
 Earlier notes, from when the plan was to replace the API:
 

@@ -58,3 +58,16 @@ out of Xbox RAM until presenting moves to the GPU (step 5).
 
 Each step ends with the race rendered through it and compared with the
 software rasteriser's screenshots.
+
+## Status (2026-10-19)
+
+Steps 1-4 are in, and most of 5: the race runs at 16-21 frames a second
+with `XBRT_GPU=gl`. The pixel side is one fragment shader driven by the
+combiner methods as uniforms rather than a shader per state; vertex
+programs are translated to GLSL, one program each (`runtime/glvsh.c`,
+`XBRT_GPU_VSH=0` for the CPU's); textures carry the game's mipmaps and
+filters. Framebuffers over the same bytes exchange pixels on the GPU,
+and render targets are sampled where they were drawn. Still read back:
+everything at flips (something reads render targets from RAM after a
+flip; see NIGHTLY.md), the shown buffers before D3D's frame notifies,
+depth textures, and anything a non-linear texture overlaps.

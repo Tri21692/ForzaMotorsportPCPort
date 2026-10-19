@@ -49,82 +49,146 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
   `go run ./cmd/xbemap -xbsdb ... -o forza.map "$X"` writes the map.
 - The installer manifest is the `BKGDINST` section (37 files, 4 MB zlib
   chunks with SHA-1s).
+- Profiling: `tools/sample.sh 40 samples.txt` while the game runs (gdb,
+  every thread's stack), then `python tools/samples.py samples.txt` for
+  the device thread (innermost frames, by line). For guest threads, map
+  the `f_XXXXXXXX` frames to names with `run/forza.map` (xbemap):
+  tonight that found DSOUND resetting its DSPs. A thread "waiting" inside
+  the GL driver (glReadPixels) is waiting for the GPU, not idle.
+- `XBRT_STATS=1` lines: texture decodes and hashing, the device thread's
+  time by phase, and the time spent waiting for the driver after trapped
+  notifies.
+- `XBRT_GPU_DUMP=<file>:<first flip>:<flips>` dumps every method; with
+  awk over methods 0210 (colour offset), 1d94 (clear), 17fc (draws),
+  0100 with a parameter (notifies), 012c/0130 (flips) a frame's passes
+  read like a list (see the Log for what Forza's frame looks like).
+- Reading guest memory from gdb: `p/x *(unsigned*)(xb_mem + 0xADDR)`
+  works for device memory too (`xb_mem + 0xFE85A000` is the EP DSP's
+  P memory).
+- The Makefile now rebuilds raster.o when glfill.c or glvsh.c change
+  (they are #included); before tonight it did not, and edits to glfill.c
+  alone were silently not built.
+- Editing through the Bash tool: backslash escapes inside a heredoc
+  (`\n` in a C string) arrive as real newlines. Write edit scripts to
+  the scratch folder with the Write tool and run them, or use Edit.
 
-## Current lead (2026-10-18, late evening)
+## Current lead (2026-10-19, nightly)
 
-**The car drives.** `tools/input/race.txt` goes from boot through Arcade
-Race to the starting grid, starts the race and holds the throttle; the
-Civic does 27 mph a few seconds in, with the HUD, minimap and opponents
-drawn. About 2-3 frames a second.
-
-    XBRT_STATS=1 XBRT_INPUT_SCRIPT=../tools/input/race.txt XBRT_WINDOW=0 \
-      XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=20 XBRT_HDD=hdd \
-      timeout 420 ../runtime/forza.exe <default.xbe>
-
-Use `XBRT_STATS=1` rather than `XBRT_LOG` for timing: logging every
-kernel call slows the game's CPU side several times over.
-
-Where the time goes (stats line): the device thread is busy all the
-time, three quarters of it filling pixels even on 12 workers; vertices
-about 10%, texture decodes a few %. The software rasteriser is near its
-ceiling: the next real speed-up is drawing on the host GPU (vertex
-programs and register combiners translated to shaders; see ROADMAP
-phase 4), which is the large piece of work left.
-
-**The GPU fill works** (docs/GPU.md, `runtime/glfill.c`). With
-`XBRT_GPU=gl` the race runs at about 6-11 frames a second instead of
-2-3, and looks better (proper depth order in the menus' 3D backgrounds):
-Maple Valley, chase camera, lap 1 of 2 at 400 s. Always build with
-`-entries tools/entries.txt` now (see below).
+**Races run at 16-21 fps with `XBRT_GPU=gl`**, with the game's mipmaps
+and filters (no more blocky or swimming textures), and without the
+black top-left quarter / grey flyby frames. `tools/input/race.txt` gets
+to lap 1, race clock ~1:08, at 400 s (at the start of the night it read
+~0:21 at 360 s).
 
     XBRT_GPU=gl XBRT_STATS=1 XBRT_INPUT_SCRIPT=../tools/input/race.txt \
       XBRT_WINDOW=0 XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=20 \
       XBRT_HDD=hdd timeout 420 ../runtime/forza.exe <default.xbe>
 
-How it works: the CPU still transforms vertices (project()); the GPU
-fills, with one fragment shader that is combine() in GLSL. Each surface
-is a framebuffer, uploaded from RAM when its hash changed after a
-CPU-visible point, read back at flips and when a texture overlaps it;
-clears run on the GPU. Not at every fence: D3D fences many times a frame
-and the read-backs were most of the time.
+Benchmark: the stats line's flip count at 415 s of that run (7053 at the
+end of the night; it was ~3050 at the start). Runs vary by ±7%, so
+compare over two runs before believing a small change.
 
-Next for speed (profile with `sample.sh`, see the setup table):
-- Textures that are render targets (shadow maps, reflections, the back
-  buffer for the downsample) are read back and re-uploaded; sample the
-  framebuffer's GL texture directly instead (docs/GPU.md step 5).
-- Vertex programs on the GPU (step 3) instead of project() on the CPU.
-- Upload uniforms only when the state changed; one buffer upload a frame.
+How the GPU path works now (docs/GPU.md steps 2-5, `runtime/glfill.c`,
+`runtime/glvsh.c`):
+- Vertex programs run on the GPU (GLSL generated from the decoded
+  program, one GL program per vertex program); `XBRT_GPU_VSH=0` puts
+  them back on the CPU for comparison. Fixed-function draws and programs
+  that write constants stay on the CPU.
+- Each surface combination (colour/depth, height) is a framebuffer.
+  Framebuffers over the same bytes exchange pixels on the GPU
+  (`gl_take_newer`, `glCopyImageSubData`) and are read back oldest
+  first (`seq`), so RAM ends with the newest drawing.
+- A linear colour texture over a framebuffer is sampled from the
+  framebuffer's texture (`gl_rt_texture`); everything else is decoded
+  from RAM (with its mipmaps) after the framebuffers that drew into it
+  are read back (`gl_sync_range`).
+- RAM is brought up to date at flips (everything) and, for the buffers
+  the CRTC has shown, before every trapped notify (`trap_method`): D3D's
+  notify after a frame's last draw lets its vertical blank handler show
+  the frame long before FLIP_INCREMENT_WRITE.
+
+What limits the race now (`tools/sample.sh` + `tools/samples.py`):
+- The device thread spends most of its time inside glReadPixels: the
+  read-backs at notifies and flips wait for the GPU to finish. Skipping
+  the notify read-backs (wrong pictures) gained nothing measurable, so
+  the GPU itself or the flip-time full read-back is the limit; the next
+  step is to stop reading everything back at flips. **Tried and failed:**
+  dropping the flip read-back and syncing only the buffer PCRTC_START is
+  pointed at left the game stuck in boot with black frames and 100,000+
+  flips, so something reads render targets from RAM after a flip
+  (unknown: the front end? D3D?). Find the reader first (XBRT_LOG=2 near
+  the flip, or protect the surface pages).
+- The game's render thread waits in D3DDevice_BlockOnFence most of the
+  time; DSOUND/XACT threads (DirectSoundDoWork, deferred commands that
+  never complete because no voice is ever processed) are most of the
+  guest CPU and hold the big lock at DISPATCH_LEVEL.
+
+Fixed tonight that mattered most: DSOUND reset both audio DSPs ~33
+times a second (P:6 of the EP did not hold its image's 0xCCCCCC, because
+nothing bootstrapped the DSPs), each time stalling 10 ms with the big
+lock held. `apu.c` now copies the boot words like the DSP boot ROM.
 
 When the runtime stops with `indirect call to X, which is not a
 translated function`, add X to `tools/entries.txt` and regenerate:
-discovery cannot see functions only reached through computed pointers.
+discovery cannot see functions only reached through computed pointers
+(always regenerate with `-entries tools/entries.txt`).
 
 Open bugs, in order:
 
-1. `XBRT_BATCH=1` (fills batched across draws) leaves the race view
-   black: a flush point is missing (a texture read of a surface the batch
-   draws into without a surface change in between, perhaps through the
-   zeta buffer, which `batch_note` covers but `nv2a_raster_invalidate`
-   does not). Off by default; it gained nothing yet, but will matter
-   once vertex work moves elsewhere.
-2. Rendering: point sampling everywhere (blocky reflections and
-   textures), no mipmaps, no fog, no stencil, the ground texture
-   swims (no filtering). A grey frame sometimes during the pre-race
-   flyby.
-3. Audio: none (DSOUND's voices are mixed by nothing).
+1. Flip pacing: a real FLIP_STALL (NV_PGRAPH_SURFACE read/write
+   indices, D3D's handler moving the read index through
+   NV_PGRAPH_INCREMENT) was tried and reverted: one run froze at a flip
+   with get != put. The handler moved the read index once more than
+   there were frames around loads. Understand its bookkeeping (it flips
+   on the frame notify, see above) before trying again.
+2. `XBRT_BATCH=1` (software rasteriser, fills batched across draws)
+   leaves the race view black; see the git history. Software path only.
+3. Rendering: no stencil, no fixed-function fog (`SET_FOG_GEN_MODE`),
+   depth textures (shadow maps) are still decoded from RAM, anisotropic
+   filtering and LOD clamps ignored.
+4. Audio: none. DSOUND's voices are never processed, which also makes
+   it busy (above). The register layout is in xemu's
+   hw/xbox/mcpx/apu/apu_regs.h; the voice processor is apu/vp/.
 
 ## Next after that
 
-1. Speed: 3 fps in the menus. Profile where host time goes (gdb
-   samples of the main thread, or a build with `-O2` for the generated
-   code: `make OPT=-O2`) before changing anything.
-2. Pace flips to the vertical blank (D3D's presentation interval).
-3. Drawing: depth and stencil, swizzled render targets, lighting and
-   texgen, filtering (everything is point sampled), 3D and cube maps. See the phase 4 list in
-   [ROADMAP.md](ROADMAP.md).
+1. Speed: find what reads render targets from RAM after a flip, then
+   keep framebuffers on the GPU across flips (read back only what is
+   shown or read). Then batch draws (1300 a frame in the race).
+2. Audio: the voice processor (front-end methods into voice memory,
+   voice lists, sample fetch, pitch and volume into the mixbins, voice
+   notifications), even before any sound comes out, so DSOUND's deferred
+   commands complete.
+3. Drawing: stencil, fixed-function fog, depth textures on the GPU, 3D
+   textures. See the phase 4 list in [ROADMAP.md](ROADMAP.md).
 
 ## Log
 
+- 2026-10-19 (nightly, branch nightly/2026-10-18): GPU path from 9-10
+  to 16-21 fps in the race (3055 -> 7053 flips over the 415 s run).
+  Texture mipmaps, filters and LOD bias from SET_TEXTURE_FILTER; fog
+  (register 3) on both paths. Framebuffers over the same bytes exchange
+  pixels on the GPU and read back in drawing order; depth read back only
+  when written (a 1.2 MB "depth buffer" at physical 0 was being read back
+  over low RAM). Render targets sampled from their framebuffer (step 5).
+  Vertex programs decoded once per change (bit-identical over 300M
+  vertices) and run on the GPU by default (step 3). Vertex array layout
+  once per Begin; RAMHT lookups remembered; interrupts wake the DPC
+  thread. The black top-left quarter and grey flyby frames: D3D's
+  per-frame notify lets its vblank handler show a frame before
+  FLIP_INCREMENT_WRITE, and RAM still held the frame's environment and
+  bloom passes; scanout buffers are now read back before notifies. The
+  APU bootstraps its DSPs (P memory from scratch memory), which stopped
+  DSOUND resetting them 33 times a second with 10 ms stalls under the
+  big lock. Tried and reverted: a real FLIP_STALL (one hang), GL state
+  caching and a streaming vertex buffer (no gain), syncing only at
+  PCRTC_START (the game stuck in boot). Forza's race frame, for
+  reference: an environment pass into the coming front buffer, the scene
+  into the 1280x480 anti-aliased buffer (01c40000, depth 01e98000),
+  bloom: a 320x240 downsample into the front buffer's top-left, 320x120
+  below it, 160x120 elsewhere, the resolve into the front buffer, the
+  notify (0x33d00121 / 0x36280121), then shadow and reflection maps for
+  the next frame, FLIP_INCREMENT_WRITE and FLIP_STALL.
 - 2026-10-18 (interactive): Windows port; boot through install, DSOUND,
   font cache and front end to the main loop. See the commit for detail.
 - 2026-10-18 (interactive, afternoon): branches now pushed to GitHub as
