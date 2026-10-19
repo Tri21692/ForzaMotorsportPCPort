@@ -133,10 +133,14 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   together with keeping textures off the draw's own depth range. 11583
   flips (from 8680) and ~28 fps in the race, but the scene was wrong:
   the world upside down in the top half, the bottom half black, the car
-  and HUD fine. Not understood: suspect the depth-range exclusion
-  (it also sent colour render targets back through RAM), or the
-  shadow map's colour and depth sharing an address. Worth redoing in
-  two separate steps.
+  and HUD fine. Without the depth-range exclusion it looks the same
+  (11797 flips), so it is the shadow-map sampling itself. Suspects: the
+  map's colour and depth share an address (02ad1000), so something else
+  may read that memory as colour; or what the GL depth texture holds
+  differs from what the readback path gives (depth from the
+  anti-aliased 2x2 grid, the D24S8 layout). Compare the two paths'
+  texels for one frame (read the GL depth texture back and diff it with
+  texture()'s decode) before trying again.
 - **Tried and failed:** reading back only the buffer PCRTC_START is
   pointed at (a request to the device thread from the vertical blank
   handler's register write) left the game stuck in boot with 100,000+
