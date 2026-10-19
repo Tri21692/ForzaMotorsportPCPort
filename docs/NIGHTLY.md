@@ -233,6 +233,13 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     `XBRT_GL_RT_CUBE=0` turns them off (for Intel, which fell to 13 fps).
     `XBRT_GL_RT_SHOWN` is gone. A grey frame still turns up now and then
     (1 of 10 screenshots in that run): the car-shadow image on screen.
+  - **Frame pacing: FLIP_STALL.** It was ignored, so the GPU ran ahead of
+    the display, and since Forza steps its world once a frame the race ran
+    1.5x real time at ~90 fps. Now FLIP_STALL parks the push buffer while
+    FLIP_READ == FLIP_WRITE, until D3D's vertical-blank handler writes
+    NV_PGRAPH_INCREMENT (bit 1 moves FLIP_READ on), as xemu does. Race at
+    58-59 fps, race clock 0.98x real time (60 fps mod). XBRT_NO_FLIP_STALL=1
+    goes back to running free (benchmarks).
   - `XBRT_RECORD=<file.mp4>` (with `XBRT_RECORD_FROM`, `XBRT_RECORD_FOR`
     seconds and `XBRT_FFMPEG`): the picture at every vertical blank piped
     into ffmpeg, H.264 at 59.94 fps, scaled 2x. `tools/input/race-fast.txt`

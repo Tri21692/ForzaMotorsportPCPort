@@ -5,6 +5,7 @@
  * beyond state (semaphores, flips, clears, draws) are handled here. Drawing
  * is not implemented yet: draws are counted and dropped.
  */
+#include <stdlib.h>
 #include <string.h>
 
 #include "rt.h"
@@ -120,8 +121,18 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
         nv2a.kelvin[FLIP_WRITE / 4] = mod ? w % mod : w;
         return;
     }
-    case FLIP_STALL:
+    case FLIP_STALL: {
+        /* Wait while the buffer about to be drawn is still the one shown
+         * (FLIP_READ == FLIP_WRITE): D3D's vertical-blank handler moves
+         * FLIP_READ on (NV_PGRAPH_INCREMENT, nv2a.c). Ignored, the GPU ran
+         * ahead of the display: at 90 fps the race ran 1.5 times too fast,
+         * since Forza steps its world once a frame. XBRT_NO_FLIP_STALL=1:
+         * as before. */
+        static int off = -1;
+        if (off < 0) off = getenv("XBRT_NO_FLIP_STALL") && atoi(getenv("XBRT_NO_FLIP_STALL"));
+        if (!off && nv2a.kelvin[FLIP_READ / 4] == nv2a.kelvin[FLIP_WRITE / 4]) nv2a.flip_stall = 1, nv2a.stalls++;
         return;
+    }
     case BACK_END_WRITE_SEMAPHORE_RELEASE: {
         nv2a_raster_flush(); /* the GPU path reads back at flips, not at every fence */
         uint32_t dma = nv2a_lookup(nv2a.kelvin[SET_CONTEXT_DMA_SEMAPHORE / 4]);

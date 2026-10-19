@@ -13,6 +13,8 @@ typedef struct {
     uint32_t kelvin[0x2000 / 4];
 
     uint32_t vblanks, draws, clears, flips, traps, skipped;
+    volatile int flip_stall; /* FLIP_STALL: the push buffer waits until the CPU moves FLIP_READ on */
+    uint32_t stalls;
 } Nv2a;
 
 extern Nv2a nv2a;

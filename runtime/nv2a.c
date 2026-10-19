@@ -241,6 +241,15 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
         REG(off) = v;
         update_irq();
         break;
+    case 0x40071C: /* NV_PGRAPH_INCREMENT: bit 1 moves FLIP_READ on (D3D does at vertical blanks) */
+        if (v & 2) {
+            uint32_t mod = nv2a.kelvin[0x128 / 4], r = nv2a.kelvin[0x120 / 4] + 1;
+            nv2a.kelvin[0x120 / 4] = mod ? r % mod : r;
+            nv2a.flip_stall = 0;
+            pthread_cond_signal(&kick);
+        }
+        REG(off) = v;
+        break;
     case PFB_WBC: /* write-back cache flush: done at once */
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
         REG(off) = v & ~PFB_WBC_FLUSH;
@@ -298,7 +307,7 @@ static uint64_t vblank_due; /* when the device loop raises the next vertical bla
 
 static int run_pushbuf(void) {
     uint32_t put = REG(PFIFO_CACHE1_DMA_PUT), get = REG(PFIFO_CACHE1_DMA_GET);
-    if (get == put) return 0;
+    if (get == put || nv2a.flip_stall) return 0; /* a flip stall parks like a jump to itself */
     int parked = 0;
     uint32_t limit = 0;
     uint32_t base = nv2a_dma_base(REG(PFIFO_CACHE1_DMA_INSTANCE) << 4, &limit);
@@ -326,6 +335,10 @@ static int run_pushbuf(void) {
             nv2a_method(subch, method, word);
             if (!ni) method += 4;
             count--;
+            if (nv2a.flip_stall) { /* FLIP_STALL: back to the device loop, which raises vertical blanks */
+                parked = 1;
+                break;
+            }
             continue;
         }
         if (rt_log_level >= 2 && ((word & 0xE0000003u) == 0x20000000u || (word & 3)))
