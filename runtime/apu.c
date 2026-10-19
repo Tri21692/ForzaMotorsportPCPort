@@ -39,9 +39,36 @@ uint32_t rt_apu_read(uint32_t off, int bytes) {
     return *(volatile uint8_t *)(xb_mem + RT_APU_BASE + off);
 }
 
+/* The DSPs' boot ROM: when a DSP leaves reset (both bits of its reset
+ * register set, from a value that did not have both), it copies the first
+ * 0x800 words of its scratch memory, which DSOUND has filled with the
+ * DSP's program, into its program RAM; 24-bit words, one per 32 bits
+ * (as xemu bootstraps its DSPs). The scratch memory is in system RAM, through
+ * the scatter-gather table at GPSADDR/EPSADDR (8 bytes an entry, the
+ * page's address first). The programs themselves do not run here, but
+ * DSOUND checks the EP's: when P:6 does not hold the 0xCCCCCC its image
+ * has there, it takes the DSP for dead and resets both, stalling the CPU
+ * 10 ms each time, some thirty times a second. */
+#define DSP_BOOT_WORDS 0x800
+#define DSP_PMEM 0xA000 /* NV_PAPU_GPPMEM / NV_PAPU_EPPMEM, in the DSP's block */
+
+static void dsp_bootstrap(uint32_t block, uint32_t sge_reg) {
+    uint32_t sge = REG(sge_reg);
+    if (!sge || sge >= RT_PHYS_SIZE) return;
+    for (uint32_t w = 0; w < DSP_BOOT_WORDS; w++) {
+        uint32_t byte = w * 4, page = xb_rd32(RT_PHYS_VIEW + sge + byte / 4096 * 8) & ~0xFFFu;
+        if (page >= RT_PHYS_SIZE) return;
+        REG(block + DSP_PMEM + byte) = xb_rd32(RT_PHYS_VIEW + page + byte % 4096) & 0xFFFFFF;
+    }
+}
+
 void rt_apu_write(uint32_t off, int bytes, uint32_t v) {
     if (bytes == 4) {
         switch (off) {
+        case 0x3FFFC: /* NV_PAPU_GPRST */
+        case 0x5FFFC: /* NV_PAPU_EPRST */
+            if ((REG(off) & 3) != 3 && (v & 3) == 3) dsp_bootstrap(off & ~0xFFFFu, off == 0x3FFFC ? 0x2040 : 0x2048);
+            break;
         case NV_PAPU_ISTS:
             REG(off) &= ~v;
             return;
