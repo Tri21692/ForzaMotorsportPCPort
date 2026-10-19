@@ -9,30 +9,53 @@
  * level xemu does it (hw/xbox/mcpx/apu): the method FIFO always has room,
  * the sample counter runs at 48 kHz, interrupt bits clear when written
  * with ones, and the front end's "notify" write lands in memory at once.
- * Every other register is plain storage.
+ * The voice processor (apu_vp.c) takes the FIFO's methods and mixes a
+ * frame of 32 samples at a time on a thread of its own, paced by the
+ * PC's sound card (waveOut, 48 kHz stereo); the sample counter counts the
+ * frames it made. XBRT_AUDIO=0: silent, paced by the clock alone.
+ * XBRT_VOLUME=<0..1>: the output level (default 1).
  *
  * Register names are the ones xemu uses (apu_regs.h).
  */
+#include <pthread.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "rt.h"
 
+void rt_vp_method(uint32_t method, uint32_t arg);
+int rt_vp_frame(float out[32][2], int *raise_irq);
+
 #define REG(off) (*(volatile uint32_t *)(xb_mem + RT_APU_BASE + (off)))
 
 #define NV_PAPU_ISTS 0x1000      /* interrupt status, write one to clear */
+#define NV_PAPU_IEN 0x1004       /* interrupt enable; bit 0 (GINTSTS) the global one */
 #define NV_PAPU_FEMEMADDR 0x1324 /* front end: where a notify is written */
 #define NV_PAPU_FEMEMDATA 0x1334 /* front end: the notify value */
 #define NV_PAPU_XGSCNT 0x200C    /* setup engine: global sample count */
 #define NV1BA0_PIO_FREE 0x20010  /* voice processor: free method FIFO entries */
 
-static uint64_t start_100ns;
+static volatile uint32_t frames; /* made by the voice processor; XGSCNT is 32 samples each */
+
+/* IRQ 5 while an enabled interrupt is pending; the ISR clears ISTS bits by
+ * writing them, after which it is raised again if any are left. */
+#define APU_IRQ 5
+static void apu_irq(void) {
+    uint32_t pending = REG(NV_PAPU_ISTS) & ~1u & REG(NV_PAPU_IEN);
+    if ((REG(NV_PAPU_IEN) & 1) && pending) {
+        REG(NV_PAPU_ISTS) |= 1;
+        rt_interrupt_raise(0x30 + APU_IRQ);
+    } else {
+        REG(NV_PAPU_ISTS) &= ~1u;
+    }
+}
 
 uint32_t rt_apu_read(uint32_t off, int bytes) {
     switch (off) {
     case NV1BA0_PIO_FREE:
         return 0x80; /* the FIFO is never full: methods take effect at once */
     case NV_PAPU_XGSCNT:
-        return (uint32_t)((rt_now_100ns() - start_100ns) * 48000 / 10000000);
+        return frames * 32;
     }
     if (bytes == 4) return REG(off);
     if (bytes == 2) return *(volatile uint16_t *)(xb_mem + RT_APU_BASE + off);
@@ -63,6 +86,10 @@ static void dsp_bootstrap(uint32_t block, uint32_t sge_reg) {
 }
 
 void rt_apu_write(uint32_t off, int bytes, uint32_t v) {
+    if (bytes == 4 && off >= 0x20000 && off < 0x30000) { /* the voice processor's method FIFO */
+        rt_vp_method(off - 0x20000, v);
+        return;
+    }
     if (bytes == 4) {
         switch (off) {
         case 0x3FFFC: /* NV_PAPU_GPRST */
@@ -71,6 +98,7 @@ void rt_apu_write(uint32_t off, int bytes, uint32_t v) {
             break;
         case NV_PAPU_ISTS:
             REG(off) &= ~v;
+            apu_irq();
             return;
         case NV_PAPU_FEMEMDATA:
             xb_wr32(RT_PHYS_VIEW + (REG(NV_PAPU_FEMEMADDR) & (RT_PHYS_SIZE - 1)), v);
@@ -108,10 +136,97 @@ void rt_apu_tick(void) {
     }
 }
 
+/* ---- output ---- */
+
+#define OUT_FRAMES 32 /* VP frames per buffer: 1024 samples, 21 ms */
+#define OUT_BUFS 4
+
+static float volume = 1.0f;
+static FILE *dump; /* XBRT_AUDIO_DUMP=<file>: the output as raw 48 kHz 16-bit stereo, for checking and for recordings */
+
+/* One buffer's worth of frames, as 16-bit stereo. */
+static void make(int16_t *pcm) {
+    for (int f = 0; f < OUT_FRAMES; f++) {
+        float s[32][2];
+        int irq = 0;
+        if (rt_vp_frame(s, &irq)) frames++;
+        if (irq) apu_irq();
+        for (int i = 0; i < 32; i++)
+            for (int c = 0; c < 2; c++) {
+                float x = s[i][c] * volume;
+                x = x > 1 ? 1 : x < -1 ? -1 : x;
+                pcm[(f * 32 + i) * 2 + c] = (int16_t)(x * 32767);
+            }
+    }
+    if (dump) fwrite(pcm, 4, OUT_FRAMES * 32, dump), fflush(dump);
+}
+
+#ifdef _WIN32
+#include <windows.h>
+#include <mmsystem.h>
+
+static void *audio_main(void *arg) {
+    int on = arg != NULL;
+    static int16_t pcm[OUT_BUFS][OUT_FRAMES * 32 * 2];
+    HWAVEOUT out = NULL;
+    HANDLE done = CreateEventA(NULL, FALSE, FALSE, NULL);
+    WAVEFORMATEX wf = {WAVE_FORMAT_PCM, 2, 48000, 48000 * 4, 4, 16, 0};
+    if (on && waveOutOpen(&out, WAVE_MAPPER, &wf, (DWORD_PTR)done, 0, CALLBACK_EVENT) != MMSYSERR_NOERROR) {
+        fprintf(stderr, "xbrt: no sound output device; audio is silent\n");
+        out = NULL;
+    }
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    if (!out) { /* silent: frames at the rate of the clock */
+        uint64_t next = rt_now_100ns();
+        for (;;) {
+            make(pcm[0]);
+            next += (uint64_t)OUT_FRAMES * 32 * 10000000 / 48000;
+            int64_t wait = (int64_t)(next - rt_now_100ns());
+            if (wait > 0) Sleep((DWORD)(wait / 10000));
+        }
+    }
+    WAVEHDR hdr[OUT_BUFS];
+    memset(hdr, 0, sizeof hdr);
+    for (int i = 0; i < OUT_BUFS; i++) {
+        hdr[i].lpData = (LPSTR)pcm[i], hdr[i].dwBufferLength = sizeof pcm[i];
+        waveOutPrepareHeader(out, &hdr[i], sizeof hdr[i]);
+        make(pcm[i]);
+        waveOutWrite(out, &hdr[i], sizeof hdr[i]);
+    }
+    for (;;) {
+        WaitForSingleObject(done, 100);
+        for (int i = 0; i < OUT_BUFS; i++)
+            if (hdr[i].dwFlags & WHDR_DONE) {
+                make(pcm[i]);
+                waveOutWrite(out, &hdr[i], sizeof hdr[i]);
+            }
+    }
+    return NULL;
+}
+#else
+static void *audio_main(void *arg) {
+    (void)arg;
+    static int16_t pcm[OUT_FRAMES * 32 * 2];
+    for (;;) {
+        make(pcm);
+        struct timespec ts = {0, OUT_FRAMES * 32 * 1000000000L / 48000};
+        nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+#endif
+
 void rt_apu_init(void) {
-    start_100ns = rt_now_100ns();
     rt_mem_commit(RT_APU_BASE, RT_APU_SIZE);
     rt_mem_commit(RT_ACI_BASE, RT_ACI_SIZE);
+    const char *a = getenv("XBRT_AUDIO"), *vol = getenv("XBRT_VOLUME");
+    if (vol) volume = (float)atof(vol);
+    const char *d = getenv("XBRT_AUDIO_DUMP");
+    if (d && *d) dump = fopen(d, "wb");
+    if (dump) fprintf(stderr, "xbrt: audio dump starts at %.3f s\n", rt_now_100ns() / 1e7);
+    rt_interrupt_ack(APU_IRQ, apu_irq);
+    pthread_t t;
+    pthread_create(&t, NULL, audio_main, (a && !atoi(a)) ? NULL : (void *)1);
 }
 
 /* ---- the AC'97 controller (ACI) at 0xFEC00000 ----

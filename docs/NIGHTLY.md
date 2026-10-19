@@ -240,6 +240,22 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     NV_PGRAPH_INCREMENT (bit 1 moves FLIP_READ on), as xemu does. Race at
     58-59 fps, race clock 0.98x real time (60 fps mod). XBRT_NO_FLIP_STALL=1
     goes back to running free (benchmarks).
+- **2026-10-19 evening (interactive): first sound.** `runtime/apu_vp.c`:
+  the APU's voice processor, written from xemu's vp.c as the hardware
+  reference. DSOUND's PIO methods (0xFE820000) now build voices in the
+  voice structures at NV_PAPU_VPVADDR and link them into the 2D/3D/MP
+  lists; every 32-sample frame the lists are walked: PCM (8/16/24/32-bit)
+  and Xbox ADPCM, buffers (SGE) and streams (SSL segments, done
+  notifications), envelopes, pitch (linear interpolation), the DLS2
+  low-pass filter, per-bin volumes, multipass sub-mixes, idle voices handed
+  back by front-end trap (SE2FE_IDLE_VOICE, IRQ 5). No GP DSP: speaker bins
+  0-5 are mixed to stereo; reverb sends, parametric EQ and HRTF are not
+  done. Output through waveOut (48 kHz), whose clock paces the frames;
+  XGSCNT counts frames made. `XBRT_AUDIO=0` silent, `XBRT_VOLUME`,
+  `XBRT_AUDIO_DUMP=<file>` (raw s16le 48 kHz stereo; mux with a recording
+  using the logged start time). KeSynchronizeExecution implemented (DSOUND
+  calls it). Without the low-pass filter Forza's wind/road noise voice
+  (looped 16-bit PCM noise) was a full-band hiss over the whole race.
   - `XBRT_RECORD=<file.mp4>` (with `XBRT_RECORD_FROM`, `XBRT_RECORD_FOR`
     seconds and `XBRT_FFMPEG`): the picture at every vertical blank piped
     into ffmpeg, H.264 at 59.94 fps, scaled 2x. `tools/input/race-fast.txt`
