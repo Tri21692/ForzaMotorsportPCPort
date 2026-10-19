@@ -149,7 +149,7 @@ boundary is smaller and fixed instead.
 - [x] Drawing on the PC's GPU (`XBRT_GPU=gl`, docs/GPU.md): register
       combiners as one fragment shader, vertex programs translated to
       GLSL, render targets sampled where they were drawn.
-- [ ] Keep framebuffers on the GPU across flips; batch draws.
+- [ ] Measure the GPU's own time; batch draws.
 
 Earlier notes, from when the plan was to replace the API:
 

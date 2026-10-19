@@ -68,6 +68,7 @@ programs are translated to GLSL, one program each (`runtime/glvsh.c`,
 `XBRT_GPU_VSH=0` for the CPU's); textures carry the game's mipmaps and
 filters. Framebuffers over the same bytes exchange pixels on the GPU,
 and render targets are sampled where they were drawn. Still read back:
-everything at flips (something reads render targets from RAM after a
-flip; see NIGHTLY.md), the shown buffers before D3D's frame notifies,
-depth textures, and anything a non-linear texture overlaps.
+everything at flips, the shown buffers before D3D's frame notifies,
+depth textures, and anything a non-linear texture overlaps. Skipping
+the flip and notify read-backs as an experiment gained nothing, so the
+GPU's own time is the next thing to measure (NIGHTLY.md).

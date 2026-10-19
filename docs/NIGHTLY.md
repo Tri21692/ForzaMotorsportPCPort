@@ -109,15 +109,16 @@ How the GPU path works now (docs/GPU.md steps 2-5, `runtime/glfill.c`,
 
 What limits the race now (`tools/sample.sh` + `tools/samples.py`):
 - The device thread spends most of its time inside glReadPixels: the
-  read-backs at notifies and flips wait for the GPU to finish. Skipping
-  the notify read-backs (wrong pictures) gained nothing measurable, so
-  the GPU itself or the flip-time full read-back is the limit; the next
-  step is to stop reading everything back at flips. **Tried and failed:**
-  dropping the flip read-back and syncing only the buffer PCRTC_START is
-  pointed at left the game stuck in boot with black frames and 100,000+
-  flips, so something reads render targets from RAM after a flip
-  (unknown: the front end? D3D?). Find the reader first (XBRT_LOG=2 near
-  the flip, or protect the surface pages).
+  read-backs at notifies and flips wait for the GPU to finish. But
+  skipping the notify read-backs (wrong pictures) gained nothing
+  measurable, and neither did skipping the full read-back at flips
+  (pictures fine, 7247 flips against 7053-7129: noise), so the GPU
+  itself (an Intel iGPU here: 2x anti-aliased 1280x480, ~1300 draws a
+  frame) is probably the limit now. Measure GPU time (timer queries)
+  before more CPU-side work. **Tried and failed:** reading back only the
+  buffer PCRTC_START is pointed at (a request to the device thread from
+  the vertical blank handler's register write) left the game stuck in
+  boot with black frames and 100,000+ flips; not understood.
 - The game's render thread waits in D3DDevice_BlockOnFence most of the
   time; DSOUND/XACT threads (DirectSoundDoWork, deferred commands that
   never complete because no voice is ever processed) are most of the
@@ -152,9 +153,10 @@ Open bugs, in order:
 
 ## Next after that
 
-1. Speed: find what reads render targets from RAM after a flip, then
-   keep framebuffers on the GPU across flips (read back only what is
-   shown or read). Then batch draws (1300 a frame in the race).
+1. Speed: measure the GPU's own time per frame (GL timer queries). If
+   it is the limit: cheaper anti-aliasing (the 2x buffer could be a
+   multisampled framebuffer), fewer passes, batched draws. If not, the
+   read-backs at flips and notifies (PBOs, so they do not wait).
 2. Audio: the voice processor (front-end methods into voice memory,
    voice lists, sample fetch, pitch and volume into the mixbins, voice
    notifications), even before any sound comes out, so DSOUND's deferred
