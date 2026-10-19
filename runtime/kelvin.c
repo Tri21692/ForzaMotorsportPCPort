@@ -111,7 +111,13 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     nv2a.kelvin[method / 4] = arg;
     nv2a_raster_method(method, arg);
     switch (method) {
+    case FLIP_READ:
+    case FLIP_WRITE:
+    case FLIP_MODULO:
+        nv2a_flip_method(method, arg);
+        return;
     case FLIP_INCREMENT_WRITE: {
+        nv2a_flip_method(method, arg);
         nv2a.flips++;
         nv2a_raster_sync(); /* the display reads the front buffer from RAM */
         nv2a_raster_invalidate();
@@ -121,6 +127,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
         return;
     }
     case FLIP_STALL:
+        nv2a_flip_stall();
         return;
     case BACK_END_WRITE_SEMAPHORE_RELEASE: {
         nv2a_raster_flush(); /* the GPU path reads back at flips, not at every fence */
