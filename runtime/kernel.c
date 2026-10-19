@@ -830,6 +830,14 @@ static uint32_t data_export(const XbKernelInfo *k) {
         return a;
     }
     if (!strcmp(k->name, "LaunchDataPage")) return rt_kdata_alloc(4); /* NULL: a cold boot */
+    if (!strcmp(k->name, "IdexChannelObject")) {
+        /* The IDE channel's queue of pending requests (a LIST_ENTRY at
+         * +0x28), empty: it points at itself. XAPI's CancelIo walks it at
+         * DISPATCH_LEVEL; zeroed, the walk followed NULL forever. */
+        a = rt_kdata_alloc(0x200);
+        xb_wr32(a + 0x28, a + 0x28), xb_wr32(a + 0x2C, a + 0x28);
+        return a;
+    }
     /* Everything else (object types, keys, hardware info) starts zeroed. */
     return rt_kdata_alloc(0x200);
 }

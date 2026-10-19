@@ -91,6 +91,7 @@ Nv2a nv2a;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; /* registers with effects */
 static struct { uint32_t put, get; } recent_put[64];      /* PUT writes, and GET then */
 static unsigned recent_put_n;
+uint64_t pusher_t_busy; /* 100 ns units the device thread spent in run_pushbuf */
 static pthread_cond_t kick = PTHREAD_COND_INITIALIZER;   /* PUT moved */
 static uint64_t start_ns;
 
@@ -475,7 +476,9 @@ static void *device_main(void *arg) {
         }
         if (REG(PFIFO_CACHE1_DMA_GET) != REG(PFIFO_CACHE1_DMA_PUT)) {
             pthread_mutex_unlock(&lock);
+            uint64_t t0 = rt_now_100ns();
             int moved = run_pushbuf();
+            pusher_t_busy += rt_now_100ns() - t0;
             pthread_mutex_lock(&lock);
             if (moved) continue;
         }
@@ -502,14 +505,21 @@ void rt_nv2a_init(void) {
     pthread_create(&h, NULL, device_main, NULL);
 }
 
-/* The stats line, every 5 seconds at log level 1; from the DPC thread, so it
- * keeps coming while the device thread is busy. */
+/* The stats line, every 5 seconds at log level 1 or with XBRT_STATS=1 (which
+ * prints it without the cost of logging every kernel call); from the DPC
+ * thread, so it keeps coming while the device thread is busy. */
 void nv2a_log_stats(void) {
     static uint64_t next;
+    static int stats = -1;
+    if (stats < 0) stats = getenv("XBRT_STATS") && atoi(getenv("XBRT_STATS"));
     uint64_t t = now_ns();
-    if (!rt_log_level || t < next) return;
+    if ((!rt_log_level && !stats) || t < next) return;
     next = t + 5000000000ull;
-    rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
-           "PATT_COLOR0 %08x, intr %08x, scanout %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
-           nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR), REG(PCRTC_START));
+    extern uint64_t raster_t_state, raster_t_setup, raster_t_fill;
+    fprintf(stderr, "[%10.3f] nv2a: device thread: pusher %.1f s, of which draw state %.1f s, vertices %.1f s, filling %.1f s\n",
+            rt_now_100ns() / 1e7, pusher_t_busy / 1e7, raster_t_state / 1e7, raster_t_setup / 1e7, raster_t_fill / 1e7);
+    fprintf(stderr, "[%10.3f] nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
+            "PATT_COLOR0 %08x, intr %08x, scanout %08x\n", rt_now_100ns() / 1e7, nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped,
+            nv2a.clears, nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR),
+            REG(PCRTC_START));
 }

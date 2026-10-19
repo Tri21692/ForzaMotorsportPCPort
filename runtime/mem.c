@@ -250,6 +250,18 @@ static LONG CALLBACK commit_on_fault(EXCEPTION_POINTERS *e) {
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
+/* A crash in the runtime itself (not a guest fault): say where, so
+ * addr2line -e forza.exe <offset> can name the line, rather than vanish. */
+static LONG WINAPI host_crash(EXCEPTION_POINTERS *e) {
+    EXCEPTION_RECORD *r = e->ExceptionRecord;
+    HMODULE exe = GetModuleHandleA(NULL);
+    fprintf(stderr, "xbrt: host exception %08lx at %p (forza.exe+%llx), address %p, thread %lu\n", r->ExceptionCode,
+            r->ExceptionAddress, (unsigned long long)((uint8_t *)r->ExceptionAddress - (uint8_t *)exe),
+            r->NumberParameters >= 2 ? (void *)r->ExceptionInformation[1] : NULL, GetCurrentThreadId());
+    fflush(stderr);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 /* VirtualAlloc2 and MapViewOfFile3 are Windows 10 1803+; look them up so
  * the program still starts (and says why) on older systems. */
 typedef PVOID(WINAPI *VirtualAlloc2Fn)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER *, ULONG);
@@ -292,6 +304,7 @@ void rt_mem_init(void) {
     }
     CloseHandle(ram); /* the views keep it alive */
     AddVectoredExceptionHandler(1, commit_on_fault);
+    SetUnhandledExceptionFilter(host_crash);
 
     memset(page_used, 1, 0x100000 / 0x1000);
     memset(page_used + (RT_PHYS_INSTANCE / 0x1000), 1, (RT_PHYS_SIZE - RT_PHYS_INSTANCE) / 0x1000);

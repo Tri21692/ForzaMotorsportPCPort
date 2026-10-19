@@ -789,8 +789,8 @@ static int draw_state(DrawState *d) {
 }
 
 /* Projects a triangle and clips its bounding box; 0 if nothing is drawn. */
-static int setup_tri(const DrawState *d, Tri *t, const Vertex *va, const Vertex *vb, const Vertex *vc) {
-    Pt a = project(va), b = project(vb), c = project(vc);
+static int setup_tri(const DrawState *d, Tri *t, const Pt *pa, const Pt *pb, const Pt *pc) {
+    Pt a = *pa, b = *pb, c = *pc;
     a.x *= d->sx, b.x *= d->sx, c.x *= d->sx, a.y *= d->sy, b.y *= d->sy, c.y *= d->sy; /* logical pixels to samples */
     float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
     if (fabsf(area) < 1e-6f || area != area) return 0;
@@ -919,8 +919,9 @@ static void fill(const DrawState *d, const Tri *t, int first, int step) {
  * Worker thread w fills the rows y % workers == w of every triangle of a
  * draw, in order. A pixel is only ever touched by one thread, in the order
  * the triangles came, so blending and depth come out as if drawn one by
- * one. XBRT_RASTER_THREADS sets the count (default: the host's cores less
- * four, at most 16; 1 fills on the device thread alone). */
+ * one. XBRT_RASTER_THREADS sets the count (default: half the host's
+ * logical cores, about one a physical core, at most 16; 1 fills on the
+ * device thread alone). */
 static int workers = -1;
 static pthread_t worker_threads[16];
 static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -930,18 +931,46 @@ static int pool_left;
 static const DrawState *pool_state;
 static const Tri *pool_tris;
 static int pool_ntris;
+static void (*pool_fn)(int w); /* the job: fill_job or project_job */
+
+static void fill_job(int w) {
+    for (int i = 0; i < pool_ntris; i++) fill(pool_state, &pool_tris[i], w, workers);
+}
+
+static Pt *pts; /* the draw's vertices, projected */
+static int pts_cap;
+
+static void project_job(int w) {
+    for (int i = w; i < nverts; i += workers) pts[i] = project(&verts[i]);
+}
+
+static void run_pool(void (*fn)(int w));
+
+/* Draws come thousands to a frame, so waking the workers through a
+ * condition variable each time cost more than the filling. Both sides spin
+ * briefly on the counters first and sleep only if that runs out. */
+#define POOL_SPINS 500
 
 static void *worker_main(void *arg) {
     int w = (int)(intptr_t)arg;
     unsigned seen = 0;
-    pthread_mutex_lock(&pool_lock);
     for (;;) {
-        while (pool_job == seen) pthread_cond_wait(&pool_go, &pool_lock);
-        seen = pool_job;
-        pthread_mutex_unlock(&pool_lock);
-        for (int i = 0; i < pool_ntris; i++) fill(pool_state, &pool_tris[i], w, workers);
-        pthread_mutex_lock(&pool_lock);
-        if (--pool_left == 0) pthread_cond_signal(&pool_done);
+        for (int spins = 0; __atomic_load_n(&pool_job, __ATOMIC_ACQUIRE) == seen;) {
+            if (++spins < POOL_SPINS) {
+                __builtin_ia32_pause();
+                continue;
+            }
+            pthread_mutex_lock(&pool_lock);
+            while (__atomic_load_n(&pool_job, __ATOMIC_ACQUIRE) == seen) pthread_cond_wait(&pool_go, &pool_lock);
+            pthread_mutex_unlock(&pool_lock);
+        }
+        seen = __atomic_load_n(&pool_job, __ATOMIC_ACQUIRE);
+        pool_fn(w);
+        if (__atomic_sub_fetch(&pool_left, 1, __ATOMIC_ACQ_REL) == 0) {
+            pthread_mutex_lock(&pool_lock);
+            pthread_cond_signal(&pool_done);
+            pthread_mutex_unlock(&pool_lock);
+        }
     }
     return NULL;
 }
@@ -954,7 +983,7 @@ static void start_workers(void) {
 #else
     cores = sysconf(_SC_NPROCESSORS_ONLN);
 #endif
-    workers = e && atoi(e) > 0 ? atoi(e) : (int)(cores > 8 ? cores - 4 : cores > 2 ? cores - 1 : 1);
+    workers = e && atoi(e) > 0 ? atoi(e) : (int)(cores >= 4 ? cores / 2 : 1); /* one per physical core, leaving the hyperthreads */
     if (workers > 16) workers = 16;
     if (workers > 1)
         for (int i = 0; i < workers; i++) pthread_create(&worker_threads[i], NULL, worker_main, (void *)(intptr_t)i);
@@ -964,12 +993,34 @@ static void start_workers(void) {
 static Tri *tris;
 static int ntris, tris_cap;
 
-static void add_tri(const DrawState *d, const Vertex *va, const Vertex *vb, const Vertex *vc) {
+/* Where the device thread's time goes, in 100 ns units, for the stats line. */
+uint64_t raster_t_state, raster_t_setup, raster_t_fill;
+
+static void add_tri(const DrawState *d, int ia, int ib, int ic) {
     if (ntris == tris_cap) {
         tris_cap = tris_cap ? tris_cap * 2 : 1024;
         tris = realloc(tris, (size_t)tris_cap * sizeof *tris);
     }
-    if (setup_tri(d, &tris[ntris], va, vb, vc)) ntris++;
+    if (setup_tri(d, &tris[ntris], &pts[ia], &pts[ib], &pts[ic])) ntris++;
+}
+
+/* Runs fn on every worker and waits for them all. */
+static void run_pool(void (*fn)(int w)) {
+    pool_fn = fn;
+    __atomic_store_n(&pool_left, workers, __ATOMIC_RELEASE);
+    __atomic_add_fetch(&pool_job, 1, __ATOMIC_RELEASE);
+    pthread_mutex_lock(&pool_lock);
+    pthread_cond_broadcast(&pool_go); /* for workers that went to sleep */
+    pthread_mutex_unlock(&pool_lock);
+    for (int spins = 0; __atomic_load_n(&pool_left, __ATOMIC_ACQUIRE);) {
+        if (++spins < POOL_SPINS) {
+            __builtin_ia32_pause();
+            continue;
+        }
+        pthread_mutex_lock(&pool_lock);
+        while (__atomic_load_n(&pool_left, __ATOMIC_ACQUIRE)) pthread_cond_wait(&pool_done, &pool_lock);
+        pthread_mutex_unlock(&pool_lock);
+    }
 }
 
 static void draw(void) {
@@ -979,32 +1030,44 @@ static void draw(void) {
         return;
     }
     DrawState d;
-    if (!draw_state(&d)) return;
+    uint64_t t0 = rt_now_100ns();
+    int ok = draw_state(&d);
+    uint64_t t1 = rt_now_100ns();
+    raster_t_state += t1 - t0;
+    if (!ok) return;
     if (workers < 0) start_workers();
-    Vertex *v = verts;
     int n = nverts;
+    if (n < 3) return;
+    /* Each vertex once (strips and quads share them), on the workers when
+     * there are enough to be worth it. */
+    if (n > pts_cap) {
+        pts_cap = n > 4096 ? n : 4096;
+        pts = realloc(pts, (size_t)pts_cap * sizeof *pts);
+    }
+    if (workers > 1 && n >= 64) run_pool(project_job);
+    else
+        for (int i = 0; i < n; i++) pts[i] = project(&verts[i]);
     ntris = 0;
     switch (prim) {
-    case 5: for (int i = 0; i + 2 < n; i += 3) add_tri(&d, &v[i], &v[i + 1], &v[i + 2]); break;
-    case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? add_tri(&d, &v[i + 1], &v[i], &v[i + 2]) : add_tri(&d, &v[i], &v[i + 1], &v[i + 2]); break;
-    case 7: case 10: for (int i = 1; i + 1 < n; i++) add_tri(&d, &v[0], &v[i], &v[i + 1]); break;
-    case 8: for (int i = 0; i + 3 < n; i += 4) add_tri(&d, &v[i], &v[i + 1], &v[i + 2]), add_tri(&d, &v[i], &v[i + 2], &v[i + 3]); break;
-    case 9: for (int i = 0; i + 3 < n; i += 2) add_tri(&d, &v[i], &v[i + 1], &v[i + 3]), add_tri(&d, &v[i], &v[i + 3], &v[i + 2]); break;
+    case 5: for (int i = 0; i + 2 < n; i += 3) add_tri(&d, i, i + 1, i + 2); break;
+    case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? add_tri(&d, i + 1, i, i + 2) : add_tri(&d, i, i + 1, i + 2); break;
+    case 7: case 10: for (int i = 1; i + 1 < n; i++) add_tri(&d, 0, i, i + 1); break;
+    case 8: for (int i = 0; i + 3 < n; i += 4) add_tri(&d, i, i + 1, i + 2), add_tri(&d, i, i + 2, i + 3); break;
+    case 9: for (int i = 0; i + 3 < n; i += 2) add_tri(&d, i, i + 1, i + 3), add_tri(&d, i, i + 3, i + 2); break;
     }
+    uint64_t t2 = rt_now_100ns();
+    raster_t_setup += t2 - t1;
     if (!ntris) return;
     long pixels = 0;
     for (int i = 0; i < ntris; i++) pixels += (long)(tris[i].x1 - tris[i].x0) * (tris[i].y1 - tris[i].y0) / 2;
-    if (workers <= 1 || pixels < 4096) {
+    if (workers <= 1 || pixels < 256) {
         for (int i = 0; i < ntris; i++) fill(&d, &tris[i], 0, 1);
+        raster_t_fill += rt_now_100ns() - t2;
         return;
     }
-    pthread_mutex_lock(&pool_lock);
     pool_state = &d, pool_tris = tris, pool_ntris = ntris;
-    pool_left = workers;
-    pool_job++;
-    pthread_cond_broadcast(&pool_go);
-    while (pool_left) pthread_cond_wait(&pool_done, &pool_lock);
-    pthread_mutex_unlock(&pool_lock);
+    run_pool(fill_job);
+    raster_t_fill += rt_now_100ns() - t2;
 }
 
 static void emit(void) {
