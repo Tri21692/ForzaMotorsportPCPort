@@ -228,6 +228,11 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     way: shadow maps, vertex programs, the swizzled path, feedback loops,
     GPU timing (`glFinish`), the bloom quarters, sub-rectangle clamping.
     Race: 68-94 fps, no patches, no grey frames.
+  - Cube-map reflections on the GPU are now the default (NVIDIA: 71-74 fps
+    in scenes of ~970 draws a frame, no waits left for them);
+    `XBRT_GL_RT_CUBE=0` turns them off (for Intel, which fell to 13 fps).
+    `XBRT_GL_RT_SHOWN` is gone. A grey frame still turns up now and then
+    (1 of 10 screenshots in that run): the car-shadow image on screen.
   - The input script's timings were made for ~30 fps: on NVIDIA the
     menus run far faster and `race.txt` sometimes ends in the pause menu.
   - Beware when judging runs: `race.txt` holds the throttle and never

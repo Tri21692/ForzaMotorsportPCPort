@@ -28,7 +28,6 @@ void nv2a_raster_flush(void);                           /* finish the batched dr
 void nv2a_raster_sync(void);
 void nv2a_raster_sync_range(uint32_t base, uint32_t size); /* the colour drawn over these bytes on its way to RAM */
 void nv2a_raster_flip(void);                            /* at FLIP_INCREMENT_WRITE */
-int nv2a_is_scanout(uint32_t base);                  /* one of the buffers the CRTC has shown */
 void nv2a_raster_vblank(void);                          /* read-backs on their way reach RAM */
 int nv2a_raster_clear(uint32_t flags);                  /* CLEAR_SURFACE on the GPU; 0 if it is not drawing */                            /* and bring RAM up to date with the GPU's drawing */
 

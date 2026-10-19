@@ -845,14 +845,6 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
             s = e;
     }
     if (!s) return NULL;
-    /* The shown buffers too (Forza draws its car-shadow image in the one not
-     * on screen, then projects it). On NVIDIA this gives black patches in
-     * the race, not on Intel; XBRT_GL_RT_SHOWN=0 sends them through RAM,
-     * which cures that but puts the shadow image on screen in many more
-     * frames. Cause not found yet; see docs/NIGHTLY.md. */
-    static int shown = -1;
-    if (shown < 0) shown = !getenv("XBRT_GL_RT_SHOWN") || atoi(getenv("XBRT_GL_RT_SHOWN"));
-    if (!shown && nv2a_is_scanout(s->cbase)) return NULL;
     for (int k = 0; k < GL_SURFS; k++) { /* depth drawn over these bytes after their colour (or with it, as a shadow map's): through RAM */
         GlSurf *e = &gl_surf[k];
         if (e->fbo && e->ztex && e->zdirty && (e == s || e->seq > s->seq) && gl_span_hit(e->zbase, e->zpitch * (uint32_t)e->h, lo, hi - lo))
@@ -882,8 +874,8 @@ static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int 
     static struct { uint32_t base; int w; GLuint tex, from[6]; unsigned seq[6]; } cubes[8]; /* from, seq: what each face was copied from */
     if (gl_ready < 0) gl_ready = gl_setup();
     if (!gl_ready || w <= 0 || h <= 0) return NULL;
-    static int cubes_on = -1; /* XBRT_GL_RT_CUBE=1: cube maps too; copying the faces made the Intel GPU fall to ~13 fps */
-    if (cubes_on < 0) cubes_on = getenv("XBRT_GL_RT_CUBE") && atoi(getenv("XBRT_GL_RT_CUBE"));
+    static int cubes_on = -1; /* XBRT_GL_RT_CUBE=0: not cube maps (copying the faces took Intel's GPU to ~13 fps; NVIDIA's is faster with them) */
+    if (cubes_on < 0) cubes_on = !getenv("XBRT_GL_RT_CUBE") || atoi(getenv("XBRT_GL_RT_CUBE"));
     if (cube && !cubes_on) return NULL;
     uint32_t face = ((uint32_t)w * (uint32_t)h * 4 + 127) & ~127u;
     uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + face * (cube ? 6u : 1u);
