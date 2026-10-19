@@ -116,7 +116,7 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
 - **Status:** with the player's extracted disc, the game boots through
   the install, the movies and its saves into the front end, creates and
   saves a profile, and races: with `XBRT_GPU=gl` a race on Maple Valley
-  runs at 16-21 frames a second, all drawn; no sound yet. See
+  runs at about 15-20 frames a second, all drawn; no sound yet. See
   [NIGHTLY.md](NIGHTLY.md) for what is next.
 - [ ] The remaining kernel imports as the game reaches them.
 
@@ -149,7 +149,7 @@ boundary is smaller and fixed instead.
 - [x] Drawing on the PC's GPU (`XBRT_GPU=gl`, docs/GPU.md): register
       combiners as one fragment shader, vertex programs translated to
       GLSL, render targets sampled where they were drawn.
-- [ ] Measure the GPU's own time; batch draws.
+- [ ] Depth textures sampled on the GPU; batch draws.
 
 Earlier notes, from when the plan was to replace the API:
 

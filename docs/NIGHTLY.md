@@ -74,7 +74,7 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 
 ## Current lead (2026-10-19, nightly)
 
-**Races run at 16-21 fps with `XBRT_GPU=gl`**, with the game's mipmaps
+**Races run at about 15-20 fps with `XBRT_GPU=gl`**, with the game's mipmaps
 and filters (no more blocky or swimming textures), and without the
 black top-left quarter / grey flyby frames. `tools/input/race.txt` gets
 to lap 1, race clock ~1:08, at 400 s (at the start of the night it read
@@ -84,8 +84,8 @@ to lap 1, race clock ~1:08, at 400 s (at the start of the night it read
       XBRT_WINDOW=0 XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=20 \
       XBRT_HDD=hdd timeout 420 ../runtime/forza.exe <default.xbe>
 
-Benchmark: the stats line's flip count at 415 s of that run (7053 at the
-end of the night; it was ~3050 at the start). Runs vary by ±7%, so
+Benchmark: the stats line's flip count at 415 s of that run (~8500 at
+the end of the night; it was ~3050 at the start). Runs vary by ±7%, so
 compare over two runs before believing a small change.
 
 How the GPU path works now (docs/GPU.md steps 2-5, `runtime/glfill.c`,
@@ -102,29 +102,34 @@ How the GPU path works now (docs/GPU.md steps 2-5, `runtime/glfill.c`,
   framebuffer's texture (`gl_rt_texture`); everything else is decoded
   from RAM (with its mipmaps) after the framebuffers that drew into it
   are read back (`gl_sync_range`).
-- RAM is brought up to date at flips (everything) and, for the buffers
-  the CRTC has shown, before every trapped notify (`trap_method`): D3D's
-  notify after a frame's last draw lets its vertical blank handler show
-  the frame long before FLIP_INCREMENT_WRITE.
+- Nothing is read back at flips. At every trapped notify
+  (`trap_method`) the colour of the buffers the CRTC has shown goes into
+  pixel buffer objects; it reaches RAM at the next vertical blank (before
+  D3D's handler can flip to it) or when anything else looks at RAM
+  (`gl_complete`). D3D's notify after a frame's last draw lets its
+  vertical blank handler show the frame long before
+  FLIP_INCREMENT_WRITE. Depth is read back only when something reads it.
+- At each flip the device thread waits for the GPU to finish the frame
+  before last (`gl_flip`, a GL fence). Without some wait on the GPU the
+  front end's thousands of frames a second filled the Intel driver's
+  queue until it blocked for good (the device thread stuck in
+  NtGdiDdDDIWaitForSynchronizationObjectFromCpu, the process unkillable
+  for a minute): that, not the game reading the front buffer, is what
+  the "boot spin" experiments below ran into.
 
 What limits the race now (`tools/sample.sh` + `tools/samples.py`):
-- The device thread spends most of its time inside glReadPixels: the
-  read-backs at notifies and flips wait for the GPU to finish. But
-  skipping the notify read-backs (wrong pictures) gained nothing
-  measurable, and neither did skipping the full read-back at flips
-  (pictures fine, 7247 flips against 7053-7129: noise), so the GPU
-  itself (an Intel iGPU here: 2x anti-aliased 1280x480, ~1300 draws a
-  frame) is probably the limit now. Measure GPU time (timer queries)
-  before more CPU-side work. **Tried and failed:** reading back only the
-  buffer PCRTC_START is pointed at (a request to the device thread from
-  the vertical blank handler's register write) left the game stuck in
-  boot with black frames and 100,000+ flips, and so does dropping both
-  the flip and the notify read-backs (as an experiment): the boot spins
-  presenting frames with no draws, vertical blanks starve, then
-  everything stops. Either read-back alone is enough to avoid it, so
-  something in the boot looks at the front buffer's pixels in RAM after
-  a frame (a loading screen copying the last frame? D3D?). Find it
-  before moving read-backs off the frame path (e.g. to PBOs).
+- The device thread's "draw state" time went up with the asynchronous
+  read-backs (148 s of 334 s over the run): textures over framebuffers
+  that cannot be sampled on the GPU are read back synchronously in
+  texture(), most likely the shadow maps (depth textures, decoded from
+  RAM). Sampling depth framebuffers on the GPU (`gl_rt_texture` for
+  depth, comparing in the shader) is the next speed step; profile first.
+- With every read-back skipped (wrong pictures, as an experiment) the
+  race ran at ~30 fps, so read-backs still cost about a third.
+- **Tried and failed:** reading back only the buffer PCRTC_START is
+  pointed at (a request to the device thread from the vertical blank
+  handler's register write) left the game stuck in boot with 100,000+
+  flips: the driver-queue problem above, before the fence existed.
 - The game's render thread waits in D3DDevice_BlockOnFence most of the
   time; DSOUND/XACT threads (DirectSoundDoWork, deferred commands that
   never complete because no voice is ever processed) are most of the
@@ -161,10 +166,10 @@ Open bugs, in order:
 
 ## Next after that
 
-1. Speed: measure the GPU's own time per frame (GL timer queries). If
-   it is the limit: cheaper anti-aliasing (the 2x buffer could be a
-   multisampled framebuffer), fewer passes, batched draws. If not, the
-   read-backs at flips and notifies (PBOs, so they do not wait).
+1. Speed: depth textures (shadow maps) sampled from their framebuffer
+   on the GPU instead of read back in texture(); then batched draws
+   (~1300 a frame in the race). With the fence now bounding the queue,
+   pacing flips to the vertical blank (FLIP_STALL) can be tried again.
 2. Audio: the voice processor (front-end methods into voice memory,
    voice lists, sample fetch, pitch and volume into the mixbins, voice
    notifications), even before any sound comes out, so DSOUND's deferred
@@ -175,7 +180,7 @@ Open bugs, in order:
 ## Log
 
 - 2026-10-19 (nightly, branch nightly/2026-10-18): GPU path from 9-10
-  to 16-21 fps in the race (3055 -> 7053 flips over the 415 s run).
+  to ~15-20 fps in the race (3055 -> 8500-8700 flips over the 415 s run).
   Texture mipmaps, filters and LOD bias from SET_TEXTURE_FILTER; fog
   (register 3) on both paths. Framebuffers over the same bytes exchange
   pixels on the GPU and read back in drawing order; depth read back only
@@ -190,9 +195,12 @@ Open bugs, in order:
   bloom passes; scanout buffers are now read back before notifies. The
   APU bootstraps its DSPs (P memory from scratch memory), which stopped
   DSOUND resetting them 33 times a second with 10 ms stalls under the
-  big lock. Tried and reverted: a real FLIP_STALL (one hang), GL state
-  caching and a streaming vertex buffer (no gain), syncing only at
-  PCRTC_START (the game stuck in boot). Forza's race frame, for
+  big lock. The shown buffers are read back through pixel buffer objects
+  without waiting, nothing at flips, and a fence keeps two frames queued
+  at most (without it the Intel driver's queue filled and blocked).
+  Tried and reverted: a real FLIP_STALL (one hang), GL state caching and
+  a streaming vertex buffer (no gain), syncing only at PCRTC_START (the
+  driver-queue block, before the fence). Forza's race frame, for
   reference: an environment pass into the coming front buffer, the scene
   into the 1280x480 anti-aliased buffer (01c40000, depth 01e98000),
   bloom: a 320x240 downsample into the front buffer's top-left, 320x120

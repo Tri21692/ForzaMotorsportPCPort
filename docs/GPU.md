@@ -61,14 +61,14 @@ software rasteriser's screenshots.
 
 ## Status (2026-10-19)
 
-Steps 1-4 are in, and most of 5: the race runs at 16-21 frames a second
+Steps 1-4 are in, and most of 5: the race runs at about 15-20 frames a second
 with `XBRT_GPU=gl`. The pixel side is one fragment shader driven by the
 combiner methods as uniforms rather than a shader per state; vertex
 programs are translated to GLSL, one program each (`runtime/glvsh.c`,
 `XBRT_GPU_VSH=0` for the CPU's); textures carry the game's mipmaps and
 filters. Framebuffers over the same bytes exchange pixels on the GPU,
-and render targets are sampled where they were drawn. Still read back:
-everything at flips, the shown buffers before D3D's frame notifies,
-depth textures, and anything a non-linear texture overlaps. Skipping
-the flip and notify read-backs as an experiment gained nothing, so the
-GPU's own time is the next thing to measure (NIGHTLY.md).
+and render targets are sampled where they were drawn. The shown buffers
+are read back without waiting (pixel buffer objects, at D3D's frame
+notifies, in RAM by the next vertical blank); nothing at flips, where a
+fence keeps at most two frames queued. Still read back synchronously:
+depth textures (shadow maps) and anything a non-linear texture overlaps.
