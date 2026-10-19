@@ -138,9 +138,13 @@ typedef struct {
     uint32_t version; /* bumped at each decode */
     GLuint gl;        /* its GL texture, made from version gl_version */
     uint32_t gl_version;
+    int surface;      /* gl is a framebuffer's colour texture (glfill.c), sampled where it was drawn */
+    int alpha_one;    /* ... of an X8R8G8B8 texture: alpha reads as one */
 } Texture;
 
 static Texture cache[512]; /* a race frame uses a few hundred textures */
+static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t color, int w, int h);
+static uint32_t draw_lo, draw_hi; /* the draw's colour buffer, which its textures must not be read from on the GPU */
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static void gl_sync_range(uint32_t base, uint32_t size);
 static void gl_sync_cpu(void);
@@ -251,6 +255,12 @@ static void dump_texture(const Texture *t, uint32_t offset, uint32_t fmt) {
 /* Stage i's texture, decoded to A8R8G8B8 (cached until the next flip). */
 static Texture *texture(int i) {
     uint32_t fmt = KT(SET_TEXTURE_FORMAT), color = (fmt >> 8) & 0xFF;
+    if (rt_gl_on && (color == 0x12 || color == 0x1E || color == 0x11)) { /* linear colour: perhaps a render target */
+        Texture *rt = gl_rt_texture(i, dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + KT(SET_TEXTURE_OFFSET),
+                                    KT(SET_TEXTURE_CONTROL1) >> 16, color, (int)(KT(SET_TEXTURE_IMAGE_RECT) >> 16),
+                                    (int)(KT(SET_TEXTURE_IMAGE_RECT) & 0xFFFF));
+        if (rt) return rt;
+    }
     uint32_t key[5] = {KT(SET_TEXTURE_OFFSET), fmt, KT(SET_TEXTURE_CONTROL1), KT(SET_TEXTURE_IMAGE_RECT), KT(SET_TEXTURE_PALETTE)};
     Texture *hit = NULL;
     for (int i = 0; i < 512 && !hit; i++)
@@ -926,6 +936,7 @@ static int draw_state(DrawState *d) {
      * stage: 0 off, 1-3 sample a texture (2D, 3D, cube), 4 pass the
      * texture coordinate through as the colour. */
     uint32_t prog = K(SET_SHADER_STAGE_PROGRAM);
+    draw_lo = d->base & (RT_PHYS_SIZE - 1), draw_hi = draw_lo + d->pitch * (uint32_t)(d->cy0 + d->ch);
     for (int i = 0; i < 4; i++) {
         d->mode[i] = (int)(prog >> (5 * i)) & 31;
         d->tex[i] = NULL;

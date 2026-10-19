@@ -468,6 +468,37 @@ static void gl_free_surf(GlSurf *s) {
     memset(s, 0, sizeof *s);
 }
 
+/* Brings what other framebuffers over these bytes drew since s last drew
+ * into s, oldest first: copied on the GPU where the bytes line up
+ * (Forza's bloom quarters of a front buffer, the same buffer with and
+ * without depth), else through RAM. */
+static void gl_take_newer(GlSurf *s) {
+    GlSurf *newer[GL_SURFS];
+    int n = 0, copy = 1;
+    for (int i = 0; i < GL_SURFS; i++) {
+        GlSurf *e = &gl_surf[i];
+        if (e != s && e->seq > s->seq &&
+            (gl_drew(e, s->cbase, s->cpitch * (uint32_t)s->h) || (s->ztex && gl_drew(e, s->zbase, s->zpitch * (uint32_t)s->h)))) {
+            newer[n++] = e;
+            copy &= gl_can_copy(e, s);
+        }
+    }
+    for (int i = 1; i < n; i++) /* by seq */
+        for (int j = i; j > 0 && newer[j - 1]->seq > newer[j]->seq; j--) {
+            GlSurf *t = newer[j];
+            newer[j] = newer[j - 1], newer[j - 1] = t;
+        }
+    if (copy) {
+        for (int i = 0; i < n; i++) gl_copy(newer[i], s);
+    } else if (n) {
+        for (int i = 0; i < n; i++)
+            if (newer[i]->dirty) gl_readback(newer[i]); /* s too, first, if it drew earlier */
+        if (s->dirty) gl_readback(s);
+        gl_upload_if_changed(s);
+        s->check = 0;
+    }
+}
+
 static GlSurf *gl_bind(const DrawState *d) {
     uint32_t fmt = K(SET_SURFACE_FORMAT);
     uint32_t cfmt = fmt & 15, zfmt = d->ztest || K(SET_DEPTH_MASK) ? (fmt >> 4) & 15 : 0;
@@ -514,34 +545,7 @@ static GlSurf *gl_bind(const DrawState *d) {
         s->used = ++gl_tick;
         if (s->check && !s->dirty) gl_upload_if_changed(s);
         s->check = 0;
-        /* Then what other framebuffers over these bytes drew since this
-         * one last drew, oldest first: copied on the GPU where the bytes
-         * line up (Forza's bloom quarters of a front buffer, the same
-         * buffer with and without depth), else through RAM. */
-        GlSurf *newer[GL_SURFS];
-        int n = 0, copy = 1;
-        for (int i = 0; i < GL_SURFS; i++) {
-            GlSurf *e = &gl_surf[i];
-            if (e != s && e->seq > s->seq &&
-                (gl_drew(e, s->cbase, s->cpitch * (uint32_t)s->h) || (s->ztex && gl_drew(e, s->zbase, s->zpitch * (uint32_t)s->h)))) {
-                newer[n++] = e;
-                copy &= gl_can_copy(e, s);
-            }
-        }
-        for (int i = 1; i < n; i++) /* by seq */
-            for (int j = i; j > 0 && newer[j - 1]->seq > newer[j]->seq; j--) {
-                GlSurf *t = newer[j];
-                newer[j] = newer[j - 1], newer[j - 1] = t;
-            }
-        if (copy) {
-            for (int i = 0; i < n; i++) gl_copy(newer[i], s);
-        } else if (n) {
-            for (int i = 0; i < n; i++)
-                if (newer[i]->dirty) gl_readback(newer[i]); /* s too, first, if it drew earlier */
-            if (s->dirty) gl_readback(s);
-            gl_upload_if_changed(s);
-            s->check = 0;
-        }
+        gl_take_newer(s);
     }
     s->used = ++gl_tick;
     if (s->check && !s->dirty) gl_upload_if_changed(s);
@@ -549,6 +553,39 @@ static GlSurf *gl_bind(const DrawState *d) {
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     glViewport(0, 0, s->w, s->h);
     return s;
+}
+
+/* A linear colour texture over a framebuffer the GPU drew (docs/GPU.md,
+ * step 5): the framebuffer's own texture is sampled instead of reading it
+ * back, hashing and decoding it, which Forza's downsample of the
+ * anti-aliased buffer and its bloom passes did every frame. Only where
+ * the bytes line up (same address, pitch and texel size, inside the
+ * framebuffer), and not when the draw itself writes those bytes (GL
+ * cannot read a texture it is drawing into). NULL: decode as usual. */
+static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t color, int w, int h) {
+    static Texture rt[4];
+    if (gl_ready < 0) gl_ready = gl_setup();
+    if (!gl_ready || w <= 0 || h <= 0) return NULL;
+    int bpp = color == 0x11 ? 2 : 4;
+    uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + pitch * (uint32_t)h;
+    if (lo < draw_hi && draw_lo < hi) return NULL;
+    GlSurf *s = NULL;
+    for (int k = 0; k < GL_SURFS; k++) {
+        GlSurf *e = &gl_surf[k];
+        if (e->fbo && (e->cbase & (RT_PHYS_SIZE - 1)) == lo && e->cpitch == pitch && e->bpp == bpp && e->w >= w && e->h >= h &&
+            (!s || e->seq > s->seq))
+            s = e;
+    }
+    if (!s) return NULL;
+    if (s->check && !s->dirty) gl_upload_if_changed(s);
+    s->check = 0;
+    gl_take_newer(s);
+    Texture *t = &rt[i];
+    memset(t, 0, sizeof *t);
+    t->w = s->w, t->h = s->h, t->linear = 1, t->levels = 1;
+    t->gl = s->ctex, t->surface = 1, t->alpha_one = color == 0x1E;
+    t->gl_version = t->version; /* gl_texture has nothing to upload */
+    return t;
 }
 
 /* CLEAR_SURFACE on the GPU: the clear rectangle (inclusive, in samples on
@@ -735,6 +772,8 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         dmax[i] = t ? (float)t->depth : 0;
         glActiveTexture(GL_TEXTURE0 + (GLenum)i);
         glBindTexture(GL_TEXTURE_2D, t && !t->cube ? gl_texture(t) : gl_dummy2d);
+        if (t && t->surface) /* X8R8G8B8 over a framebuffer that keeps alpha */
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, t->alpha_one ? GL_ONE : GL_ALPHA);
         if (t && !t->cube) {
             uint32_t addr = KT(SET_TEXTURE_ADDRESS);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_wrap(addr & 15));
