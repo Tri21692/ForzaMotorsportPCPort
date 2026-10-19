@@ -63,6 +63,7 @@ static uint32_t k_KeDisconnectInterrupt(XbCtx *c) {
 
 void rt_interrupt_raise(uint32_t vector) {
     __atomic_or_fetch(&raised, 1u << (vector - VECTOR_BASE), __ATOMIC_SEQ_CST);
+    rt_dpc_wake();
 }
 
 void rt_interrupts_run(XbCtx *c) {

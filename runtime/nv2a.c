@@ -93,6 +93,7 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; /* registers with effec
 static struct { uint32_t put, get; } recent_put[64];      /* PUT writes, and GET then */
 static unsigned recent_put_n;
 uint64_t pusher_t_busy; /* 100 ns units the device thread spent in run_pushbuf */
+static uint64_t trap_t_wait; /* ... of which waiting for the driver's ISR after a trapped method */
 static pthread_cond_t kick = PTHREAD_COND_INITIALIZER;   /* PUT moved */
 static uint64_t start_ns;
 
@@ -381,6 +382,7 @@ static int run_pushbuf(void) {
  * ISR). Layout as xemu has it; runs on the device thread. */
 static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
     nv2a_raster_flush();
+    uint64_t t0 = rt_now_100ns();
     pthread_mutex_lock(&lock);
     uint32_t chid = (REG(PGRAPH_CTX_USER) >> 24) & 0x1F;
     REG(PGRAPH_TRAPPED_ADDR) = chid << 20 | subch << 16 | (method & 0x1FFF);
@@ -397,6 +399,7 @@ static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
             rt_log("nv2a: still waiting for the driver to clear PGRAPH_INTR (%08x)\n", REG(PGRAPH_INTR));
     }
     pthread_mutex_unlock(&lock);
+    trap_t_wait += rt_now_100ns() - t0;
 }
 
 /* Channel methods (below 0x100) are PFIFO's own; the rest go to the
@@ -536,6 +539,7 @@ void nv2a_log_stats(void) {
             (unsigned long long)raster_n_decode, raster_t_decode / 1e7, (unsigned long long)(raster_hash_bytes >> 20), raster_t_hash / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: device thread: pusher %.1f s, of which draw state %.1f s, vertices %.1f s, filling %.1f s\n",
             rt_now_100ns() / 1e7, pusher_t_busy / 1e7, raster_t_state / 1e7, raster_t_setup / 1e7, raster_t_fill / 1e7);
+    fprintf(stderr, "[%10.3f] nv2a: waiting for the driver after %u traps: %.1f s\n", rt_now_100ns() / 1e7, nv2a.traps, trap_t_wait / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
             "PATT_COLOR0 %08x, intr %08x, scanout %08x\n", rt_now_100ns() / 1e7, nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped,
             nv2a.clears, nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR),

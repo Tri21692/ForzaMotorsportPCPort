@@ -139,6 +139,7 @@ extern __thread RtThread *rt_self;
 #endif
 void rt_cond_init(pthread_cond_t *cv);
 void rt_abstime(struct timespec *ts, uint64_t ns_from_now); /* for pthread_cond_timedwait */
+void rt_dpc_wake(void);                                       /* dpc.c: an interrupt is pending */
 RtThread *rt_thread_create(uint32_t stack_size, uint32_t tls_size, uint32_t extra_size);
 void rt_thread_start(RtThread *t);
 void rt_thread_run_main(RtThread *t, uint32_t entry);
