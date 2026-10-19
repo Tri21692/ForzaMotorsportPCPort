@@ -40,6 +40,8 @@
 
 #include "rt.h"
 #include "nv2a.h"
+#include "gl.h"
+#undef DrawState /* windows.h, through the GL headers, defines it */
 
 #define K(m) nv2a.kelvin[(m) / 4]
 
@@ -125,15 +127,21 @@ typedef struct {
     int cube;         /* six faces, one after another in texels */
     uint32_t depth;   /* a depth texture: texels hold depth, up to this maximum */
     uint32_t *texels; /* A8R8G8B8 */
+    uint32_t version; /* bumped at each decode */
+    GLuint gl;        /* its GL texture, made from version gl_version */
+    uint32_t gl_version;
 } Texture;
 
 static Texture cache[512]; /* a race frame uses a few hundred textures */
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
+static int gl_writes(uint32_t base, uint32_t size);    /* has the GPU drawn into them without reading back? */
+static void gl_sync(void);
+static void gl_sync_cpu(void);
 static int cache_next;
 static uint32_t generation; /* bumped when render targets may have changed what textures hold */
 
 void nv2a_raster_invalidate(void) {
-    nv2a_raster_flush(); /* what was drawn before may be a texture now */
+    nv2a_raster_flush(); /* what was drawn before may be a texture now (on the GPU, texture() reads back what it needs) */
     generation++;
 }
 
@@ -253,6 +261,7 @@ static Texture *texture(int i) {
     uint32_t size = linear ? (pitch ? pitch : (uint32_t)w * (uint32_t)bpp) * (uint32_t)h : face_size * (uint32_t)faces;
     if (size > RT_PHYS_SIZE) size = RT_PHYS_SIZE;
     if (batch_writes(base, size)) nv2a_raster_flush(); /* draw into it first */
+    if (rt_gl_on && gl_writes(base, size)) gl_sync();     /* the GPU drew into it */
     uint64_t hash = 0x9E3779B97F4A7C15ull ^ size;
     {
         const uint8_t *p = phys(base);
@@ -293,6 +302,7 @@ static Texture *texture(int i) {
     t->texels = malloc((size_t)w * h * 4 * faces);
     memcpy(t->key, key, sizeof key);
     t->hash = hash, t->gen = generation;
+    t->version++;
     t->w = w, t->h = h, t->linear = linear, t->cube = cube;
     t->depth = color == 0x2E ? 0xFFFFFF : color == 0x30 ? 0xFFFF : 0;
   for (int face = 0; face < faces; face++) {
@@ -1108,6 +1118,25 @@ void nv2a_raster_flush(void) {
     raster_t_fill += rt_now_100ns() - t0;
 }
 
+void nv2a_raster_sync(void) {
+    nv2a_raster_flush();
+    if (rt_gl_on) gl_sync_cpu();
+}
+
+#define SET_COLOR_CLEAR_VALUE 0x1D90
+#define SET_ZSTENCIL_CLEAR_VALUE 0x1D8C
+#define SET_CLEAR_RECT_HORIZONTAL 0x1D98
+#define SET_CLEAR_RECT_VERTICAL 0x1D9C
+#include "glfill.c"
+
+/* CLEAR_SURFACE: on the GPU when it draws, else 0 and kelvin.c clears RAM. */
+int nv2a_raster_clear(uint32_t flags) {
+    if (!rt_gl_on) return 0;
+    nv2a_raster_flush();
+    return gl_clear(flags);
+}
+
+
 /* Runs fn on every worker and waits for them all. */
 static void run_pool(void (*fn)(int w)) {
     pool_fn = fn;
@@ -1168,6 +1197,15 @@ static void draw(void) {
     case 9: for (int i = 0; i + 3 < n; i += 2) add_tri(st, i, i + 1, i + 3), add_tri(st, i, i + 3, i + 2); break;
     }
     raster_t_setup += rt_now_100ns() - t1;
+    if (rt_gl_on) { /* the GPU fills */
+        uint64_t t3 = rt_now_100ns();
+        gl_draw(&bstates[st], tris, ntris);
+        ntris = nstates = 0;
+        batch_pixels = 0;
+        nbatch_surf = 0;
+        raster_t_fill += rt_now_100ns() - t3;
+        return;
+    }
     static int no_batch = -1; /* batching is off unless XBRT_BATCH=1: it left the race view black, and gained nothing */
     if (no_batch < 0) no_batch = !(getenv("XBRT_BATCH") && atoi(getenv("XBRT_BATCH")));
     if (ntris >= 1 << 16 || no_batch) nv2a_raster_flush();

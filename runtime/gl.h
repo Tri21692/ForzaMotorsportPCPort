@@ -60,6 +60,12 @@
     X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation)                                                                    \
     X(PFNGLUNIFORM1IPROC, glUniform1i)                                                                                      \
     X(PFNGLUNIFORM4FVPROC, glUniform4fv)                                                                                    \
+    X(PFNGLUNIFORM1UIPROC, glUniform1ui)                                                                                    \
+    X(PFNGLUNIFORM1UIVPROC, glUniform1uiv)                                                                                  \
+    X(PFNGLUNIFORM1IVPROC, glUniform1iv)                                                                                    \
+    X(PFNGLUNIFORM1FPROC, glUniform1f)                                                                                      \
+    X(PFNGLUNIFORM1FVPROC, glUniform1fv)                                                                                    \
+    X(PFNGLUNIFORM2FVPROC, glUniform2fv)                                                                                    \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays)                                                                          \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)                                                                          \
     X(PFNGLGENBUFFERSPROC, glGenBuffers)                                                                                    \
@@ -123,6 +129,12 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glGetUniformLocation p_glGetUniformLocation
 #define glUniform1i p_glUniform1i
 #define glUniform4fv p_glUniform4fv
+#define glUniform1ui p_glUniform1ui
+#define glUniform1uiv p_glUniform1uiv
+#define glUniform1iv p_glUniform1iv
+#define glUniform1f p_glUniform1f
+#define glUniform1fv p_glUniform1fv
+#define glUniform2fv p_glUniform2fv
 #define glGenVertexArrays p_glGenVertexArrays
 #define glBindVertexArray p_glBindVertexArray
 #define glGenBuffers p_glGenBuffers

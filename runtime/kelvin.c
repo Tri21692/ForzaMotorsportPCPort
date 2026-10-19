@@ -113,6 +113,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     switch (method) {
     case FLIP_INCREMENT_WRITE: {
         nv2a.flips++;
+        nv2a_raster_sync(); /* the display reads the front buffer from RAM */
         nv2a_raster_invalidate();
         uint32_t mod = nv2a.kelvin[FLIP_MODULO / 4];
         uint32_t w = nv2a.kelvin[FLIP_WRITE / 4] + 1;
@@ -122,7 +123,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     case FLIP_STALL:
         return;
     case BACK_END_WRITE_SEMAPHORE_RELEASE: {
-        nv2a_raster_flush(); /* the CPU may look at what was drawn once it sees this */
+        nv2a_raster_flush(); /* the GPU path reads back at flips, not at every fence */
         uint32_t dma = nv2a_lookup(nv2a.kelvin[SET_CONTEXT_DMA_SEMAPHORE / 4]);
         uint32_t base = nv2a_dma_base(dma, NULL);
         if (base == ~0u) {
@@ -138,8 +139,9 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
         if (arg) nv2a.draws++;
         return;
     case CLEAR_SURFACE:
-        nv2a_raster_flush();
         nv2a.clears++;
+        if (nv2a_raster_clear(arg)) return;
+        nv2a_raster_sync(); /* clears work on RAM */
         clear_color(arg);
         clear_zeta(arg);
         return;

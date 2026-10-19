@@ -30,6 +30,7 @@ func main() {
 	dbDir := flag.String("xbsdb", "", "XbSymbolDatabase checkout, to name library functions")
 	top := flag.Int("top", 25, "how many unsupported instructions to list")
 	trace := flag.String("trace", "", "comma-separated function addresses (hex) that log their calls and returns")
+	entries := flag.String("entries", "", "file of extra function addresses (hex, one a line, # comments) that discovery cannot find")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: xbrecomp [-xbsdb dir] [-o dir] default.xbe")
 		flag.PrintDefaults()
@@ -63,6 +64,28 @@ func main() {
 			seeds = append(seeds, m.Addr)
 		} else if f.SectionAt(m.Addr) != nil {
 			vars[m.Addr] = m.Name // a real global, not a derived struct offset
+		}
+	}
+	if *entries != "" {
+		// Functions only ever reached through computed pointers, which
+		// discovery cannot see: the runtime names them when the game calls
+		// one ("indirect call to X, which is not a translated function").
+		raw, err := os.ReadFile(*entries)
+		if err != nil {
+			fail(err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if i := strings.IndexByte(line, '#'); i >= 0 {
+				line = line[:i]
+			}
+			if line = strings.TrimPrefix(strings.TrimSpace(line), "0x"); line == "" {
+				continue
+			}
+			va, err := strconv.ParseUint(line, 16, 32)
+			if err != nil {
+				fail(fmt.Errorf("%s: %v", *entries, err))
+			}
+			seeds = append(seeds, uint32(va))
 		}
 	}
 	p := analysis.Analyze(f, seeds...)

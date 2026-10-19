@@ -123,7 +123,7 @@ typedef struct RtThread {
     int started;  /* has begun running guest code */
     uint32_t exit_code;
     pthread_t host;
-    struct { uint32_t routine, context, iosb; } apc[32]; /* user APCs, run at the next alertable wait */
+    struct { uint32_t routine, context, iosb; } apc[1024]; /* user APCs, run at the next alertable wait (streaming queues many) */
     int napc;
     uint32_t last_call, last_from; /* its latest kernel call (ordinal) and caller, for thread dumps */
     struct RtThread *next_all;      /* every thread started, for thread dumps */

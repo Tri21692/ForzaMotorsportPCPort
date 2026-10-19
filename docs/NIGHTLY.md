@@ -71,14 +71,33 @@ ceiling: the next real speed-up is drawing on the host GPU (vertex
 programs and register combiners translated to shaders; see ROADMAP
 phase 4), which is the large piece of work left.
 
-**The GPU backend has started** (docs/GPU.md). Step 1 is done:
-`XBRT_GPU=gl` makes an OpenGL 4.3 core context on the device thread
-(this PC: Intel Graphics, driver 32.0.101.8861) and passes a clear-and-read
--back self-test. Next is step 2, hybrid mode: Kelvin draws into a GL
-framebuffer per surface, read back into RAM at flips, semaphores, notifies
-and surface changes, so everything else keeps working; then step 3, the
-vertex program and combiner shaders. Compare against the software
-rasteriser's screenshots at each step.
+**The GPU fill works** (docs/GPU.md, `runtime/glfill.c`). With
+`XBRT_GPU=gl` the race runs at about 6-11 frames a second instead of
+2-3, and looks better (proper depth order in the menus' 3D backgrounds):
+Maple Valley, chase camera, lap 1 of 2 at 400 s. Always build with
+`-entries tools/entries.txt` now (see below).
+
+    XBRT_GPU=gl XBRT_STATS=1 XBRT_INPUT_SCRIPT=../tools/input/race.txt \
+      XBRT_WINDOW=0 XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=20 \
+      XBRT_HDD=hdd timeout 420 ../runtime/forza.exe <default.xbe>
+
+How it works: the CPU still transforms vertices (project()); the GPU
+fills, with one fragment shader that is combine() in GLSL. Each surface
+is a framebuffer, uploaded from RAM when its hash changed after a
+CPU-visible point, read back at flips and when a texture overlaps it;
+clears run on the GPU. Not at every fence: D3D fences many times a frame
+and the read-backs were most of the time.
+
+Next for speed (profile with `sample.sh`, see the setup table):
+- Textures that are render targets (shadow maps, reflections, the back
+  buffer for the downsample) are read back and re-uploaded; sample the
+  framebuffer's GL texture directly instead (docs/GPU.md step 5).
+- Vertex programs on the GPU (step 3) instead of project() on the CPU.
+- Upload uniforms only when the state changed; one buffer upload a frame.
+
+When the runtime stops with `indirect call to X, which is not a
+translated function`, add X to `tools/entries.txt` and regenerate:
+discovery cannot see functions only reached through computed pointers.
 
 Open bugs, in order:
 

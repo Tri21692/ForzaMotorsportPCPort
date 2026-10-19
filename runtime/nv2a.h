@@ -25,5 +25,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg);
 void nv2a_raster_method(uint32_t method, uint32_t arg); /* raster.c: draws in software */
 void nv2a_raster_invalidate(void);                      /* textures may have changed */
 void nv2a_raster_flush(void);                           /* finish the batched drawing */
+void nv2a_raster_sync(void);
+int nv2a_raster_clear(uint32_t flags);                  /* CLEAR_SURFACE on the GPU; 0 if it is not drawing */                            /* and bring RAM up to date with the GPU's drawing */
 
 #endif
