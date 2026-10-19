@@ -152,6 +152,26 @@ void nv2a_raster_invalidate(void) {
     generation++;
 }
 
+/* Whether bytes changed since they were last seen, for textures and
+ * surfaces: four independent lanes of multiply and fold, combined at the
+ * end. One lane is a chain of dependent multiplies; four keep the
+ * multiplier busy, several times the speed over the megabytes a frame
+ * checks. */
+static uint64_t hash_bytes(const uint8_t *p, uint32_t n) {
+    uint64_t h[4] = {0x9E3779B97F4A7C15ull ^ n, 0xC2B2AE3D27D4EB4Full, 0x165667B19E3779F9ull, 0x27D4EB2F165667C5ull};
+    uint32_t k = 0;
+    for (; k + 32 <= n; k += 32)
+        for (int j = 0; j < 4; j++) {
+            uint64_t v;
+            memcpy(&v, p + k + 8 * j, 8);
+            h[j] = (h[j] ^ v) * 0x100000001B3ull;
+            h[j] ^= h[j] >> 29;
+        }
+    uint64_t r = h[0] ^ (h[1] * 3) ^ (h[2] * 5) ^ (h[3] * 7);
+    for (; k < n; k++) r = (r ^ p[k]) * 0x100000001B3ull;
+    return r;
+}
+
 /* Morton order, as the NV2A swizzles: bits of x and y interleaved, x first,
  * until the smaller dimension runs out. */
 static uint32_t swizzle(uint32_t x, uint32_t y, int w, int h) {
@@ -269,7 +289,7 @@ static Texture *texture(int i) {
     if (size > RT_PHYS_SIZE) size = RT_PHYS_SIZE;
     if (batch_writes(base, size)) nv2a_raster_flush(); /* draw into it first */
     if (rt_gl_on) gl_sync_range(base, size);              /* the GPU drew into it */
-    uint64_t hash = 0x9E3779B97F4A7C15ull ^ size;
+    uint64_t hash;
     extern uint64_t raster_t_hash, raster_hash_bytes;
     uint64_t th0 = rt_now_100ns();
     raster_hash_bytes += size;
@@ -277,14 +297,7 @@ static Texture *texture(int i) {
         const uint8_t *p = phys(base);
         uint32_t n = size;
         if (p + n > xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE) n = (uint32_t)(xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE - p);
-        uint32_t k = 0;
-        for (; k + 8 <= n; k += 8) {
-            uint64_t v;
-            memcpy(&v, p + k, 8);
-            hash = (hash ^ v) * 0x100000001B3ull;
-            hash ^= hash >> 29;
-        }
-        for (; k < n; k++) hash = (hash ^ p[k]) * 0x100000001B3ull;
+        hash = hash_bytes(p, n) ^ size;
         if (color == 0x0B) { /* the palette is part of what the texture looks like */
             uint32_t pl = KT(SET_TEXTURE_PALETTE);
             const uint8_t *pp = phys(dma_base((pl & 1) ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + (pl & ~63u));

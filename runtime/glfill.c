@@ -292,19 +292,6 @@ static GlSurf gl_surf[GL_SURFS];
 static GlSurf *gl_cur;
 static unsigned gl_tick, gl_seq;
 
-static uint64_t hash_bytes(const uint8_t *p, uint32_t n) {
-    uint64_t h = 0x9E3779B97F4A7C15ull ^ n;
-    uint32_t k = 0;
-    for (; k + 8 <= n; k += 8) {
-        uint64_t v;
-        memcpy(&v, p + k, 8);
-        h = (h ^ v) * 0x100000001B3ull;
-        h ^= h >> 29;
-    }
-    for (; k < n; k++) h = (h ^ p[k]) * 0x100000001B3ull;
-    return h;
-}
-
 static int gl_fits(uint32_t base, uint32_t pitch, int h) {
     return (uint64_t)(base & (RT_PHYS_SIZE - 1)) + (uint64_t)pitch * (uint64_t)h <= RT_PHYS_SIZE;
 }
