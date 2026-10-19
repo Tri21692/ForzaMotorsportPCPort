@@ -126,6 +126,21 @@ static void load_xbe(const char *path) {
     }
     rt_mem_reserve_image(base, img);
 
+    /* XBRT_FPS=30 or 60: Forza's frame rate. The retail game presents every
+     * second vertical blank (30 fps); the 60 fps patch is this one value in
+     * .data set to 1. Only where the neighbouring bytes are Forza's. */
+    const char *fps = getenv("XBRT_FPS");
+    if (fps && *fps) {
+        const uint32_t at = 0x554944;
+        uint32_t interval = atoi(fps) >= 60 ? 1 : 2;
+        if (at + 8 <= base + img && xb_rd32(at - 4) == 1 && (xb_rd32(at) == 1 || xb_rd32(at) == 2) && xb_rd32(at + 4) == 0x80000002u) {
+            rt_log("XBRT_FPS=%s: frame interval %u -> %u vertical blanks\n", fps, xb_rd32(at), interval);
+            xb_wr32(at, interval);
+        } else {
+            fprintf(stderr, "xbrt: XBRT_FPS: this is not the Forza Motorsport the setting knows; ignored\n");
+        }
+    }
+
     rt_image.base = base;
     rt_image.entry = e;
     rt_image.thunk = k;

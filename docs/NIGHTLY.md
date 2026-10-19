@@ -176,6 +176,22 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     check. It now lands only those over the bytes in question and what
     was issued before them (`gl_complete_range`): 25.3 -> 28.8 fps at the
     start, 23.7 -> 26.6 in the forest section.
+  - **The xbe in Downloads is the user's 60 fps mod.** The disc image
+    (`...xiso.iso`) has the retail one; they differ in one dword of .data
+    at 00554944, the frame interval in vertical blanks: 2 (retail, 30 fps)
+    or 1 (60 fps). `XBRT_FPS=30` / `XBRT_FPS=60` sets it at load (only
+    where the neighbouring bytes are Forza's); without it, the xbe's own
+    value is used. The game steps its world once per frame, so below the
+    target it runs in slow motion: at 60 the race clock ran ~9 s per 20 s
+    at ~28 fps, at 30 it runs ~88-93% of real time. Judge speed by the
+    race clock against wall time, not by fps alone.
+  - Vertical blanks were ~45 Hz in a race, not 59.94: the device loop
+    raises them between push-buffer passes, and passes ran long. A pass
+    now stops when one is due (every 128 words it checks): 58.3 Hz. At
+    `XBRT_FPS=30` the race start reaches the cap (30.2 fps).
+  - Seen at `XBRT_FPS=30`, not looked into yet: one screenshot per run
+    near the start of lap 2 is grey and untextured (sky and ground flat
+    grey, the car's shadow only).
   - Beware when judging runs: `race.txt` holds the throttle and never
     steers, and the grid slot changes from run to run (4th to 8th). From
     the inner slots the car ends against the pit-lane pillar or the

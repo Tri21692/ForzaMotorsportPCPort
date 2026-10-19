@@ -294,6 +294,8 @@ static unsigned pb_n;
  * and GET is published as it moves. A jump to itself parks the GPU until
  * PUT moves; that returns 0, so the device thread goes back to its timed
  * wait (and keeps raising vertical blanks) instead of spinning here. */
+static uint64_t vblank_due; /* when the device loop raises the next vertical blank */
+
 static int run_pushbuf(void) {
     uint32_t put = REG(PFIFO_CACHE1_DMA_PUT), get = REG(PFIFO_CACHE1_DMA_GET);
     if (get == put) return 0;
@@ -313,6 +315,7 @@ static int run_pushbuf(void) {
         REG(USER_DMA_GET) = get;
         put = REG(PFIFO_CACHE1_DMA_PUT);
         if (get == put) break;
+        if (!(guard & 127) && now_ns() >= vblank_due) break; /* a long pass let vertical blanks slip to ~45 Hz: the game's clock */
         uint32_t word = *(volatile uint32_t *)phys(base + get);
         if (tracing) {
             pb_ring[pb_n % 65536].at = get, pb_ring[pb_n % 65536].word = word, pb_ring[pb_n % 65536].count = count;
@@ -493,12 +496,14 @@ static void *device_main(void *arg) {
     const char *gpu = getenv("XBRT_GPU");
     if (gpu && !strcmp(gpu, "gl")) rt_gl_init(); /* the context lives on this thread */
     uint64_t next_vblank = now_ns() + 16683333;
+    vblank_due = next_vblank;
     pthread_mutex_lock(&lock);
     for (;;) {
         uint64_t t = now_ns();
         if (t >= next_vblank) {
             next_vblank += 16683333; /* 59.94 Hz */
             if (t > next_vblank) next_vblank = t + 16683333;
+            vblank_due = next_vblank;
             nv2a.vblanks++;
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
                 static const char *spec;
