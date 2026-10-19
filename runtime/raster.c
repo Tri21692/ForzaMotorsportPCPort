@@ -145,6 +145,8 @@ typedef struct {
 static Texture cache[512]; /* a race frame uses a few hundred textures */
 static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t color, int w, int h);
 static uint32_t draw_lo, draw_hi; /* the draw's colour buffer, which its textures must not be read from on the GPU */
+static uint32_t draw_zlo, draw_zhi; /* ... and its depth buffer */
+static int gl_rt_depth = -1;        /* XBRT_GL_RT_DEPTH=1: sample shadow maps from their framebuffer, not through RAM */
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static void gl_sync_range(uint32_t base, uint32_t size);
 static void gl_sync_cpu(void);
@@ -258,7 +260,7 @@ static void dump_texture(const Texture *t, uint32_t offset, uint32_t fmt) {
 /* Stage i's texture, decoded to A8R8G8B8 (cached until the next flip). */
 static Texture *texture(int i) {
     uint32_t fmt = KT(SET_TEXTURE_FORMAT), color = (fmt >> 8) & 0xFF;
-    if (rt_gl_on && (color == 0x12 || color == 0x1E || color == 0x11)) { /* linear colour: perhaps a render target */
+    if (rt_gl_on && (color == 0x12 || color == 0x1E || color == 0x11 || (color == 0x2E && gl_rt_depth))) { /* linear: perhaps a render target */
         Texture *rt = gl_rt_texture(i, dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + KT(SET_TEXTURE_OFFSET),
                                     KT(SET_TEXTURE_CONTROL1) >> 16, color, (int)(KT(SET_TEXTURE_IMAGE_RECT) >> 16),
                                     (int)(KT(SET_TEXTURE_IMAGE_RECT) & 0xFFFF));
@@ -940,6 +942,12 @@ static int draw_state(DrawState *d) {
      * texture coordinate through as the colour. */
     uint32_t prog = K(SET_SHADER_STAGE_PROGRAM);
     draw_lo = d->base & (RT_PHYS_SIZE - 1), draw_hi = draw_lo + d->pitch * (uint32_t)(d->cy0 + d->ch);
+    draw_zlo = draw_zhi = 0;
+    if ((K(SET_SURFACE_FORMAT) >> 4) & 15) {
+        draw_zlo = (dma_base(SET_CONTEXT_DMA_ZETA) + K(SET_SURFACE_ZETA_OFFSET)) & (RT_PHYS_SIZE - 1);
+        draw_zhi = draw_zlo + (K(SET_SURFACE_PITCH) >> 16) * (uint32_t)(d->cy0 + d->ch);
+    }
+    if (gl_rt_depth < 0) gl_rt_depth = getenv("XBRT_GL_RT_DEPTH") && atoi(getenv("XBRT_GL_RT_DEPTH")); /* off by default: see docs/NIGHTLY.md */
     for (int i = 0; i < 4; i++) {
         d->mode[i] = (int)(prog >> (5 * i)) & 31;
         d->tex[i] = NULL;

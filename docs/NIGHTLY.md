@@ -141,6 +141,24 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   anti-aliased 2x2 grid, the D24S8 layout). Compare the two paths'
   texels for one frame (read the GL depth texture back and diff it with
   texture()'s decode) before trying again.
+- **2026-10-19 morning (interactive): GPU shadow maps redone, opt-in.**
+  `XBRT_GL_RT_DEPTH=1` samples a 24-bit depth texture (format 0x2E)
+  from the framebuffer whose depth it is (texture kind 4: GL's 0..1
+  depth times 0xFFFFFF, rounded, then the same compare as kind 3), when
+  that framebuffer drew it on the GPU and the draw does not write those
+  bytes. The picture is right this time (nothing upside down) and the
+  race is ~25% faster (12093 and 11702 flips at 415 s, against 9453 and
+  9756 without). **But the car stalls:** in both runs with it on, it sat
+  at 0 mph near the start from ~27 s into the race, revving, wheels
+  spinning (the yellow-green clouds are its dust), while both runs
+  without it drove on. Yellow light-shaft quads along the grandstand roof
+  also appear only with it. Suspect: something on the CPU reads that
+  depth buffer from RAM (it is no longer read back, since nothing on the
+  GPU path needs it there). Next: with it on, read the shadow
+  framebuffers' depth back to RAM at each flip anyway; if the car then
+  drives, find the CPU reader (an `XBRT_RAM_DUMP` of 02ad1000 over a
+  few frames, or a watch on reads of that range). Off by default until
+  then.
 - **Tried and failed:** reading back only the buffer PCRTC_START is
   pointed at (a request to the device thread from the vertical blank
   handler's register write) left the game stuck in boot with 100,000+

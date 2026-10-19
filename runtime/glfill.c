@@ -54,7 +54,7 @@ static const char *fs_src =
     "uniform vec4 u_c0[8], u_c1[8], u_fc0, u_fc1;\n"
     "uniform uint u_ctl, u_f0, u_f1;\n"
     "uniform int u_mode[4];\n"      /* 0 off, 1-3 sample, 4 pass-through */
-    "uniform int u_kind[4];\n"      /* 0 none, 1 2D, 2 cube, 3 depth */
+    "uniform int u_kind[4];\n"      /* 0 none, 1 2D, 2 cube, 3 depth (from RAM), 4 depth (a framebuffer's) */
     "uniform vec2 u_scale[4];\n"    /* 1 / size for linear textures (texel coordinates), else 1 */
     "uniform float u_dmax[4];\n"
     "uniform int u_shadow_func;\n"
@@ -127,9 +127,10 @@ static const char *fs_src =
     "    if (u_mode[i] == 4) return clamp(q, 0.0, 1.0);\n"
     "    if (u_kind[i] == 0) return vec4(0.0);\n"
     "    if (u_kind[i] == 2) return texture(cube, q.xyz);\n"
-    "    if (u_kind[i] == 3) {\n" /* a shadow map: compare, as xemu does */
+    "    if (u_kind[i] == 3 || u_kind[i] == 4) {\n" /* a shadow map: compare, as xemu does */
     "        float qw = q.w != 0.0 ? q.w : 1.0;\n"
     "        float d = texture(t, q.xy / qw * u_scale[i]).r;\n"
+    "        if (u_kind[i] == 4) d = floor(d * u_dmax[i] + 0.5);\n" /* GL's depth is 0..1: back to the Xbox's units */
     "        float r = u_mode[i] == 2 ? clamp(q.z / qw, 0.0, u_dmax[i]) : 0.0;\n"
     "        return vec4(compare(u_shadow_func, d, r) ? 1.0 : 0.0);\n"
     "    }\n"
@@ -671,6 +672,24 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
     int bpp = color == 0x11 ? 2 : 4;
     uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + pitch * (uint32_t)h;
     if (lo < draw_hi && draw_lo < hi) return NULL;
+    if (lo < draw_zhi && draw_zlo < hi) return NULL; /* GL cannot sample what it draws into */
+    if (color == 0x2E) { /* a shadow map: the depth of a framebuffer the GPU drew */
+        GlSurf *s = NULL;
+        for (int k = 0; k < GL_SURFS; k++) {
+            GlSurf *e = &gl_surf[k];
+            if (e->fbo && e->ztex && e->zbpp == 4 && (e->zbase & (RT_PHYS_SIZE - 1)) == lo && e->zpitch == pitch && e->w >= w &&
+                e->h >= h && (!s || e->seq > s->seq))
+                s = e;
+        }
+        if (!s || !s->zdirty) return NULL; /* not drawn on the GPU: decode from RAM */
+        gl_take_newer(s);
+        Texture *t = &rt[i];
+        memset(t, 0, sizeof *t);
+        t->w = s->w, t->h = s->h, t->linear = 1, t->levels = 1;
+        t->gl = s->ztex, t->surface = 1, t->depth = 0xFFFFFF;
+        t->gl_version = t->version;
+        return t;
+    }
     GlSurf *s = NULL;
     for (int k = 0; k < GL_SURFS; k++) {
         GlSurf *e = &gl_surf[k];
@@ -868,13 +887,13 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
     for (int i = 0; i < 4; i++) {
         Texture *t = d->tex[i];
         mode[i] = d->mode[i];
-        kind[i] = !t ? 0 : t->depth ? 3 : t->cube ? 2 : 1;
+        kind[i] = !t ? 0 : t->depth ? (t->surface ? 4 : 3) : t->cube ? 2 : 1;
         scale[2 * i] = t && t->linear ? 1.0f / (float)t->w : 1.0f;
         scale[2 * i + 1] = t && t->linear ? 1.0f / (float)t->h : 1.0f;
         dmax[i] = t ? (float)t->depth : 0;
         glActiveTexture(GL_TEXTURE0 + (GLenum)i);
         glBindTexture(GL_TEXTURE_2D, t && !t->cube ? gl_texture(t) : gl_dummy2d);
-        if (t && t->surface) /* X8R8G8B8 over a framebuffer that keeps alpha */
+        if (t && t->surface && !t->depth) /* X8R8G8B8 over a framebuffer that keeps alpha */
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, t->alpha_one ? GL_ONE : GL_ALPHA);
         if (t && !t->cube) {
             uint32_t addr = KT(SET_TEXTURE_ADDRESS);
