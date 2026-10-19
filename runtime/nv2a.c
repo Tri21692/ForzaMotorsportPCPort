@@ -356,6 +356,7 @@ static int run_pushbuf(void) {
     }
     nv2a.method = method, nv2a.subch = subch, nv2a.count = count, nv2a.ni = ni;
     recent_pass[pass].end = get;
+    nv2a_raster_flush();
     REG(PFIFO_CACHE1_DMA_GET) = get;
     REG(USER_DMA_GET) = get;
     return !parked;
@@ -367,6 +368,7 @@ static int run_pushbuf(void) {
  * clears it. D3D's BlockOnTime waits for this (D3D sets an event in the
  * ISR). Layout as xemu has it; runs on the device thread. */
 static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
+    nv2a_raster_flush();
     pthread_mutex_lock(&lock);
     uint32_t chid = (REG(PGRAPH_CTX_USER) >> 24) & 0x1F;
     REG(PGRAPH_TRAPPED_ADDR) = chid << 20 | subch << 16 | (method & 0x1FFF);
@@ -515,7 +517,9 @@ void nv2a_log_stats(void) {
     uint64_t t = now_ns();
     if ((!rt_log_level && !stats) || t < next) return;
     next = t + 5000000000ull;
-    extern uint64_t raster_t_state, raster_t_setup, raster_t_fill;
+    extern uint64_t raster_t_state, raster_t_setup, raster_t_fill, raster_t_decode, raster_n_decode;
+    fprintf(stderr, "[%10.3f] nv2a: texture decodes %llu, %.1f s\n", rt_now_100ns() / 1e7, (unsigned long long)raster_n_decode,
+            raster_t_decode / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: device thread: pusher %.1f s, of which draw state %.1f s, vertices %.1f s, filling %.1f s\n",
             rt_now_100ns() / 1e7, pusher_t_busy / 1e7, raster_t_state / 1e7, raster_t_setup / 1e7, raster_t_fill / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "

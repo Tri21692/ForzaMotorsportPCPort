@@ -24,5 +24,6 @@ void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg);
 void nv2a_kelvin(uint32_t method, uint32_t arg);
 void nv2a_raster_method(uint32_t method, uint32_t arg); /* raster.c: draws in software */
 void nv2a_raster_invalidate(void);                      /* textures may have changed */
+void nv2a_raster_flush(void);                           /* finish the batched drawing */
 
 #endif

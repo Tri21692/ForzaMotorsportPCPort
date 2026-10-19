@@ -118,18 +118,24 @@ static uint32_t dma_base(uint32_t handle_method) {
 /* ---- textures ---- */
 
 typedef struct {
-    uint32_t key[6]; /* offset, format, control1, image rect, palette, generation */
+    uint32_t key[5]; /* offset, format, control1, image rect, palette */
+    uint64_t hash;   /* of the bytes it was decoded from */
+    uint32_t gen;    /* the generation it was last known good in */
     int w, h, linear;
     int cube;         /* six faces, one after another in texels */
     uint32_t depth;   /* a depth texture: texels hold depth, up to this maximum */
     uint32_t *texels; /* A8R8G8B8 */
 } Texture;
 
-static Texture cache[64];
+static Texture cache[512]; /* a race frame uses a few hundred textures */
+static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static int cache_next;
 static uint32_t generation; /* bumped when render targets may have changed what textures hold */
 
-void nv2a_raster_invalidate(void) { generation++; }
+void nv2a_raster_invalidate(void) {
+    nv2a_raster_flush(); /* what was drawn before may be a texture now */
+    generation++;
+}
 
 /* Morton order, as the NV2A swizzles: bits of x and y interleaved, x first,
  * until the smaller dimension runs out. */
@@ -210,9 +216,11 @@ static void dump_texture(const Texture *t, uint32_t offset, uint32_t fmt) {
 /* Stage i's texture, decoded to A8R8G8B8 (cached until the next flip). */
 static Texture *texture(int i) {
     uint32_t fmt = KT(SET_TEXTURE_FORMAT), color = (fmt >> 8) & 0xFF;
-    uint32_t key[6] = {KT(SET_TEXTURE_OFFSET), fmt, KT(SET_TEXTURE_CONTROL1), KT(SET_TEXTURE_IMAGE_RECT), KT(SET_TEXTURE_PALETTE), generation};
-    for (int i = 0; i < 64; i++)
-        if (cache[i].texels && !memcmp(cache[i].key, key, sizeof key)) return &cache[i];
+    uint32_t key[5] = {KT(SET_TEXTURE_OFFSET), fmt, KT(SET_TEXTURE_CONTROL1), KT(SET_TEXTURE_IMAGE_RECT), KT(SET_TEXTURE_PALETTE)};
+    Texture *hit = NULL;
+    for (int i = 0; i < 512 && !hit; i++)
+        if (cache[i].texels && !memcmp(cache[i].key, key, sizeof key)) hit = &cache[i];
+    if (hit && hit->gen == generation) return hit;
 
     int linear = (color >= 0x10 && color <= 0x20) || color == 0x24 || color == 0x25 || color >= 0x2E;
     int w, h;
@@ -238,11 +246,53 @@ static Texture *texture(int i) {
     face_size = (face_size + 127) & ~127u;
     if (base + (uint64_t)face_size * faces > (uint64_t)RT_PHYS_SIZE * 2 && !dxt && !linear) return NULL;
 
-    Texture *t = &cache[cache_next];
-    cache_next = (cache_next + 1) % 64;
+    /* Since the last surface change or flip the bytes may have changed (a
+     * render target drawn to, or the CPU writing); a hash of them says
+     * whether the decoded copy still holds. Re-decoding every texture after
+     * every surface change cost a tenth of the frame. */
+    uint32_t size = linear ? (pitch ? pitch : (uint32_t)w * (uint32_t)bpp) * (uint32_t)h : face_size * (uint32_t)faces;
+    if (size > RT_PHYS_SIZE) size = RT_PHYS_SIZE;
+    if (batch_writes(base, size)) nv2a_raster_flush(); /* draw into it first */
+    uint64_t hash = 0x9E3779B97F4A7C15ull ^ size;
+    {
+        const uint8_t *p = phys(base);
+        uint32_t n = size;
+        if (p + n > xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE) n = (uint32_t)(xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE - p);
+        uint32_t k = 0;
+        for (; k + 8 <= n; k += 8) {
+            uint64_t v;
+            memcpy(&v, p + k, 8);
+            hash = (hash ^ v) * 0x100000001B3ull;
+            hash ^= hash >> 29;
+        }
+        for (; k < n; k++) hash = (hash ^ p[k]) * 0x100000001B3ull;
+        if (color == 0x0B) { /* the palette is part of what the texture looks like */
+            uint32_t pl = KT(SET_TEXTURE_PALETTE);
+            const uint8_t *pp = phys(dma_base((pl & 1) ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + (pl & ~63u));
+            for (int j = 0; j < 1024; j += 8) {
+                uint64_t v;
+                memcpy(&v, pp + j, 8);
+                hash = (hash ^ v) * 0x100000001B3ull;
+            }
+        }
+    }
+    if (hit && hit->hash == hash) {
+        hit->gen = generation;
+        return hit;
+    }
+    extern uint64_t raster_t_decode, raster_n_decode;
+    uint64_t td0 = rt_now_100ns();
+    raster_n_decode++;
+    nv2a_raster_flush(); /* batched triangles may point at the entry about to be replaced */
+    Texture *t = hit;
+    if (!t) {
+        t = &cache[cache_next];
+        cache_next = (cache_next + 1) % 512;
+    }
     free(t->texels);
     t->texels = malloc((size_t)w * h * 4 * faces);
     memcpy(t->key, key, sizeof key);
+    t->hash = hash, t->gen = generation;
     t->w = w, t->h = h, t->linear = linear, t->cube = cube;
     t->depth = color == 0x2E ? 0xFFFFFF : color == 0x30 ? 0xFFFF : 0;
   for (int face = 0; face < faces; face++) {
@@ -314,6 +364,7 @@ static Texture *texture(int i) {
         }
   }
     dump_texture(t, base, fmt);
+    raster_t_decode += rt_now_100ns() - td0;
     return t;
 }
 
@@ -725,6 +776,7 @@ typedef struct {
     Pt a, b, c;
     int x0, x1, y0, y1;
     float inv;
+    int state; /* its draw's DrawState, in the batch */
 } Tri;
 
 static int draw_state(DrawState *d) {
@@ -928,13 +980,13 @@ static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t pool_go = PTHREAD_COND_INITIALIZER, pool_done = PTHREAD_COND_INITIALIZER;
 static unsigned pool_job;
 static int pool_left;
-static const DrawState *pool_state;
+static const DrawState *pool_states;
 static const Tri *pool_tris;
 static int pool_ntris;
 static void (*pool_fn)(int w); /* the job: fill_job or project_job */
 
 static void fill_job(int w) {
-    for (int i = 0; i < pool_ntris; i++) fill(pool_state, &pool_tris[i], w, workers);
+    for (int i = 0; i < pool_ntris; i++) fill(&pool_states[pool_tris[i].state], &pool_tris[i], w, workers);
 }
 
 static Pt *pts; /* the draw's vertices, projected */
@@ -990,18 +1042,70 @@ static void start_workers(void) {
     rt_log("raster: %d fill thread%s\n", workers, workers == 1 ? "" : "s");
 }
 
+/* Triangles are filled in batches across draws: a pool round trip per draw
+ * cost more than the filling for the thousands of small draws in a frame.
+ * Each triangle keeps its draw's state, and the batch is filled whenever
+ * its results could be seen: a surface change or a flip
+ * (nv2a_raster_invalidate), a clear, a semaphore or notify, the end of a
+ * push buffer pass, or a texture decode. */
 static Tri *tris;
 static int ntris, tris_cap;
+static DrawState *bstates;
+static int nstates, states_cap;
+static long batch_pixels;
+static struct { uint32_t lo, hi; } batch_surf[16]; /* the byte ranges the batch draws into */
+static int nbatch_surf;
+
+static void batch_note(uint32_t lo, uint32_t hi) {
+    uint32_t len = hi - lo;
+    lo &= RT_PHYS_SIZE - 1, hi = lo + len; /* physical, as textures are compared */
+    for (int i = 0; i < nbatch_surf; i++)
+        if (batch_surf[i].lo == lo && batch_surf[i].hi == hi) return;
+    if (nbatch_surf == 16) nv2a_raster_flush();
+    batch_surf[nbatch_surf].lo = lo, batch_surf[nbatch_surf].hi = hi;
+    nbatch_surf++;
+}
+
+static int batch_writes(uint32_t base, uint32_t size) {
+    uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + size;
+    for (int i = 0; i < nbatch_surf; i++)
+        if (lo < batch_surf[i].hi && batch_surf[i].lo < hi) return 1;
+    return 0;
+}
 
 /* Where the device thread's time goes, in 100 ns units, for the stats line. */
-uint64_t raster_t_state, raster_t_setup, raster_t_fill;
+uint64_t raster_t_state, raster_t_setup, raster_t_fill, raster_t_decode, raster_n_decode;
 
-static void add_tri(const DrawState *d, int ia, int ib, int ic) {
+static void add_tri(int state, int ia, int ib, int ic) {
     if (ntris == tris_cap) {
         tris_cap = tris_cap ? tris_cap * 2 : 1024;
         tris = realloc(tris, (size_t)tris_cap * sizeof *tris);
     }
-    if (setup_tri(d, &tris[ntris], &pts[ia], &pts[ib], &pts[ic])) ntris++;
+    Tri *t = &tris[ntris];
+    if (setup_tri(&bstates[state], t, &pts[ia], &pts[ib], &pts[ic])) {
+        t->state = state;
+        batch_pixels += (long)(t->x1 - t->x0) * (t->y1 - t->y0) / 2;
+        ntris++;
+    }
+}
+
+void nv2a_raster_flush(void) {
+    if (!ntris) {
+        nstates = 0;
+        nbatch_surf = 0;
+        return;
+    }
+    uint64_t t0 = rt_now_100ns();
+    if (workers <= 1 || batch_pixels < 256) {
+        for (int i = 0; i < ntris; i++) fill(&bstates[tris[i].state], &tris[i], 0, 1);
+    } else {
+        pool_states = bstates, pool_tris = tris, pool_ntris = ntris;
+        run_pool(fill_job);
+    }
+    ntris = nstates = 0;
+    batch_pixels = 0;
+    nbatch_surf = 0;
+    raster_t_fill += rt_now_100ns() - t0;
 }
 
 /* Runs fn on every worker and waits for them all. */
@@ -1038,6 +1142,15 @@ static void draw(void) {
     if (workers < 0) start_workers();
     int n = nverts;
     if (n < 3) return;
+    if (nstates == states_cap) {
+        states_cap = states_cap ? states_cap * 2 : 256;
+        bstates = realloc(bstates, (size_t)states_cap * sizeof *bstates);
+    }
+    uint32_t rows = (uint32_t)(d.cy0 + d.ch);
+    batch_note(d.base, d.base + d.pitch * rows);
+    if (d.ztest) batch_note(d.zbase, d.zbase + d.zpitch * rows);
+    int st = nstates++;
+    bstates[st] = d;
     /* Each vertex once (strips and quads share them), on the workers when
      * there are enough to be worth it. */
     if (n > pts_cap) {
@@ -1047,27 +1160,17 @@ static void draw(void) {
     if (workers > 1 && n >= 64) run_pool(project_job);
     else
         for (int i = 0; i < n; i++) pts[i] = project(&verts[i]);
-    ntris = 0;
     switch (prim) {
-    case 5: for (int i = 0; i + 2 < n; i += 3) add_tri(&d, i, i + 1, i + 2); break;
-    case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? add_tri(&d, i + 1, i, i + 2) : add_tri(&d, i, i + 1, i + 2); break;
-    case 7: case 10: for (int i = 1; i + 1 < n; i++) add_tri(&d, 0, i, i + 1); break;
-    case 8: for (int i = 0; i + 3 < n; i += 4) add_tri(&d, i, i + 1, i + 2), add_tri(&d, i, i + 2, i + 3); break;
-    case 9: for (int i = 0; i + 3 < n; i += 2) add_tri(&d, i, i + 1, i + 3), add_tri(&d, i, i + 3, i + 2); break;
+    case 5: for (int i = 0; i + 2 < n; i += 3) add_tri(st, i, i + 1, i + 2); break;
+    case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? add_tri(st, i + 1, i, i + 2) : add_tri(st, i, i + 1, i + 2); break;
+    case 7: case 10: for (int i = 1; i + 1 < n; i++) add_tri(st, 0, i, i + 1); break;
+    case 8: for (int i = 0; i + 3 < n; i += 4) add_tri(st, i, i + 1, i + 2), add_tri(st, i, i + 2, i + 3); break;
+    case 9: for (int i = 0; i + 3 < n; i += 2) add_tri(st, i, i + 1, i + 3), add_tri(st, i, i + 3, i + 2); break;
     }
-    uint64_t t2 = rt_now_100ns();
-    raster_t_setup += t2 - t1;
-    if (!ntris) return;
-    long pixels = 0;
-    for (int i = 0; i < ntris; i++) pixels += (long)(tris[i].x1 - tris[i].x0) * (tris[i].y1 - tris[i].y0) / 2;
-    if (workers <= 1 || pixels < 256) {
-        for (int i = 0; i < ntris; i++) fill(&d, &tris[i], 0, 1);
-        raster_t_fill += rt_now_100ns() - t2;
-        return;
-    }
-    pool_state = &d, pool_tris = tris, pool_ntris = ntris;
-    run_pool(fill_job);
-    raster_t_fill += rt_now_100ns() - t2;
+    raster_t_setup += rt_now_100ns() - t1;
+    static int no_batch = -1; /* batching is off unless XBRT_BATCH=1: it left the race view black, and gained nothing */
+    if (no_batch < 0) no_batch = !(getenv("XBRT_BATCH") && atoi(getenv("XBRT_BATCH")));
+    if (ntris >= 1 << 16 || no_batch) nv2a_raster_flush();
 }
 
 static void emit(void) {

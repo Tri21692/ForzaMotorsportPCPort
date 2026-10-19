@@ -122,6 +122,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     case FLIP_STALL:
         return;
     case BACK_END_WRITE_SEMAPHORE_RELEASE: {
+        nv2a_raster_flush(); /* the CPU may look at what was drawn once it sees this */
         uint32_t dma = nv2a_lookup(nv2a.kelvin[SET_CONTEXT_DMA_SEMAPHORE / 4]);
         uint32_t base = nv2a_dma_base(dma, NULL);
         if (base == ~0u) {
@@ -137,6 +138,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
         if (arg) nv2a.draws++;
         return;
     case CLEAR_SURFACE:
+        nv2a_raster_flush();
         nv2a.clears++;
         clear_color(arg);
         clear_zeta(arg);
