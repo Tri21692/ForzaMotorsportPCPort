@@ -517,6 +517,7 @@ static void *device_main(void *arg) {
                 rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
                        "PATT_COLOR0 %08x, intr %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
                        nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR));
+            nv2a_raster_vblank(); /* before D3D's handler can point the CRTC at them */
             REG(PCRTC_INTR_0) |= 1;
             update_irq();
         }

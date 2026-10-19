@@ -77,6 +77,11 @@
     X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer)                                                                  \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray)                                                          \
     X(PFNGLDRAWARRAYSPROC, glDrawArrays)                                                                                    \
+    X(PFNGLFENCESYNCPROC, glFenceSync)                                                                                      \
+    X(PFNGLCLIENTWAITSYNCPROC, glClientWaitSync)                                                                            \
+    X(PFNGLDELETESYNCPROC, glDeleteSync)                                                                                    \
+    X(PFNGLMAPBUFFERRANGEPROC, glMapBufferRange)                                                                            \
+    X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer)                                                                                  \
     X(PFNGLDRAWELEMENTSPROC, glDrawElements)                                                                                \
     X(PFNGLDEBUGMESSAGECALLBACKPROC, glDebugMessageCallback)
 
@@ -150,6 +155,11 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glVertexAttribPointer p_glVertexAttribPointer
 #define glEnableVertexAttribArray p_glEnableVertexAttribArray
 #define glDrawArrays p_glDrawArrays
+#define glFenceSync p_glFenceSync
+#define glClientWaitSync p_glClientWaitSync
+#define glDeleteSync p_glDeleteSync
+#define glMapBufferRange p_glMapBufferRange
+#define glUnmapBuffer p_glUnmapBuffer
 #define glDrawElements p_glDrawElements
 #define glDebugMessageCallback p_glDebugMessageCallback
 

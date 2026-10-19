@@ -148,6 +148,9 @@ static uint32_t draw_lo, draw_hi; /* the draw's colour buffer, which its texture
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static void gl_sync_range(uint32_t base, uint32_t size);
 static void gl_sync_cpu(void);
+static void gl_sync_color_async(uint32_t base, uint32_t size);
+static void gl_flip(void);
+static void gl_complete(void);
 static int cache_next;
 static uint32_t generation; /* bumped when render targets may have changed what textures hold */
 
@@ -1253,7 +1256,16 @@ void nv2a_raster_sync(void) {
 
 void nv2a_raster_sync_range(uint32_t base, uint32_t size) {
     nv2a_raster_flush();
-    if (rt_gl_on) gl_sync_range(base, size);
+    if (rt_gl_on) gl_sync_color_async(base, size);
+}
+
+void nv2a_raster_flip(void) {
+    nv2a_raster_flush();
+    if (rt_gl_on) gl_flip();
+}
+
+void nv2a_raster_vblank(void) {
+    if (rt_gl_on) gl_complete();
 }
 
 #define SET_COLOR_CLEAR_VALUE 0x1D90

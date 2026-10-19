@@ -281,7 +281,8 @@ typedef struct {
     GLuint fbo, ctex, ztex;
     uint64_t chash, zhash; /* of RAM as the GPU last left it or saw it */
     int dirty;             /* the GPU has drawn since the last read-back */
-    int zdirty;            /* ... and written depth or stencil */
+    int cdirty;            /* ... colour not read back (or on its way, gl_pending) */
+    int zdirty;            /* ... depth or stencil written and not read back */
     int check;             /* RAM may have changed: compare hashes before the next draw (only when not dirty) */
     unsigned used;
     unsigned seq;          /* when it last drew, in gl_seq's order */
@@ -298,10 +299,13 @@ static int gl_fits(uint32_t base, uint32_t pitch, int h) {
 
 static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size);
 static int gl_aliases(const GlSurf *a, const GlSurf *b);
+static int gl_span_hit(uint32_t a, uint32_t an, uint32_t b, uint32_t bn);
+static void gl_complete(void);
 
 static void gl_readback_one(GlSurf *s) {
+    gl_complete();
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
-    if (gl_fits(s->cbase, s->cpitch, s->h)) {
+    if (s->cdirty && gl_fits(s->cbase, s->cpitch, s->h)) { /* colour already read back, or on its way, is not read again */
         glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         if (s->bpp == 4) glReadPixels(0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, phys(s->cbase));
@@ -318,7 +322,7 @@ static void gl_readback_one(GlSurf *s) {
         s->zhash = hash_bytes(phys(s->zbase), s->zpitch * (uint32_t)s->h);
     }
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    s->dirty = s->zdirty = 0;
+    s->dirty = s->cdirty = s->zdirty = 0;
 }
 
 /* Several framebuffers can cover the same bytes (gl_aliases); each one,
@@ -356,7 +360,7 @@ static int gl_drew(const GlSurf *s, uint32_t base, uint32_t size) {
     uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + size;
     uint32_t c0 = s->cbase & (RT_PHYS_SIZE - 1), c1 = c0 + s->cpitch * (uint32_t)s->h;
     uint32_t z0 = s->zbase & (RT_PHYS_SIZE - 1), z1 = z0 + s->zpitch * (uint32_t)s->h;
-    return (lo < c1 && c0 < hi) || (s->zdirty && lo < z1 && z0 < hi);
+    return (s->cdirty && lo < c1 && c0 < hi) || (s->zdirty && lo < z1 && z0 < hi);
 }
 
 /* Do two framebuffers cover some of the same bytes? Forza draws to the
@@ -371,6 +375,7 @@ static int gl_aliases(const GlSurf *a, const GlSurf *b) {
  * to: switching surfaces does not read back, only something that can look
  * at RAM does (a texture over a surface, the CPU after a fence or a flip). */
 static void gl_sync(void) {
+    gl_complete();
     for (int i = 0; i < GL_SURFS; i++)
         if (gl_surf[i].fbo && gl_surf[i].dirty) gl_readback(&gl_surf[i]); /* older ones over the same bytes first */
 }
@@ -384,16 +389,112 @@ static void gl_sync_cpu(void) {
     for (int i = 0; i < GL_SURFS; i++) gl_surf[i].check = 1;
 }
 
+/* ---- read-backs that do not wait ----
+ * The buffers the CRTC shows are read back into pixel buffer objects
+ * when D3D's frame notify comes (see trap_method), and copied to RAM at
+ * the next vertical blank, before D3D's handler can point the CRTC at
+ * them, or earlier when anything else is about to look at RAM (any other
+ * read-back, a hash check, a texture). Waiting for each read-back where
+ * it was asked for kept the CPU and the GPU taking turns: ~20 fps in the
+ * race, ~30 without. In issue order, so older drawing reaches RAM first. */
+typedef struct {
+    GlSurf *s;
+    uint32_t base, size;
+    GLuint pbo;
+} GlPending;
+
+static GlPending gl_pend[16];
+static int gl_npend;
+
+static void gl_complete(void) {
+    if (!gl_npend) return;
+    for (int i = 0; i < gl_npend; i++) {
+        GlPending *p = &gl_pend[i];
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+        const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, p->size, GL_MAP_READ_BIT);
+        if (m) memcpy(phys(p->base), m, p->size);
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        if (!p->s->cdirty) p->s->chash = hash_bytes(phys(p->base), p->size);
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    gl_npend = 0;
+}
+
+/* A framebuffer's colour into a pixel buffer object, older colour over
+ * the same bytes first; its depth stays on the GPU. */
+static void gl_readback_color_async(GlSurf *s) {
+    uint32_t c = s->cpitch * (uint32_t)s->h;
+    for (;;) {
+        GlSurf *older = NULL;
+        for (int i = 0; i < GL_SURFS; i++) {
+            GlSurf *e = &gl_surf[i];
+            if (e != s && e->fbo && e->seq < s->seq && gl_drew(e, s->cbase, c) && (!older || e->seq < older->seq)) older = e;
+        }
+        if (!older) break;
+        if (older->zdirty && gl_span_hit(older->zbase, older->zpitch * (uint32_t)older->h, s->cbase, c)) gl_readback(older);
+        else gl_readback_color_async(older);
+    }
+    if (!gl_fits(s->cbase, s->cpitch, s->h)) return;
+    if (gl_npend == 16) gl_complete();
+    GlPending *p = &gl_pend[gl_npend++];
+    p->s = s, p->base = s->cbase, p->size = c;
+    if (!p->pbo) glGenBuffers(1, &p->pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, c, NULL, GL_STREAM_READ);
+    glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
+    glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    if (s->bpp == 4) glReadPixels(0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+    else glReadPixels(0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, NULL);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    s->cdirty = 0;
+    s->dirty = s->zdirty;
+    for (int i = 0; i < GL_SURFS; i++)
+        if (&gl_surf[i] != s && gl_surf[i].fbo && !gl_surf[i].dirty && gl_aliases(&gl_surf[i], s)) gl_surf[i].check = 1;
+}
+
+/* The colour drawn over these bytes on its way to RAM (the shown buffers). */
+static void gl_sync_color_async(uint32_t base, uint32_t size) {
+    for (int i = 0; i < GL_SURFS; i++) {
+        GlSurf *e = &gl_surf[i];
+        if (e->fbo && e->cdirty && gl_span_hit(e->cbase, e->cpitch * (uint32_t)e->h, base, size)) gl_readback_color_async(e);
+    }
+}
+
+/* A flip. The framebuffers stay on the GPU: the display gets its buffers
+ * through the read-backs above, textures theirs when they are read, and
+ * nothing else turned out to look (reading everything back here was a
+ * wait for the GPU every frame). The CPU may write RAM under the clean
+ * ones. Then at most two frames stay queued on the GPU: with nothing
+ * waiting for it, the front end presents thousands of frames a second and
+ * the Intel driver's queue grew until it blocked for good. */
+static void gl_flip(void) {
+    static GLsync fence[2];
+    static int next;
+    for (int i = 0; i < GL_SURFS; i++)
+        if (!gl_surf[i].dirty) gl_surf[i].check = 1;
+    if (gl_ready <= 0) return;
+    if (fence[next]) {
+        glClientWaitSync(fence[next], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        glDeleteSync(fence[next]);
+    }
+    fence[next] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    next = (next + 1) % 2;
+}
+
 /* RAM up to date in these bytes: the framebuffers that drew into them are
  * read back (with older drawing over the same bytes first), the rest stay
  * on the GPU. Reading back everything whenever a texture was a render
  * target cost a third of the device thread. */
 static void gl_sync_range(uint32_t base, uint32_t size) {
+    gl_complete();
     for (int i = 0; i < GL_SURFS; i++)
         if (gl_drew(&gl_surf[i], base, size)) gl_readback(&gl_surf[i]);
 }
 
 static void gl_upload_if_changed(GlSurf *s) {
+    gl_complete(); /* RAM as the GPU left it, before comparing */
     if (gl_fits(s->cbase, s->cpitch, s->h)) {
         uint64_t h = hash_bytes(phys(s->cbase), s->cpitch * (uint32_t)s->h);
         if (h != s->chash) {
@@ -521,6 +622,7 @@ static GlSurf *gl_bind(const DrawState *d) {
         if (!s) {
             s = lru;
             if (s->fbo && s->dirty) gl_readback(s);
+            gl_complete(); /* nothing on its way refers to the slot */
             gl_free_surf(s);
             s->cbase = d->base, s->cpitch = d->pitch, s->cfmt = cfmt, s->zbase = zbase, s->zfmt = zfmt, s->zpitch = zpitch;
             s->w = w, s->h = h, s->bpp = d->bpp, s->zbpp = zfmt == 1 ? 2 : 4;
@@ -633,7 +735,7 @@ static int gl_clear(uint32_t flags) {
         bits |= GL_STENCIL_BUFFER_BIT;
     }
     glClear(bits);
-    s->dirty = 1, s->seq = ++gl_seq;
+    s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
     if (flags & 3) s->zdirty = 1;
     return 1;
 }
@@ -733,7 +835,7 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * 3 * GL_VERT * sizeof(float), gl_verts, GL_STREAM_DRAW);
     gl_frag_state(d, s);
     glDrawArrays(GL_TRIANGLES, 0, n * 3);
-    s->dirty = 1, s->seq = ++gl_seq;
+    s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
     if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1;
 }
 

@@ -278,7 +278,7 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     gl_frag_state(d, s);
     glDrawElements(GL_TRIANGLES, k, GL_UNSIGNED_INT, NULL);
     glBindVertexArray(gl_vao);
-    s->dirty = 1, s->seq = ++gl_seq;
+    s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
     if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1;
     return 1;
 }
