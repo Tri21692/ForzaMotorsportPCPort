@@ -456,28 +456,75 @@ typedef struct {
 
 static uint32_t field(const uint32_t *t, int word, int bit, int len) { return (t[word] >> bit) & ((1u << len) - 1); }
 
-static void vsh_input(const uint32_t *t, int mux, int reg, int neg, int swz_word, int swz_bit, int scalar,
-                      float r[13][4], const Vertex *in, const VshOut *out, int a0, float v[4]) {
-    float s[4] = {0, 0, 0, 0};
-    if (mux == 1) {
-        if (reg == 12) memcpy(s, out->o[O_POS], sizeof s);
-        else if (reg < 12) memcpy(s, r[reg], sizeof s);
-    } else if (mux == 2) {
-        memcpy(s, in->a[field(t, 1, 9, 4)], sizeof s);
-    } else if (mux == 3) {
-        int c = (int)field(t, 1, 13, 8) + (field(t, 3, 1, 1) ? a0 : 0);
-        if (c >= 0 && c < 192)
-            for (int k = 0; k < 4; k++) s[k] = f32(constants[c][k]);
-    }
-    for (int k = 0; k < 4; k++) {
-        int sel = (int)field(t, swz_word, swz_bit - 2 * (scalar ? 0 : k), 2);
-        v[k] = neg ? -s[sel] : s[sel];
-    }
-}
-
 static void write_masked(float dst[4], const float src[4], uint32_t mask) {
     for (int k = 0; k < 4; k++)
         if (mask & (8u >> k)) dst[k] = src[k];
+}
+
+/* The program decoded once per change, for the per-vertex loop: the same
+ * fields as above, taken out of the instruction words ahead of time. Run
+ * per vertex the bit fields cost more than the arithmetic. */
+typedef struct {
+    uint8_t mux, reg, neg, sel[4]; /* sel: the swizzle, component by component */
+} VshIn;
+
+typedef struct {
+    uint8_t mac, ilu, final, attr, rel;
+    int16_t c;
+    VshIn in[3]; /* A, B, C */
+    uint8_t out_reg, mac_mask, ilu_mask, o_mask, orb, o_mux;
+    uint16_t o_addr;
+} VshIns;
+
+static VshIns vprog[136];
+static uint32_t vprog_version, vprog_decoded = ~0u, vprog_start = ~0u; /* vprog_version: bumped by program uploads */
+
+static void vsh_decode_in(const uint32_t *t, int mux, int reg, int neg, int swz_word, int swz_bit, int scalar, VshIn *d) {
+    d->mux = (uint8_t)mux, d->reg = (uint8_t)reg, d->neg = (uint8_t)neg;
+    for (int k = 0; k < 4; k++) d->sel[k] = (uint8_t)field(t, swz_word, swz_bit - 2 * (scalar ? 0 : k), 2);
+}
+
+/* Called before vertices are projected: the workers only read vprog. */
+static void vsh_decode(void) {
+    uint32_t start = K(SET_TRANSFORM_PROGRAM_START);
+    if (vprog_decoded == vprog_version && vprog_start == start) return;
+    for (uint32_t slot = start; slot < 136; slot++) {
+        const uint32_t *t = program[slot];
+        VshIns *d = &vprog[slot];
+        d->mac = (uint8_t)field(t, 1, 21, 4), d->ilu = (uint8_t)field(t, 1, 25, 3);
+        int ilu_scalar = d->ilu >= 2 && d->ilu <= 6;
+        d->attr = (uint8_t)field(t, 1, 9, 4), d->c = (int16_t)field(t, 1, 13, 8), d->rel = (uint8_t)field(t, 3, 1, 1);
+        vsh_decode_in(t, (int)field(t, 2, 26, 2), (int)field(t, 2, 28, 4), (int)field(t, 1, 8, 1), 1, 6, 0, &d->in[0]);
+        vsh_decode_in(t, (int)field(t, 2, 11, 2), (int)field(t, 2, 13, 4), (int)field(t, 2, 25, 1), 2, 23, 0, &d->in[1]);
+        vsh_decode_in(t, (int)field(t, 3, 28, 2), (int)(field(t, 2, 0, 2) << 2 | field(t, 3, 30, 2)), (int)field(t, 2, 10, 1), 2, 8,
+                      ilu_scalar, &d->in[2]);
+        d->out_reg = (uint8_t)field(t, 3, 20, 4), d->mac_mask = (uint8_t)field(t, 3, 24, 4), d->ilu_mask = (uint8_t)field(t, 3, 16, 4);
+        d->o_mask = (uint8_t)field(t, 3, 12, 4), d->orb = (uint8_t)field(t, 3, 11, 1), d->o_addr = (uint16_t)field(t, 3, 3, 8);
+        d->o_mux = (uint8_t)field(t, 3, 2, 1), d->final = (uint8_t)field(t, 3, 0, 1);
+    }
+    vprog_decoded = vprog_version, vprog_start = start;
+}
+
+static inline void vsh_in(const VshIns *ins, const VshIn *d, float r[13][4], const Vertex *in, const VshOut *out, int a0, float v[4]) {
+    static const float zero[4];
+    const float *s = zero;
+    float c[4];
+    if (d->mux == 1) {
+        if (d->reg == 12) s = out->o[O_POS];
+        else if (d->reg < 12) s = r[d->reg];
+    } else if (d->mux == 2) {
+        s = in->a[ins->attr];
+    } else if (d->mux == 3) {
+        int k = ins->c + (ins->rel ? a0 : 0);
+        if (k >= 0 && k < 192) {
+            for (int j = 0; j < 4; j++) c[j] = f32(constants[k][j]);
+            s = c;
+        }
+    }
+    if (d->neg)
+        for (int k = 0; k < 4; k++) v[k] = -s[d->sel[k]];
+    else
+        for (int k = 0; k < 4; k++) v[k] = s[d->sel[k]];
 }
 
 static void run_program(const Vertex *in, VshOut *out) {
@@ -486,15 +533,13 @@ static void run_program(const Vertex *in, VshOut *out) {
     memset(out, 0, sizeof *out);
     out->o[O_D0][3] = out->o[O_D1][3] = 1;
     for (int i = 0; i < 4; i++) out->o[O_T0 + i][3] = 1;
-    for (uint32_t slot = K(SET_TRANSFORM_PROGRAM_START); slot < 136; slot++) {
-        const uint32_t *t = program[slot];
-        uint32_t mac = field(t, 1, 21, 4), ilu = field(t, 1, 25, 3);
+    for (uint32_t slot = vprog_start; slot < 136; slot++) {
+        const VshIns *ins = &vprog[slot];
+        uint32_t mac = ins->mac, ilu = ins->ilu;
         float A[4], B[4], C[4], m[4] = {0}, l[4] = {0};
-        int ilu_scalar = ilu >= 2 && ilu <= 6;
-        vsh_input(t, (int)field(t, 2, 26, 2), (int)field(t, 2, 28, 4), (int)field(t, 1, 8, 1), 1, 6, 0, r, in, out, a0, A);
-        vsh_input(t, (int)field(t, 2, 11, 2), (int)field(t, 2, 13, 4), (int)field(t, 2, 25, 1), 2, 23, 0, r, in, out, a0, B);
-        vsh_input(t, (int)field(t, 3, 28, 2), (int)(field(t, 2, 0, 2) << 2 | field(t, 3, 30, 2)), (int)field(t, 2, 10, 1), 2, 8,
-                  ilu_scalar, r, in, out, a0, C);
+        vsh_in(ins, &ins->in[0], r, in, out, a0, A);
+        vsh_in(ins, &ins->in[1], r, in, out, a0, B);
+        vsh_in(ins, &ins->in[2], r, in, out, a0, C);
         switch (mac) {
         case 1: memcpy(m, A, sizeof m); break;
         case 2: for (int k = 0; k < 4; k++) m[k] = (A[k] == 0 || B[k] == 0) ? 0 : A[k] * B[k]; break;
@@ -526,8 +571,8 @@ static void run_program(const Vertex *in, VshOut *out) {
                   l[0] = 1, l[1] = d, l[2] = d > 0 ? powf(s, p) : 0, l[3] = 1; break; }
         }
 
-        uint32_t out_reg = field(t, 3, 20, 4), mac_mask = field(t, 3, 24, 4), ilu_mask = field(t, 3, 16, 4);
-        uint32_t o_mask = field(t, 3, 12, 4), orb = field(t, 3, 11, 1), o_addr = field(t, 3, 3, 8), o_mux = field(t, 3, 2, 1);
+        uint32_t out_reg = ins->out_reg, mac_mask = ins->mac_mask, ilu_mask = ins->ilu_mask;
+        uint32_t o_mask = ins->o_mask, orb = ins->orb, o_addr = ins->o_addr, o_mux = ins->o_mux;
         if (mac == 13) {
             a0 = (int)floorf(A[0] + 0.001f);
         } else if (mac) {
@@ -548,7 +593,7 @@ static void run_program(const Vertex *in, VshOut *out) {
                         if (o_mask & (8u >> k)) memcpy(&constants[o_addr][k], &v[k], 4);
             }
         }
-        if (field(t, 3, 0, 1)) break; /* final */
+        if (ins->final) break;
     }
 }
 
@@ -558,6 +603,7 @@ static int program_method(uint32_t method, uint32_t arg) {
         uint32_t k = (method - SET_TRANSFORM_PROGRAM) / 4 % 4;
         if (program_load < 136) program[program_load][k] = arg;
         if (k == 3) program_load++;
+        vprog_version++;
         return 1;
     }
     if (method >= SET_TRANSFORM_CONSTANT && method < SET_TRANSFORM_CONSTANT + 0x80) {
@@ -1239,6 +1285,7 @@ static void draw(void) {
     bstates[st] = d;
     /* Each vertex once (strips and quads share them), on the workers when
      * there are enough to be worth it. */
+    if (mode == 2) vsh_decode();
     if (n > pts_cap) {
         pts_cap = n > 4096 ? n : 4096;
         pts = realloc(pts, (size_t)pts_cap * sizeof *pts);
