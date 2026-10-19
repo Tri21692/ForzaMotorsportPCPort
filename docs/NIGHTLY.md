@@ -148,8 +148,10 @@ Open bugs, in order:
    with get != put. The handler moved the read index once more than
    there were frames around loads. Understand its bookkeeping (it flips
    on the frame notify, see above) before trying again.
-2. `XBRT_BATCH=1` (software rasteriser, fills batched across draws)
-   leaves the race view black; see the git history. Software path only.
+2. Software rasteriser (no `XBRT_GPU`): in the race, triangles that
+   cross the near plane are drawn stretched across the screen, with
+   smeared textures (no clipping against w); the same before tonight.
+   `XBRT_BATCH=1` there leaves the race view black.
 3. Rendering: no stencil, no fixed-function fog (`SET_FOG_GEN_MODE`),
    depth textures (shadow maps) are still decoded from RAM, anisotropic
    filtering and LOD clamps ignored.
