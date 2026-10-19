@@ -141,24 +141,39 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   anti-aliased 2x2 grid, the D24S8 layout). Compare the two paths'
   texels for one frame (read the GL depth texture back and diff it with
   texture()'s decode) before trying again.
-- **2026-10-19 morning (interactive): GPU shadow maps redone, opt-in.**
-  `XBRT_GL_RT_DEPTH=1` samples a 24-bit depth texture (format 0x2E)
-  from the framebuffer whose depth it is (texture kind 4: GL's 0..1
-  depth times 0xFFFFFF, rounded, then the same compare as kind 3), when
-  that framebuffer drew it on the GPU and the draw does not write those
-  bytes. The picture is right this time (nothing upside down) and the
-  race is ~25% faster (12093 and 11702 flips at 415 s, against 9453 and
-  9756 without). **But the car stalls:** in both runs with it on, it sat
-  at 0 mph near the start from ~27 s into the race, revving, wheels
-  spinning (the yellow-green clouds are its dust), while both runs
-  without it drove on. Yellow light-shaft quads along the grandstand roof
-  also appear only with it. Suspect: something on the CPU reads that
-  depth buffer from RAM (it is no longer read back, since nothing on the
-  GPU path needs it there). Next: with it on, read the shadow
-  framebuffers' depth back to RAM at each flip anyway; if the car then
-  drives, find the CPU reader (an `XBRT_RAM_DUMP` of 02ad1000 over a
-  few frames, or a watch on reads of that range). Off by default until
-  then.
+- **2026-10-19 (interactive): GPU shadow maps, found and fixed; still
+  opt-in, since they gain little.** `XBRT_GL_RT_DEPTH=1` samples a 24-bit
+  depth texture (format 0x2E) from the framebuffer whose depth it is
+  (shader kind 4: GL's 0..1 depth times 0xFFFFFF, rounded, then the same
+  compare as kind 3).
+  - What broke it, here and in the nightly's attempt: the 768x768 shadow
+    map at 02ad1000 (colour and depth at the same address) shares its
+    bytes with something of the CPU's. Sampled on the GPU it stayed dirty,
+    and later read-backs (`gl_sync`) wrote old shadow depth over those
+    bytes: the car flew off at 170+ mph with the world upside down, or
+    (with the depth not in RAM in time) yellow light shafts and dust and
+    a car stuck in the ground. Sampling only the 512x512 map at 029df800
+    on the GPU was fine; only 02ad1000 did this.
+  - Fix: at the first GPU sample after a draw, the depth goes into a
+    pixel buffer object and the framebuffer counts as clean, as the
+    software path's read-back left it (`gl_readback_depth_async`); the GPU
+    keeps sampling its own copy until the next depth write, or uploads
+    RAM if the CPU wrote it (hash check). While such a read-back is on its
+    way GET is not published (`nv2a_hold_get`: D3D's fences watch GET),
+    and semaphore releases land pending read-backs (`nv2a_raster_fence`).
+  - Also: a linear colour texture over a framebuffer is no longer sampled
+    from that framebuffer when depth drawn after it covers the bytes
+    (Forza reads the main depth buffer's memory, 01e98000, as a 720x480
+    A8R8G8B8 texture).
+  - Result: right picture, the car drives, but no real speed-up (9812
+    flips at 415 s against 10344 for the same build without it; draw
+    state 117 s against 130 s of device time): the ~25% seen before came
+    from the bug skipping work. Off by default.
+  - Beware when judging runs: `race.txt` holds the throttle and never
+    steers, and the grid slot changes from run to run (4th to 8th). From
+    the inner slots the car ends against the pit-lane pillar or the
+    grandstand wall at 0 mph with the wheels spinning, with or without
+    any of this. Compare the start (shot 8, 160 s), not where it ends up.
 - **Tried and failed:** reading back only the buffer PCRTC_START is
   pointed at (a request to the device thread from the vertical blank
   handler's register write) left the game stuck in boot with 100,000+

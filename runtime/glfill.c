@@ -287,6 +287,7 @@ typedef struct {
     int check;             /* RAM may have changed: compare hashes before the next draw (only when not dirty) */
     unsigned used;
     unsigned seq;          /* when it last drew, in gl_seq's order */
+    int zqueued;           /* depth on its way to RAM (gl_readback_depth_async), still sampled on the GPU */
 } GlSurf;
 
 #define GL_SURFS 32 /* a race frame draws to about 21 */
@@ -402,6 +403,7 @@ typedef struct {
     GlSurf *s;
     uint32_t base, size;
     GLuint pbo;
+    int depth; /* the framebuffer's depth, not its colour */
 } GlPending;
 
 static GlPending gl_pend[16];
@@ -415,10 +417,12 @@ static void gl_complete(void) {
         const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, p->size, GL_MAP_READ_BIT);
         if (m) memcpy(phys(p->base), m, p->size);
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
-        if (!p->s->cdirty) p->s->chash = hash_bytes(phys(p->base), p->size);
+        if (p->depth) p->s->zhash = hash_bytes(phys(p->base), p->size);
+        else if (!p->s->cdirty) p->s->chash = hash_bytes(phys(p->base), p->size);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     gl_npend = 0;
+    nv2a_hold_get = 0;
 }
 
 /* A framebuffer's colour into a pixel buffer object, older colour over
@@ -438,7 +442,7 @@ static void gl_readback_color_async(GlSurf *s) {
     if (!gl_fits(s->cbase, s->cpitch, s->h)) return;
     if (gl_npend == 16) gl_complete();
     GlPending *p = &gl_pend[gl_npend++];
-    p->s = s, p->base = s->cbase, p->size = c;
+    p->s = s, p->base = s->cbase, p->size = c, p->depth = 0;
     if (!p->pbo) glGenBuffers(1, &p->pbo);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
     glBufferData(GL_PIXEL_PACK_BUFFER, c, NULL, GL_STREAM_READ);
@@ -453,6 +457,35 @@ static void gl_readback_color_async(GlSurf *s) {
     s->dirty = s->zdirty;
     for (int i = 0; i < GL_SURFS; i++)
         if (&gl_surf[i] != s && gl_surf[i].fbo && !gl_surf[i].dirty && gl_aliases(&gl_surf[i], s)) gl_surf[i].check = 1;
+}
+
+/* A shadow map's depth into a pixel buffer object, when the GPU samples
+ * it, as the software path read it back there. Then it is clean, as it
+ * was there: Forza's 768x768 one at 02ad1000 shares its bytes with
+ * something of the CPU's, and when it stayed dirty, later read-backs
+ * (gl_sync) wrote old shadow depth over them; the car flew off upside
+ * down. The GPU keeps sampling its own copy (zqueued) until the next draw
+ * or a CPU write (gl_upload_if_changed). */
+static void gl_readback_depth_async(GlSurf *s) {
+    if (!s->ztex || s->zbpp != 4 || !gl_fits(s->zbase, s->zpitch, s->h)) return;
+    s->zqueued = 1, s->zdirty = 0;
+    if (s->cbase == s->zbase && s->cpitch == s->zpitch) s->cdirty = 0; /* the colour's bytes are the depth's: depth wins */
+    s->dirty = s->cdirty;
+    uint32_t z = s->zpitch * (uint32_t)s->h;
+    if (gl_npend == 16) gl_complete();
+    GlPending *p = &gl_pend[gl_npend++];
+    p->s = s, p->base = s->zbase, p->size = z, p->depth = 1;
+    nv2a_hold_get = 1; /* D3D's fences watch GET: none passes this draw before the depth is in RAM */
+    if (!p->pbo) glGenBuffers(1, &p->pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, z, NULL, GL_STREAM_READ);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s->fbo);
+    glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->zpitch / 4));
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, s->w, s->h, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
 }
 
 /* The colour drawn over these bytes on its way to RAM (the shown buffers). */
@@ -681,8 +714,11 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
                 e->h >= h && (!s || e->seq > s->seq))
                 s = e;
         }
-        if (!s || !s->zdirty) return NULL; /* not drawn on the GPU: decode from RAM */
+        if (!s || !(s->zdirty || s->zqueued)) return NULL; /* not drawn on the GPU: decode from RAM */
+        if (s->check && !s->dirty) gl_upload_if_changed(s); /* the CPU may have written it since */
+        s->check = 0;
         gl_take_newer(s);
+        if (s->zdirty) gl_readback_depth_async(s);
         Texture *t = &rt[i];
         memset(t, 0, sizeof *t);
         t->w = s->w, t->h = s->h, t->linear = 1, t->levels = 1;
@@ -698,6 +734,11 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
             s = e;
     }
     if (!s) return NULL;
+    for (int k = 0; k < GL_SURFS; k++) { /* depth drawn over these bytes after their colour (or with it, as a shadow map's): through RAM */
+        GlSurf *e = &gl_surf[k];
+        if (e->fbo && e->ztex && e->zdirty && (e == s || e->seq > s->seq) && gl_span_hit(e->zbase, e->zpitch * (uint32_t)e->h, lo, hi - lo))
+            return NULL;
+    }
     if (s->check && !s->dirty) gl_upload_if_changed(s);
     s->check = 0;
     gl_take_newer(s);
@@ -755,7 +796,7 @@ static int gl_clear(uint32_t flags) {
     }
     glClear(bits);
     s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
-    if (flags & 3) s->zdirty = 1;
+    if (flags & 3) s->zdirty = 1, s->zqueued = 0;
     return 1;
 }
 
@@ -855,7 +896,7 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     gl_frag_state(d, s);
     glDrawArrays(GL_TRIANGLES, 0, n * 3);
     s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
-    if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1;
+    if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1, s->zqueued = 0;
 }
 
 /* The program's uniforms for the pixel side (the combiners, the texture
