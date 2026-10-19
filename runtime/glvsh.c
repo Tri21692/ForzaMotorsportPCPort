@@ -1,5 +1,5 @@
-/* Vertex programs on the host GPU (docs/GPU.md, step 3), behind
- * XBRT_GPU_VSH=1 while it is new.
+/* Vertex programs on the host GPU (docs/GPU.md, step 3), with XBRT_GPU=gl;
+ * XBRT_GPU_VSH=0 leaves them to the CPU (run_program), for comparison.
  *
  * Included by raster.c after glfill.c. A draw whose transform mode is a
  * vertex program goes up as the vertices D3D fetched (all sixteen
@@ -217,7 +217,7 @@ static GlVsh *gl_vsh_get(uint32_t n) {
 
 static int gl_vsh_on(void) {
     static int on = -1;
-    if (on < 0) on = getenv("XBRT_GPU_VSH") && atoi(getenv("XBRT_GPU_VSH"));
+    if (on < 0) on = !getenv("XBRT_GPU_VSH") || atoi(getenv("XBRT_GPU_VSH"));
     return on;
 }
 
