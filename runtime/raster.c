@@ -1343,17 +1343,36 @@ static void emit(void) {
 }
 
 /* Vertex arrays: offset bit 31 picks the second vertex DMA. */
-static void fetch(uint32_t index, Vertex *out, const uint32_t **inl) {
+/* The arrays' layout, worked out once per Begin: the formats and offsets
+ * are set before it. Looking the DMA objects up for every attribute of
+ * every vertex was a quarter of the device thread once vertex programs
+ * ran on the GPU. */
+typedef struct {
+    uint8_t a, type, size;
+    uint32_t stride, base; /* base: the physical address of element 0 */
+} FetchAttr;
+
+static FetchAttr fattr[NATTR];
+static int nfattr;
+
+static void fetch_layout(void) {
+    nfattr = 0;
     for (int a = 0; a < NATTR; a++) {
-        uint32_t f = K(SET_VERTEX_DATA_ARRAY_FORMAT + 4 * a), type = f & 15, size = (f >> 4) & 15, stride = f >> 8;
+        uint32_t f = K(SET_VERTEX_DATA_ARRAY_FORMAT + 4 * a), size = (f >> 4) & 15;
         if (!size) continue;
-        const uint8_t *p;
-        if (inl) {
-            p = (const uint8_t *)*inl;
-        } else {
-            uint32_t off = K(SET_VERTEX_DATA_ARRAY_OFFSET + 4 * a);
-            p = phys(dma_base(off & 0x80000000u ? SET_CONTEXT_DMA_VERTEX_B : SET_CONTEXT_DMA_VERTEX_A) + (off & 0x7FFFFFFFu) + index * stride);
-        }
+        uint32_t off = K(SET_VERTEX_DATA_ARRAY_OFFSET + 4 * a);
+        FetchAttr *fa = &fattr[nfattr++];
+        fa->a = (uint8_t)a, fa->type = (uint8_t)(f & 15), fa->size = (uint8_t)size, fa->stride = f >> 8;
+        fa->base = dma_base(off & 0x80000000u ? SET_CONTEXT_DMA_VERTEX_B : SET_CONTEXT_DMA_VERTEX_A) + (off & 0x7FFFFFFFu);
+    }
+}
+
+static void fetch(uint32_t index, Vertex *out, const uint32_t **inl) {
+    for (int i = 0; i < nfattr; i++) {
+        const FetchAttr *fa = &fattr[i];
+        int a = fa->a;
+        uint32_t type = fa->type, size = fa->size;
+        const uint8_t *p = inl ? (const uint8_t *)*inl : phys(fa->base + index * fa->stride);
         float v[4] = {0, 0, 0, 1};
         uint32_t bytes = 0;
         for (uint32_t k = 0; k < size && k < 4; k++) {
@@ -1378,6 +1397,7 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
     if (method == SET_BEGIN_END) {
         if (arg) {
             prim = (int)arg, nverts = 0, ninline = 0;
+            fetch_layout();
         } else if (prim) {
             if (ninline) { /* INLINE_ARRAY: whole vertices, attribute by attribute */
                 const uint32_t *p = inline_buf, *end = inline_buf + ninline;
