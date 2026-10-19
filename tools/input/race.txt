@@ -1,0 +1,7 @@
+# XBRT_INPUT_SCRIPT from boot into a race with the throttle held: START
+# and A through the menus (profile "0" must exist; see new-profile.txt),
+# Start Race on the grid, then the right trigger. With XBRT_STATS=1 and
+# no logging the grid shows at about 140 s and the car moves by ~400 s.
+0 auto 100    # START and A: profile, main menu, Arcade Race, class, car, track
+150 A 0.5     # Start Race on the starting grid
+165 RT 300    # throttle

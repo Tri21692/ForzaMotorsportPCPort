@@ -50,60 +50,40 @@ Tests: `FORZA_XBE="$X" XBSDB=/c/Users/maste/XbSymbolDatabase go test ./...`
 - The installer manifest is the `BKGDINST` section (37 files, 4 MB zlib
   chunks with SHA-1s).
 
-## Current lead (2026-10-18, evening)
+## Current lead (2026-10-18, late evening)
 
-**The game races.** Arcade Race goes through car class and track
-selection, loads Maple Valley, shows the starting grid and runs the race
-in 3D with depth buffering (cars, pit building, track). Drive it with:
+**The car drives.** `tools/input/race.txt` goes from boot through Arcade
+Race to the starting grid, starts the race and holds the throttle; the
+Civic does 27 mph a few seconds in, with the HUD, minimap and opponents
+drawn. About 2-3 frames a second.
 
-    printf '0 auto 100\n150 A 0.5\n' > race1.txt   # START/A through the menus, then Start Race
-    XBRT_INPUT_SCRIPT=race1.txt XBRT_WINDOW=0 XBRT_SCREENSHOT=shots \
-      XBRT_SCREENSHOT_EVERY=6 XBRT_HDD=hdd timeout 300 ../runtime/forza.exe <default.xbe>
+    XBRT_STATS=1 XBRT_INPUT_SCRIPT=../tools/input/race.txt XBRT_WINDOW=0 \
+      XBRT_SCREENSHOT=shots XBRT_SCREENSHOT_EVERY=20 XBRT_HDD=hdd \
+      timeout 420 ../runtime/forza.exe <default.xbe>
 
-This needs a profile on the hard disk (`run/hdd` has one, "0"; a fresh
-disk needs `tools/input/new-profile.txt` first). Screenshots: the grid
-at about 135 s, the race from about 160 s.
+Use `XBRT_STATS=1` rather than `XBRT_LOG` for timing: logging every
+kernel call slows the game's CPU side several times over.
 
-**Bug to fix first: the race sometimes freezes** (always with
-`XBRT_LOG=1 XBRT_LOG_FROM=200`, sometimes without). The push-buffer
-reader loses sync. It reads index data (pairs of 16-bit indices,
-`ARRAY_ELEMENT16` parameters) as method headers, takes one for a jump,
-and ends up past PUT reading garbage, so GET never meets PUT and D3D
-waits forever in `KeWaitForSingleObject` (from 0x3BD6AF). The first bad
-word now prints the latest jumps and the 64 words before it
-(`xbrt: bad push buffer word`). Only the device thread runs
-`run_pushbuf`, so it is not two parsers racing. Suspects:
+Where the time goes (stats line): the device thread is busy all the
+time, three quarters of it filling pixels even on 12 workers; vertices
+about 10%, texture decodes a few %. The software rasteriser is near its
+ceiling: the next real speed-up is drawing on the host GPU (vertex
+programs and register combiners translated to shaders; see ROADMAP
+phase 4), which is the large piece of work left.
 
-- D3D overwriting ring space the reader has not consumed yet, because it
-  believes the GPU is further along: check how D3D decides (fences via
-  `BACK_END_WRITE_SEMAPHORE_RELEASE`, the 0x400B10 mirror, or reading
-  `USER_DMA_GET`) against when `run_pushbuf` publishes GET (only at the
-  end of a pass; a long pass with the software rasteriser can take
-  seconds).
-- D3D writing GET or PUT itself (a reset) while a pass is in flight; the
-  pass then writes back its own GET and keeps its method count.
+Open bugs, in order:
 
-More evidence, from the evening session: `XBRT_PB_TRACE=<file>` keeps the
-last 65536 words parsed and writes them out at the first bad word.
-With it on, three runs did not freeze (it slows the device thread), so
-the bug needs the reader to catch up with the writer. D3D works out free
-ring space from the GPU's read position and from fences
-(`D3D_MakeRequestedSpace` 0x3BD6C0), both of which the runtime publishes
-conservatively. `CDevice_KickOff` (0x3BD370) has a second path, taken
-when bit 0x2000 of the device flags is set, that points its register
-block at a dummy in RAM (0x3C8550) and sets the fake GET equal to PUT.
-That path is ruled out: the only instruction in the XBE that sets bit
-0x2000 is in KickOff itself, behind a global (0x3C85A0) that nothing
-writes. Next ideas: log PUT writes and pass boundaries (get, put, method
-count) to a ring as well, and compare a failing pass against the ring
-contents; check that a pass never starts with a nonzero method count left
-over from a pass that ended at PUT mid-command (legal on hardware, but
-then D3D must have split a command across kicks).
-
-Then: cars are very dark (cube maps are read as 2D textures, and texture
-stages 1-3 may hold environment maps; check the combiner state with
-`XBRT_LOG=2`'s `draw state` lines), and speed (the race runs at well
-under one frame a second; the rasteriser is single-threaded C).
+1. `XBRT_BATCH=1` (fills batched across draws) leaves the race view
+   black: a flush point is missing (a texture read of a surface the batch
+   draws into without a surface change in between, perhaps through the
+   zeta buffer, which `batch_note` covers but `nv2a_raster_invalidate`
+   does not). Off by default; it gained nothing yet, but will matter
+   once vertex work moves elsewhere.
+2. Rendering: point sampling everywhere (blocky reflections and
+   textures), no mipmaps, no fog, no stencil, the ground texture
+   swims (no filtering). A grey frame sometimes during the pre-race
+   flyby.
+3. Audio: none (DSOUND's voices are mixed by nothing).
 
 ## Next after that
 
@@ -168,6 +148,18 @@ under one frame a second; the rasteriser is single-threaded C).
   specular colour (V1). New aids: `XBRT_THREAD_DUMP=<s>[,<s>...]`, and
   sharing violations, reads past EOF and reads on bad handles print
   without a log.
+- 2026-10-18 (interactive, night): races run and drive. Freezes: D3D
+  learns GPU progress from PATT_COLOR0 (0x400B10), which the image
+  pattern object's SET_MONOCHROME_COLOR0 (class 0x44, 0x310) sets; the
+  old guess lost the lap bits, so D3D overwrote unread commands. The
+  pusher now reads PUT every word, publishes GET as it goes and parks on
+  a jump to itself (it spun forever before, starving vertical blanks).
+  CancelIo's walk of IdexChannelObject+0x28 needs an empty list, not
+  zeros. Rendering: cube maps, shadow maps (depth textures with the
+  shadow compare). Speed 0.35 -> ~2.8 fps: filling on worker threads by
+  rows, vertices once per draw and in parallel, a texture cache kept
+  across surface changes (hash-checked). XBRT_STATS, XBRT_BATCH,
+  XBRT_RASTER_THREADS; host crashes print their address.
 - 2026-10-18 (interactive, evening): CPU detection (pushfd/popfd keep
   AC/ID, cpuid answers as the Xbox's Pentium III), so Bink finds MMX;
   CVTPS2PI/CVTTPS2PI/CVTPI2PS; the video overlay's STOP register; the

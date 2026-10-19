@@ -33,6 +33,8 @@ first build takes a while.
 | `XBRT_AUTOPRESS` | `1` taps START and A every two seconds | off |
 | `XBRT_INPUT_SCRIPT` | a file of timed button presses (format in `hle_input.c`; example in `tools/input`) | off |
 | `XBRT_LOG_FROM` | with `XBRT_LOG`, start logging only after this many seconds | 0 |
+| `XBRT_STATS` | `1` prints the GPU stats line every 5 s without logging kernel calls | off |
+| `XBRT_RASTER_THREADS` | threads that fill pixels | half the logical cores, at most 16 |
 | `XBRT_THREAD_DUMP` | seconds (comma-separated) at which to print every guest thread's registers, latest kernel call and stack | off |
 | `XBRT_WINDOW` | `0` runs without a window (Windows shows one) | on |
 | `XBRT_SCREENSHOT` | a folder to save the picture to as BMP files | off |
