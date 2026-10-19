@@ -679,7 +679,10 @@ static void gl_copy_rows(const GlSurf *e, GLuint from, uint32_t from_base, GLuin
 static void gl_copy(const GlSurf *e, GlSurf *s) {
     int w = e->w < s->w ? e->w : s->w;
     gl_copy_rows(e, e->ctex, e->cbase, s->ctex, s->h, s->cbase, s->cpitch, w);
-    if (e->zdirty && e->ztex && s->ztex) gl_copy_rows(e, e->ztex, e->zbase, s->ztex, s->h, s->zbase, s->zpitch, w);
+    /* Not depth: Forza's shown buffers share the scene's depth memory (a 640
+     * wide view of 1280-wide depth), and the scene's depth copied in made
+     * the passes drawn there fail their depth test: black patches on NVIDIA.
+     * Intel's driver evidently never did the copy, and looked right. */
 }
 
 /* A draw or clear into s over this rectangle (clipped to s). */
@@ -1130,7 +1133,8 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         scale[2 * i + 1] = t && t->linear ? 1.0f / (float)t->h : 1.0f;
         dmax[i] = t ? (float)t->depth : 0;
         glActiveTexture(GL_TEXTURE0 + (GLenum)i);
-        glBindTexture(GL_TEXTURE_2D, t && !t->cube ? (t->surface ? gl_unalias(i, gl_texture(t), s) : gl_texture(t)) : gl_dummy2d);
+        GLuint tid = t && !t->cube ? (t->surface ? gl_unalias(i, gl_texture(t), s) : gl_texture(t)) : gl_dummy2d;
+        glBindTexture(GL_TEXTURE_2D, tid);
         if (t && t->surface && !t->depth && !t->cube) /* X8R8G8B8 over a framebuffer that keeps alpha */
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, t->alpha_one ? GL_ONE : GL_ALPHA);
         if (t && !t->cube) {

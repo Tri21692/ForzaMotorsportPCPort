@@ -217,20 +217,17 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   - Framebuffers over the same bytes now copy each other only the
     rectangle they drew (bloom quarters drew 320 of 640 columns), and a
     framebuffer takes from later ones even when those were read back.
-  - **Open, NVIDIA only:** black patches over part of the race picture
-    (often the right half or lower right, edges following geometry). Not
-    the shadow maps, the vertex programs, the swizzled path, feedback
-    loops (a draw sampling its own framebuffer now samples a copy), nor
-    the bloom quarters. It goes away when the shown buffers (019e8000,
-    01b14000) are not sampled from their framebuffers
-    (`XBRT_GL_RT_SHOWN=0`). Forza draws a car-shadow image into the
-    buffer not on screen (grey ground, dark car blobs) and projects it
-    from there; the framebuffer's texture and RAM held the same picture
-    when dumped, so the difference is in how it is sampled or when.
-    With `XBRT_GL_RT_SHOWN=0` that shadow image appears on screen in many
-    frames instead (the "grey frames", 6 of 15 screenshots; 1-2 of 15
-    otherwise), so the default stays sampling them. Both are probably
-    one bug about which buffer holds what when; next session's first job.
+  - **Fixed: black patches and grey frames on NVIDIA.** Framebuffers over
+    the same bytes copied each other's depth too (`gl_copy`). Forza's shown
+    buffers (640x480) share the scene's depth memory (01e98000, 1280 wide),
+    so the scene's depth landed in theirs and the passes drawn there
+    failed their depth test: black patches, and frames where only the
+    car-shadow image Forza draws in the back buffer showed (the grey
+    frames). Intel's driver evidently never did the depth copy and looked
+    right. Depth is no longer copied between framebuffers. Ruled out on the
+    way: shadow maps, vertex programs, the swizzled path, feedback loops,
+    GPU timing (`glFinish`), the bloom quarters, sub-rectangle clamping.
+    Race: 68-94 fps, no patches, no grey frames.
   - The input script's timings were made for ~30 fps: on NVIDIA the
     menus run far faster and `race.txt` sometimes ends in the pause menu.
   - Beware when judging runs: `race.txt` holds the throttle and never
