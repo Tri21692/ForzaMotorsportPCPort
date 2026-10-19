@@ -74,16 +74,6 @@
 #define PCRTC_INTR_0 0x600100
 #define PCRTC_INTR_EN_0 0x600140
 #define PCRTC_START 0x600800
-/* Flips (xemu's nv2a_regs.h): PGRAPH counts frames in flight in
- * NV_PGRAPH_SURFACE. The 3D engine's write index moves on
- * FLIP_INCREMENT_WRITE; D3D's vertical blank handler moves the read index
- * through NV_PGRAPH_INCREMENT when it shows a frame. */
-#define PGRAPH_SURFACE 0x400710
-#define PGRAPH_SURFACE_WRITE_3D_SHIFT 20
-#define PGRAPH_SURFACE_READ_3D_SHIFT 24
-#define PGRAPH_SURFACE_MODULO_3D_SHIFT 28
-#define PGRAPH_INCREMENT 0x40071C
-#define PGRAPH_INCREMENT_READ_3D (1u << 1)
 
 #define PRAMDAC_NVPLL 0x680500
 #define PRAMDAC_MPLL 0x680504
@@ -161,11 +151,6 @@ static void after_isr(void) {
     update_irq();
     pthread_mutex_unlock(&lock);
 }
-
-/* ---- flips ---- */
-
-static uint32_t flip_field(int shift) { return (REG(PGRAPH_SURFACE) >> shift) & 7; }
-static void set_flip_field(int shift, uint32_t v) { REG(PGRAPH_SURFACE) = (REG(PGRAPH_SURFACE) & ~(7u << shift)) | (v & 7) << shift; }
 
 /* ---- registers ---- */
 
@@ -268,13 +253,6 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
         break; /* nobody sets the clock */
     case PVIDEO_STOP: /* bit 0 tears the overlay down, as xemu has it; D3D waits for the buffers to drain */
         if (v & 1) REG(PVIDEO_BUFFER) = 0;
-        break;
-    case PGRAPH_INCREMENT: /* a frame was shown: one fewer in flight, which may end a FLIP_STALL */
-        if (v & PGRAPH_INCREMENT_READ_3D) {
-            uint32_t mod = flip_field(PGRAPH_SURFACE_MODULO_3D_SHIFT);
-            set_flip_field(PGRAPH_SURFACE_READ_3D_SHIFT, mod ? (flip_field(PGRAPH_SURFACE_READ_3D_SHIFT) + 1) % mod : 0);
-            pthread_cond_broadcast(&kick);
-        }
         break;
     default:
         REG(off) = v;
@@ -480,82 +458,38 @@ void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
 
 /* ---- the device thread ---- */
 
-static uint64_t next_vblank;
-
-/* The vertical blank interrupt, when it is due. Called with lock held. */
-static void vblank(void) {
-    uint64_t t = now_ns();
-    if (t >= next_vblank) {
-        next_vblank += 16683333; /* 59.94 Hz */
-        if (t > next_vblank) next_vblank = t + 16683333;
-        nv2a.vblanks++;
-        { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
-            static const char *spec;
-            static int checked;
-            if (!checked) checked = 1, spec = getenv("XBRT_RAM_DUMP");
-            const char *colon = spec ? strrchr(spec, ':') : NULL;
-            if (colon && nv2a.vblanks == (uint32_t)(atof(colon + 1) * 60)) {
-                char path[1024];
-                snprintf(path, sizeof path, "%.*s", (int)(colon - spec), spec);
-                FILE *f = fopen(path, "wb");
-                if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
-                rt_log("nv2a: RAM dumped to %s\n", path);
-            }
-        }
-        if (0)
-            rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
-                   "PATT_COLOR0 %08x, intr %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
-                   nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR));
-        REG(PCRTC_INTR_0) |= 1;
-        update_irq();
-    }
-}
-
-/* FLIP_STALL: the 3D engine waits while the frame it would draw next is
- * still waiting to be shown (read index == write index), as xemu's
- * pfifo_stall_for_flip does. With D3D's three frames in flight this keeps
- * drawing at most two frames ahead of the screen; it went on regardless
- * before. Vertical blanks keep coming meanwhile: they end the wait. */
-void nv2a_flip_stall(void) {
-    pthread_mutex_lock(&lock);
-    while (flip_field(PGRAPH_SURFACE_READ_3D_SHIFT) == flip_field(PGRAPH_SURFACE_WRITE_3D_SHIFT) &&
-           flip_field(PGRAPH_SURFACE_MODULO_3D_SHIFT)) {
-        vblank();
-        struct timespec ts;
-        uint64_t t = now_ns();
-        rt_abstime(&ts, next_vblank > t ? next_vblank - t : 0);
-        pthread_cond_timedwait(&kick, &lock, &ts);
-    }
-    pthread_mutex_unlock(&lock);
-}
-
-/* SET_FLIP_READ/WRITE/MODULO and FLIP_INCREMENT_WRITE keep their counters
- * in NV_PGRAPH_SURFACE, where the vertical blank handler moves the read
- * index. */
-void nv2a_flip_method(uint32_t method, uint32_t arg) {
-    pthread_mutex_lock(&lock);
-    switch (method) {
-    case 0x0120: set_flip_field(PGRAPH_SURFACE_READ_3D_SHIFT, arg); break;
-    case 0x0124: set_flip_field(PGRAPH_SURFACE_WRITE_3D_SHIFT, arg); break;
-    case 0x0128: set_flip_field(PGRAPH_SURFACE_MODULO_3D_SHIFT, arg); break;
-    case 0x012C: {
-        uint32_t mod = flip_field(PGRAPH_SURFACE_MODULO_3D_SHIFT);
-        set_flip_field(PGRAPH_SURFACE_WRITE_3D_SHIFT, mod ? (flip_field(PGRAPH_SURFACE_WRITE_3D_SHIFT) + 1) % mod : 0);
-        break;
-    }
-    }
-    pthread_mutex_unlock(&lock);
-}
-
 static void *device_main(void *arg) {
     (void)arg;
     const char *gpu = getenv("XBRT_GPU");
     if (gpu && !strcmp(gpu, "gl")) rt_gl_init(); /* the context lives on this thread */
-    next_vblank = now_ns() + 16683333;
+    uint64_t next_vblank = now_ns() + 16683333;
     pthread_mutex_lock(&lock);
     for (;;) {
         uint64_t t = now_ns();
-        vblank();
+        if (t >= next_vblank) {
+            next_vblank += 16683333; /* 59.94 Hz */
+            if (t > next_vblank) next_vblank = t + 16683333;
+            nv2a.vblanks++;
+            { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
+                static const char *spec;
+                static int checked;
+                if (!checked) checked = 1, spec = getenv("XBRT_RAM_DUMP");
+                const char *colon = spec ? strrchr(spec, ':') : NULL;
+                if (colon && nv2a.vblanks == (uint32_t)(atof(colon + 1) * 60)) {
+                    char path[1024];
+                    snprintf(path, sizeof path, "%.*s", (int)(colon - spec), spec);
+                    FILE *f = fopen(path, "wb");
+                    if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
+                    rt_log("nv2a: RAM dumped to %s\n", path);
+                }
+            }
+            if (0)
+                rt_log("nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
+                       "PATT_COLOR0 %08x, intr %08x\n", nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped, nv2a.clears,
+                       nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR));
+            REG(PCRTC_INTR_0) |= 1;
+            update_irq();
+        }
         if (REG(PFIFO_CACHE1_DMA_GET) != REG(PFIFO_CACHE1_DMA_PUT)) {
             pthread_mutex_unlock(&lock);
             uint64_t t0 = rt_now_100ns();

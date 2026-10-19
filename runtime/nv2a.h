@@ -22,8 +22,6 @@ uint32_t nv2a_lookup(uint32_t handle);
 uint32_t nv2a_dma_base(uint32_t inst, uint32_t *limit);
 void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg);
 void nv2a_kelvin(uint32_t method, uint32_t arg);
-void nv2a_flip_method(uint32_t method, uint32_t arg); /* SET_FLIP_*, FLIP_INCREMENT_WRITE */
-void nv2a_flip_stall(void);                           /* FLIP_STALL: wait for a frame to be shown */
 void nv2a_raster_method(uint32_t method, uint32_t arg); /* raster.c: draws in software */
 void nv2a_raster_invalidate(void);                      /* textures may have changed */
 void nv2a_raster_flush(void);                           /* finish the batched drawing */
