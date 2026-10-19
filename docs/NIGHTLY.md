@@ -118,7 +118,13 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   before more CPU-side work. **Tried and failed:** reading back only the
   buffer PCRTC_START is pointed at (a request to the device thread from
   the vertical blank handler's register write) left the game stuck in
-  boot with black frames and 100,000+ flips; not understood.
+  boot with black frames and 100,000+ flips, and so does dropping both
+  the flip and the notify read-backs (as an experiment): the boot spins
+  presenting frames with no draws, vertical blanks starve, then
+  everything stops. Either read-back alone is enough to avoid it, so
+  something in the boot looks at the front buffer's pixels in RAM after
+  a frame (a loading screen copying the last frame? D3D?). Find it
+  before moving read-backs off the frame path (e.g. to PBOs).
 - The game's render thread waits in D3DDevice_BlockOnFence most of the
   time; DSOUND/XACT threads (DirectSoundDoWork, deferred commands that
   never complete because no voice is ever processed) are most of the
