@@ -140,6 +140,7 @@ typedef struct {
     uint32_t gl_version;
     int surface;      /* gl is a framebuffer's colour texture (glfill.c), sampled where it was drawn */
     int alpha_one;    /* ... of an X8R8G8B8 texture: alpha reads as one */
+    uint32_t zaddr;   /* a shadow map sampled on the GPU: its depth's address (glvsh.c's shadow-matrix forwarding) */
 } Texture;
 
 static Texture cache[512]; /* a race frame uses a few hundred textures */

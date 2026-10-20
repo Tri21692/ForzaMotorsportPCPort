@@ -294,6 +294,17 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   all on the GPU), so the patch evidently leaves part of the shadow/light
   setup on the original 30 Hz rhythm: every other frame pairs a new map
   with old matrices. Fixing that means finding and patching that game code.
+  **Found and fixed (2026-10-20):** a frame draws the shadow receivers
+  first and the shadow map last. The map's draws always carry light
+  matrix L1 in c92-c95 (scale in c90.xyz); the receivers carry L1 on even
+  frames and the next one, L2, on odd frames (the camera itself, c0-c3,
+  only changes every other frame: the game still runs its camera at 30 Hz).
+  At 30 fps only even frames were shown. glvsh.c now remembers each shadow
+  map's c90.xyz/c92-c95 from its own draws and gives them to draws that
+  sample it (`XBRT_SHADOW_SYNC=0` turns it off): flicker map at 60 fps 8374
+  -> 2036 pixels, the rest moving railings and the timer. Found by dumping
+  the program and constants of every shadow-map and receiver draw over 12
+  frames and looking for rows that toggle A/B/A between frames.
   Also done: bilinear PCF for shadow compares (as the NV2A filters), the
   polygon offset's slope term per Xbox pixel (x render scale), and our own
   read-backs no longer make aliasing framebuffers re-upload RAM.

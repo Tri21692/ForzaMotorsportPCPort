@@ -1041,7 +1041,7 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
         Texture *t = &rt[i];
         memset(t, 0, sizeof *t);
         t->w = s->w, t->h = s->h, t->linear = 1, t->levels = 1;
-        t->gl = s->ztex, t->surface = 1, t->depth = 0xFFFFFF;
+        t->gl = s->ztex, t->surface = 1, t->depth = 0xFFFFFF, t->zaddr = lo;
         t->gl_version = t->version;
         return t;
     }

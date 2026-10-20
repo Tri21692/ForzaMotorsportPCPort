@@ -224,6 +224,49 @@ static int gl_vsh_on(void) {
     return on;
 }
 
+/* Forza's shadow matrices and the 60 fps patch. Each frame draws the
+ * surfaces that receive shadows first and the shadow map last; the
+ * receivers look the map up with the light matrix in c92-c95 (and its
+ * scale in c90.xyz). With the patch the game presents every frame where it
+ * used to present every other one, and on the odd frames the receivers
+ * carry the next light matrix while the map they read was drawn with the
+ * previous one: whole objects turned from lit to shadowed and back, the
+ * flicker of the buildings and signs at 60 fps. So a draw that samples a
+ * shadow map takes those rows as the map's own draws had them. At 30 fps
+ * they already match. XBRT_SHADOW_SYNC=0 turns it off. */
+#define SHADOW_ROWS_FIRST 90
+#define SHADOW_ROWS_LAST 95
+typedef struct {
+    uint32_t zaddr;
+    float rows[SHADOW_ROWS_LAST - SHADOW_ROWS_FIRST + 1][4];
+} ShadowRows;
+static ShadowRows shadow_rows[4];
+
+static void gl_shadow_sync(const DrawState *d, const GlSurf *s, float c[192][4]) {
+    static int on = -1;
+    if (on < 0) on = !getenv("XBRT_SHADOW_SYNC") || atoi(getenv("XBRT_SHADOW_SYNC"));
+    if (!on) return;
+    if (s->ztex && s->cbase == s->zbase) { /* drawing a shadow map (colour and depth at one address): remember its rows */
+        uint32_t z = s->zbase & (RT_PHYS_SIZE - 1);
+        int k = 0;
+        while (k < 3 && shadow_rows[k].zaddr && shadow_rows[k].zaddr != z) k++;
+        shadow_rows[k].zaddr = z;
+        memcpy(shadow_rows[k].rows, c[SHADOW_ROWS_FIRST], sizeof shadow_rows[k].rows);
+        return;
+    }
+    for (int i = 0; i < 4; i++) {
+        const Texture *t = d->tex[i];
+        if (!t || !t->depth || !t->zaddr) continue;
+        for (int k = 0; k < 4; k++)
+            if (shadow_rows[k].zaddr == t->zaddr) {
+                const float(*r)[4] = shadow_rows[k].rows;
+                for (int j = 0; j < 3; j++) c[SHADOW_ROWS_FIRST][j] = r[0][j]; /* c90: the scale, not its w */
+                memcpy(c[92], r[92 - SHADOW_ROWS_FIRST], 4 * 4 * sizeof(float));
+                return;
+            }
+    }
+}
+
 /* Draws verts[0..n) as primitive prim with the current vertex program on
  * the GPU. 0: not handled here (the CPU path draws it). */
 static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
@@ -273,6 +316,7 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     float c[192][4];
     for (int i = 0; i < 192; i++)
         for (int j = 0; j < 4; j++) c[i][j] = f32(constants[i][j]);
+    gl_shadow_sync(d, s, c);
     glUniform4fv(v->prog.vc, 192, &c[0][0]);
     float sxy[2] = {(float)d->sx, (float)d->sy};
     glUniform2fv(v->prog.sxy, 1, sxy);
