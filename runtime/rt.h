@@ -88,6 +88,8 @@ int rt_user_query(uint32_t addr, uint32_t *base, uint32_t *size, uint32_t *prote
 uint32_t rt_contig_alloc(uint32_t size, uint32_t lo, uint32_t hi, uint32_t align);
 void rt_contig_free(uint32_t va);
 uint32_t rt_phys_of(uint32_t va);
+#define RT_PHYS_ALIAS 0x40000000u /* stand-in physical pages of memory outside the 64 MB (rt_phys_of) */
+uint8_t *rt_phys_ptr(uint32_t pa); /* a physical address as devices see it, stand-ins included */
 uint32_t rt_pool_alloc(uint32_t size);
 uint32_t rt_kdata_alloc(uint32_t size);
 void rt_mem_reserve_image(uint32_t base, uint32_t size);

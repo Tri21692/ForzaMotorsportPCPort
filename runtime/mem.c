@@ -169,10 +169,59 @@ void rt_contig_free(uint32_t va) {
     *b = blocks[--nblocks];
 }
 
+/* On the Xbox all memory is physical; here user memory and the pools are
+ * host memory of their own, outside the 64 MB the devices see. Their
+ * pages get stand-in physical addresses from RT_PHYS_ALIAS up, which
+ * devices resolve with rt_phys_ptr. The first time a page is asked for,
+ * the whole allocation around it (user region or pool block, up to 16 MB)
+ * gets a run of consecutive stand-ins, so a buffer stays contiguous for
+ * the APU, which runs from one page of a sample buffer or stream segment
+ * into the next. DSOUND puts its sample buffers in user memory and hands
+ * the APU their "physical" pages: given the virtual address back, the APU
+ * read whatever RAM was there, which played as static. (Stand-ins as
+ * RT_PHYS_ALIAS + va instead silenced the menu music.) */
+#define ALIAS_PAGES 0x40000 /* 1 GB of stand-in addresses */
+static uint32_t alias_va[ALIAS_PAGES];
+static volatile uint32_t nalias;
+static uint32_t alias_hash[ALIAS_PAGES * 2]; /* va page -> index + 1, open addressing */
+
+static uint32_t *alias_slot(uint32_t page) {
+    uint32_t h = (page >> 12) * 2654435761u % (ALIAS_PAGES * 2);
+    while (alias_hash[h] && alias_va[alias_hash[h] - 1] != page) h = (h + 1) % (ALIAS_PAGES * 2);
+    return &alias_hash[h];
+}
+
 uint32_t rt_phys_of(uint32_t va) {
     if (va >= RT_PHYS_VIEW && va - RT_PHYS_VIEW < RT_PHYS_SIZE) return va - RT_PHYS_VIEW;
     if (va >= RT_PHYS_WC && va - RT_PHYS_WC < RT_PHYS_SIZE) return va - RT_PHYS_WC;
-    return va & 0x7FFFFFFFu; /* not GPU-visible here; good enough for logging */
+    uint32_t page = va & ~0xFFFu, *slot = alias_slot(page);
+    if (!*slot) {
+        uint32_t lo = page, hi = page + 0x1000; /* the allocation around it */
+        Region *r = region_at(va);
+        if (r) lo = r->base, hi = r->base + r->size;
+        else
+            for (int i = 0; i < nblocks; i++)
+                if (va >= blocks[i].base && va - blocks[i].base < blocks[i].size) lo = blocks[i].base & ~0xFFFu, hi = blocks[i].base + blocks[i].size;
+        if (hi - lo > 16u << 20) lo = page, hi = page + 0x1000;
+        for (uint32_t p = lo; p < hi && nalias < ALIAS_PAGES; p += 0x1000) {
+            uint32_t *sl = alias_slot(p);
+            if (*sl) continue;
+            alias_va[nalias] = p;
+            *sl = nalias + 1;
+            __atomic_store_n(&nalias, nalias + 1, __ATOMIC_RELEASE);
+        }
+        slot = alias_slot(page);
+        if (!*slot) return va & 0x7FFFFFFFu;
+    }
+    return RT_PHYS_ALIAS + (*slot - 1) * 0x1000u + (va & 0xFFF);
+}
+
+uint8_t *rt_phys_ptr(uint32_t pa) {
+    if (pa >= RT_PHYS_ALIAS) {
+        uint32_t i = (pa - RT_PHYS_ALIAS) >> 12;
+        if (i < __atomic_load_n(&nalias, __ATOMIC_ACQUIRE)) return xb_mem + alias_va[i] + (pa & 0xFFF);
+    }
+    return xb_mem + RT_PHYS_VIEW + (pa & (RT_PHYS_SIZE - 1));
 }
 
 /* ---- bump allocators for pool and kernel data ---- */

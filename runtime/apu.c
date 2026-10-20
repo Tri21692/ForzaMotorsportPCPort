@@ -17,6 +17,7 @@
  *
  * Register names are the ones xemu uses (apu_regs.h).
  */
+#include <math.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -141,20 +142,33 @@ void rt_apu_tick(void) {
 #define OUT_FRAMES 32 /* VP frames per buffer: 1024 samples, 21 ms */
 #define OUT_BUFS 4
 
-static float volume = 1.0f;
+static float volume = 0.7f; /* XBRT_VOLUME; below 1 for headroom: the mix of all bins can exceed full scale */
 static FILE *dump; /* XBRT_AUDIO_DUMP=<file>: the output as raw 48 kHz 16-bit stereo, for checking and for recordings */
 
 /* One buffer's worth of frames, as 16-bit stereo. */
 static void make(int16_t *pcm) {
     for (int f = 0; f < OUT_FRAMES; f++) {
         float s[32][2];
-        int irq = 0;
-        if (rt_vp_frame(s, &irq)) frames++;
-        if (irq) apu_irq();
+        /* While DSOUND takes an idle voice back (a front-end trap, IRQ 5)
+         * the frame waits, up to 20 ms: making silence instead lost a frame
+         * of every voice each time, and a race ends short sounds by the
+         * dozen, which stuttered and slowed the music. */
+        int r;
+        for (int tries = 0;; tries++) {
+            int irq = 0;
+            r = rt_vp_frame(s, &irq);
+            if (irq) apu_irq();
+            if (r != -1 || tries >= 200) break;
+            struct timespec ts = {0, 100000};
+            nanosleep(&ts, NULL);
+        }
+        if (r == 1) frames++;
         for (int i = 0; i < 32; i++)
             for (int c = 0; c < 2; c++) {
-                float x = s[i][c] * volume;
-                x = x > 1 ? 1 : x < -1 ? -1 : x;
+                /* Soft limiting above 0.6 instead of hard clipping, which
+                 * crackled at the race start when every engine revs at once. */
+                float x = s[i][c] * volume, a = fabsf(x);
+                if (a > 0.6f) x = copysignf(0.6f + 0.4f * tanhf((a - 0.6f) / 0.4f), x);
                 pcm[(f * 32 + i) * 2 + c] = (int16_t)(x * 32767);
             }
     }
@@ -193,8 +207,13 @@ static void *audio_main(void *arg) {
         make(pcm[i]);
         waveOutWrite(out, &hdr[i], sizeof hdr[i]);
     }
+    unsigned underruns = 0;
     for (;;) {
         WaitForSingleObject(done, 100);
+        int ndone = 0;
+        for (int i = 0; i < OUT_BUFS; i++) ndone += (hdr[i].dwFlags & WHDR_DONE) != 0;
+        if (ndone == OUT_BUFS && ++underruns % 50 == 1) /* all played out: the sound card ran dry (a gap) */
+            rt_log("apu: output ran dry (%u times)\n", underruns);
         for (int i = 0; i < OUT_BUFS; i++)
             if (hdr[i].dwFlags & WHDR_DONE) {
                 make(pcm[i]);

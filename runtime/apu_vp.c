@@ -15,8 +15,9 @@
  *
  * On the Xbox the GP DSP then runs DSOUND's effects (reverb, the speaker
  * mix) over the bins; that DSP is not emulated, so the speaker bins (0-5:
- * front left and right, centre, LFE, rear left and right) are mixed down
- * to stereo directly and effect sends are dropped. Each voice's low-pass
+ * front left and right, centre, LFE, rear left and right) and the 3D
+ * crosstalk bins (6-9) are mixed down to stereo directly and effect sends
+ * are dropped. Each voice's low-pass
  * filter (DLS2 mode) runs as a state-variable filter; not done yet: the
  * parametric EQ mode and HRTF for 3D voices.
  *
@@ -24,6 +25,7 @@
  * which documents the hardware; the code is this project's.
  */
 #include <math.h>
+#include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +34,7 @@
 
 #define REG(off) (*(volatile uint32_t *)(xb_mem + RT_APU_BASE + (off)))
 
-static inline uint8_t *pa(uint32_t addr) { return xb_mem + RT_PHYS_VIEW + (addr & (RT_PHYS_SIZE - 1)); }
+static inline uint8_t *pa(uint32_t addr) { return rt_phys_ptr(addr); } /* sample data may be in user memory (stand-in pages) */
 static inline uint32_t rd32(uint32_t addr) { uint32_t v; memcpy(&v, pa(addr), 4); return v; }
 static inline void wr32(uint32_t addr, uint32_t v) { memcpy(pa(addr), &v, 4); }
 
@@ -457,7 +459,11 @@ static int voice_samples(unsigned v, float (*out)[2], int n) {
             if (h->adpcm_block != block) {
                 uint8_t blk[72];
                 uint32_t bytes = 36u * (uint32_t)ch, lin = (uint32_t)block * bytes;
-                if (stream) memcpy(blk, pa(seg_addr + lin), bytes);
+                if (stream)
+                    for (uint32_t i = 0; i < bytes; i += 4) { /* a block can cross a page, and stand-in pages are not adjacent */
+                        uint32_t w = rd32(seg_addr + lin + i);
+                        memcpy(blk + i, &w, 4);
+                    }
                 else
                     for (uint32_t i = 0; i < bytes; i += 4) {
                         uint32_t w = rd32(sge_addr(ba + lin + i));
@@ -577,14 +583,19 @@ static void voice_process(unsigned v, float mix[BINS][FRAME]) {
             for (int c = 0; c < 2; c++) {
                 uint32_t fc = vget(v, 0x74 + (uint32_t)(c % ch) * 4);
                 float f = powf(2.0f, (float)(int16_t)(fc & 0xFFFF) / 4096.0f), q = (float)(fc >> 16) / 32768.0f;
-                f = f < 0.003906f ? 0.003906f : f > 1 ? 1 : f;
+                f = f < 0.003906f ? 0.003906f : f > 0.95f ? 0.95f : f; /* cutoff as a fraction of 24 kHz */
                 q = q < 0.079407f ? 0.079407f : q > 1 ? 1 : q;
+                /* A topology-preserving state-variable filter (Zavalishin),
+                 * stable at any cutoff: the plain Chamberlin form blew up near
+                 * the top of the range, and its infinities silenced the mix. */
+                float g = tanf(1.5707963f * f), k = 2.0f * q;
+                if (k < 0.5f) k = 0.5f; /* resonance kept mild: unknown how the hardware scales it */
+                float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
+                if (!isfinite(h->low[c]) || !isfinite(h->band[c])) h->low[c] = h->band[c] = 0;
                 for (int i = 0; i < FRAME; i++) {
-                    h->low[c] += f * h->band[c];
-                    float high = s[i][c] - h->low[c] - q * h->band[c];
-                    h->band[c] += f * high;
-                    float y = h->low[c];
-                    s[i][c] = y > 1 ? 1 : y < -1 ? -1 : y;
+                    float v3 = s[i][c] - h->low[c], v1 = a1 * h->band[c] + a2 * v3, v2 = h->low[c] + a2 * h->band[c] + a3 * v3;
+                    h->band[c] = 2 * v1 - h->band[c], h->low[c] = 2 * v2 - h->low[c];
+                    s[i][c] = v2 > 1 ? 1 : v2 < -1 ? -1 : v2;
                 }
             }
         }
@@ -608,16 +619,18 @@ static void voice_process(unsigned v, float mix[BINS][FRAME]) {
 }
 
 /* One frame: 32 stereo samples into out. Returns 0, with silence, while
- * the setup engine is off or the front end is trapped or halted (DSOUND
- * is busy with an idle voice, or the APU is not set up yet). */
+ * the setup engine is off or the APU is not set up yet, and -1 while the
+ * front end is trapped or halted (DSOUND's ISR is taking an idle voice
+ * back): then the caller waits for it rather than skipping the frame. */
 int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
     static float mix[BINS][FRAME];
     memset(out, 0, sizeof(float) * FRAME * 2);
     pthread_mutex_lock(&vp_lock);
     if (!(REG(NV_PAPU_SECTL) & SECTL_XCNTMODE) || (REG(NV_PAPU_FECTL) & FECTL_FEMETHMODE) || !REG(NV_PAPU_VPVADDR)) {
+        int trapped = (REG(NV_PAPU_FECTL) & FECTL_FEMETHMODE) != 0;
         *raise_irq = irq_pending, irq_pending = 0;
         pthread_mutex_unlock(&vp_lock);
-        return 0;
+        return trapped ? -1 : 0;
     }
     memset(mix, 0, sizeof mix);
     for (int list = 0; list < 3; list++) {
@@ -641,9 +654,17 @@ int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
     }
 done:
     for (int i = 0; i < FRAME; i++) {
+        /* Speakers: front left/right, centre, rear left/right; then the 3D
+         * sound DSOUND routes through the GP DSP's crosstalk program (bins
+         * 6-9, front left/right and rear left/right, as the HRTF submix
+         * register names them): Forza's engines, tyres and other cars all
+         * arrive there through multipass voices. Without the DSP they were
+         * silent. LFE (3) and the effect sends (10 and up) are dropped. */
         float c = 0.7071f * mix[2][i];
-        out[i][0] = mix[0][i] + c + 0.7071f * mix[4][i];
-        out[i][1] = mix[1][i] + c + 0.7071f * mix[5][i];
+        out[i][0] = mix[0][i] + c + 0.7071f * mix[4][i] + mix[6][i] + 0.7071f * mix[8][i];
+        out[i][1] = mix[1][i] + c + 0.7071f * mix[5][i] + mix[7][i] + 0.7071f * mix[9][i];
+        if (!isfinite(out[i][0])) out[i][0] = 0;
+        if (!isfinite(out[i][1])) out[i][1] = 0;
     }
     *raise_irq = irq_pending, irq_pending = 0;
     pthread_mutex_unlock(&vp_lock);
