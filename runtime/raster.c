@@ -140,6 +140,8 @@ typedef struct {
     uint32_t gl_version;
     int surface;      /* gl is a framebuffer's colour texture (glfill.c), sampled where it was drawn */
     int alpha_one;    /* ... of an X8R8G8B8 texture: alpha reads as one */
+    uint64_t sig;     /* hash_sparse of its bytes when last fully hashed */
+    uint32_t sig_checks; /* checks since the last full hash */
     uint32_t zaddr;   /* a shadow map sampled on the GPU: its depth's address (glvsh.c's shadow-matrix forwarding) */
 } Texture;
 
@@ -170,6 +172,18 @@ void nv2a_raster_invalidate(void) {
  * end. One lane is a chain of dependent multiplies; four keep the
  * multiplier busy, several times the speed over the megabytes a frame
  * checks. */
+/* A sparse signature: 64 bytes of every 2 KB (and the tail). Checking it
+ * each frame and the whole every 32nd time (sig_full) costs a 32nd of
+ * hashing everything: re-hashing every texture and framebuffer each frame
+ * was a third of the device thread at the race start, which fell to 45 fps. */
+static uint64_t hash_bytes(const uint8_t *p, uint32_t n);
+static uint64_t hash_sparse(const uint8_t *p, uint32_t n) {
+    if (n <= 4096) return hash_bytes(p, n);
+    uint64_t h = 0x9E3779B97F4A7C15ull ^ n;
+    for (uint32_t k = 0; k + 64 <= n; k += 2048) h = (h ^ hash_bytes(p + k + 1024, k + 1088 <= n ? 64 : 0)) * 0x100000001B3ull ^ hash_bytes(p + k, 64);
+    return h ^ hash_bytes(p + n - 64, 64);
+}
+
 static uint64_t hash_bytes(const uint8_t *p, uint32_t n) {
     uint64_t h[4] = {0x9E3779B97F4A7C15ull ^ n, 0xC2B2AE3D27D4EB4Full, 0x165667B19E3779F9ull, 0x27D4EB2F165667C5ull};
     uint32_t k = 0;
@@ -337,12 +351,21 @@ static Texture *texture(int i) {
     uint64_t hash;
     extern uint64_t raster_t_hash, raster_hash_bytes;
     uint64_t th0 = rt_now_100ns();
-    raster_hash_bytes += size;
+    uint64_t quick_sig = 0;
     {
         const uint8_t *p = phys(base);
         uint32_t n = size;
         if (p + n > xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE) n = (uint32_t)(xb_mem + RT_PHYS_VIEW + RT_PHYS_SIZE - p);
+        uint64_t sig = hash_sparse(p, n);
+        if (hit && sig == hit->sig && ++hit->sig_checks % 32 != 0 && color != 0x0B) { /* very likely unchanged */
+            raster_t_hash += rt_now_100ns() - th0;
+            hit->gen = generation;
+            return hit;
+        }
+        raster_hash_bytes += size;
         hash = hash_bytes(p, n) ^ size;
+        if (hit) hit->sig = sig;
+        quick_sig = sig;
         if (color == 0x0B) { /* the palette is part of what the texture looks like */
             uint32_t pl = KT(SET_TEXTURE_PALETTE);
             const uint8_t *pp = phys(dma_base((pl & 1) ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + (pl & ~63u));
@@ -376,7 +399,7 @@ static Texture *texture(int i) {
     free(t->texels);
     t->texels = malloc(face_texels * 4 * faces);
     memcpy(t->key, key, sizeof key);
-    t->hash = hash, t->gen = generation;
+    t->hash = hash, t->gen = generation, t->sig = quick_sig, t->sig_checks = 0;
     t->version++;
     t->w = w, t->h = h, t->linear = linear, t->cube = cube;
     t->levels = nl, t->face_texels = face_texels;
@@ -1434,25 +1457,28 @@ static void fetch_layout(void) {
 }
 
 static void fetch(uint32_t index, Vertex *out, const uint32_t **inl) {
+    /* One loop per format (the per-component switch was a quarter of the
+     * device thread in a race): floats are a straight copy. */
     for (int i = 0; i < nfattr; i++) {
         const FetchAttr *fa = &fattr[i];
-        int a = fa->a;
-        uint32_t type = fa->type, size = fa->size;
+        uint32_t type = fa->type, size = fa->size < 4 ? fa->size : 4;
         const uint8_t *p = inl ? (const uint8_t *)*inl : phys(fa->base + index * fa->stride);
-        float v[4] = {0, 0, 0, 1};
-        uint32_t bytes = 0;
-        for (uint32_t k = 0; k < size && k < 4; k++) {
-            switch (type) {
-            case 2: v[k] = f32((uint32_t)(p[4 * k] | p[4 * k + 1] << 8 | p[4 * k + 2] << 16 | (uint32_t)p[4 * k + 3] << 24)); bytes = 4 * size; break;
-            case 0: v[k] = p[k] / 255.0f; bytes = 4; break; /* D3DCOLOR, swapped below */
-            case 4: v[k] = p[k] / 255.0f; bytes = size; break;
-            case 1: v[k] = (int16_t)(p[2 * k] | p[2 * k + 1] << 8) / 32767.0f; bytes = 2 * size; break;
-            case 5: v[k] = (float)(int16_t)(p[2 * k] | p[2 * k + 1] << 8); bytes = 2 * size; break;
-            default: bytes = 4 * size; break;
-            }
+        float *v = out->a[fa->a];
+        uint32_t bytes;
+        v[0] = v[1] = v[2] = 0, v[3] = 1;
+        switch (type) {
+        case 2: memcpy(v, p, 4 * size); bytes = 4 * fa->size; break;
+        case 0: /* D3DCOLOR: B,G,R,A in memory */
+            v[0] = p[2] / 255.0f, v[1] = p[1] / 255.0f, v[2] = p[0] / 255.0f, v[3] = p[3] / 255.0f;
+            if (size < 4) v[3] = 1;
+            if (size < 3) v[2] = 0;
+            bytes = 4;
+            break;
+        case 4: for (uint32_t k = 0; k < size; k++) v[k] = p[k] / 255.0f; bytes = fa->size; break;
+        case 1: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = t / 32767.0f; } bytes = 2 * fa->size; break;
+        case 5: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = (float)t; } bytes = 2 * fa->size; break;
+        default: bytes = 4 * fa->size; break;
         }
-        if (type == 0) { float t = v[0]; v[0] = v[2], v[2] = t; } /* B,G,R,A in memory */
-        memcpy(out->a[a], v, sizeof v);
         if (inl) *inl += (bytes + 3) / 4;
     }
 }

@@ -326,6 +326,8 @@ typedef struct {
     unsigned used;
     unsigned seq;          /* when it last drew, in gl_seq's order */
     int zgpu;              /* a shadow map sampled where it was drawn: its depth lives only on the GPU (gl_depth_stays) */
+    uint64_t csig, zsig;   /* hash_sparse of RAM at the last full comparison (gl_upload_if_changed) */
+    uint32_t sig_checks;
     int swz;               /* a swizzled surface: its colour is in Morton order in RAM (gl_to_ram, gl_from_ram) */
     int k;                 /* drawn at k times its size (XBRT_GL_SCALE); RAM sees it through the proxy below */
     GLuint pfbo, ptex, pztex; /* the proxy: the same surface at its own size, for read-backs and uploads */
@@ -535,8 +537,8 @@ static void gl_ram_written(const void *by, uint32_t base, uint32_t size) {
         GlSurf *e = &gl_surf[i];
         if (e == by || !e->fbo || e->dirty) continue;
         uint32_t c = e->cpitch * (uint32_t)e->h, z = e->ztex ? e->zpitch * (uint32_t)e->h : 0;
-        if (gl_span_hit(e->cbase, c, base, size) && gl_fits(e->cbase, e->cpitch, e->h)) e->chash = hash_bytes(phys(e->cbase), c);
-        if (z && gl_span_hit(e->zbase, z, base, size) && gl_fits(e->zbase, e->zpitch, e->h)) e->zhash = hash_bytes(phys(e->zbase), z);
+        if (gl_span_hit(e->cbase, c, base, size)) e->chash = 0; /* 0: adopt what RAM holds at the next check (gl_upload_if_changed) */
+        if (z && gl_span_hit(e->zbase, z, base, size)) e->zhash = 0;
     }
 }
 
@@ -561,7 +563,7 @@ static void gl_readback_one(GlSurf *s) {
      * screen's picture), and reading the old depth back over it turned the
      * picture into yellow stripes. The CPU's write is the newer one; the
      * framebuffer takes it from RAM before it next draws. */
-    if (s->ztex && s->zdirty && s->zhash != 1 && gl_fits(s->zbase, s->zpitch, s->h) &&
+    if (s->ztex && s->zdirty && s->zhash > 1 && gl_fits(s->zbase, s->zpitch, s->h) &&
         hash_bytes(phys(s->zbase), s->zpitch * (uint32_t)s->h) != s->zhash) {
         s->zdirty = 0, s->check = 1;
     }
@@ -664,7 +666,7 @@ static void gl_complete_first(int n) {
         const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, p->size, GL_MAP_READ_BIT);
         if (m) memcpy(phys(p->base), m, p->size);
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
-        if (!p->s->cdirty) p->s->chash = hash_bytes(phys(p->base), p->size);
+        if (!p->s->cdirty) p->s->chash = 0; /* RAM is what the GPU drew: adopted at the next check */
         gl_ram_written(p->s, p->base, p->size);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
@@ -812,8 +814,16 @@ static void gl_sync_range(uint32_t base, uint32_t size) {
 static void gl_upload_if_changed(GlSurf *s) {
     gl_complete_range(s->cbase, s->cpitch * (uint32_t)s->h); /* RAM as the GPU left it, before comparing */
     if (s->ztex) gl_complete_range(s->zbase, s->zpitch * (uint32_t)s->h);
+    /* RAM as it was at the last full comparison (sparse signature): almost
+     * always the case, and then the whole is hashed only every 32nd time. */
+    int full = s->sig_checks++ % 32 == 0;
+    uint64_t cs = gl_fits(s->cbase, s->cpitch, s->h) ? hash_sparse(phys(s->cbase), s->cpitch * (uint32_t)s->h) : 0;
+    uint64_t zs = s->ztex && gl_fits(s->zbase, s->zpitch, s->h) ? hash_sparse(phys(s->zbase), s->zpitch * (uint32_t)s->h) : 0;
+    if (!full && cs == s->csig && zs == s->zsig) return;
+    s->csig = cs, s->zsig = zs;
     if (gl_fits(s->cbase, s->cpitch, s->h)) {
         uint64_t h = hash_bytes(phys(s->cbase), s->cpitch * (uint32_t)s->h);
+        if (!s->chash) s->chash = h; /* our own read-back put it there */
         if (h != s->chash) {
             glBindTexture(GL_TEXTURE_2D, gl_up_tex(s, 0));
             glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
@@ -827,6 +837,7 @@ static void gl_upload_if_changed(GlSurf *s) {
     }
     if (s->ztex && gl_fits(s->zbase, s->zpitch, s->h)) {
         uint64_t h = hash_bytes(phys(s->zbase), s->zpitch * (uint32_t)s->h);
+        if (!s->zhash) s->zhash = h;
         if (h != s->zhash) {
             glBindTexture(GL_TEXTURE_2D, gl_up_tex(s, 1));
             glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(s->zpitch / (uint32_t)s->zbpp));
