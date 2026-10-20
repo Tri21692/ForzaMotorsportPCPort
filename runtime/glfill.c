@@ -35,8 +35,11 @@ static const char *vs_src =
     "uniform float u_zmax;\n"
     "out vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
     "out float v_fog;\n"
+    "noperspective out float v_zs;\n" /* screen z, Xbox units */
+    "out float v_w;\n"                /* w, interpolated with perspective: the w-buffer's depth */
     "void main() {\n"
     "    float w = a_pos.w != 0.0 ? 1.0 / a_pos.w : 1.0;\n"
+    "    v_zs = a_pos.z; v_w = w;\n"
     "    vec3 ndc = vec3(a_pos.x / u_size.x * 2.0 - 1.0, a_pos.y / u_size.y * 2.0 - 1.0,\n"
     "                    clamp(a_pos.z / u_zmax, 0.0, 1.0) * 2.0 - 1.0);\n"
     "    gl_Position = vec4(ndc * w, w);\n"
@@ -48,7 +51,11 @@ static const char *fs_src =
     "#version 430\n"
     "in vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
     "in float v_fog;\n"
+    "noperspective in float v_zs;\n"
+    "in float v_w;\n"
     "out vec4 o_color;\n"
+    "uniform vec4 u_zr;\n"   /* depth: units in the buffer (65535 or 16777215), clip min, clip max, w-buffer on */
+    "uniform vec3 u_zoff;\n" /* polygon offset: bias, factor, the render scale (slopes are per Xbox pixel) */
     "uniform vec3 u_fogc;\n"
     "uniform uint u_cicw[8], u_cocw[8], u_aicw[8], u_aocw[8];\n"
     "uniform vec4 u_c0[8], u_c1[8], u_fc0, u_fc1;\n"
@@ -170,6 +177,18 @@ static const char *fs_src =
     "    }\n"
     "    if (u_alpha_func != 0 && !compare(u_alpha_func - 0x200, o.a, u_alpha_ref)) discard;\n"
     "    o_color = o;\n"
+    /* The NV2A's depth, as xemu works it out: screen z, or w when the
+     * w-buffer is on (CONTROL0 Z_PERSPECTIVE), plus the polygon offset
+     * (bias, and factor times the depth slope), clamped to the clip range.
+     * Forza draws road markings, kerbs and skid marks with offsets; without
+     * them they fought the road and flickered. */
+    "    float z = u_zr.w > 0.5 ? v_w : gl_FragCoord.z * u_zr.x;\n" /* the GPU's own depth unless w-buffering: passes must match exactly */
+    "    if (u_zoff.x != 0.0 || u_zoff.y != 0.0) {\n"
+    "        float slope = max(abs(dFdx(z)), abs(dFdy(z))) * u_zoff.z;\n"
+    "        z += u_zoff.x + (isinf(slope) || isnan(slope) ? 0.0 : u_zoff.y * slope);\n"
+    "    }\n"
+    "    if (u_zr.w > 0.5 || u_zoff.x != 0.0 || u_zoff.y != 0.0) z = clamp(z, u_zr.y, u_zr.z);\n"
+    "    gl_FragDepth = isnan(z) ? gl_FragCoord.z : clamp(z / u_zr.x, 0.0, 1.0);\n"
     "}\n";
 
 #define GL_VERT 29 /* floats per vertex */
@@ -178,7 +197,7 @@ static int gl_ready = -1; /* -1 not set up, 0 failed, 1 ready */
 static GLuint gl_fs, gl_vao, gl_vbo, gl_dummy2d, gl_dummycube;
 static int gl_k = 1; /* XBRT_GL_SCALE: see gl_proxy */
 static GLint u_size, u_zmax, u_cicw, u_cocw, u_aicw, u_aocw, u_c0, u_c1, u_fc0, u_fc1, u_ctl, u_f0, u_f1;
-static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4];
+static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4], u_zr, u_zoff;
 
 /* A linked program and its uniforms' locations: the CPU path's vertex
  * shader, or one made from a vertex program (glvsh.c), each with the one
@@ -186,11 +205,11 @@ static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_fun
 static GLint *const gl_loc_var[] = {&u_size, &u_zmax, &u_cicw, &u_cocw, &u_aicw, &u_aocw, &u_c0, &u_c1, &u_fc0, &u_fc1,
                                     &u_ctl, &u_f0, &u_f1, &u_fogc, &u_mode, &u_kind, &u_scale, &u_dmax, &u_shadow_func,
                                     &u_alpha_func, &u_alpha_ref, &u_tex[0], &u_tex[1], &u_tex[2], &u_tex[3], &u_cube[0],
-                                    &u_cube[1], &u_cube[2], &u_cube[3]};
+                                    &u_cube[1], &u_cube[2], &u_cube[3], &u_zr, &u_zoff};
 static const char *const gl_loc_name[] = {"u_size", "u_zmax", "u_cicw", "u_cocw", "u_aicw", "u_aocw", "u_c0", "u_c1", "u_fc0",
                                           "u_fc1", "u_ctl", "u_f0", "u_f1", "u_fogc", "u_mode", "u_kind", "u_scale", "u_dmax",
                                           "u_shadow_func", "u_alpha_func", "u_alpha_ref", "u_tex0", "u_tex1", "u_tex2", "u_tex3",
-                                          "u_cube0", "u_cube1", "u_cube2", "u_cube3"};
+                                          "u_cube0", "u_cube1", "u_cube2", "u_cube3", "u_zr", "u_zoff"};
 #define GL_NLOC (int)(sizeof gl_loc_var / sizeof gl_loc_var[0])
 
 typedef struct {
@@ -1276,6 +1295,24 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
     float size[2] = {(float)s->w, (float)s->h};
     glUniform2fv(u_size, 1, size);
     glUniform1f(u_zmax, d->zmax);
+    {
+        uint32_t cmin = K(0x394), cmax = K(0x398); /* SET_CLIP_MIN / MAX, floats in depth units */
+        float lo, hi;
+        memcpy(&lo, &cmin, 4), memcpy(&hi, &cmax, 4);
+        if (!(hi > lo)) lo = 0, hi = d->zmax;
+        float zr[4] = {d->zmax, lo, hi, (K(0x290) & (1u << 16)) ? 1.0f : 0.0f}; /* CONTROL0 Z_PERSPECTIVE */
+        uint32_t fb = K(0x388), ff = K(0x384); /* POLYGON_OFFSET_BIAS / SCALE_FACTOR, if POLY_OFFSET_FILL_ENABLE */
+        float zoff[3] = {0, 0, 1.0f / (float)s->k};
+        if (K(0x338) & 1) memcpy(&zoff[0], &fb, 4), memcpy(&zoff[1], &ff, 4);
+        /* W-buffering only with XBRT_GL_WBUFFER=1: taking the program's w as
+         * the depth left the lower half of the cars dark (their passes
+         * failed the depth test), so its scale is not understood yet. */
+        static int wbuf = -1;
+        if (wbuf < 0) wbuf = getenv("XBRT_GL_WBUFFER") && atoi(getenv("XBRT_GL_WBUFFER"));
+        if (!wbuf) zr[3] = 0;
+        glUniform4fv(u_zr, 1, zr);
+        glUniform3fv(u_zoff, 1, zoff);
+    }
 
     /* The combiners, as combine() reads them. */
     GLuint cicw[8], cocw[8], aicw[8], aocw[8];
