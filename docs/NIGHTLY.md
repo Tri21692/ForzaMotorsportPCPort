@@ -308,6 +308,31 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   Also done: bilinear PCF for shadow compares (as the NV2A filters), the
   polygon offset's slope term per Xbox pixel (x render scale), and our own
   read-backs no longer make aliasing framebuffers re-upload RAM.
+- **2026-10-20 (interactive): loading screen, race-start audio, speed.**
+  - Loading screen was yellow stripes: Forza puts its picture (1024x512
+    DXT5) in the race's depth-buffer memory (01e98000) and our old GPU
+    depth was read back over it. A dirty depth buffer whose RAM no longer
+    hashes to what the GPU left there is now dropped (CPU wins).
+  - Race-start audio: silent 32-sample frames while DSOUND's ISR took an
+    idle voice back (the mixer stopped while trapped, and stopped the
+    rest of the frame on handing back): up to ~90 clicks/s, bimodal per run.
+    Voices now keep playing while trapped. Plus a compressor (2 ms / 250
+    ms) instead of per-sample soft clipping (the start is ~5x louder), and
+    volume ramps per frame. Clicks 3-7/s.
+  - Speed (windowed, 60 fps mode): race start 45 -> 58 fps. Sparse change
+    signatures (64 B per 2 KB) instead of full hashes of every texture and
+    framebuffer each frame (36 GB -> 1.8 GB hashed per run); lazy hashes
+    after our own read-backs; vertex fetch with one loop per format.
+  - Latency: picture collected when its copy finishes (not at the next
+    vblank), window repaints on a new picture (event, not the 16 ms timer),
+    one frame queued on the GPU (`XBRT_GL_QUEUE=2` for two): ~2 frames less.
+  - Open: the cars' rear/lower body is near black in races (same with
+    shadow maps from RAM, no shadow sync, cube map from RAM, CPU vertex
+    programs: so it is the game's lighting maths as we run it, right or
+    shared-wrong); needs a reference shot (xemu or console). Foliage
+    edges look dotted at 2x: the leaves' alpha test, would need
+    alpha-to-coverage. The hill corner's missing scenery is unseen here
+    (the throttle-only script never gets there).
   - `XBRT_RECORD=<file.mp4>` (with `XBRT_RECORD_FROM`, `XBRT_RECORD_FOR`
     seconds and `XBRT_FFMPEG`): the picture at every vertical blank piped
     into ffmpeg, H.264 at 59.94 fps, scaled 2x. `tools/input/race-fast.txt`
