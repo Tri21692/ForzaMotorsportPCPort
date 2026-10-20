@@ -89,22 +89,36 @@ static int pc_pad(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
     return 1;
 }
 
-/* Keyboard: arrows steer (D-pad and left stick), Enter START, Escape
- * BACK, Space/Z A, X B, C X, V Y, W/S throttle and brake, while the
- * game's window has focus. */
+/* Keyboard (a stopgap until remapping): arrows are the D-pad and left
+ * stick, A/D steer too, W/S throttle and brake, Enter START, Escape
+ * BACK, Space/Z A, X B, C X, V Y, Q WHITE, E BLACK, while the game's
+ * window has focus. Added to a controller's state, not instead of it.
+ * Steering eases in (full lock in 0.25 s) and back faster (0.1 s): a
+ * key's instant full lock spun the car. */
 static void keyboard(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
-    if (!rt_display_focused()) return; /* only keys meant for the game window */
+    static double steer, last;
+    double now = rt_now_100ns() / 1e7, dt = last > 0 ? now - last : 0;
+    last = now;
+    if (dt > 0.1) dt = 0.1;
+    if (!rt_display_focused()) { steer = 0; return; } /* only keys meant for the game window */
 #define DOWN(vk) ((GetAsyncKeyState(vk) & 0x8000) != 0)
     if (DOWN(VK_UP)) *buttons |= 0x1, thumbs[1] = 32767;
     if (DOWN(VK_DOWN)) *buttons |= 0x2, thumbs[1] = -32768;
-    if (DOWN(VK_LEFT)) *buttons |= 0x4, thumbs[0] = -32768;
-    if (DOWN(VK_RIGHT)) *buttons |= 0x8, thumbs[0] = 32767;
+    if (DOWN(VK_LEFT)) *buttons |= 0x4;
+    if (DOWN(VK_RIGHT)) *buttons |= 0x8;
+    int target = (DOWN(VK_RIGHT) || DOWN('D')) - (DOWN(VK_LEFT) || DOWN('A'));
+    if (target == 0 || (target > 0) != (steer > 0)) /* centring, or turning the other way */
+        steer = steer > 0 ? fmax(0, steer - 10 * dt) : fmin(0, steer + 10 * dt);
+    if (target) steer = fmax(-1, fmin(1, steer + target * 4 * dt));
+    if (steer != 0) thumbs[0] = (int16_t)(steer * 32767);
     if (DOWN(VK_RETURN)) *buttons |= 0x10;
     if (DOWN(VK_ESCAPE)) *buttons |= 0x20;
     if (DOWN(VK_SPACE) || DOWN('Z')) analog[A_A] = 255;
     if (DOWN('X')) analog[A_B] = 255;
     if (DOWN('C')) analog[A_X] = 255;
     if (DOWN('V')) analog[A_Y] = 255;
+    if (DOWN('Q')) analog[A_WHITE] = 255;
+    if (DOWN('E')) analog[A_BLACK] = 255;
     if (DOWN('W')) analog[A_RT] = 255;
     if (DOWN('S')) analog[A_LT] = 255;
 #undef DOWN
@@ -211,7 +225,8 @@ static void host_pad(uint32_t pad) {
     uint16_t buttons = 0;
     uint8_t analog[8] = {0};
     int16_t thumbs[4] = {0};
-    if (!pc_pad(&buttons, analog, thumbs)) keyboard(&buttons, analog, thumbs);
+    pc_pad(&buttons, analog, thumbs);
+    keyboard(&buttons, analog, thumbs);
     if (autopress && rt_now_100ns() % 20000000 < 2000000) { /* 0.2 s of every 2 s */
         buttons |= 0x10;
         analog[A_A] = 255;
