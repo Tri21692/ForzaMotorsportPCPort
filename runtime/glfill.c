@@ -802,6 +802,20 @@ static void gl_sync_range(uint32_t base, uint32_t size) {
     gl_complete_range(base, size);
     static int log = -1; /* XBRT_GL_SYNC_LOG=1: which texture made which framebuffer wait, every 30 s */
     if (log < 0) log = getenv("XBRT_GL_SYNC_LOG") && atoi(getenv("XBRT_GL_SYNC_LOG"));
+    /* A compressed (DXT) texture over a depth buffer's bytes is the CPU's:
+     * no game samples its depth as DXT. Forza loads its loading screen's
+     * picture into the race's depth buffer memory (01e98000); the read-
+     * back's own check (gl_readback_one) misses the case where that buffer
+     * was drawn with RAM's state unknown (after another framebuffer's
+     * read-back over it), and old depth turned the picture yellow. The
+     * depth is dropped, and RAM uploaded before it next draws. */
+    uint32_t color = (gl_sync_fmt >> 8) & 0xFF;
+    if (color >= 0x0C && color <= 0x0F)
+        for (int i = 0; i < GL_SURFS; i++) {
+            GlSurf *e = &gl_surf[i];
+            if (!e->fbo || !e->zdirty || !gl_span_hit(e->zbase, e->zpitch * (uint32_t)e->h, base, size)) continue;
+            e->zdirty = 0, e->dirty = e->cdirty, e->zhash = 1, e->check = 1; /* 1: never matches, so RAM is uploaded */
+        }
     for (int i = 0; i < GL_SURFS; i++)
         if (gl_drew(&gl_surf[i], base, size)) {
             if (!log) {
