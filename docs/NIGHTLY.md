@@ -284,6 +284,19 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     say whether that is right), taillight lenses look striped; presenting
     the picture at the higher resolution (window and recordings) needs the
     display to come from the GPU instead of RAM.
+- **2026-10-19 night: the world's lighting flickers, only at 60 fps.**
+  Most objects but the cars switch between shadowed and lit from one frame
+  to the next. Measured with a per-pixel flicker map of headless recordings
+  (pixels that jump by >18 and straight back, duplicate frames dropped):
+  ~10,800 flickering pixels with the 60 fps patch, ~330 (noise) at
+  `XBRT_FPS=30`; forcing every shadow test to pass also removed it. The
+  shadow map itself is steady (1 clear, 64 draws, ~60 samples every frame,
+  all on the GPU), so the patch evidently leaves part of the shadow/light
+  setup on the original 30 Hz rhythm: every other frame pairs a new map
+  with old matrices. Fixing that means finding and patching that game code.
+  Also done: bilinear PCF for shadow compares (as the NV2A filters), the
+  polygon offset's slope term per Xbox pixel (x render scale), and our own
+  read-backs no longer make aliasing framebuffers re-upload RAM.
   - `XBRT_RECORD=<file.mp4>` (with `XBRT_RECORD_FROM`, `XBRT_RECORD_FOR`
     seconds and `XBRT_FFMPEG`): the picture at every vertical blank piped
     into ffmpeg, H.264 at 59.94 fps, scaled 2x. `tools/input/race-fast.txt`

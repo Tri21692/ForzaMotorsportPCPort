@@ -136,10 +136,21 @@ static const char *fs_src =
     "    if (u_kind[i] == 2) return texture(cube, q.xyz);\n"
     "    if (u_kind[i] == 3 || u_kind[i] == 4) {\n" /* a shadow map: compare, as xemu does */
     "        float qw = q.w != 0.0 ? q.w : 1.0;\n"
-    "        float d = texture(t, q.xy / qw * u_scale[i]).r;\n"
-    "        if (u_kind[i] == 4) d = floor(d * u_dmax[i] + 0.5);\n" /* GL's depth is 0..1: back to the Xbox's units */
     "        float r = u_mode[i] == 2 ? clamp(q.z / qw, 0.0, u_dmax[i]) : 0.0;\n"
-    "        return vec4(compare(u_shadow_func, d, r) ? 1.0 : 0.0);\n"
+    /* Four texels compared and blended by position (bilinear percentage-
+     * closer filtering), as the NV2A does with a linear filter: one
+     * nearest texel made shadow edges crawl as the camera moved. (The
+     * buildings and signs flickering in the race are the 60 fps patch's:
+     * at XBRT_FPS=30 they do not.) */
+    "        vec2 sz = vec2(textureSize(t, 0));\n"
+    "        vec2 uv = q.xy / qw * u_scale[i] * sz - 0.5, f = fract(uv), base = (floor(uv) + 0.5) / sz;\n"
+    "        float c[4];\n"
+    "        for (int k = 0; k < 4; k++) {\n"
+    "            float d = texture(t, base + vec2(k & 1, k >> 1) / sz).r;\n"
+    "            if (u_kind[i] == 4) d = floor(d * u_dmax[i] + 0.5);\n" /* GL's depth is 0..1: back to the Xbox's units */
+    "            c[k] = compare(u_shadow_func, d, r) ? 1.0 : 0.0;\n"
+    "        }\n"
+    "        return vec4(mix(mix(c[0], c[1], f.x), mix(c[2], c[3], f.x), f.y));\n"
     "    }\n"
     "    vec2 st = q.w != 0.0 && q.w != 1.0 ? q.xy / q.w : q.xy;\n"
     "    return texture(t, st * u_scale[i]);\n"
@@ -1320,7 +1331,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         if (!(hi > lo)) lo = 0, hi = d->zmax;
         float zr[4] = {d->zmax, lo, hi, (K(0x290) & (1u << 16)) ? 1.0f : 0.0f}; /* CONTROL0 Z_PERSPECTIVE */
         uint32_t fb = K(0x388), ff = K(0x384); /* POLYGON_OFFSET_BIAS / SCALE_FACTOR, if POLY_OFFSET_FILL_ENABLE */
-        float zoff[3] = {0, 0, 1.0f / (float)s->k};
+        float zoff[3] = {0, 0, (float)s->k}; /* slopes per Xbox pixel: k GL pixels each */
         if (K(0x338) & 1) memcpy(&zoff[0], &fb, 4), memcpy(&zoff[1], &ff, 4);
         /* W-buffering only with XBRT_GL_WBUFFER=1: taking the program's w as
          * the depth left the lower half of the cars dark (their passes
