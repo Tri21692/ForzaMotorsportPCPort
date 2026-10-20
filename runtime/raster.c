@@ -810,14 +810,18 @@ static float map_out(float x, uint32_t m) {
     return fminf(fmaxf(x, -1), 1);
 }
 
-static void stage(Comb *cb, uint32_t icw, uint32_t ocw, int alpha, int mux_msb) {
+/* One half (RGB or alpha) of a general combiner stage. Both halves read
+ * the registers as they were before the stage (in) and write cb: the
+ * alpha half reading what the RGB half just wrote took the car paint's
+ * unshadowed light (0.7 x T2.b) from a dot product instead. */
+static void stage(const Comb *in, Comb *cb, uint32_t icw, uint32_t ocw, int alpha, int mux_msb) {
     int n = alpha ? 1 : 3;
     float a[3], b[3], c[3], d[3], ab[3], cd[3], ms[3];
-    input(cb, icw >> 24 & 255, alpha, a), input(cb, icw >> 16 & 255, alpha, b);
-    input(cb, icw >> 8 & 255, alpha, c), input(cb, icw & 255, alpha, d);
+    input(in, icw >> 24 & 255, alpha, a), input(in, icw >> 16 & 255, alpha, b);
+    input(in, icw >> 8 & 255, alpha, c), input(in, icw & 255, alpha, d);
     uint32_t flags = ocw >> 12, m = flags & 0x38;
     float abd = a[0] * b[0] + (alpha ? 0 : a[1] * b[1] + a[2] * b[2]), cdd = c[0] * d[0] + (alpha ? 0 : c[1] * d[1] + c[2] * d[2]);
-    float r0a = cb->r[12][3];
+    float r0a = in->r[12][3];
     int sel = mux_msb ? r0a >= 0.5f : ((int)(r0a * 255) & 1);
     for (int k = 0; k < n; k++) {
         float x = !alpha && (flags & 2) ? abd : a[k] * b[k], y = !alpha && (flags & 1) ? cdd : c[k] * d[k];
@@ -878,8 +882,9 @@ static void combine(const float v0[4], const float v1[4], const float tv[4][4], 
     for (int i = 0; i < stages; i++) {
         argb(K(SET_COMBINER_FACTOR0 + 4 * ((ctl & 0x1000) ? i : 0)), cb.r[1]);
         argb(K(SET_COMBINER_FACTOR1 + 4 * ((ctl & 0x10000) ? i : 0)), cb.r[2]);
-        stage(&cb, K(SET_COMBINER_COLOR_ICW + 4 * i), K(SET_COMBINER_COLOR_OCW + 4 * i), 0, mux_msb);
-        stage(&cb, K(SET_COMBINER_ALPHA_ICW + 4 * i), K(SET_COMBINER_ALPHA_OCW + 4 * i), 1, mux_msb);
+        Comb in = cb;
+        stage(&in, &cb, K(SET_COMBINER_COLOR_ICW + 4 * i), K(SET_COMBINER_COLOR_OCW + 4 * i), 0, mux_msb);
+        stage(&in, &cb, K(SET_COMBINER_ALPHA_ICW + 4 * i), K(SET_COMBINER_ALPHA_OCW + 4 * i), 1, mux_msb);
     }
     uint32_t f0 = K(SET_COMBINER_SPECULAR_FOG_CW0), f1 = K(SET_COMBINER_SPECULAR_FOG_CW1);
     if (!f0 && !f1) { /* no final combiner: R0 */

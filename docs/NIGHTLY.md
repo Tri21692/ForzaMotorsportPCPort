@@ -371,6 +371,16 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     what is drawn into that 256x256 target (its format: X8R8G8B8 alpha?
     is it written at all, or read before it is drawn?) and what the car's
     T2 coordinates are.
+    **Fixed (and the above corrected):** T2 is fine: dumped on every
+    frame it is all white (A8R8G8B8 256x256 at 02a..-02b..). The debug
+    view read R[10] after the stages had run, and stage 1's RGB half
+    writes R[10] (a dot product). That was the bug itself: both halves of
+    a combiner stage read the registers as they were before the stage,
+    but ours ran RGB first and the alpha half read what it had just
+    written, so `r0.a = 0.70 * T2.b` took the dot product (~0 on the rear
+    and lower body). Both the shader and the CPU combine() now read a
+    copy taken before each stage. The cars keep their paint in the sun's
+    shadow, as on the console.
     Found on the way, both kept: CMP packed normals (vertex type
     6, attribute 2) were read as zeros; face culling (SET_CULL_FACE_ENABLE
     etc.) was never applied on the GPU path (winding swapped for our y).
