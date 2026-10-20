@@ -605,6 +605,7 @@ static void *device_main(void *arg) {
             REG(PCRTC_INTR_0) |= 1;
             update_irq();
         }
+        nv2a_raster_poll();
         if (REG(PFIFO_CACHE1_DMA_GET) != REG(PFIFO_CACHE1_DMA_PUT)) {
             pthread_mutex_unlock(&lock);
             uint64_t t0 = rt_now_100ns();

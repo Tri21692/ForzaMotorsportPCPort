@@ -223,6 +223,7 @@ void rt_display_compose(uint32_t *out); /* 640x480 xRGB, as the TV would show it
 #define RT_DISPLAY_MAX (640 * 4 * 480 * 4)
 void rt_display_compose_best(uint32_t *out, int *w, int *h); /* at the drawn resolution when the GPU has it (up to RT_DISPLAY_MAX pixels) */
 int rt_gl_frame(uint32_t fb, uint32_t *out, int max_pixels, int *w, int *h);
+void rt_display_new_frame(void); /* a new drawn-resolution picture: the window shows it now */
 int rt_display_focused(void);           /* the game's window has the keyboard */
 
 /* ---- the audio processor (apu.c) ---- */

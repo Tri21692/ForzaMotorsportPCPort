@@ -153,6 +153,7 @@ static int gl_rt_depth = -1;        /* sample shadow maps from their framebuffer
 static int batch_writes(uint32_t base, uint32_t size); /* would the pending batch draw into these bytes? */
 static void gl_sync_range(uint32_t base, uint32_t size);
 static void gl_present_vblank(uint32_t fb);
+static void gl_present_poll(int wait);
 static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int h, int cube);
 static uint32_t gl_sync_fmt; /* the texture format behind a gl_sync_range, for XBRT_GL_SYNC_LOG */
 static void gl_sync_cpu(void);
@@ -1332,6 +1333,10 @@ void nv2a_raster_vblank(void) {
 
 void nv2a_raster_present(uint32_t fb) {
     if (rt_gl_on) gl_present_vblank(fb);
+}
+
+void nv2a_raster_poll(void) {
+    if (rt_gl_on) gl_present_poll(0);
 }
 
 #define SET_COLOR_CLEAR_VALUE 0x1D90

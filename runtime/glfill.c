@@ -431,9 +431,19 @@ static GLuint hi_pbo;
 static int hi_pend, hi_pw, hi_ph;
 static uint32_t hi_pfb;
 
-static void gl_present_vblank(uint32_t fb) {
-    if (gl_ready <= 0) return;
-    if (hi_pend) {
+static GLsync hi_sync;
+
+/* The copy started at the last vertical blank, as soon as the GPU has
+ * finished it (polled from the device loop): waiting for the next blank
+ * to collect it put another 16 ms between the game and the screen. */
+static void gl_present_poll(int wait) {
+    if (!hi_pend) return;
+    if (hi_sync) {
+        GLenum r = glClientWaitSync(hi_sync, GL_SYNC_FLUSH_COMMANDS_BIT, wait ? 100000000ull : 0);
+        if (r == GL_TIMEOUT_EXPIRED) return;
+        glDeleteSync(hi_sync), hi_sync = 0;
+    }
+    {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, hi_pbo);
         const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)hi_pw * hi_ph * 4, GL_MAP_READ_BIT);
         if (m) {
@@ -446,7 +456,13 @@ static void gl_present_vblank(uint32_t fb) {
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         hi_pend = 0;
+        if (m) rt_display_new_frame();
     }
+}
+
+static void gl_present_vblank(uint32_t fb) {
+    if (gl_ready <= 0) return;
+    gl_present_poll(1);
     fb &= RT_PHYS_SIZE - 1;
     GlSurf *s = NULL;
     for (int i = 0; i < GL_SURFS; i++) {
@@ -479,6 +495,7 @@ static void gl_present_vblank(uint32_t fb) {
     glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+    hi_sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0); /* polled with GL_SYNC_FLUSH_COMMANDS_BIT */
     hi_pend = 1, hi_pw = w, hi_ph = h, hi_pfb = fb;
 }
 
@@ -765,12 +782,16 @@ static void gl_flip(void) {
     for (int i = 0; i < GL_SURFS; i++)
         if (!gl_surf[i].dirty) gl_surf[i].check = 1;
     if (gl_ready <= 0) return;
+    /* XBRT_GL_QUEUE=<1|2> frames may be queued on the GPU (default 1): each
+     * one queued is a frame between the controller and the screen. */
+    static int depth = 0;
+    if (!depth) depth = getenv("XBRT_GL_QUEUE") && atoi(getenv("XBRT_GL_QUEUE")) == 2 ? 2 : 1;
     if (fence[next]) {
         glClientWaitSync(fence[next], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
         glDeleteSync(fence[next]);
     }
     fence[next] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    next = (next + 1) % 2;
+    next = (next + 1) % depth;
 }
 
 /* RAM up to date in these bytes: the framebuffers that drew into them are

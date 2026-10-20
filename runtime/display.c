@@ -151,6 +151,11 @@ static void maybe_screenshot(const uint32_t *px, int w, int h) {
 #include <windows.h>
 
 static HWND window;
+static HANDLE new_frame; /* set by rt_display_new_frame */
+
+void rt_display_new_frame(void) {
+    if (new_frame) SetEvent(new_frame);
+}
 static uint32_t frame[RT_DISPLAY_MAX];
 static int frame_w = DISP_W, frame_h = DISP_H;
 
@@ -183,6 +188,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 static DWORD WINAPI window_main(LPVOID arg) {
     (void)arg;
+    new_frame = CreateEventA(NULL, FALSE, FALSE, NULL);
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
@@ -193,11 +199,16 @@ static DWORD WINAPI window_main(LPVOID arg) {
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     window = CreateWindowA("ForzaPC", "Forza Motorsport (PC port, work in progress)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                            CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
-    SetTimer(window, 1, 16, NULL);
-    MSG m;
-    while (GetMessageA(&m, NULL, 0, 0) > 0) {
-        TranslateMessage(&m);
-        DispatchMessageA(&m);
+    SetTimer(window, 1, 16, NULL); /* the picture from RAM (menus' 1x frames, movies) */
+    for (;;) { /* and a new GPU picture as soon as it arrives */
+        DWORD r = MsgWaitForMultipleObjects(1, &new_frame, FALSE, INFINITE, QS_ALLINPUT);
+        if (r == WAIT_OBJECT_0) SendMessageA(window, WM_TIMER, 1, 0), UpdateWindow(window);
+        MSG m;
+        while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) {
+            if (m.message == WM_QUIT) return 0;
+            TranslateMessage(&m);
+            DispatchMessageA(&m);
+        }
     }
     return 0;
 }
@@ -205,6 +216,7 @@ static DWORD WINAPI window_main(LPVOID arg) {
 int rt_display_focused(void) { return window && GetForegroundWindow() == window; }
 #else
 int rt_display_focused(void) { return 1; }
+void rt_display_new_frame(void) {}
 #endif
 
 /* Without a window, screenshots come from a thread of their own. */
