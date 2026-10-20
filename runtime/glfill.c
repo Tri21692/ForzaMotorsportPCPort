@@ -1451,7 +1451,21 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         glDisable(GL_DEPTH_TEST);
     }
     glColorMask((d->wm & 0x00FF0000u) != 0, (d->wm & 0x0000FF00u) != 0, (d->wm & 0x000000FFu) != 0, (d->wm & 0xFF000000u) != 0);
-    glDisable(GL_CULL_FACE);
+    /* Face culling, as the game sets it (SET_CULL_FACE_ENABLE, SET_CULL_FACE,
+     * SET_FRONT_FACE; GL's own values). Our y runs down the screen where
+     * GL's NDC runs up, which mirrors the winding: CW and CCW swap (unswapped
+     * the scene lost most of its faces). XBRT_GL_CULL=0 turns it off. */
+    static int cull = -1;
+    if (cull < 0) cull = getenv("XBRT_GL_CULL") ? atoi(getenv("XBRT_GL_CULL")) : 1;
+    if (cull && K(0x308) && (K(0x39C) == GL_FRONT || K(0x39C) == GL_BACK || K(0x39C) == GL_FRONT_AND_BACK)) {
+        glEnable(GL_CULL_FACE);
+        glCullFace((GLenum)K(0x39C));
+        GLenum ff = K(0x3A0) == GL_CW ? GL_CW : GL_CCW;
+        if (cull == 1) ff = ff == GL_CW ? GL_CCW : GL_CW;
+        glFrontFace(ff);
+    } else {
+        glDisable(GL_CULL_FACE);
+    }
     glEnable(GL_SCISSOR_TEST);
     glScissor(d->cx0 * s->k, d->cy0 * s->k, d->cw * s->k, d->ch * s->k);
 }

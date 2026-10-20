@@ -1482,6 +1482,15 @@ static void fetch(uint32_t index, Vertex *out, const uint32_t **inl) {
         case 4: for (uint32_t k = 0; k < size; k++) v[k] = p[k] / 255.0f; bytes = fa->size; break;
         case 1: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = t / 32767.0f; } bytes = 2 * fa->size; break;
         case 5: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = (float)t; } bytes = 2 * fa->size; break;
+        case 6: { /* CMP: a normal packed in 32 bits, signed x:11 y:11 z:10 (Forza's normals, attribute 2; read as zeros before) */
+            uint32_t w;
+            memcpy(&w, p, 4);
+            v[0] = (float)((int32_t)(w << 21) >> 21) / 1023.0f;
+            v[1] = (float)((int32_t)(w << 10) >> 21) / 1023.0f;
+            v[2] = (float)((int32_t)w >> 22) / 511.0f;
+            bytes = 4 * fa->size;
+            break;
+        }
         default: bytes = 4 * fa->size; break;
         }
         if (inl) *inl += (bytes + 3) / 4;

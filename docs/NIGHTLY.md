@@ -326,7 +326,21 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   - Latency: picture collected when its copy finishes (not at the next
     vblank), window repaints on a new picture (event, not the 16 ms timer),
     one frame queued on the GPU (`XBRT_GL_QUEUE=2` for two): ~2 frames less.
-  - Open: the cars' rear/lower body is near black in races (same with
+  - **Cars' dark rear/lower body: a confirmed bug** (the user's reference
+    shot of the same start shows the rear lit). Narrowed down with a debug
+    view of the car paint's inputs: diffuse vertex colour is lit, texture
+    stage 0 (the car atlas) is right, **texture stage 1 is black over the
+    lower body**: it is a shadow-map lookup (format 2E, mode 2 = project3d
+    compare, SHADOW_DEPTH_FUNC GREATER), and the car fails it on its own
+    body. Our compare matches xemu's (map depth > fragment's z/w). Ruled
+    out: shadow maps through RAM, shadow-matrix sync, cube maps, CPU vertex
+    programs, culling. Next: which map the car samples (512 or 768) and
+    whether its own draws into that map (depth, polygon offset) or the
+    receiver's q.z (c90.w bias term differs between casters and receivers)
+    are off. Found on the way, both kept: CMP packed normals (vertex type
+    6, attribute 2) were read as zeros; face culling (SET_CULL_FACE_ENABLE
+    etc.) was never applied on the GPU path (winding swapped for our y).
+  - Was: the cars' rear/lower body is near black in races (same with
     shadow maps from RAM, no shadow sync, cube map from RAM, CPU vertex
     programs: so it is the game's lighting maths as we run it, right or
     shared-wrong); needs a reference shot (xemu or console). Foliage
