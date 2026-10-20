@@ -764,11 +764,22 @@ static void gl_depth_stays(GlSurf *s) {
 }
 
 /* The colour drawn over these bytes on its way to RAM (the shown buffers). */
+/* When frames come seconds apart (a loading screen), the read-back lands
+ * at once instead of at the next vertical blank: there is no frame rate to
+ * keep, and Forza's loading thread draws its turbo icon on the CPU into
+ * the shown buffer, blending it over the picture in RAM. When it got there
+ * before the read-back, it blended over black and kept redrawing the icon
+ * in a black square. */
 static void gl_sync_color_async(uint32_t base, uint32_t size) {
+    static uint64_t last;
+    uint64_t now = rt_now_100ns();
+    int slow = now - last > 1000000; /* 100 ms since the last frame */
+    last = now;
     for (int i = 0; i < GL_SURFS; i++) {
         GlSurf *e = &gl_surf[i];
         if (e->fbo && e->cdirty && gl_span_hit(e->cbase, e->cpitch * (uint32_t)e->h, base, size)) gl_readback_color_async(e);
     }
+    if (slow) gl_complete_range(base, size);
 }
 
 /* A flip. The framebuffers stay on the GPU: the display gets its buffers
