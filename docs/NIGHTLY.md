@@ -329,11 +329,40 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     shadows, and flickmap2-style counts (pixels that go up then straight
     back down). Then dump each frame's shadow-map draws and receivers'
     texture/zaddr/c92-95 over a few frames, as for the first shadow sync.
-  - **Open: frame drop at the start of the race** (user). Not looked at
-    yet. Suspect: vertex programs compiled to GLSL the first time each is
-    seen (gl_vsh_get) as the race's scenery appears. Check by timing the
-    compiles; if so, cache them (glProgramBinary to disk, or compile the
-    programs seen on earlier runs at start-up).
+    **Later the same day, still open; what was learned:**
+    - The "shadows off removes it" result above is not sound. The pop count
+      (pixels that jump by >20 for one frame and come back within 6;
+      scratch pops.py) swings 4-8x between identical runs (7.5 to 57 per
+      frame) because the car takes a different line. Three runs at once
+      also slow each other and hide it (0 pops), so record one at a time.
+      Shadows off gave 52 vs 57 run alone, so not the shadows.
+    - Not the cause, each measured: frames presented out of order (never),
+      the display falling back to RAM (never, headless or windowed),
+      colour/depth uploads from RAM over the GPU's frames (only at the race
+      start), the speed blur's previous-frame input (steady; skipping
+      those 26 draws/frame: 13.6/7.5 vs 25.3/9.2 pops, no change), the
+      160x120 glow buffer (always from the GPU, steady).
+    - Shadow receivers: every frame they sample the GPU map with its own
+      rows (shadow sync works). Rows 90-95 still toggle A/B/A every frame
+      (1.823/0.998), in draws that sample no shadow map, so probably
+      unused there. Toggle analysis: dump c[192] per vertex-program draw
+      for 12 frames (cdump.bin, scratch toggle.py/toggle2.py).
+    - Looking at frames of the user's clip: lighting is steady frame to
+      frame; what pops is thin detail (window bars, railings, crowd)
+      shimmering as the camera moves. Need from the user: a phone clip
+      or exactly where/what flickers, to know whether that shimmer is it.
+  - **Frame drop at the start of the race:** first race of a session: 33
+    vertex programs built at once, one 239 ms frame (~106 ms of it the
+    builds; the NVIDIA driver caches them on disk, so later runs mostly
+    skip it). In the race's first seconds, with the cars together, the
+    frame rate falls from ~59 to ~39-50 fps with 40-64 ms frames, while
+    the device thread is mostly idle (pusher 1.5 s of 5 s against 4.2 s
+    at a smooth 59 fps). Stack samples: the game's threads wait in
+    NtWaitForSingleObjectEx (ordinal 234, handle 688, from f_00264D8F <-
+    f_00264EA5 <- f_0042D94E), i.e. on something we signal late. A wait
+    log found no long waits there, but that run may not have reached the
+    race: redo it (XBRT_FRAMELOG-style timestamps with the waits) and
+    find what sets that handle.
   - `clips/forza-progress-2026-10-20*.mp4` (ignored): the build at this
     point; `run/race-rec.txt` reaches the race without the pause menu.
 - **2026-10-20 (interactive): loading screen, race-start audio, speed.**
