@@ -334,6 +334,7 @@ static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size);
 static int gl_aliases(const GlSurf *a, const GlSurf *b);
 static int gl_span_hit(uint32_t a, uint32_t an, uint32_t b, uint32_t bn);
 static void gl_complete(void);
+static void gl_ram_written(const void *by, uint32_t base, uint32_t size);
 static void gl_complete_range(uint32_t base, uint32_t size);
 
 /* ---- drawing at a higher resolution (XBRT_GL_SCALE=<k>, default 2) ----
@@ -510,6 +511,24 @@ static void gl_from_ram(GlSurf *s) {
     free(tmp);
 }
 
+/* Our own read-back wrote these bytes of RAM. Other framebuffers over them
+ * that have not drawn since take the hash of what RAM holds now, instead of
+ * being marked to compare and upload it: RAM is what the GPU drew (at 1x),
+ * and the newer framebuffer reaches them on the GPU, at full resolution,
+ * when they next draw (gl_take_newer). Uploading it was flicker: the
+ * shown buffers' read-backs reloaded the other framebuffers over the same
+ * buffer with the older, softer picture, and Forza's glow and speed blur,
+ * which feed on the previous frame, built up and dropped back over and over. */
+static void gl_ram_written(const void *by, uint32_t base, uint32_t size) {
+    for (int i = 0; i < GL_SURFS; i++) {
+        GlSurf *e = &gl_surf[i];
+        if (e == by || !e->fbo || e->dirty) continue;
+        uint32_t c = e->cpitch * (uint32_t)e->h, z = e->ztex ? e->zpitch * (uint32_t)e->h : 0;
+        if (gl_span_hit(e->cbase, c, base, size) && gl_fits(e->cbase, e->cpitch, e->h)) e->chash = hash_bytes(phys(e->cbase), c);
+        if (z && gl_span_hit(e->zbase, z, base, size) && gl_fits(e->zbase, e->zpitch, e->h)) e->zhash = hash_bytes(phys(e->zbase), z);
+    }
+}
+
 static void gl_readback_one(GlSurf *s) {
     gl_complete_range(s->cbase, s->cpitch * (uint32_t)s->h); /* older colour on its way must not land over this */
     if (s->ztex) gl_complete_range(s->zbase, s->zpitch * (uint32_t)s->h);
@@ -552,8 +571,8 @@ static void gl_readback(GlSurf *s) {
         gl_readback(older);
     }
     gl_readback_one(s);
-    for (int i = 0; i < GL_SURFS; i++)
-        if (&gl_surf[i] != s && gl_surf[i].fbo && !gl_surf[i].dirty && gl_aliases(&gl_surf[i], s)) gl_surf[i].check = 1;
+    gl_ram_written(s, s->cbase, s->cpitch * (uint32_t)s->h);
+    if (s->ztex) gl_ram_written(s, s->zbase, s->zpitch * (uint32_t)s->h);
 }
 
 static int gl_overlaps(const GlSurf *s, uint32_t base, uint32_t size) {
@@ -625,6 +644,7 @@ static void gl_complete_first(int n) {
         if (m) memcpy(phys(p->base), m, p->size);
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         if (!p->s->cdirty) p->s->chash = hash_bytes(phys(p->base), p->size);
+        gl_ram_written(p->s, p->base, p->size);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     for (int i = n; i < gl_npend; i++) { /* the rest move up, keeping their buffers apart */
@@ -682,8 +702,6 @@ static void gl_readback_color_async(GlSurf *s) {
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     s->cdirty = 0;
     s->dirty = s->zdirty;
-    for (int i = 0; i < GL_SURFS; i++)
-        if (&gl_surf[i] != s && gl_surf[i].fbo && !gl_surf[i].dirty && gl_aliases(&gl_surf[i], s)) gl_surf[i].check = 1;
 }
 
 /* A shadow map sampled on the GPU, where it was drawn, never goes to RAM:
