@@ -555,6 +555,16 @@ static void gl_readback_one(GlSurf *s) {
     /* Depth only when something wrote it: Forza's 2D passes keep the depth
      * mask on with no depth buffer (zeta offset 0), which made a 1.2 MB
      * "depth buffer" at physical address 0 that was read back over RAM. */
+    /* Unless the CPU wrote those bytes since they were last in step (RAM no
+     * longer hashes to what the GPU left or saw there): the game reuses its
+     * depth buffer's memory for other data between races (the loading
+     * screen's picture), and reading the old depth back over it turned the
+     * picture into yellow stripes. The CPU's write is the newer one; the
+     * framebuffer takes it from RAM before it next draws. */
+    if (s->ztex && s->zdirty && s->zhash != 1 && gl_fits(s->zbase, s->zpitch, s->h) &&
+        hash_bytes(phys(s->zbase), s->zpitch * (uint32_t)s->h) != s->zhash) {
+        s->zdirty = 0, s->check = 1;
+    }
     if (s->ztex && s->zdirty && gl_fits(s->zbase, s->zpitch, s->h)) {
         glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->zpitch / (uint32_t)s->zbpp));
         if (s->zbpp == 4) glReadPixels(0, 0, s->w, s->h, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, phys(s->zbase));
