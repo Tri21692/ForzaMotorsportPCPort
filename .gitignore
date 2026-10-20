@@ -20,3 +20,6 @@ __pycache__/
 # Recorded gameplay (game content): never pushed
 clips/
 *.mp4
+
+# The local launcher (has this PC's disc path)
+/Play Forza*.bat
