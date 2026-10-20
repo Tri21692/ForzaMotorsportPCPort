@@ -358,6 +358,19 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     since: the casters' polygon offset (off, bias only, factor only,
     negated: no change). Also added: texture address mode 4 (border, with
     SET_TEXTURE_BORDER_COLOR), which the shadow lookups use.
+    **Then: the combiners.** The car paint (8 stages; T0 a 3D texture,
+    T1 the shadow map, T2 2D, T3 a cube map) does, in alpha:
+    `v1.a *= T2.a`, then `v1.a *= T1.b` (the shadow) and
+    `r0.a = 0.70 * T2.b`; then rgb `v0 = v0 * (v1.a + r0.a)`. So the
+    shadow only removes the v1.a term; `0.70 * T2.b` should stay. A debug
+    view (rgb = T2.b, T2.a, shadow) shows T2's blue and alpha are ~0 over
+    the whole car except the tail-lights, while v0 is fine (white): that
+    is why shadowed paint is black, not the shadow. T2 is not a texture
+    from RAM: it is a 256x256 framebuffer the game draws itself each
+    frame (`surface` 1, sampled on the GPU, address wrap). Next: find
+    what is drawn into that 256x256 target (its format: X8R8G8B8 alpha?
+    is it written at all, or read before it is drawn?) and what the car's
+    T2 coordinates are.
     Found on the way, both kept: CMP packed normals (vertex type
     6, attribute 2) were read as zeros; face culling (SET_CULL_FACE_ENABLE
     etc.) was never applied on the GPU path (winding swapped for our y).
