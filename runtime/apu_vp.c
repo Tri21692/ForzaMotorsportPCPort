@@ -151,6 +151,8 @@ typedef struct {
     int adpcm_block;
     int16_t adpcm[65 * 2];
     float low[2], band[2]; /* the low-pass filter's state, per channel */
+    float gain[8];       /* the gain each output had at the end of the last frame */
+    int gain_set;        /* gain[] holds something: a new voice starts at its targets */
 } VoiceHost;
 static VoiceHost host[MAX_VOICES];
 
@@ -609,29 +611,41 @@ static void voice_process(unsigned v, float mix[BINS][FRAME]) {
     uint32_t vol[8] = {(va >> 4) & 0xFFF, va >> 20, (vbv >> 4) & 0xFFF, vbv >> 20, (vc >> 4) & 0xFFF, vc >> 20,
                        (vc & 0xF) << 8 | (vbv & 0xF) << 4 | (va & 0xF), ((vc >> 16) & 0xF) << 8 | ((vbv >> 16) & 0xF) << 4 | ((va >> 16) & 0xF)};
     int ch = (fmt & FMT_STEREO) ? 2 : 1;
+    /* The volumes and the envelope are targets: each output glides from the
+     * gain it had to the new one across the frame. Jumping once a frame
+     * (the game moves engine volumes all the time) clicked ~90 times a
+     * second at the race start, a gritty, harsh sound. */
+    VoiceHost *hv = &host[v];
     for (int b = 0; b < 8; b++) {
         float g = ea * attenuate(vol[b]);
-        if (g == 0) continue;
         int hr = (v < MAX_3D_VOICES && b < 4) ? hrtf_headroom : submix_headroom[bin[b]];
         g /= (float)(1 << hr);
-        for (int i = 0; i < FRAME; i++) mix[bin[b]][i] += g * s[i][b % ch];
+        float g0 = hv->gain_set ? hv->gain[b] : g;
+        hv->gain[b] = g;
+        if (g == 0 && g0 == 0) continue;
+        float dg = (g - g0) / FRAME;
+        for (int i = 0; i < FRAME; i++) mix[bin[b]][i] += (g0 + dg * (float)(i + 1)) * s[i][b % ch];
     }
+    hv->gain_set = 1;
 }
 
 /* One frame: 32 stereo samples into out. Returns 0, with silence, while
- * the setup engine is off or the APU is not set up yet, and -1 while the
- * front end is trapped or halted (DSOUND's ISR is taking an idle voice
- * back): then the caller waits for it rather than skipping the frame. */
+ * the setup engine is off or the APU is not set up yet. */
 int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
     static float mix[BINS][FRAME];
     memset(out, 0, sizeof(float) * FRAME * 2);
     pthread_mutex_lock(&vp_lock);
-    if (!(REG(NV_PAPU_SECTL) & SECTL_XCNTMODE) || (REG(NV_PAPU_FECTL) & FECTL_FEMETHMODE) || !REG(NV_PAPU_VPVADDR)) {
-        int trapped = (REG(NV_PAPU_FECTL) & FECTL_FEMETHMODE) != 0;
+    if (!(REG(NV_PAPU_SECTL) & SECTL_XCNTMODE) || !REG(NV_PAPU_VPVADDR)) {
         *raise_irq = irq_pending, irq_pending = 0;
         pthread_mutex_unlock(&vp_lock);
-        return trapped ? -1 : 0;
+        return 0;
     }
+    /* While the front end is trapped (DSOUND's ISR is taking an idle voice
+     * back) or halted, the voices still play; only the next hand-back
+     * waits. Stopping the mix instead left silent 32-sample gaps whenever
+     * the ISR was slow, and handing back stopped the rest of that frame:
+     * the clicks and the harsh, gritty race start. */
+    int trapped = (REG(NV_PAPU_FECTL) & FECTL_FEMETHMODE) != 0;
     memset(mix, 0, sizeof mix);
     for (int list = 0; list < 3; list++) {
         uint32_t v = REG(list_top[list]) & 0xFFFF;
@@ -639,12 +653,12 @@ int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
             if (v >= MAX_VOICES) break;
             uint32_t next = vget(v, V_TAR_PITCH_LINK) & 0xFFFF;
             if (!(vget(v, V_PAR_STATE) & STATE_ACTIVE)) {
-                if (REG(NV_PAPU_FETFORCE1) & FETFORCE1_SE2FE_IDLE_VOICE) { /* hand it back: DSOUND unlinks it in its ISR */
+                if (!trapped && (REG(NV_PAPU_FETFORCE1) & FETFORCE1_SE2FE_IDLE_VOICE)) { /* hand it back: DSOUND unlinks it in its ISR */
                     REG(NV_PAPU_FEDECMETH) = SE2FE_IDLE_VOICE, REG(NV_PAPU_FEDECPARAM) = v;
                     REG(NV_PAPU_FECTL) = (REG(NV_PAPU_FECTL) & ~(FECTL_FEMETHMODE | FECTL_FETRAPREASON)) | FECTL_TRAPPED | FECTL_REQUESTED;
                     REG(NV_PAPU_ISTS) |= ISTS_FETINTSTS;
                     irq_pending = 1;
-                    goto done; /* one at a time: the next frames wait until the ISR lets the front end run */
+                    trapped = 1; /* one at a time */
                 }
             } else if (!(locked[v / 64] & (1ull << (v % 64)))) {
                 voice_process(v, mix);
@@ -652,7 +666,6 @@ int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
             v = next;
         }
     }
-done:
     for (int i = 0; i < FRAME; i++) {
         /* Speakers: front left/right, centre, rear left/right; then the 3D
          * sound DSOUND routes through the GP DSP's crosstalk program (bins

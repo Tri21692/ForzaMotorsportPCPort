@@ -149,28 +149,27 @@ static FILE *dump; /* XBRT_AUDIO_DUMP=<file>: the output as raw 48 kHz 16-bit st
 static void make(int16_t *pcm) {
     for (int f = 0; f < OUT_FRAMES; f++) {
         float s[32][2];
-        /* While DSOUND takes an idle voice back (a front-end trap, IRQ 5)
-         * the frame waits, up to 20 ms: making silence instead lost a frame
-         * of every voice each time, and a race ends short sounds by the
-         * dozen, which stuttered and slowed the music. */
-        int r;
-        for (int tries = 0;; tries++) {
-            int irq = 0;
-            r = rt_vp_frame(s, &irq);
-            if (irq) apu_irq();
-            if (r != -1 || tries >= 200) break;
-            struct timespec ts = {0, 100000};
-            nanosleep(&ts, NULL);
-        }
-        if (r == 1) frames++;
-        for (int i = 0; i < 32; i++)
+        int irq = 0;
+        if (rt_vp_frame(s, &irq)) frames++;
+        if (irq) apu_irq();
+        /* A compressor on the whole mix: when the level goes over 0.5 the gain
+         * comes down within ~2 ms and recovers over ~250 ms, the same for both
+         * channels, so the waveform keeps its shape. At the race start, with
+         * every engine revving at once, the mix is ~5x the usual level; the
+         * per-sample soft clipping used before distorted it into a harsh
+         * rasp. The soft clip stays only as a last guard. */
+        static float env = 0;
+        for (int i = 0; i < 32; i++) {
+            float l = s[i][0] * volume, r = s[i][1] * volume, pk = fmaxf(fabsf(l), fabsf(r));
+            env = pk > env ? env + (pk - env) * 0.01f : env + (pk - env) * 0.00008f; /* attack ~2 ms, release ~250 ms at 48 kHz */
+            float g = env > 0.5f ? 0.5f / env : 1.0f;
+            float o[2] = {l * g, r * g};
             for (int c = 0; c < 2; c++) {
-                /* Soft limiting above 0.6 instead of hard clipping, which
-                 * crackled at the race start when every engine revs at once. */
-                float x = s[i][c] * volume, a = fabsf(x);
-                if (a > 0.6f) x = copysignf(0.6f + 0.4f * tanhf((a - 0.6f) / 0.4f), x);
+                float x = o[c], a = fabsf(x);
+                if (a > 0.8f) x = copysignf(0.8f + 0.2f * tanhf((a - 0.8f) / 0.2f), x);
                 pcm[(f * 32 + i) * 2 + c] = (int16_t)(x * 32767);
             }
+        }
     }
     if (dump) fwrite(pcm, 4, OUT_FRAMES * 32, dump), fflush(dump);
 }
