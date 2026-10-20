@@ -337,7 +337,14 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     programs, culling. Next: which map the car samples (512 or 768) and
     whether its own draws into that map (depth, polygon offset) or the
     receiver's q.z (c90.w bias term differs between casters and receivers)
-    are off. Found on the way, both kept: CMP packed normals (vertex type
+    are off. **2026-10-20 later:** the car samples BOTH maps (768x768 at
+    02ad1000 and 512x512 at 02a64800), and no car draw goes into either
+    (casters: car 0, zwrite on, zfunc LEQUAL, polygon offset on with bias
+    -2000 and factor 1, cull back faces). So the car is shadowed by the
+    track/world casters, not by itself: next, check the depth range those
+    casters write (bias -2000 in depth units, our offset applies it per
+    fragment in the shader) against the car's q.z.
+    Found on the way, both kept: CMP packed normals (vertex type
     6, attribute 2) were read as zeros; face culling (SET_CULL_FACE_ENABLE
     etc.) was never applied on the GPU path (winding swapped for our y).
   - Was: the cars' rear/lower body is near black in races (same with
