@@ -308,6 +308,34 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
   Also done: bilinear PCF for shadow compares (as the NV2A filters), the
   polygon offset's slope term per Xbox pixel (x render scale), and our own
   read-backs no longer make aliasing framebuffers re-upload RAM.
+- **2026-10-20 (interactive, later): where things stand. Next up.**
+  - Done: cars' paint (combiner stage halves read the registers before
+    the stage), yellow loading screen (DXT texture over a depth buffer
+    drops the GPU depth), boot splash turbo icon in a black square (the
+    loading thread blends it on the CPU into the shown buffer; on slow
+    frames the read-back now lands at once), keyboard controls (stopgap:
+    W/S throttle and brake, A/D or arrows steer, Space/Z A, X B, C X, V Y,
+    Q/E white/black, Enter start, Esc back).
+  - **Open, the user's top item: lighting flicker on static scenery at
+    60 fps** (pit building wall, stands, grass; seen with the car stopped,
+    so not motion). User: "better than last time, but still a glaring
+    issue". First look: with shadow lookups forced lit (a temporary
+    u_noshadow), the large flickering areas went and only thin edges
+    shimmered, so it is mostly the shadow maps alternating A/B under the
+    60 fps patch, which shadow sync (rows 90-95) does not fully cover.
+    Runs are not deterministic (the car takes a different line), so the
+    next step needs a fixed view: record the grid (before the throttle)
+    or the stopped car at ~100 s, at XBRT_FPS=60 vs 30, with and without
+    shadows, and flickmap2-style counts (pixels that go up then straight
+    back down). Then dump each frame's shadow-map draws and receivers'
+    texture/zaddr/c92-95 over a few frames, as for the first shadow sync.
+  - **Open: frame drop at the start of the race** (user). Not looked at
+    yet. Suspect: vertex programs compiled to GLSL the first time each is
+    seen (gl_vsh_get) as the race's scenery appears. Check by timing the
+    compiles; if so, cache them (glProgramBinary to disk, or compile the
+    programs seen on earlier runs at start-up).
+  - `clips/forza-progress-2026-10-20*.mp4` (ignored): the build at this
+    point; `run/race-rec.txt` reaches the race without the pause menu.
 - **2026-10-20 (interactive): loading screen, race-start audio, speed.**
   - Loading screen was yellow stripes: Forza puts its picture (1024x512
     DXT5) in the race's depth-buffer memory (01e98000) and our old GPU
