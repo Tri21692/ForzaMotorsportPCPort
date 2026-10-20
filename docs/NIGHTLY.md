@@ -344,6 +344,20 @@ What limits the race now (`tools/sample.sh` + `tools/samples.py`):
     track/world casters, not by itself: next, check the depth range those
     casters write (bias -2000 in depth units, our offset applies it per
     fragment in the shader) against the car's q.z.
+    **Then:** a debug view of the lookup on the car (inside the map? passes?
+    its z against the map's depth) shows the car's lower body is inside the
+    512x512 map and well behind what the map holds there (~1% of the depth
+    range, car-sized), and the map seen on the car has car-shaped shapes:
+    the cars are drawn into it (untextured casters, so not caught by the
+    'volume texture' test above). The car's front, toward the low sun,
+    shadows its rear: plausible. What differs from the console is the
+    effect: there the rear keeps its paint (only direct sun goes), here the
+    whole surface goes black. Next: look at how the car's combiner stages
+    use stage 1's result (which registers/channels; whether the shadow
+    should scale only one term) against xemu's combiner code. Ruled out
+    since: the casters' polygon offset (off, bias only, factor only,
+    negated: no change). Also added: texture address mode 4 (border, with
+    SET_TEXTURE_BORDER_COLOR), which the shadow lookups use.
     Found on the way, both kept: CMP packed normals (vertex type
     6, attribute 2) were read as zeros; face culling (SET_CULL_FACE_ENABLE
     etc.) was never applied on the GPU path (winding swapped for our y).

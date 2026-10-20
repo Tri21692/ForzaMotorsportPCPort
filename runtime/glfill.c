@@ -1288,8 +1288,12 @@ static void gl_filter(GLenum target, const Texture *t, uint32_t filt) {
     glTexParameterf(target, GL_TEXTURE_LOD_BIAS, (float)bias / 256.0f);
 }
 
+/* Address modes: 1 wrap, 2 mirror, 3 clamp to edge, 4 border, 5 clamp
+ * (OpenGL's). Border was taken as clamp to edge; Forza's shadow-map
+ * lookups use it (address 00040404, border ffffffff: outside the map is
+ * far, so lit). */
 static GLint gl_wrap(uint32_t mode) {
-    return mode == 2 ? GL_MIRRORED_REPEAT : (mode == 1 || mode == 0) ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    return mode == 2 ? GL_MIRRORED_REPEAT : (mode == 1 || mode == 0) ? GL_REPEAT : mode == 4 ? GL_CLAMP_TO_BORDER : GL_CLAMP_TO_EDGE;
 }
 
 /* ---- drawing ---- */
@@ -1419,6 +1423,13 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
             uint32_t addr = KT(SET_TEXTURE_ADDRESS);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_wrap(addr & 15));
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_wrap((addr >> 8) & 15));
+            if ((addr & 15) == 4 || ((addr >> 8) & 15) == 4) { /* the border colour: ARGB; a depth map's (R32F, Xbox units) scaled up */
+                uint32_t bc = KT(0x1B24);
+                float col[4] = {(float)((bc >> 16) & 255) / 255.0f, (float)((bc >> 8) & 255) / 255.0f, (float)(bc & 255) / 255.0f,
+                                (float)(bc >> 24) / 255.0f};
+                if (t->depth && !t->surface) col[0] *= (float)t->depth;
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, col);
+            }
             gl_filter(GL_TEXTURE_2D, t, KT(SET_TEXTURE_FILTER));
         }
         glActiveTexture(GL_TEXTURE4 + (GLenum)i);

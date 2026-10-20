@@ -43,6 +43,7 @@
     X(PFNGLTEXSUBIMAGE2DPROC, glTexSubImage2D)                                                                              \
     X(PFNGLTEXPARAMETERIPROC, glTexParameteri)                                                                              \
     X(PFNGLTEXPARAMETERFPROC, glTexParameterf)                                                                              \
+    X(PFNGLTEXPARAMETERFVPROC, glTexParameterfv)                                                                            \
     X(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers)                                                                          \
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)                                                                    \
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                                                                          \
@@ -123,6 +124,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glTexSubImage2D p_glTexSubImage2D
 #define glTexParameteri p_glTexParameteri
 #define glTexParameterf p_glTexParameterf
+#define glTexParameterfv p_glTexParameterfv
 #define glGenFramebuffers p_glGenFramebuffers
 #define glDeleteFramebuffers p_glDeleteFramebuffers
 #define glBindFramebuffer p_glBindFramebuffer
