@@ -1,0 +1,154 @@
+<title>Forza PC Port Roadmap</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a pit-wall timing sheet. One summary strip, then the task sheet grouped by area, then the key card. */
+:root {
+  --bg: #f3f4f6; --panel: #ffffff; --fg: #16191f; --muted: #5b6270; --line: #d9dce3;
+  --accent: #c2410c; --accent-soft: #fde7da;
+  --next: #1d4ed8; --next-bg: #e0e8fb; --wait: #a16207; --wait-bg: #fbf0d4;
+  --later: #4b5563; --later-bg: #e8eaee; --done: #15803d; --done-bg: #dcf2e3;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111318; --panel: #191c23; --fg: #e8eaef; --muted: #9aa1ae; --line: #2c313b;
+  --accent: #fb8a4c; --accent-soft: #3a2418;
+  --next: #8fb0ff; --next-bg: #1c2a4a; --wait: #f0c463; --wait-bg: #3a3017;
+  --later: #b6bcc7; --later-bg: #262a33; --done: #6fd394; --done-bg: #173323; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111318; --panel: #191c23; --fg: #e8eaef; --muted: #9aa1ae; --line: #2c313b;
+  --accent: #fb8a4c; --accent-soft: #3a2418;
+  --next: #8fb0ff; --next-bg: #1c2a4a; --wait: #f0c463; --wait-bg: #3a3017;
+  --later: #b6bcc7; --later-bg: #262a33; --done: #6fd394; --done-bg: #173323; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 32px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 6vw, 48px); line-height: 1; margin: 0; text-wrap: balance; letter-spacing: .01em; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 24px; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 65ch; margin: 0; }
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.strip div { background: var(--panel); padding: 14px 16px; display: grid; gap: 2px; }
+.strip b { font-family: var(--display); font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.strip span { font-size: 13px; color: var(--muted); }
+.sheet { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; min-width: 680px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tr.group td { font-family: var(--display); font-size: 18px; font-weight: 600; letter-spacing: .03em; background: var(--accent-soft); color: var(--fg); padding-block: 6px; }
+td.task b { font-weight: 600; display: block; }
+td.task span { color: var(--muted); font-size: 13.5px; }
+td.est { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.next { color: var(--next); background: var(--next-bg); }
+.wait { color: var(--wait); background: var(--wait-bg); }
+.later { color: var(--later); background: var(--later-bg); }
+.done { color: var(--done); background: var(--done-bg); }
+section { display: grid; gap: 12px; }
+.note { color: var(--muted); font-size: 13.5px; max-width: 70ch; margin: 0; }
+.keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
+.key { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding-block: 5px; }
+.key span:last-child { color: var(--muted); text-align: right; }
+kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; background: var(--bg); white-space: nowrap; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Forza Motorsport · PC port · as of 24 Oct 2026</div>
+    <h1>Forza PC Port Roadmap</h1>
+    <p class="lede">What's left before the port is ready to hand to other people, with rough working-time estimates. Estimates are hours of work, not calendar time. Investigations like the dark cars can land early or run long.</p>
+  </header>
+
+  <div class="strip">
+    <div><b>13</b><span>tasks left</span></div>
+    <div><b>38–75 h</b><span>estimated work in total</span></div>
+    <div><b>4–8</b><span>nights at the nightly task's pace (11 pm–8 am)</span></div>
+    <div><b>5</b><span>waiting on you</span></div>
+  </div>
+
+  <section>
+    <h2>Task sheet</h2>
+    <div class="sheet">
+      <table>
+        <thead><tr><th>Task</th><th>Status</th><th>Estimate</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="3">Speed and smoothness</td></tr>
+          <tr><td class="task"><b>Race frame rate</b><span>Race start up from ~40–50 to 56–60 fps at 2× (headless test). The GPU now draws the window directly, frames stay on the GPU, and pixels hidden behind others are no longer shaded.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Even frame pacing (judder)</b><span>Frames are shown in the order they finish, one per screen refresh: 1,761 of 1,762 race frames exactly one refresh apart. Should fix the judder when turning the camera around the car in menus.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Freeze one second into a race</b><span>Fixed: the GPU waited for a signal the game never sent. Frame pacing no longer depends on it.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Pause menu freeze (7–11 s)</b><span>Fixed: paused sounds that were stopped never finished, and DirectSound waited half a second for each one.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>30 fps mode running at double speed</b><span>Fixed: frames now go at the game's own frame interval.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Short hiccups entering menus</b><span>Half-second pauses when a menu or the car select first appears, likely textures and graphics programs being built the first time.</span></td><td><span class="pill next">Next up</span></td><td class="est">2–4 h</td></tr>
+
+          <tr class="group"><td colspan="3">Graphics</td></tr>
+          <tr><td class="task"><b>Missing scenery on the hill corner</b><span>Fixed: large draws were cut off after 4,096 vertices. You confirmed the cliff shows.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Frame flickers, grey flashes, missing intro videos</b><span>Fixed along the way while moving the window to GPU drawing.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Black square behind the loading icon</b><span>Fixed again: the frame now always reaches memory before the game draws the icon over it, at almost no cost.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Dark rear and lower body on the cars</b><span>Fixed: the colour-mixing stages read a value in the wrong order.</span></td><td><span class="pill done">Done 20 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Yellow loading screen</b><span>Fixed in a way that doesn't depend on timing; not seen since.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Lighting flicker on scenery at 60 fps</b><span>The frame flickers are gone; tell me if any lighting flicker on buildings or grass remains.</span></td><td><span class="pill wait">Your check</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Car shadows in the pre-race preview</b><span>Shadow fixes since then may have solved it. Needs a look from you.</span></td><td><span class="pill wait">Your check</span></td><td class="est">1–2 h</td></tr>
+          <tr><td class="task"><b>Dotted leaf edges at 2× scale</b><span>Smooth the trees' cut-out edges (alpha to coverage).</span></td><td><span class="pill later">Later</span></td><td class="est">1–2 h</td></tr>
+
+          <tr class="group"><td colspan="3">Controls</td></tr>
+          <tr><td class="task"><b>Keyboard controls</b><span>A stopgap layout, listed below. It works alongside a controller.</span></td><td><span class="pill done">Done today</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Key and button remapping</b><span>Choose your own keys, saved in a settings file. Your feedback on the stopgap layout feeds into this.</span></td><td><span class="pill wait">Your feedback</span></td><td class="est">3–5 h</td></tr>
+
+          <tr class="group"><td colspan="3">PC features</td></tr>
+          <tr><td class="task"><b>Fullscreen and resolution options</b><span>Borderless fullscreen and a choice of render scale.</span></td><td><span class="pill later">Later</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Settings menu</b><span>30/60 fps, scale and volume from the game window instead of two separate launchers.</span></td><td><span class="pill later">Later</span></td><td class="est">3–6 h</td></tr>
+
+          <tr class="group"><td colspan="3">Audio</td></tr>
+          <tr><td class="task"><b>Leftover clicks at the race start</b><span>Down from up to 90 a second to 3–7. Polish the rest.</span></td><td><span class="pill later">Later</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>Reverb and 3D sound positioning</b><span>The Xbox's sound effects processor isn't emulated yet, so tunnels and stands sound flat.</span></td><td><span class="pill later">Later</span></td><td class="est">8–15 h</td></tr>
+
+          <tr class="group"><td colspan="3">Coverage</td></tr>
+          <tr><td class="task"><b>Other tracks, cars and modes</b><span>Mostly Maple Valley so far; Silverstone Short loaded and raced fine in a test. Each new track can turn up its own graphics bugs.</span></td><td><span class="pill later">Later</span></td><td class="est">6–12 h</td></tr>
+          <tr><td class="task"><b>Saves and career progress</b><span>Check that career progress and settings survive a restart.</span></td><td><span class="pill later">Later</span></td><td class="est">2–4 h</td></tr>
+
+          <tr class="group"><td colspan="3">Hardware and release</td></tr>
+          <tr><td class="task"><b>Intel integrated graphics pass</b><span>Last, as you asked. NVIDIA and other high-end GPUs come first.</span></td><td><span class="pill later">Last</span></td><td class="est">4–8 h</td></tr>
+          <tr><td class="task"><b>Packaging</b><span>A launcher that points at your own disc copy, plus a short readme. It ships no game files.</span></td><td><span class="pill later">Last</span></td><td class="est">3–6 h</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The totals cover the 13 open tasks with an estimate; rows marked done, and checks with no work estimated, aren't counted. The nightly estimate assumes roughly 9 working hours a night.</p>
+  </section>
+
+  <section>
+    <h2>Keyboard controls (stopgap)</h2>
+    <div class="keys">
+      <div class="key"><span><kbd>W</kbd></span><span>Throttle (RT)</span></div>
+      <div class="key"><span><kbd>S</kbd></span><span>Brake (LT)</span></div>
+      <div class="key"><span><kbd>A</kbd> <kbd>D</kbd> or <kbd>←</kbd> <kbd>→</kbd></span><span>Steer</span></div>
+      <div class="key"><span><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></span><span>Menus (D-pad)</span></div>
+      <div class="key"><span><kbd>Space</kbd> or <kbd>Z</kbd></span><span>A</span></div>
+      <div class="key"><span><kbd>X</kbd></span><span>B</span></div>
+      <div class="key"><span><kbd>C</kbd></span><span>X</span></div>
+      <div class="key"><span><kbd>V</kbd></span><span>Y</span></div>
+      <div class="key"><span><kbd>Q</kbd></span><span>White (left shoulder)</span></div>
+      <div class="key"><span><kbd>E</kbd></span><span>Black (right shoulder)</span></div>
+      <div class="key"><span><kbd>Enter</kbd></span><span>Start</span></div>
+      <div class="key"><span><kbd>Esc</kbd></span><span>Back</span></div>
+    </div>
+    <p class="note">Keys only register while the game window has focus. Steering eases to full lock over a quarter second and recentres in a tenth.</p>
+  </section>
+
+  <section>
+    <h2>Debug keys</h2>
+    <div class="keys">
+      <div class="key"><span><kbd>F12</kbd></span><span>Screenshot to <code>run\screenshots\</code></span></div>
+      <div class="key"><span><kbd>F5</kbd></span><span>Culling off</span></div>
+      <div class="key"><span><kbd>F6</kbd></span><span>Depth test off</span></div>
+      <div class="key"><span><kbd>F7</kbd></span><span>Alpha test off</span></div>
+      <div class="key"><span><kbd>F8</kbd></span><span>Depth clip off</span></div>
+      <div class="key"><span><kbd>F9</kbd></span><span>Vertex programs on the CPU</span></div>
+    </div>
+    <p class="note">F5–F9 toggle; the window title lists what's off. They're for finding rendering bugs and make the picture look wrong on purpose.</p>
+  </section>
+</div>
