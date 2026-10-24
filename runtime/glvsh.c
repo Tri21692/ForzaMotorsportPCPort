@@ -305,7 +305,8 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     uint64_t p1 = rt_now_100ns();
     GlSurf *s = gl_bind(d);
     uint64_t p2 = rt_now_100ns();
-    gl_use(&v->prog);
+    GlProg *p = gl_variant(&v->prog, gl_frag_variant());
+    gl_use(p);
     if (!gl_vsh_vao) {
         glGenVertexArrays(1, &gl_vsh_vao);
         glBindVertexArray(gl_vsh_vao);
@@ -348,11 +349,11 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     for (int i = 0; i < 192; i++)
         for (int j = 0; j < 4; j++) c[i][j] = f32(constants[i][j]);
     gl_shadow_sync(d, s, c);
-    glUniform4fv(v->prog.vc, 192, &c[0][0]);
+    glUniform4fv(p->vc, 192, &c[0][0]);
     float sxy[2] = {(float)d->sx, (float)d->sy};
-    glUniform2fv(v->prog.sxy, 1, sxy);
+    glUniform2fv(p->sxy, 1, sxy);
     float fog[4] = {K(SET_FOG_ENABLE) ? 1.0f : 0.0f, (float)K(SET_FOG_MODE), f32(K(SET_FOG_PARAMS)), f32(K(SET_FOG_PARAMS + 4))};
-    glUniform4fv(v->prog.fog, 1, fog);
+    glUniform4fv(p->fog, 1, fog);
     uint64_t p4 = rt_now_100ns();
     gl_frag_state(d, s);
     uint64_t p5 = rt_now_100ns();

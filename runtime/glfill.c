@@ -188,8 +188,11 @@ static const char *fs_src =
     "        o.rgb = clamp(d + a * b + (1.0 - a) * c, 0.0, 1.0);\n"
     "        o.a = clamp(in_a(u_f1 >> 8 & 255u), 0.0, 1.0);\n"
     "    }\n"
+    "#ifndef NO_ALPHA_TEST\n"
     "    if (u_alpha_func != 0 && !compare(u_alpha_func - 0x200, o.a, u_alpha_ref)) discard;\n"
+    "#endif\n"
     "    o_color = o;\n"
+    "#ifndef NO_FRAG_DEPTH\n"
     /* The NV2A's depth, as xemu works it out: screen z, or w when the
      * w-buffer is on (CONTROL0 Z_PERSPECTIVE), plus the polygon offset
      * (bias, and factor times the depth slope), clamped to the clip range.
@@ -202,6 +205,7 @@ static const char *fs_src =
     "    }\n"
     "    if (u_zr.w > 0.5 || u_zoff.x != 0.0 || u_zoff.y != 0.0) z = clamp(z, u_zr.y, u_zr.z);\n"
     "    gl_FragDepth = isnan(z) ? gl_FragCoord.z : clamp(z / u_zr.x, 0.0, 1.0);\n"
+    "#endif\n"
     "}\n";
 
 #define GL_VERT 29 /* floats per vertex */
@@ -225,11 +229,13 @@ static const char *const gl_loc_name[] = {"u_size", "u_zmax", "u_cicw", "u_cocw"
                                           "u_cube0", "u_cube1", "u_cube2", "u_cube3", "u_zr", "u_zoff"};
 #define GL_NLOC (int)(sizeof gl_loc_var / sizeof gl_loc_var[0])
 
-typedef struct {
-    GLuint prog;
+typedef struct GlProg GlProg;
+struct GlProg {
+    GLuint prog, vs;
     GLint loc[GL_NLOC];
     GLint vc, sxy, fog; /* a vertex program's: constants, sample scale, fog */
-} GlProg;
+    GlProg *var[4];     /* by gl_frag_variant(), linked when first used; [0] is this one */
+};
 
 static GlProg gl_main, *gl_using;
 
@@ -248,11 +254,56 @@ static GLuint compile(GLenum type, const char *src) {
     return s;
 }
 
+/* The fragment shader without what a draw does not need, by bit: 1 no
+ * gl_FragDepth (the depth is the GPU's own: no polygon offset, no
+ * w-buffer), 2 no alpha test. Writing gl_FragDepth, or discarding, turns
+ * the GPU's early depth test off: every hidden pixel was shaded, and the
+ * race at 2x was held back by the GPU (60 fps at 1x, ~45 at 2x). */
+static GLuint gl_fs_var[4];
+
+static GLuint gl_fs_variant(int var) {
+    if (!var) return gl_fs;
+    if (!gl_fs_var[var]) {
+        char head[128];
+        snprintf(head, sizeof head, "#version 430\n%s%s", var & 1 ? "#define NO_FRAG_DEPTH\n" : "",
+                 var & 2 ? "#define NO_ALPHA_TEST\n" : "");
+        size_t n = strlen(head) + strlen(fs_src);
+        char *src = malloc(n + 1);
+        strcpy(src, head), strcat(src, fs_src + strlen("#version 430\n"));
+        gl_fs_var[var] = compile(GL_FRAGMENT_SHADER, src);
+        free(src);
+    }
+    return gl_fs_var[var];
+}
+
+static int gl_link_fs(GlProg *p, GLuint vs, GLuint fs);
+
 /* Links vs with the fragment shader into p. */
 static int gl_link(GlProg *p, GLuint vs) {
+    p->vs = vs, p->var[0] = p;
+    return gl_link_fs(p, vs, gl_fs);
+}
+
+/* p's variant var (gl_fs_variant), or p itself if it cannot be made. */
+static GlProg *gl_variant(GlProg *p, int var) {
+    if (!var || !p->vs) return p;
+    if (!p->var[var]) {
+        GlProg *v = calloc(1, sizeof *v);
+        GLuint fs = gl_fs_variant(var);
+        if (!fs || !gl_link_fs(v, p->vs, fs)) {
+            free(v);
+            p->vs = 0; /* no more tries */
+            return p;
+        }
+        p->var[var] = v;
+    }
+    return p->var[var];
+}
+
+static int gl_link_fs(GlProg *p, GLuint vs, GLuint fs) {
     p->prog = glCreateProgram();
     glAttachShader(p->prog, vs);
-    glAttachShader(p->prog, gl_fs);
+    glAttachShader(p->prog, fs);
     glLinkProgram(p->prog);
     GLint ok = 0;
     glGetProgramiv(p->prog, GL_LINK_STATUS, &ok);
@@ -534,6 +585,7 @@ static void gl_present_vblank(uint32_t fb) {
         glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
         if (!rt_display_wants_pixels()) return;
     }
+    if (!rt_display_hwnd() && !rt_display_wants_pixels()) return; /* no window, no screenshots: nobody looks */
     if (hi_pend) return; /* the last copy is not done: this blank's picture is skipped rather than waited for */
     if (!hi_pbo) glGenBuffers(1, &hi_pbo);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, hi_pbo);
@@ -1484,11 +1536,25 @@ static void gl_uniform_argb(GLint loc, uint32_t v) {
 
 static void gl_frag_state(const DrawState *d, const GlSurf *s);
 
+/* Which fragment shader variant this draw can use (gl_fs_variant): the
+ * same conditions as gl_frag_state's depth and alpha test. */
+static int gl_frag_variant(void) {
+    static int wbuf = -1, on = -1;
+    if (wbuf < 0) wbuf = getenv("XBRT_GL_WBUFFER") && atoi(getenv("XBRT_GL_WBUFFER"));
+    if (on < 0) on = !getenv("XBRT_GL_EARLY_Z") || atoi(getenv("XBRT_GL_EARLY_Z"));
+    if (!on) return 0;
+    int var = 0;
+    int offset = (K(0x338) & 1) && (K(0x388) != 0 || K(0x384) != 0); /* POLY_OFFSET_FILL_ENABLE with a bias or a factor */
+    if (!offset && !(wbuf && (K(0x290) & (1u << 16)))) var |= 1;
+    if (!K(SET_ALPHA_TEST_ENABLE) || (rt_debug_keys & RT_DBG_NO_ALPHA)) var |= 2;
+    return var;
+}
+
 static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     if (gl_ready < 0) gl_ready = gl_setup();
     if (!gl_ready || !n) return;
     GlSurf *s = gl_bind(d);
-    gl_use(&gl_main);
+    gl_use(gl_variant(&gl_main, gl_frag_variant()));
 
     if (n * 3 * GL_VERT > gl_verts_cap) {
         gl_verts_cap = n * 3 * GL_VERT * 2;
