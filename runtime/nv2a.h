@@ -16,6 +16,7 @@ typedef struct {
     volatile int flip_stall; /* FLIP_STALL: the push buffer waits until the CPU moves FLIP_READ on */
     uint32_t stalls;
     volatile int queued; /* frames flipped and not yet shown: each vertical blank shows one */
+    int drained;         /* this vertical blank took a frame off the queue (the display shows the next one) */
 } Nv2a;
 
 extern Nv2a nv2a;
@@ -33,6 +34,7 @@ void nv2a_raster_sync(void);
 void nv2a_raster_sync_range(uint32_t base, uint32_t size); /* the colour drawn over these bytes on its way to RAM */
 void nv2a_raster_flip(void);                            /* at FLIP_INCREMENT_WRITE */
 void nv2a_raster_poll(void);                            /* a finished picture copy goes to the display at once */
+int nv2a_is_scanout(uint32_t base); /* the CRTC has shown this buffer */
 void nv2a_raster_present(uint32_t fb);                  /* the shown buffer at the drawn resolution, for the display */
 void nv2a_raster_vblank(void);                          /* read-backs on their way reach RAM */
 int nv2a_raster_clear(uint32_t flags);                  /* CLEAR_SURFACE on the GPU; 0 if it is not drawing */                            /* and bring RAM up to date with the GPU's drawing */

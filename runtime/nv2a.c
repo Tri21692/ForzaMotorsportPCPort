@@ -79,6 +79,12 @@
  * vertical blank handler show one of them. */
 static uint32_t scanout[4];
 
+int nv2a_is_scanout(uint32_t base) {
+    for (int i = 0; i < 4; i++)
+        if (scanout[i] && ((scanout[i] ^ base) & (RT_PHYS_SIZE - 1)) == 0) return 1;
+    return 0;
+}
+
 #define PRAMDAC_NVPLL 0x680500
 #define PRAMDAC_MPLL 0x680504
 #define PRAMDAC_VPLL 0x680508
@@ -619,7 +625,8 @@ static void *device_main(void *arg) {
             static uint32_t since;
             uint32_t interval = rt_frame_interval_at ? xb_rd32(rt_frame_interval_at) : 1;
             if (interval < 1 || interval > 4) interval = 1;
-            if (++since >= interval && nv2a.queued) nv2a.queued--, since = 0;
+            nv2a.drained = 0;
+            if (++since >= interval && nv2a.queued) nv2a.queued--, since = 0, nv2a.drained = 1;
             if (nv2a.flip_stall && nv2a.queued < 2) nv2a.flip_stall = 0, nv2a_trace('R', 1);
             if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */

@@ -485,6 +485,16 @@ typedef struct {
 #define GL_SNAPS 8
 static GlSnap gl_snap[GL_SNAPS];
 
+/* The frames to show, in the order they were finished (copied at their
+ * flips), one taken at each vertical blank that takes a frame off the
+ * queue (nv2a.drained). Showing whatever buffer the CRTC pointed at
+ * instead skipped and repeated frames whenever two flipped within one
+ * blank: menus and the camera turning around the car judder. Four slots:
+ * two frames queued at most, the one shown, and one spare. */
+#define GL_FIFO 4
+static GlSnap gl_fifo[GL_FIFO];
+static int gl_fifo_head, gl_fifo_n, gl_fifo_shown = -1;
+
 static pthread_mutex_t hi_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t *hi_frame;
 static int hi_w, hi_h;
@@ -568,6 +578,7 @@ static void gl_present_vblank(uint32_t fb) {
         last_seq = s->seq, same = 0;
     }
     if (rt_display_video_on()) s = NULL; /* a movie: the overlay is composited from RAM */
+    if (!s) gl_fifo_n = 0, gl_fifo_shown = -1; /* RAM shows the screen: what was queued is old */
     if (!s && fb) gl_sync_range(fb, (rt_display_pitch ? rt_display_pitch : 640 * 4) * 480); /* what the GPU drew there, not read back at the notifies */
     if (!s) { /* RAM shows what is on screen now: the display goes back to it at once */
         pthread_mutex_lock(&hi_lock);
@@ -580,7 +591,12 @@ static void gl_present_vblank(uint32_t fb) {
     GlSnap *snap = NULL;
     for (int i = 0; i < GL_SNAPS; i++)
         if (gl_snap[i].fbo && gl_snap[i].base == s->cbase && gl_snap[i].w == w && gl_snap[i].h == h) snap = &gl_snap[i];
-    if (rt_gl_show(snap ? snap->fbo : s->fbo, w, h)) {
+    static int fifo_on = -1;
+    if (fifo_on < 0) fifo_on = !getenv("XBRT_GL_FIFO") || atoi(getenv("XBRT_GL_FIFO"));
+    if (fifo_on && nv2a.drained && gl_fifo_n)
+        gl_fifo_shown = gl_fifo_head, gl_fifo_head = (gl_fifo_head + 1) % GL_FIFO, gl_fifo_n--, nv2a_trace('D', gl_fifo[gl_fifo_shown].seq);
+    GlSnap *fs = fifo_on && gl_fifo_shown >= 0 && gl_fifo[gl_fifo_shown].w == w ? &gl_fifo[gl_fifo_shown] : NULL;
+    if (rt_gl_show(fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h)) {
         rt_gl_shown = rt_now_100ns();
         glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
         if (!rt_display_wants_pixels()) return;
@@ -909,6 +925,8 @@ static void gl_depth_stays(GlSurf *s) {
  * already hold part of the next frame (a flip stall the watchdog let go),
  * and showing it as it stood flickered. Not at D3D's notifies: there are
  * about two a frame, and the second can come with the next frame begun. */
+static void gl_snap_into(GlSnap *n, GlSurf *e);
+
 static void gl_snapshot(GlSurf *e) {
     if (e->k < 2 || e->bpp != 4 || e->swz || e->w != 640 || e->h < 480) return;
     GlSnap *n = NULL;
@@ -917,6 +935,11 @@ static void gl_snapshot(GlSurf *e) {
     if (!n) /* the oldest */
         for (int i = 0; i < GL_SNAPS; i++)
             if (!n || gl_snap[i].seq < n->seq) n = &gl_snap[i];
+    gl_snap_into(n, e);
+}
+
+/* e's colour into n (made or remade at e's size). */
+static void gl_snap_into(GlSnap *n, GlSurf *e) {
     int w = 640 * e->k, h = 480 * e->k;
     if (n->w != w || n->h != h) {
         if (n->fbo) glDeleteFramebuffers(1, &n->fbo), glDeleteTextures(1, &n->tex);
@@ -981,6 +1004,23 @@ static void gl_flip(void) {
         for (int j = 0; j < GL_SNAPS; j++)
             if (gl_snap[j].base == e->cbase && gl_snap[j].seq == e->seq) fresh = 1;
         if (!fresh) gl_snapshot(e);
+    }
+    { /* the frame just finished: the newest drawing over a buffer the CRTC shows */
+        GlSurf *f = NULL;
+        for (int i = 0; i < GL_SURFS; i++) {
+            GlSurf *e = &gl_surf[i];
+            if (e->fbo && e->k > 1 && e->bpp == 4 && !e->swz && e->w == 640 && e->h >= 480 && nv2a_is_scanout(e->cbase) &&
+                (!f || e->seq > f->seq))
+                f = e;
+        }
+        static unsigned pushed;
+        if (f && f->seq != pushed) {
+            if (gl_fifo_n == GL_FIFO - 1) gl_fifo_head = (gl_fifo_head + 1) % GL_FIFO, gl_fifo_n--; /* behind: drop the oldest */
+            int slot = (gl_fifo_head + gl_fifo_n) % GL_FIFO;
+            if (slot == gl_fifo_shown) gl_fifo_shown = -1;
+            gl_snap_into(&gl_fifo[slot], f);
+            gl_fifo_n++, pushed = f->seq;
+        }
     }
     /* XBRT_GL_QUEUE=<1|2> frames may be queued on the GPU (default 1): each
      * one queued is a frame between the controller and the screen. */
