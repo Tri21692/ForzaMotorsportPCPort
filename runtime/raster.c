@@ -153,9 +153,35 @@ typedef struct {
     uint64_t sig;     /* hash_sparse of its bytes when last fully hashed */
     uint32_t sig_checks; /* checks since the last full hash */
     uint32_t zaddr;   /* a shadow map sampled on the GPU: its depth's address (glvsh.c's shadow-matrix forwarding) */
+    uint32_t used;    /* the flip it was last used at: the least recently used goes first */
+    int next;         /* the next in its hash bucket, + 1 (0: none) */
 } Texture;
 
-static Texture cache[512]; /* a race frame uses a few hundred textures */
+/* Decoded textures, found by a hash of their key. 512, replaced in turn,
+ * were too few for Road Atlanta's first chicane: more than that were in
+ * view, every frame decoded them all again (45,000 decodes in 5 s) and the
+ * race fell to 30 fps. */
+/* Once on the GPU a texture's decoded texels are freed (gl_texture) and
+ * point here: only the software rasteriser reads them later, and 4096
+ * textures' worth would have been gigabytes. */
+static uint32_t tex_dropped[1];
+#define TEX_CACHE 4096
+#define TEX_BUCKETS 4096
+static Texture cache[TEX_CACHE];
+static int tex_bucket[TEX_BUCKETS]; /* the first entry in each, + 1 */
+
+static uint32_t tex_hash(const uint32_t key[5]) {
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < 5; i++) h = (h ^ key[i]) * 16777619u;
+    return (h ^ h >> 15) & (TEX_BUCKETS - 1);
+}
+
+static void tex_unlink(Texture *t) {
+    int *p = &tex_bucket[tex_hash(t->key)], me = (int)(t - cache) + 1;
+    while (*p && *p != me) p = &cache[*p - 1].next;
+    if (*p) *p = t->next;
+    t->next = 0;
+}
 static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t color, int w, int h);
 static uint32_t draw_lo, draw_hi; /* the draw's colour buffer, which its textures must not be read from on the GPU */
 static uint32_t draw_zlo, draw_zhi; /* ... and its depth buffer */
@@ -297,7 +323,7 @@ static void dump_texture(const Texture *t, uint32_t offset, uint32_t fmt) {
     memcpy(h + 2, &vals[0], 4), memcpy(h + 10, &vals[2], 4), memcpy(h + 14, &vals[3], 4), memcpy(h + 18, &vals[4], 4), memcpy(h + 22, &vals[5], 4);
     h[26] = 1, h[28] = 32;
     fwrite(h, 1, 54, f);
-    fwrite(t->texels, 4, (size_t)t->w * t->h, f);
+    if (t->texels != tex_dropped) fwrite(t->texels, 4, (size_t)t->w * t->h, f);
     fclose(f);
 }
 
@@ -317,8 +343,9 @@ static Texture *texture(int i) {
     }
     uint32_t key[5] = {KT(SET_TEXTURE_OFFSET), fmt, KT(SET_TEXTURE_CONTROL1), KT(SET_TEXTURE_IMAGE_RECT), KT(SET_TEXTURE_PALETTE)};
     Texture *hit = NULL;
-    for (int i = 0; i < 512 && !hit; i++)
-        if (cache[i].texels && !memcmp(cache[i].key, key, sizeof key)) hit = &cache[i];
+    for (int e = tex_bucket[tex_hash(key)]; e && !hit; e = cache[e - 1].next)
+        if (cache[e - 1].texels && !memcmp(cache[e - 1].key, key, sizeof key)) hit = &cache[e - 1];
+    if (hit) hit->used = nv2a.flips;
     if (hit && hit->gen == generation) return hit;
 
     int linear = (color >= 0x10 && color <= 0x20) || color == 0x24 || color == 0x25 || color >= 0x2E;
@@ -398,9 +425,19 @@ static Texture *texture(int i) {
     raster_n_decode++;
     nv2a_raster_flush(); /* batched triangles may point at the entry about to be replaced */
     Texture *t = hit;
-    if (!t) {
-        t = &cache[cache_next];
-        cache_next = (cache_next + 1) % 512;
+    if (!t) { /* the least recently used of the next 32 (a free one first) */
+        int best = cache_next;
+        for (int k = 0; k < 32; k++) {
+            int c = (cache_next + k) % TEX_CACHE;
+            if (!cache[c].texels) {
+                best = c;
+                break;
+            }
+            if (cache[c].used < cache[best].used) best = c;
+        }
+        t = &cache[best];
+        cache_next = (best + 1) % TEX_CACHE;
+        if (t->texels) tex_unlink(t);
     }
     /* The GPU samples the game's own mipmaps; the software rasteriser only
      * reads level 0, so it does not decode the rest. Linear textures have
@@ -408,9 +445,14 @@ static Texture *texture(int i) {
     int nl = rt_gl_on && !linear && levels > 1 ? levels : 1;
     size_t face_texels = 0;
     for (int l = 0; l < nl; l++) face_texels += (size_t)(w >> l > 1 ? w >> l : 1) * (size_t)(h >> l > 1 ? h >> l : 1);
-    free(t->texels);
+    if (t->texels != tex_dropped) free(t->texels);
     t->texels = malloc(face_texels * 4 * faces);
-    memcpy(t->key, key, sizeof key);
+    if (t != hit) { /* into its bucket */
+        memcpy(t->key, key, sizeof key);
+        uint32_t b = tex_hash(t->key);
+        t->next = tex_bucket[b], tex_bucket[b] = (int)(t - cache) + 1;
+    }
+    t->used = nv2a.flips;
     t->hash = hash, t->gen = generation, t->sig = quick_sig, t->sig_checks = 0;
     t->version++;
     t->w = w, t->h = h, t->linear = linear, t->cube = cube;

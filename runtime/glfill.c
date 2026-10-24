@@ -1642,6 +1642,7 @@ static GLuint gl_texture(Texture *t) {
     glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     t->gl_version = t->version;
+    free(t->texels), t->texels = tex_dropped; /* the GPU has them now */
     return t->gl;
 }
 
