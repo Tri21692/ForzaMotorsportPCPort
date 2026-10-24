@@ -17,6 +17,7 @@ int rt_gl_on;
 #define GL_DEFINE(type, name) type p_##name;
 GL_FUNCTIONS(GL_DEFINE)
 #undef GL_DEFINE
+PFNGLBUFFERSTORAGEPROC p_glBufferStorage;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -152,6 +153,7 @@ int rt_gl_init(void) {
 #define GL_LOAD(type, name)                                                                                                 \
     if (!(p_##name = (type)load(gl, #name))) missing++, fprintf(stderr, "xbrt: GL function %s is missing\n", #name);
     GL_FUNCTIONS(GL_LOAD)
+    p_glBufferStorage = (PFNGLBUFFERSTORAGEPROC)load(gl, "glBufferStorage"); /* optional */
 #undef GL_LOAD
     if (missing) {
         fprintf(stderr, "xbrt: XBRT_GPU=gl: %d GL functions missing; drawing in software\n", missing);

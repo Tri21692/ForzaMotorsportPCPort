@@ -80,6 +80,7 @@
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays)                                                                          \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)                                                                          \
     X(PFNGLGENBUFFERSPROC, glGenBuffers)                                                                                    \
+    X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers)                                                                                    \
     X(PFNGLBINDBUFFERPROC, glBindBuffer)                                                                                    \
     X(PFNGLBUFFERDATAPROC, glBufferData)                                                                                    \
     X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer)                                                                  \
@@ -167,6 +168,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glGenVertexArrays p_glGenVertexArrays
 #define glBindVertexArray p_glBindVertexArray
 #define glGenBuffers p_glGenBuffers
+#define glDeleteBuffers p_glDeleteBuffers
 #define glBindBuffer p_glBindBuffer
 #define glBufferData p_glBufferData
 #define glVertexAttribPointer p_glVertexAttribPointer
@@ -182,6 +184,8 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glDebugMessageCallback p_glDebugMessageCallback
 
 extern int rt_gl_on; /* XBRT_GPU=gl and the context came up */
+extern PFNGLBUFFERSTORAGEPROC p_glBufferStorage; /* GL 4.4 / ARB_buffer_storage: NULL without it */
+#define glBufferStorage p_glBufferStorage
 
 /* On the device thread: make the context and load the functions. Returns 0
  * (and says why) if the host has no OpenGL 4.3. */

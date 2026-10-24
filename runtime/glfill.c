@@ -772,6 +772,8 @@ typedef struct {
     uint32_t base, size;
     GLuint pbo;
     GLsync sync; /* passed when the copy is done */
+    void *map;   /* the buffer in the CPU's memory, mapped for good (glBufferStorage) */
+    uint32_t cap;
 } GlPending;
 
 static GlPending gl_pend[16];
@@ -781,10 +783,15 @@ static int gl_npend;
 static void gl_complete_first(int n) {
     for (int i = 0; i < n; i++) {
         GlPending *p = &gl_pend[i];
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
-        const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, p->size, GL_MAP_READ_BIT);
-        if (m) memcpy(phys(p->base), m, p->size);
-        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        if (p->map) { /* persistent: the copy is there once the fence passes */
+            if (p->sync) glClientWaitSync(p->sync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            memcpy(phys(p->base), p->map, p->size);
+        } else {
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+            const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, p->size, GL_MAP_READ_BIT);
+            if (m) memcpy(phys(p->base), m, p->size);
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
         if (p->sync) glDeleteSync(p->sync), p->sync = 0;
         if (!p->s->cdirty) p->s->chash = 0; /* RAM is what the GPU drew: adopted at the next check */
         gl_ram_written(p->s, p->base, p->size);
@@ -845,9 +852,22 @@ static void gl_readback_color_async(GlSurf *s) {
     if (gl_npend == 16) gl_complete();
     GlPending *p = &gl_pend[gl_npend++];
     p->s = s, p->base = s->cbase, p->size = c;
+    /* Into the CPU's memory where the driver allows (client storage,
+     * mapped for good): mapping a GL_STREAM_READ buffer at each completion
+     * copied it out of video memory then, and that was most of the cost of
+     * reading the shown frames back. */
+    if (glBufferStorage && p->cap < c) {
+        if (p->pbo) glDeleteBuffers(1, &p->pbo), p->pbo = 0, p->map = NULL;
+        glGenBuffers(1, &p->pbo);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+        GLbitfield fl = GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+        glBufferStorage(GL_PIXEL_PACK_BUFFER, c, NULL, fl | GL_CLIENT_STORAGE_BIT);
+        p->map = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, c, fl);
+        p->cap = p->map ? c : 0;
+    }
     if (!p->pbo) glGenBuffers(1, &p->pbo);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
-    glBufferData(GL_PIXEL_PACK_BUFFER, c, NULL, GL_STREAM_READ);
+    if (!p->map) glBufferData(GL_PIXEL_PACK_BUFFER, c, NULL, GL_STREAM_READ);
     gl_read_bind(s, GL_COLOR_BUFFER_BIT);
     glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -922,11 +942,11 @@ static void gl_snapshot(GlSurf *e) {
 static void gl_sync_color_async(uint32_t base, uint32_t size) {
     static uint64_t last, prev;
     static int every = -1;
-    if (every < 0) every = getenv("XBRT_GL_SHOWN_READBACK") && atoi(getenv("XBRT_GL_SHOWN_READBACK"));
+    if (every < 0) every = !getenv("XBRT_GL_SHOWN_READBACK") || atoi(getenv("XBRT_GL_SHOWN_READBACK"));
     uint64_t now = rt_now_100ns();
     if (now - last > 50000) prev = last, last = now; /* a notify: one call per shown buffer */
     int slow = last - prev > 1000000; /* 100 ms since the last frame */
-    if (!slow && !every && !rt_display_wants_pixels()) return;
+    if (!slow && !every && !rt_display_wants_pixels() && !glBufferStorage) return;
     for (int i = 0; i < GL_SURFS; i++) {
         GlSurf *e = &gl_surf[i];
         if (e->fbo && e->cdirty && gl_span_hit(e->cbase, e->cpitch * (uint32_t)e->h, base, size)) gl_readback_color_async(e);
