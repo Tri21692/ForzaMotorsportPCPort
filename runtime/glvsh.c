@@ -88,6 +88,11 @@ static void vsh_mask(Str *s, uint32_t mask, char *out) {
 static char *vsh_glsl(const VshIns *prog, uint32_t n) {
     Str s = {malloc(16384), 0, 16384};
     put(&s, "#version 430\n"
+            /* A surface drawn again by another program (Forza's lighting
+             * passes) must land on exactly the same depth: compiled apart,
+             * the same arithmetic could round differently, and the passes
+             * fought (flicker on overlapping surfaces). */
+            "invariant gl_Position;\n"
             "layout(location = 0) in vec4 a_in[16];\n"
             "uniform vec4 u_vc[192];\n"
             "uniform vec2 u_size, u_sxy;\n"

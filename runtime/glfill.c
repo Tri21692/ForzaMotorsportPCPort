@@ -23,6 +23,7 @@
 
 static const char *vs_src =
     "#version 430\n"
+    "invariant gl_Position;\n" /* the same position from every program: see vsh_glsl */
     "layout(location = 0) in vec4 a_pos;\n" /* x, y in samples; z in depth units; 1/w */
     "layout(location = 1) in vec4 a_c0;\n"
     "layout(location = 2) in vec4 a_c1;\n"
