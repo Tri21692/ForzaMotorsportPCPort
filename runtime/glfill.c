@@ -351,6 +351,7 @@ static int gl_span_hit(uint32_t a, uint32_t an, uint32_t b, uint32_t bn);
 static void gl_complete(void);
 static void gl_ram_written(const void *by, uint32_t base, uint32_t size);
 static void gl_complete_range(uint32_t base, uint32_t size);
+static void gl_sync_range(uint32_t base, uint32_t size);
 
 /* ---- drawing at a higher resolution (XBRT_GL_SCALE=<k>, default 2) ----
  * Every framebuffer the game draws, except swizzled ones, is k times its
@@ -516,6 +517,7 @@ static void gl_present_vblank(uint32_t fb) {
         last_seq = s->seq, same = 0;
     }
     if (rt_display_video_on()) s = NULL; /* a movie: the overlay is composited from RAM */
+    if (!s && fb) gl_sync_range(fb, (rt_display_pitch ? rt_display_pitch : 640 * 4) * 480); /* what the GPU drew there, not read back at the notifies */
     if (!s) { /* RAM shows what is on screen now: the display goes back to it at once */
         pthread_mutex_lock(&hi_lock);
         hi_when = 0;
@@ -860,11 +862,19 @@ static void gl_snapshot(GlSurf *e) {
     glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
 }
 
+/* Only then: the window shows the GPU's own copies of the frames, and
+ * whatever reads these bytes later collects them (gl_sync_range), as
+ * does the display when it goes back to RAM (gl_present_vblank). Reading
+ * every shown frame back was a third of the device thread in a race.
+ * XBRT_GL_SHOWN_READBACK=1: every frame, as before. */
 static void gl_sync_color_async(uint32_t base, uint32_t size) {
-    static uint64_t last;
+    static uint64_t last, prev;
+    static int every = -1;
+    if (every < 0) every = getenv("XBRT_GL_SHOWN_READBACK") && atoi(getenv("XBRT_GL_SHOWN_READBACK"));
     uint64_t now = rt_now_100ns();
-    int slow = now - last > 1000000; /* 100 ms since the last frame */
-    last = now;
+    if (now - last > 50000) prev = last, last = now; /* a notify: one call per shown buffer */
+    int slow = last - prev > 1000000; /* 100 ms since the last frame */
+    if (!slow && !every && !rt_display_wants_pixels()) return;
     for (int i = 0; i < GL_SURFS; i++) {
         GlSurf *e = &gl_surf[i];
         if (e->fbo && e->cdirty && gl_span_hit(e->cbase, e->cpitch * (uint32_t)e->h, base, size)) gl_readback_color_async(e);

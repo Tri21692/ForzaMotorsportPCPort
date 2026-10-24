@@ -271,11 +271,11 @@ static DWORD WINAPI window_main(LPVOID arg) {
 
 int rt_display_focused(void) { return window && GetForegroundWindow() == window; }
 void *rt_display_hwnd(void) { return window; }
-int rt_display_wants_pixels(void) { return !window || shot_dir || shot_wanted || recording(); }
+int rt_display_wants_pixels(void) { return shot_dir || shot_wanted || recording(); }
 #else
 int rt_display_focused(void) { return 1; }
 void *rt_display_hwnd(void) { return NULL; }
-int rt_display_wants_pixels(void) { return 1; }
+int rt_display_wants_pixels(void) { return shot_dir || recording(); }
 void rt_display_new_frame(void) {}
 #endif
 
