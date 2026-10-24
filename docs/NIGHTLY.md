@@ -513,6 +513,27 @@ Open bugs, in order:
 
 ## Log
 
+- **2026-10-24 (interactive, the user driving): speed, pacing, hangs.**
+  - Hill-corner scenery: draws over 4096 vertices were cut off (fixed
+    arrays); now they grow. The user confirmed the cliff shows.
+  - Race-start hang: the GPU parked in a FLIP_STALL that D3D's vertical
+    blank handler never released (XBRT_FRAME_TRACE showed S with no R).
+    FLIP_STALL no longer follows FLIP_READ/WRITE: it waits only while two
+    finished frames wait to be shown (three-buffer pacing, max 60 a
+    second). Releasing stalls by hand instead desynced D3D (bunched
+    frames, sluggish menus); two-buffer waiting gave ~40 fps.
+  - The window is drawn by OpenGL from copies of finished frames taken at
+    flips (newest framebuffer per shown address); menus, movies and
+    loading screens from RAM (rt_display_compose) the same way. Once GL
+    has drawn a window, GDI pictures no longer show in it.
+  - Per GPU draw (XBRT_STATS): ~16 us in a race, ~900-1500 draws a
+    frame, the device thread 80-100% busy: fetch 5-8 us, gl_bind 4-5 us
+    (hash checks after sync points), upload ~1.3 us (attributes packed),
+    frag ~1 us (sampler objects). Next: fetch (each vertex starts as a
+    256-byte copy of `cur`) and gl_bind.
+  - Race 52-57 fps headless at the heavy start; the user reports smooth,
+    no flicker, pause no longer locks up.
+
 - 2026-10-19 (nightly, branch nightly/2026-10-18): GPU path from 9-10
   to ~15-20 fps in the race (3055 -> 8500-8700 flips over the 415 s run).
   Texture mipmaps, filters and LOD bias from SET_TEXTURE_FILTER; fog
