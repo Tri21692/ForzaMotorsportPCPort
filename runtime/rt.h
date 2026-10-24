@@ -54,6 +54,7 @@ extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
 #define RT_DBG_NO_CLIP 8u
 #define RT_DBG_CPU_VSH 16u
 extern volatile uint32_t rt_debug_keys;
+extern uint32_t rt_frame_interval_at; /* where the game keeps its frame interval in vertical blanks, or 0 */
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_backtrace(XbCtx *c); /* registers and likely return addresses, to stderr */
 void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));

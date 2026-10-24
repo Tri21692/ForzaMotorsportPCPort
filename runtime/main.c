@@ -130,10 +130,12 @@ static void load_xbe(const char *path) {
      * second vertical blank (30 fps); the 60 fps patch is this one value in
      * .data set to 1. Only where the neighbouring bytes are Forza's. */
     const char *fps = getenv("XBRT_FPS");
+    const uint32_t at = 0x554944;
+    int forza = at + 8 <= base + img && xb_rd32(at - 4) == 1 && (xb_rd32(at) == 1 || xb_rd32(at) == 2) && xb_rd32(at + 4) == 0x80000002u;
+    if (forza) rt_frame_interval_at = at; /* the flip pacing reads it (nv2a.c) */
     if (fps && *fps) {
-        const uint32_t at = 0x554944;
         uint32_t interval = atoi(fps) >= 60 ? 1 : 2;
-        if (at + 8 <= base + img && xb_rd32(at - 4) == 1 && (xb_rd32(at) == 1 || xb_rd32(at) == 2) && xb_rd32(at + 4) == 0x80000002u) {
+        if (forza) {
             rt_log("XBRT_FPS=%s: frame interval %u -> %u vertical blanks\n", fps, xb_rd32(at), interval);
             xb_wr32(at, interval);
         } else {

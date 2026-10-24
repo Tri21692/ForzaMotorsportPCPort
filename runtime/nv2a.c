@@ -331,6 +331,7 @@ static unsigned pb_n;
  * and GET is published as it moves. A jump to itself parks the GPU until
  * PUT moves; that returns 0, so the device thread goes back to its timed
  * wait (and keeps raising vertical blanks) instead of spinning here. */
+uint32_t rt_frame_interval_at;
 static uint64_t vblank_due; /* when the device loop raises the next vertical blank */
 
 static int run_pushbuf(void) {
@@ -611,8 +612,14 @@ static void *device_main(void *arg) {
             vblank_due = next_vblank;
             nv2a.vblanks++;
             nv2a_trace('V', nv2a.vblanks);
-            /* A blank shows one waiting frame: a stalled one may go on (kelvin.c, FLIP_STALL). */
-            if (nv2a.queued) nv2a.queued--;
+            /* A blank shows one waiting frame, every interval blanks (the
+             * game's presentation interval: 2 for 30 fps, which ran at 60
+             * without it): a stalled one may then go on (kelvin.c,
+             * FLIP_STALL). */
+            static uint32_t since;
+            uint32_t interval = rt_frame_interval_at ? xb_rd32(rt_frame_interval_at) : 1;
+            if (interval < 1 || interval > 4) interval = 1;
+            if (++since >= interval && nv2a.queued) nv2a.queued--, since = 0;
             if (nv2a.flip_stall && nv2a.queued < 2) nv2a.flip_stall = 0, nv2a_trace('R', 1);
             if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
