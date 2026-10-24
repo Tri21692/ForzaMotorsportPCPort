@@ -110,10 +110,20 @@ typedef struct {
 } Vertex;
 
 static Vertex cur;            /* the inline attribute values */
-static Vertex verts[4096];    /* the primitive being collected */
+static Vertex *verts;          /* the primitive being collected */
 static int nverts, prim;      /* prim: SET_BEGIN_END op, 0 outside Begin/End */
-static uint32_t inline_buf[4096]; /* INLINE_ARRAY words of this Begin/End */
+static uint32_t *inline_buf;  /* INLINE_ARRAY words of this Begin/End */
 static int ninline;
+static int verts_cap, inline_cap;
+
+/* The next vertex of the primitive, starting from the inline values. Both
+ * buffers grow: with 4096 vertices (and 4096 inline words) the rest of a
+ * bigger draw was dropped. */
+static Vertex *vert_new(void) {
+    if (nverts == verts_cap) verts_cap = verts_cap ? verts_cap * 2 : 4096, verts = realloc(verts, (size_t)verts_cap * sizeof *verts);
+    verts[nverts] = cur;
+    return &verts[nverts++];
+}
 
 static inline uint8_t *phys(uint32_t pa) { return xb_mem + RT_PHYS_VIEW + (pa & (RT_PHYS_SIZE - 1)); }
 static inline float f32(uint32_t v) { float f; memcpy(&f, &v, 4); return f; }
@@ -1438,7 +1448,7 @@ static void draw(void) {
 }
 
 static void emit(void) {
-    if (prim && nverts < (int)(sizeof verts / sizeof verts[0])) verts[nverts++] = cur;
+    if (prim) vert_new();
 }
 
 /* Vertex arrays: offset bit 31 picks the second vertex DMA. */
@@ -1512,10 +1522,10 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
         } else if (prim) {
             if (ninline) { /* INLINE_ARRAY: whole vertices, attribute by attribute */
                 const uint32_t *p = inline_buf, *end = inline_buf + ninline;
-                while (p < end && nverts < (int)(sizeof verts / sizeof verts[0])) {
-                    verts[nverts] = cur;
-                    fetch(0, &verts[nverts], &p);
-                    nverts++;
+                while (p < end) {
+                    const uint32_t *was = p;
+                    fetch(0, vert_new(), &p);
+                    if (p == was) break; /* no attributes enabled */
                 }
             }
             draw();
@@ -1555,21 +1565,13 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
         if (k == 1 && a == ATTR_POS) emit();
     } else if (method == DRAW_ARRAYS && prim) {
         uint32_t start = arg & 0xFFFFFF, count = (arg >> 24) + 1;
-        for (uint32_t i = 0; i < count && nverts < (int)(sizeof verts / sizeof verts[0]); i++) {
-            verts[nverts] = cur;
-            fetch(start + i, &verts[nverts++], NULL);
-        }
+        for (uint32_t i = 0; i < count; i++) fetch(start + i, vert_new(), NULL);
     } else if (method == ARRAY_ELEMENT16 && prim) {
-        for (int h = 0; h < 2 && nverts < (int)(sizeof verts / sizeof verts[0]); h++) {
-            verts[nverts] = cur;
-            fetch(h ? arg >> 16 : arg & 0xFFFF, &verts[nverts++], NULL);
-        }
+        for (int h = 0; h < 2; h++) fetch(h ? arg >> 16 : arg & 0xFFFF, vert_new(), NULL);
     } else if (method == ARRAY_ELEMENT32 && prim) {
-        if (nverts < (int)(sizeof verts / sizeof verts[0])) {
-            verts[nverts] = cur;
-            fetch(arg, &verts[nverts++], NULL);
-        }
+        fetch(arg, vert_new(), NULL);
     } else if (method == INLINE_ARRAY && prim) {
-        if (ninline < (int)(sizeof inline_buf / sizeof inline_buf[0])) inline_buf[ninline++] = arg;
+        if (ninline == inline_cap) inline_cap = inline_cap ? inline_cap * 2 : 4096, inline_buf = realloc(inline_buf, (size_t)inline_cap * 4);
+        inline_buf[ninline++] = arg;
     }
 }
