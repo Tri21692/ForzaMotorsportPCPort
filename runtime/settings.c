@@ -24,6 +24,8 @@ static RtSetting settings[] = {
     {"anisotropic", "XBRT_GL_ANISO", "16", "Texture sharpness at angles: 1 (off) to 16"},
     {"vsync", "XBRT_VSYNC", "0", "Wait for the monitor's refresh when showing a frame: 1 on, 0 off"},
     {"volume", "XBRT_VOLUME", "0.7", "Sound volume: 0 to 1"},
+    {"music", "XBRT_MUSIC", "music", "Folder of your own songs for Forza's custom soundtracks: one subfolder per soundtrack (mp3, flac, wav, ogg, m4a, wma)"},
+    {"ffmpeg", "XBRT_FFMPEG", "ffmpeg", "ffmpeg.exe, which converts the songs once (and records clips); the full path if it is not on the PATH"},
 };
 #define NSETTINGS (int)(sizeof settings / sizeof settings[0])
 

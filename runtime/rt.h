@@ -64,6 +64,7 @@ int rt_settings_count(void);
 const RtSetting *rt_setting(int i);
 const char *rt_settings_get(const char *name);
 void rt_settings_set(const char *name, const char *value); /* and saves the file */
+void rt_soundtracks_init(void);              /* soundtrack.c: the music folder onto the hard disk */
 
 /* The settings overlay (overlay.c; drawn by glfill.c). */
 enum { RT_OV_UP, RT_OV_DOWN, RT_OV_LEFT, RT_OV_RIGHT, RT_OV_OK, RT_OV_BACK };
