@@ -790,6 +790,7 @@ typedef struct {
     GLsync sync; /* passed when the copy is done */
     void *map;   /* the buffer in the CPU's memory, mapped for good (glBufferStorage) */
     uint32_t cap;
+    uint64_t ram_sig; /* hash_sparse of the bytes in RAM when it was asked for */
 } GlPending;
 
 static GlPending gl_pend[16];
@@ -799,6 +800,16 @@ static int gl_npend;
 static void gl_complete_first(int n) {
     for (int i = 0; i < n; i++) {
         GlPending *p = &gl_pend[i];
+        /* The bytes changed since it was asked for, and not by us: the game
+         * has used that memory for something else (a menu's track logo,
+         * freshly read from disc, came out as a white block under a late
+         * frame read-back). RAM keeps what the game put there. */
+        int reused = hash_sparse(phys(p->base), p->size) != p->ram_sig;
+        if (reused) {
+            if (p->sync) glDeleteSync(p->sync), p->sync = 0;
+            static int said; if (said++ < 10) fprintf(stderr, "xbrt: read-back of %08x dropped: the memory was reused\n", p->base);
+            continue;
+        }
         if (p->map) { /* persistent: the copy is there once the fence passes */
             if (p->sync) glClientWaitSync(p->sync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
             memcpy(phys(p->base), p->map, p->size);
@@ -811,6 +822,8 @@ static void gl_complete_first(int n) {
         if (p->sync) glDeleteSync(p->sync), p->sync = 0;
         if (!p->s->cdirty) p->s->chash = 0; /* RAM is what the GPU drew: adopted at the next check */
         gl_ram_written(p->s, p->base, p->size);
+        for (int j = i + 1; j < gl_npend; j++) /* later ones over these bytes: this write was ours */
+            if (gl_span_hit(gl_pend[j].base, gl_pend[j].size, p->base, p->size)) gl_pend[j].ram_sig = hash_sparse(phys(gl_pend[j].base), gl_pend[j].size);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     for (int i = n; i < gl_npend; i++) { /* the rest move up, keeping their buffers apart */
@@ -868,6 +881,7 @@ static void gl_readback_color_async(GlSurf *s) {
     if (gl_npend == 16) gl_complete();
     GlPending *p = &gl_pend[gl_npend++];
     p->s = s, p->base = s->cbase, p->size = c;
+    p->ram_sig = hash_sparse(phys(p->base), c);
     /* Into the CPU's memory where the driver allows (client storage,
      * mapped for good): mapping a GL_STREAM_READ buffer at each completion
      * copied it out of video memory then, and that was most of the cost of
