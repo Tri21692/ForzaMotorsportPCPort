@@ -1401,7 +1401,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         uint32_t cmin = K(0x394), cmax = K(0x398); /* SET_CLIP_MIN / MAX, floats in depth units */
         float lo, hi;
         memcpy(&lo, &cmin, 4), memcpy(&hi, &cmax, 4);
-        if (!(hi > lo)) lo = 0, hi = d->zmax;
+        if (!(hi > lo) || (rt_debug_keys & RT_DBG_NO_CLIP)) lo = 0, hi = d->zmax;
         float zr[4] = {d->zmax, lo, hi, (K(0x290) & (1u << 16)) ? 1.0f : 0.0f}; /* CONTROL0 Z_PERSPECTIVE */
         uint32_t fb = K(0x388), ff = K(0x384); /* POLYGON_OFFSET_BIAS / SCALE_FACTOR, if POLY_OFFSET_FILL_ENABLE */
         float zoff[3] = {0, 0, (float)s->k}; /* slopes per Xbox pixel: k GL pixels each */
@@ -1466,7 +1466,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
     glActiveTexture(GL_TEXTURE0);
     glUniform1iv(u_mode, 4, mode), glUniform1iv(u_kind, 4, kind), glUniform2fv(u_scale, 4, scale), glUniform1fv(u_dmax, 4, dmax);
     glUniform1i(u_shadow_func, (GLint)(K(SET_SHADOW_DEPTH_FUNC) & 7));
-    glUniform1i(u_alpha_func, K(SET_ALPHA_TEST_ENABLE) ? (GLint)K(SET_ALPHA_FUNC) : 0);
+    glUniform1i(u_alpha_func, K(SET_ALPHA_TEST_ENABLE) && !(rt_debug_keys & RT_DBG_NO_ALPHA) ? (GLint)K(SET_ALPHA_FUNC) : 0);
     glUniform1f(u_alpha_ref, (float)(K(SET_ALPHA_REF) & 255) / 255.0f);
     float fogc[3];
     fog_color(fogc);
@@ -1481,7 +1481,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
     } else {
         glDisable(GL_BLEND);
     }
-    if (d->ztest && s->ztex) {
+    if (d->ztest && s->ztex && !(rt_debug_keys & RT_DBG_NO_DEPTH)) {
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(d->zfunc);
         glDepthMask(d->zwrite ? GL_TRUE : GL_FALSE);
@@ -1495,7 +1495,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
      * the scene lost most of its faces). XBRT_GL_CULL=0 turns it off. */
     static int cull = -1;
     if (cull < 0) cull = getenv("XBRT_GL_CULL") ? atoi(getenv("XBRT_GL_CULL")) : 1;
-    if (cull && K(0x308) && (K(0x39C) == GL_FRONT || K(0x39C) == GL_BACK || K(0x39C) == GL_FRONT_AND_BACK)) {
+    if (cull && !(rt_debug_keys & RT_DBG_NO_CULL) && K(0x308) && (K(0x39C) == GL_FRONT || K(0x39C) == GL_BACK || K(0x39C) == GL_FRONT_AND_BACK)) {
         glEnable(GL_CULL_FACE);
         glCullFace((GLenum)K(0x39C));
         GLenum ff = K(0x3A0) == GL_CW ? GL_CW : GL_CCW;

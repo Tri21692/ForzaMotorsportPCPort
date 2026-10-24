@@ -130,6 +130,8 @@ static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
     fclose(f);
 }
 
+volatile uint32_t rt_debug_keys;
+
 static const char *shot_dir;
 static double shot_every = 5;
 static int shot_count;
@@ -159,6 +161,27 @@ void rt_display_new_frame(void) {
 static uint32_t frame[RT_DISPLAY_MAX];
 static int frame_w = DISP_W, frame_h = DISP_H;
 
+/* F5-F9 flip rt_debug_keys (the title says which are on); F12 saves the
+ * picture to screenshots/ beside the game, whether XBRT_SCREENSHOT is set
+ * or not. */
+static void debug_key(WPARAM vk) {
+    static const char *names[] = {"no culling", "no depth test", "no alpha test", "no depth clip", "CPU vertex programs"};
+    if (vk == VK_F12) {
+        CreateDirectoryA("screenshots", NULL);
+        char path[256];
+        snprintf(path, sizeof path, "screenshots/shot_%06.1fs.bmp", rt_now_100ns() / 1e7);
+        save_bmp(path, frame, frame_w, frame_h);
+        return;
+    }
+    if (vk < VK_F5 || vk > VK_F9) return;
+    rt_debug_keys ^= 1u << (vk - VK_F5);
+    char title[512];
+    int n = snprintf(title, sizeof title, "Forza Motorsport (PC port, work in progress)");
+    for (int i = 0; i < 5; i++)
+        if (rt_debug_keys & (1u << i)) n += snprintf(title + n, sizeof title - n, " | F%d %s", 5 + i, names[i]);
+    SetWindowTextA(window, title);
+}
+
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: {
@@ -180,6 +203,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         maybe_screenshot(frame, frame_w, frame_h);
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
+    case WM_KEYDOWN:
+        debug_key(wp);
+        break;
     case WM_CLOSE:
         ExitProcess(0);
     }

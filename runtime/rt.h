@@ -46,6 +46,14 @@
 
 /* ---- logging ---- */
 extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
+/* Debugging toggles, flipped live with F5-F9 in the window (display.c):
+ * drawing with one of the GPU's features off, to see what hides a thing. */
+#define RT_DBG_NO_CULL 1u
+#define RT_DBG_NO_DEPTH 2u
+#define RT_DBG_NO_ALPHA 4u
+#define RT_DBG_NO_CLIP 8u
+#define RT_DBG_CPU_VSH 16u
+extern volatile uint32_t rt_debug_keys;
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_backtrace(XbCtx *c); /* registers and likely return addresses, to stderr */
 void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));

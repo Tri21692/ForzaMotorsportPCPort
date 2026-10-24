@@ -1406,7 +1406,7 @@ static void draw(void) {
      * there are enough to be worth it. */
     if (mode == 2) {
         vsh_decode();
-        if (rt_gl_on && gl_vsh_on() && gl_draw_vsh(&d, verts, n, prim)) return; /* the GPU runs the program */
+        if (rt_gl_on && gl_vsh_on() && !(rt_debug_keys & RT_DBG_CPU_VSH) && gl_draw_vsh(&d, verts, n, prim)) return; /* the GPU runs the program */
     }
     if (n > pts_cap) {
         pts_cap = n > 4096 ? n : 4096;
