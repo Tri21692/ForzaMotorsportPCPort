@@ -44,6 +44,11 @@
     X(PFNGLTEXPARAMETERIPROC, glTexParameteri)                                                                              \
     X(PFNGLTEXPARAMETERFPROC, glTexParameterf)                                                                              \
     X(PFNGLTEXPARAMETERFVPROC, glTexParameterfv)                                                                            \
+    X(PFNGLGENSAMPLERSPROC, glGenSamplers)                                                                                  \
+    X(PFNGLBINDSAMPLERPROC, glBindSampler)                                                                                  \
+    X(PFNGLSAMPLERPARAMETERIPROC, glSamplerParameteri)                                                                      \
+    X(PFNGLSAMPLERPARAMETERFPROC, glSamplerParameterf)                                                                      \
+    X(PFNGLSAMPLERPARAMETERFVPROC, glSamplerParameterfv)                                                                            \
     X(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers)                                                                          \
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)                                                                    \
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                                                                          \
@@ -79,6 +84,7 @@
     X(PFNGLBUFFERDATAPROC, glBufferData)                                                                                    \
     X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer)                                                                  \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray)                                                          \
+    X(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray)                                                          \
     X(PFNGLDRAWARRAYSPROC, glDrawArrays)                                                                                    \
     X(PFNGLFENCESYNCPROC, glFenceSync)                                                                                      \
     X(PFNGLCLIENTWAITSYNCPROC, glClientWaitSync)                                                                            \
@@ -125,6 +131,11 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glTexParameteri p_glTexParameteri
 #define glTexParameterf p_glTexParameterf
 #define glTexParameterfv p_glTexParameterfv
+#define glGenSamplers p_glGenSamplers
+#define glBindSampler p_glBindSampler
+#define glSamplerParameteri p_glSamplerParameteri
+#define glSamplerParameterf p_glSamplerParameterf
+#define glSamplerParameterfv p_glSamplerParameterfv
 #define glGenFramebuffers p_glGenFramebuffers
 #define glDeleteFramebuffers p_glDeleteFramebuffers
 #define glBindFramebuffer p_glBindFramebuffer
@@ -160,6 +171,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glBufferData p_glBufferData
 #define glVertexAttribPointer p_glVertexAttribPointer
 #define glEnableVertexAttribArray p_glEnableVertexAttribArray
+#define glDisableVertexAttribArray p_glDisableVertexAttribArray
 #define glDrawArrays p_glDrawArrays
 #define glFenceSync p_glFenceSync
 #define glClientWaitSync p_glClientWaitSync
@@ -174,5 +186,6 @@ extern int rt_gl_on; /* XBRT_GPU=gl and the context came up */
 /* On the device thread: make the context and load the functions. Returns 0
  * (and says why) if the host has no OpenGL 4.3. */
 int rt_gl_init(void);
+int rt_gl_show(GLuint fbo, int w, int h); /* the framebuffer into the game's window, scaled to it */
 
 #endif

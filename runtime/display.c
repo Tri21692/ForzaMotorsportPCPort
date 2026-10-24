@@ -97,8 +97,10 @@ void rt_display_compose(uint32_t *out) {
     overlay(out);
 }
 
+int rt_display_video_on(void) { return (REG(PVIDEO_BUFFER) & 1) && REG(PVIDEO_SIZE_IN) != 0xFFFFFFFFu; }
+
 void rt_display_compose_best(uint32_t *out, int *w, int *h) {
-    int video = (REG(PVIDEO_BUFFER) & 1) && REG(PVIDEO_SIZE_IN) != 0xFFFFFFFFu; /* a movie through the overlay */
+    int video = rt_display_video_on(); /* a movie through the overlay */
     uint32_t fb = REG(PCRTC_START);
     if (!video && fb && rt_gl_frame(fb, out, RT_DISPLAY_MAX, w, h)) return;
     rt_display_compose(out);
@@ -131,6 +133,19 @@ static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
 }
 
 volatile uint32_t rt_debug_keys;
+volatile uint64_t rt_gl_shown;
+
+/* The GPU draws the window (rt_gl_show) until it says RAM shows what is on
+ * screen (menus at 1x, movies); else GDI draws it from frame[]. Not on a
+ * timeout: in a hitch the window went to frame[], which nothing keeps up
+ * to date then, and flashed grey. */
+static int gl_showing(void) { return rt_gl_shown != 0; }
+
+static int recording(void) {
+    static int r = -1;
+    if (r < 0) r = getenv("XBRT_RECORD") && *getenv("XBRT_RECORD");
+    return r;
+}
 
 static const char *shot_dir;
 static double shot_every = 5;
@@ -154,6 +169,7 @@ static void maybe_screenshot(const uint32_t *px, int w, int h) {
 
 static HWND window;
 static HANDLE new_frame; /* set by rt_display_new_frame */
+static volatile int shot_wanted; /* F12 pressed, with the window drawn by the GPU: the next picture read back is saved */
 
 void rt_display_new_frame(void) {
     if (new_frame) SetEvent(new_frame);
@@ -167,6 +183,10 @@ static int frame_w = DISP_W, frame_h = DISP_H;
 static void debug_key(WPARAM vk) {
     static const char *names[] = {"no culling", "no depth test", "no alpha test", "no depth clip", "CPU vertex programs"};
     if (vk == VK_F12) {
+        if (rt_gl_shown) { /* the window is drawn by the GPU: frame[] is not kept up to date */
+            shot_wanted = 1;
+            return;
+        }
         CreateDirectoryA("screenshots", NULL);
         char path[256];
         snprintf(path, sizeof path, "screenshots/shot_%06.1fs.bmp", rt_now_100ns() / 1e7);
@@ -187,6 +207,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(hwnd, &ps);
+        if (gl_showing()) { /* the GPU draws the window itself */
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
         RECT r;
         GetClientRect(hwnd, &r);
         BITMAPINFO bi = {0};
@@ -199,9 +223,14 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_TIMER:
+        if (gl_showing() && !rt_display_wants_pixels()) return 0;
         rt_display_compose_best(frame, &frame_w, &frame_h);
         maybe_screenshot(frame, frame_w, frame_h);
-        InvalidateRect(hwnd, NULL, FALSE);
+        if (shot_wanted && wp == 2) { /* a picture just read back for F12 */
+            shot_wanted = 0;
+            rt_gl_shown = 0, debug_key(VK_F12), rt_gl_shown = rt_now_100ns();
+        }
+        if (!gl_showing()) InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     case WM_KEYDOWN:
         debug_key(wp);
@@ -216,6 +245,7 @@ static DWORD WINAPI window_main(LPVOID arg) {
     (void)arg;
     new_frame = CreateEventA(NULL, FALSE, FALSE, NULL);
     WNDCLASSA wc = {0};
+    wc.style = CS_OWNDC; /* OpenGL draws into it */
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
@@ -228,7 +258,7 @@ static DWORD WINAPI window_main(LPVOID arg) {
     SetTimer(window, 1, 16, NULL); /* the picture from RAM (menus' 1x frames, movies) */
     for (;;) { /* and a new GPU picture as soon as it arrives */
         DWORD r = MsgWaitForMultipleObjects(1, &new_frame, FALSE, INFINITE, QS_ALLINPUT);
-        if (r == WAIT_OBJECT_0) SendMessageA(window, WM_TIMER, 1, 0), UpdateWindow(window);
+        if (r == WAIT_OBJECT_0) SendMessageA(window, WM_TIMER, 2, 0), UpdateWindow(window);
         MSG m;
         while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) {
             if (m.message == WM_QUIT) return 0;
@@ -240,8 +270,12 @@ static DWORD WINAPI window_main(LPVOID arg) {
 }
 
 int rt_display_focused(void) { return window && GetForegroundWindow() == window; }
+void *rt_display_hwnd(void) { return window; }
+int rt_display_wants_pixels(void) { return !window || shot_dir || shot_wanted || recording(); }
 #else
 int rt_display_focused(void) { return 1; }
+void *rt_display_hwnd(void) { return NULL; }
+int rt_display_wants_pixels(void) { return 1; }
 void rt_display_new_frame(void) {}
 #endif
 

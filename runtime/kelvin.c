@@ -114,6 +114,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     switch (method) {
     case FLIP_INCREMENT_WRITE: {
         nv2a.flips++;
+        nv2a_trace('F', nv2a.draws);
         nv2a_raster_flip(); /* the display gets its buffers at notifies (trap_method) */
         nv2a_raster_invalidate();
         uint32_t mod = nv2a.kelvin[FLIP_MODULO / 4];
@@ -130,7 +131,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
          * as before. */
         static int off = -1;
         if (off < 0) off = getenv("XBRT_NO_FLIP_STALL") && atoi(getenv("XBRT_NO_FLIP_STALL"));
-        if (!off && nv2a.kelvin[FLIP_READ / 4] == nv2a.kelvin[FLIP_WRITE / 4]) nv2a.flip_stall = 1, nv2a.stalls++;
+        if (!off && nv2a.kelvin[FLIP_READ / 4] == nv2a.kelvin[FLIP_WRITE / 4]) nv2a.flip_stall = 1, nv2a.stalls++, nv2a_trace('S', 0);
         return;
     }
     case BACK_END_WRITE_SEMAPHORE_RELEASE: {

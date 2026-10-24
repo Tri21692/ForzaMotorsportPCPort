@@ -14,7 +14,7 @@ typedef struct {
 
     uint32_t vblanks, draws, clears, flips, traps, skipped;
     volatile int flip_stall; /* FLIP_STALL: the push buffer waits until the CPU moves FLIP_READ on */
-    uint32_t stalls;
+    uint32_t stalls, stall_breaks; /* flip stalls; ones the device thread had to release itself */
 } Nv2a;
 
 extern Nv2a nv2a;
@@ -24,6 +24,7 @@ uint32_t nv2a_lookup(uint32_t handle);
 uint32_t nv2a_dma_base(uint32_t inst, uint32_t *limit);
 void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg);
 void nv2a_kelvin(uint32_t method, uint32_t arg);
+void nv2a_trace(char what, uint32_t arg); /* XBRT_FRAME_TRACE: one event of the frame timeline (nv2a.c) */
 void nv2a_raster_method(uint32_t method, uint32_t arg); /* raster.c: draws in software */
 void nv2a_raster_invalidate(void);                      /* textures may have changed */
 void nv2a_raster_flush(void);                           /* finish the batched drawing */

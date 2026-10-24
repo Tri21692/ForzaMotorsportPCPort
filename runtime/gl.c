@@ -72,6 +72,45 @@ static int self_test(void) {
     return ok;
 }
 
+static HGLRC gl_ctx;
+static int gl_format;
+static PIXELFORMATDESCRIPTOR gl_pfd;
+
+/* Straight into the window: a blit to its back buffer and a swap that does
+ * not wait for the screen. Reading the picture back for the window to
+ * draw with GDI held the device thread at every vertical blank. The
+ * context moves to the window's DC the first time (same pixel format as
+ * the hidden window it was made on). 0: not possible, the caller reads
+ * back instead. */
+int rt_gl_show(GLuint fbo, int w, int h) {
+    static HWND shown;
+    static HDC dc;
+    static int failed;
+    HWND wnd = (HWND)rt_display_hwnd();
+    if (!wnd || failed) return 0;
+    if (wnd != shown) {
+        dc = GetDC(wnd);
+        if (!dc || (GetPixelFormat(dc) != gl_format && !SetPixelFormat(dc, gl_format, &gl_pfd)) || !wglMakeCurrent(dc, gl_ctx)) {
+            fprintf(stderr, "xbrt: cannot draw into the window with OpenGL; it shows read-backs instead\n");
+            failed = 1;
+            return 0;
+        }
+        shown = wnd;
+        PFNWGLSWAPINTERVALEXTPROC interval = (PFNWGLSWAPINTERVALEXTPROC)(void *)wglGetProcAddress("wglSwapIntervalEXT");
+        if (interval) interval(0);
+    }
+    RECT r;
+    GetClientRect(wnd, &r);
+    if (r.right <= 0 || r.bottom <= 0) return 1; /* minimised */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glBlitFramebuffer(0, 0, w, h, 0, r.bottom, r.right, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR); /* our rows run down */
+    SwapBuffers(dc);
+    return 1;
+}
+
 int rt_gl_init(void) {
     HINSTANCE inst = GetModuleHandleA(NULL);
     WNDCLASSA wc = {0};
@@ -101,6 +140,7 @@ int rt_gl_init(void) {
     int attribs[] = {WGL_CONTEXT_MAJOR_VERSION_ARB, 4, WGL_CONTEXT_MINOR_VERSION_ARB, 3, WGL_CONTEXT_PROFILE_MASK_ARB,
                      WGL_CONTEXT_CORE_PROFILE_BIT_ARB, WGL_CONTEXT_FLAGS_ARB, getenv("XBRT_GL_DEBUG") ? WGL_CONTEXT_DEBUG_BIT_ARB : 0, 0};
     HGLRC ctx = create ? create(dc, NULL, attribs) : NULL;
+    gl_ctx = ctx, gl_format = format, gl_pfd = pfd;
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(legacy);
     if (!ctx || !wglMakeCurrent(dc, ctx)) {
@@ -128,6 +168,7 @@ int rt_gl_init(void) {
     return 1;
 }
 #else
+int rt_gl_show(GLuint fbo, int w, int h) { (void)fbo, (void)w, (void)h; return 0; }
 int rt_gl_init(void) {
     fprintf(stderr, "xbrt: XBRT_GPU=gl is Windows-only for now; drawing in software\n");
     return 0;

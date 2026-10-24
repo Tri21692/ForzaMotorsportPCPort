@@ -165,6 +165,32 @@ static uint64_t now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
 }
 
+/* Debugging: XBRT_FRAME_TRACE=<file> writes a timeline, one event a line
+ * as "<ms> <event> <arg>": V vertical blank, P the game moves PUT, S a
+ * flip stall starts, R D3D's handler releases it, F a flip, W/w the device
+ * thread starts/stops waiting for work. Written once a second from the
+ * device thread. */
+static struct { uint64_t t; char c; uint32_t a; } tr_ring[1 << 18];
+static uint32_t tr_n, tr_done;
+static int tr_on;
+static FILE *tr_file;
+
+void nv2a_trace(char what, uint32_t arg) {
+    if (!tr_on) return;
+    uint32_t i = __atomic_fetch_add(&tr_n, 1, __ATOMIC_RELAXED) & ((1 << 18) - 1);
+    tr_ring[i].t = now_ns(), tr_ring[i].c = what, tr_ring[i].a = arg;
+}
+
+static void trace_write(void) {
+    uint32_t n = __atomic_load_n(&tr_n, __ATOMIC_ACQUIRE);
+    if (n - tr_done > (1 << 18)) tr_done = n - (1 << 18);
+    for (; tr_done < n; tr_done++) {
+        uint32_t i = tr_done & ((1 << 18) - 1);
+        fprintf(tr_file, "%.3f %c %u\n", (tr_ring[i].t - start_ns) / 1e6, tr_ring[i].c, tr_ring[i].a);
+    }
+    fflush(tr_file);
+}
+
 /* PTIMER runs at the core clock scaled by NUMERATOR / DENOMINATOR, which
  * D3D programs. */
 static uint64_t ptimer(void) {
@@ -245,6 +271,7 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
         if (v & 2) {
             uint32_t mod = nv2a.kelvin[0x128 / 4], r = nv2a.kelvin[0x120 / 4] + 1;
             nv2a.kelvin[0x120 / 4] = mod ? r % mod : r;
+            if (nv2a.flip_stall) nv2a_trace('R', 0);
             nv2a.flip_stall = 0;
             pthread_cond_signal(&kick);
         }
@@ -258,6 +285,7 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
     case PFIFO_CACHE1_DMA_PUT:
         recent_put[recent_put_n % 64].put = v, recent_put[recent_put_n % 64].get = REG(PFIFO_CACHE1_DMA_GET);
         recent_put_n++;
+        nv2a_trace('P', v);
         REG(USER_DMA_PUT) = v;
         REG(PFIFO_CACHE1_DMA_PUT) = v;
         pthread_cond_signal(&kick);
@@ -582,6 +610,25 @@ static void *device_main(void *arg) {
             if (t > next_vblank) next_vblank = t + 16683333;
             vblank_due = next_vblank;
             nv2a.vblanks++;
+            nv2a_trace('V', nv2a.vblanks);
+            /* A flip stall D3D's handler never releases: seen once a second
+             * into a race (the handler's count of frames to show had
+             * fallen behind), and the game hung for good, the GPU parked
+             * and the game waiting for it. After 2 blanks (33 ms) the
+             * display moves on by itself, as the handler would have. */
+            static uint32_t stall_since;
+            if (!nv2a.flip_stall) {
+                stall_since = 0;
+            } else if (!stall_since) {
+                stall_since = nv2a.vblanks;
+            } else if (nv2a.vblanks - stall_since >= 2) {
+                uint32_t mod = nv2a.kelvin[0x128 / 4], r = nv2a.kelvin[0x120 / 4] + 1;
+                nv2a.kelvin[0x120 / 4] = mod ? r % mod : r;
+                nv2a.flip_stall = 0, stall_since = 0, nv2a.stall_breaks++;
+                nv2a_trace('X', nv2a.stall_breaks);
+                if (nv2a.stall_breaks <= 5) fprintf(stderr, "xbrt: a flip stall went unreleased for 2 blanks; released (%u)\n", nv2a.stall_breaks);
+            }
+            if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
                 static const char *spec;
                 static int checked;
@@ -616,7 +663,9 @@ static void *device_main(void *arg) {
         }
         struct timespec ts;
         rt_abstime(&ts, next_vblank - t);
+        nv2a_trace('W', 0);
         pthread_cond_timedwait(&kick, &lock, &ts);
+        nv2a_trace('w', 0);
     }
     return NULL;
 }
@@ -633,6 +682,7 @@ void rt_nv2a_init(void) {
     REG(PFIFO_RUNOUT_STATUS) = 0x10; /* EMPTY */
     rt_interrupt_ack(GPU_IRQ, after_isr);
     rt_cond_init(&kick);
+    if (getenv("XBRT_FRAME_TRACE") && (tr_file = fopen(getenv("XBRT_FRAME_TRACE"), "w"))) tr_on = 1;
     pthread_t h;
     pthread_create(&h, NULL, device_main, NULL);
 }
@@ -652,6 +702,16 @@ void nv2a_log_stats(void) {
             (unsigned long long)raster_n_decode, raster_t_decode / 1e7, (unsigned long long)(raster_hash_bytes >> 20), raster_t_hash / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: device thread: pusher %.1f s, of which draw state %.1f s, vertices %.1f s, filling %.1f s\n",
             rt_now_100ns() / 1e7, pusher_t_busy / 1e7, raster_t_state / 1e7, raster_t_setup / 1e7, raster_t_fill / 1e7);
+    {
+        extern uint64_t prof_t[6], prof_n, prof_verts, raster_t_fetch;
+        static uint64_t lt[6], ln, lv, lf;
+        uint64_t dn = prof_n - ln ? prof_n - ln : 1;
+        fprintf(stderr, "[%10.3f] nv2a: per GPU draw (%llu, %.0f verts): fetch %.1f us; prog %.1f bind %.1f upload %.1f consts %.1f frag %.1f call %.1f us\n",
+                rt_now_100ns() / 1e7, (unsigned long long)(prof_n - ln), (double)(prof_verts - lv) / dn, (raster_t_fetch - lf) / 10.0 / dn,
+                (prof_t[0] - lt[0]) / 10.0 / dn, (prof_t[1] - lt[1]) / 10.0 / dn, (prof_t[2] - lt[2]) / 10.0 / dn,
+                (prof_t[3] - lt[3]) / 10.0 / dn, (prof_t[4] - lt[4]) / 10.0 / dn, (prof_t[5] - lt[5]) / 10.0 / dn);
+        memcpy(lt, prof_t, sizeof lt), ln = prof_n, lv = prof_verts, lf = raster_t_fetch;
+    }
     fprintf(stderr, "[%10.3f] nv2a: waiting for the driver after %u traps: %.1f s\n", rt_now_100ns() / 1e7, nv2a.traps, trap_t_wait / 1e7);
     fprintf(stderr, "[%10.3f] nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
             "PATT_COLOR0 %08x, intr %08x, scanout %08x\n", rt_now_100ns() / 1e7, nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped,

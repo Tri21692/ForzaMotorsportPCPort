@@ -19,6 +19,7 @@ typedef struct {
     VshIns ins[136];
     GlProg prog;
     int ok;
+    uint16_t inputs; /* the attributes it reads (bit per v register) */
 } GlVsh;
 
 static GlVsh *gl_vsh;
@@ -209,6 +210,9 @@ static GlVsh *gl_vsh_get(uint32_t n) {
     memset(v, 0, sizeof *v);
     v->key = key, v->start = vprog_start, v->n = n;
     memcpy(v->ins, &vprog[vprog_start], n * sizeof(VshIns));
+    for (uint32_t i = 0; i < n; i++)
+        for (int k = 0; k < 3; k++)
+            if (v->ins[i].in[k].mux == 2) v->inputs |= (uint16_t)(1u << (v->ins[i].attr & 15));
     char *src = vsh_glsl(v->ins, n);
     GLuint vs = compile(GL_VERTEX_SHADER, src);
     free(src);
@@ -269,11 +273,16 @@ static void gl_shadow_sync(const DrawState *d, const GlSurf *s, float c[192][4])
 
 /* Draws verts[0..n) as primitive prim with the current vertex program on
  * the GPU. 0: not handled here (the CPU path draws it). */
+/* XBRT_STATS: where a draw's time goes (program and indices, gl_bind,
+ * vertex upload, constants, gl_frag_state, the draw call). */
+uint64_t prof_t[6], prof_n, prof_verts;
+
 static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     if (gl_ready < 0) gl_ready = gl_setup();
     if (!gl_ready || n < 3) return gl_ready ? 1 : 0;
     uint32_t len;
     if (!vsh_extent(&len)) return 0;
+    uint64_t p0 = rt_now_100ns();
     GlVsh *v = gl_vsh_get(len);
     if (!v->ok) return 0;
 
@@ -293,8 +302,9 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     }
 #undef TRI
     if (!k) return 1;
-
+    uint64_t p1 = rt_now_100ns();
     GlSurf *s = gl_bind(d);
+    uint64_t p2 = rt_now_100ns();
     gl_use(&v->prog);
     if (!gl_vsh_vao) {
         glGenVertexArrays(1, &gl_vsh_vao);
@@ -310,8 +320,29 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     }
     glBindVertexArray(gl_vsh_vao);
     glBindBuffer(GL_ARRAY_BUFFER, gl_vsh_vbo);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * (GLsizeiptr)sizeof(Vertex), vs, GL_STREAM_DRAW);
+    /* Only the attributes the program reads, packed: all sixteen were
+     * 256 bytes a vertex, some 60 MB a frame in a race. */
+    static float *packed;
+    static int packed_cap;
+    static int last_inputs = -1;
+    int used[16], m = 0;
+    for (int a = 0; a < NATTR; a++)
+        if (v->inputs & (1u << a)) used[m++] = a;
+    if (!m) used[m++] = 0;
+    if (n * m * 4 > packed_cap) packed_cap = n * m * 4, packed = realloc(packed, (size_t)packed_cap * sizeof *packed);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * m * 16, packed, GL_STREAM_DRAW);
+    if (v->inputs != last_inputs) {
+        for (int a = 0; a < NATTR; a++) glDisableVertexAttribArray((GLuint)a);
+        for (int j = 0; j < m; j++) {
+            glVertexAttribPointer((GLuint)used[j], 4, GL_FLOAT, GL_FALSE, m * 16, (void *)(uintptr_t)(j * 16));
+            glEnableVertexAttribArray((GLuint)used[j]);
+        }
+        last_inputs = v->inputs;
+    }
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)k * (GLsizeiptr)sizeof(GLuint), idx, GL_STREAM_DRAW);
+    uint64_t p3 = rt_now_100ns();
 
     float c[192][4];
     for (int i = 0; i < 192; i++)
@@ -322,8 +353,13 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     glUniform2fv(v->prog.sxy, 1, sxy);
     float fog[4] = {K(SET_FOG_ENABLE) ? 1.0f : 0.0f, (float)K(SET_FOG_MODE), f32(K(SET_FOG_PARAMS)), f32(K(SET_FOG_PARAMS + 4))};
     glUniform4fv(v->prog.fog, 1, fog);
+    uint64_t p4 = rt_now_100ns();
     gl_frag_state(d, s);
+    uint64_t p5 = rt_now_100ns();
     glDrawElements(GL_TRIANGLES, k, GL_UNSIGNED_INT, NULL);
+    uint64_t p6 = rt_now_100ns();
+    prof_t[0] += p1 - p0, prof_t[1] += p2 - p1, prof_t[2] += p3 - p2, prof_t[3] += p4 - p3, prof_t[4] += p5 - p4, prof_t[5] += p6 - p5;
+    prof_n++, prof_verts += (uint64_t)n;
     glBindVertexArray(gl_vao);
     s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
     if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1, s->zgpu = 0;

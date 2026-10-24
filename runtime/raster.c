@@ -170,6 +170,7 @@ static void gl_sync_cpu(void);
 static void gl_sync_color_async(uint32_t base, uint32_t size);
 static void gl_flip(void);
 static void gl_complete(void);
+static void gl_complete_ready(void);
 static int cache_next;
 static uint32_t generation; /* bumped when render targets may have changed what textures hold */
 
@@ -1293,6 +1294,8 @@ static int batch_writes(uint32_t base, uint32_t size) {
 }
 
 /* Where the device thread's time goes, in 100 ns units, for the stats line. */
+static uint64_t prim_t0;
+uint64_t raster_t_fetch;
 uint64_t raster_t_state, raster_t_setup, raster_t_fill, raster_t_decode, raster_n_decode, raster_t_hash, raster_hash_bytes;
 
 static void add_tri(int state, int ia, int ib, int ic) {
@@ -1343,7 +1346,7 @@ void nv2a_raster_flip(void) {
 }
 
 void nv2a_raster_vblank(void) {
-    if (rt_gl_on) gl_complete();
+    if (rt_gl_on) gl_complete_ready();
 }
 
 void nv2a_raster_present(uint32_t fb) {
@@ -1517,6 +1520,7 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
     if (program_method(method, arg)) return;
     if (method == SET_BEGIN_END) {
         if (arg) {
+            prim_t0 = rt_now_100ns();
             prim = (int)arg, nverts = 0, ninline = 0;
             fetch_layout();
         } else if (prim) {
@@ -1528,6 +1532,7 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
                     if (p == was) break; /* no attributes enabled */
                 }
             }
+            raster_t_fetch += rt_now_100ns() - prim_t0;
             draw();
             prim = 0;
         }

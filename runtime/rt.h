@@ -233,6 +233,10 @@ void rt_display_compose_best(uint32_t *out, int *w, int *h); /* at the drawn res
 int rt_gl_frame(uint32_t fb, uint32_t *out, int max_pixels, int *w, int *h);
 void rt_display_new_frame(void); /* a new drawn-resolution picture: the window shows it now */
 int rt_display_focused(void);           /* the game's window has the keyboard */
+void *rt_display_hwnd(void);            /* the game's window (an HWND), or NULL */
+int rt_display_video_on(void);          /* a movie shows through the video overlay */
+int rt_display_wants_pixels(void);      /* screenshots or a recording need the picture in memory */
+extern volatile uint64_t rt_gl_shown;   /* when the GPU last put a picture in the window itself */
 
 /* ---- the audio processor (apu.c) ---- */
 void rt_apu_init(void);

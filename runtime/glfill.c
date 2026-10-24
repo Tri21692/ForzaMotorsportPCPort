@@ -424,6 +424,14 @@ static void gl_up_done(GlSurf *s, GLbitfield bits) {
  * window, screenshots and recordings show the 2x picture instead of RAM's
  * 640x480. Only while the GPU keeps drawing that buffer; otherwise (and
  * for movies, which come through the video overlay) the display takes RAM. */
+typedef struct {
+    uint32_t base;
+    GLuint tex, fbo;
+    int w, h;
+    unsigned seq;
+} GlSnap;
+static GlSnap gl_snap[4];
+
 static pthread_mutex_t hi_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t *hi_frame;
 static int hi_w, hi_h;
@@ -462,9 +470,34 @@ static void gl_present_poll(int wait) {
     }
 }
 
+/* What RAM shows (menus at 1x, movies through the overlay), into the
+ * window through OpenGL too: once OpenGL has drawn a window, GDI's
+ * pictures no longer show in it. */
+static int gl_show_ram(void) {
+    static GLuint tex, fbo;
+    static uint32_t *px;
+    if (!px) px = malloc(640 * 480 * 4);
+    if (!tex) {
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 640, 480);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    }
+    rt_display_compose(px);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 640, 480, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, px);
+    int ok = rt_gl_show(fbo, 640, 480);
+    glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+    return ok;
+}
+
 static void gl_present_vblank(uint32_t fb) {
+    if (gl_ready < 0) gl_ready = gl_setup();
     if (gl_ready <= 0) return;
-    gl_present_poll(1);
+    gl_present_poll(0);
     fb &= RT_PHYS_SIZE - 1;
     GlSurf *s = NULL;
     for (int i = 0; i < GL_SURFS; i++) {
@@ -481,13 +514,24 @@ static void gl_present_vblank(uint32_t fb) {
     } else if (s) {
         last_seq = s->seq, same = 0;
     }
+    if (rt_display_video_on()) s = NULL; /* a movie: the overlay is composited from RAM */
     if (!s) { /* RAM shows what is on screen now: the display goes back to it at once */
         pthread_mutex_lock(&hi_lock);
         hi_when = 0;
         pthread_mutex_unlock(&hi_lock);
+        rt_gl_shown = rt_display_hwnd() && gl_show_ram() ? rt_now_100ns() : 0;
         return;
     }
     int w = 640 * s->k, h = 480 * s->k;
+    GlSnap *snap = NULL;
+    for (int i = 0; i < 4; i++)
+        if (gl_snap[i].fbo && gl_snap[i].base == s->cbase && gl_snap[i].w == w && gl_snap[i].h == h) snap = &gl_snap[i];
+    if (rt_gl_show(snap ? snap->fbo : s->fbo, w, h)) {
+        rt_gl_shown = rt_now_100ns();
+        glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+        if (!rt_display_wants_pixels()) return;
+    }
+    if (hi_pend) return; /* the last copy is not done: this blank's picture is skipped rather than waited for */
     if (!hi_pbo) glGenBuffers(1, &hi_pbo);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, hi_pbo);
     glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)w * h * 4, NULL, GL_STREAM_READ);
@@ -672,6 +716,7 @@ typedef struct {
     GlSurf *s;
     uint32_t base, size;
     GLuint pbo;
+    GLsync sync; /* passed when the copy is done */
 } GlPending;
 
 static GlPending gl_pend[16];
@@ -685,6 +730,7 @@ static void gl_complete_first(int n) {
         const void *m = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, p->size, GL_MAP_READ_BIT);
         if (m) memcpy(phys(p->base), m, p->size);
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        if (p->sync) glDeleteSync(p->sync), p->sync = 0;
         if (!p->s->cdirty) p->s->chash = 0; /* RAM is what the GPU drew: adopted at the next check */
         gl_ram_written(p->s, p->base, p->size);
     }
@@ -698,6 +744,18 @@ static void gl_complete_first(int n) {
 
 static void gl_complete(void) {
     if (gl_npend) gl_complete_first(gl_npend);
+}
+
+/* At a vertical blank: only the read-backs the GPU has finished. Waiting
+ * there for the rest (the GPU still drawing the frame queued before them)
+ * held the device thread most of each blank; nothing needs them yet, and
+ * whatever looks at those bytes first collects them (gl_complete_range). */
+static void gl_complete_ready(void) {
+    int n = 0;
+    while (n < gl_npend && (!gl_pend[n].sync ||
+                            glClientWaitSync(gl_pend[n].sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0) != GL_TIMEOUT_EXPIRED))
+        n++;
+    if (n) gl_complete_first(n);
 }
 
 /* Only those over these bytes, and whatever went before them: waiting for
@@ -740,6 +798,7 @@ static void gl_readback_color_async(GlSurf *s) {
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     if (s->bpp == 4) glReadPixels(0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
     else glReadPixels(0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, NULL);
+    p->sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     s->cdirty = 0;
@@ -770,6 +829,36 @@ static void gl_depth_stays(GlSurf *s) {
  * the shown buffer, blending it over the picture in RAM. When it got there
  * before the read-back, it blended over black and kept redrawing the icon
  * in a black square. */
+/* The frames the window shows, copied on the GPU at each flip, when the
+ * frame is done: at the vertical blank the buffer the CRTC points at may
+ * already hold part of the next frame (a flip stall the watchdog let go),
+ * and showing it as it stood flickered. Not at D3D's notifies: there are
+ * about two a frame, and the second can come with the next frame begun. */
+static void gl_snapshot(GlSurf *e) {
+    if (e->k < 2 || e->bpp != 4 || e->swz || e->w != 640 || e->h < 480) return;
+    GlSnap *n = NULL;
+    for (int i = 0; i < 4 && !n; i++)
+        if (gl_snap[i].base == e->cbase) n = &gl_snap[i];
+    if (!n) /* the oldest */
+        for (int i = 0; i < 4; i++)
+            if (!n || gl_snap[i].seq < n->seq) n = &gl_snap[i];
+    int w = 640 * e->k, h = 480 * e->k;
+    if (n->w != w || n->h != h) {
+        if (n->fbo) glDeleteFramebuffers(1, &n->fbo), glDeleteTextures(1, &n->tex);
+        glGenTextures(1, &n->tex);
+        glBindTexture(GL_TEXTURE_2D, n->tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+        glGenFramebuffers(1, &n->fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, n->fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, n->tex, 0);
+        n->w = w, n->h = h;
+    }
+    n->base = e->cbase, n->seq = e->seq;
+    glDisable(GL_SCISSOR_TEST);
+    gl_blit(e->fbo, w, h, n->fbo, w, h, GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+}
+
 static void gl_sync_color_async(uint32_t base, uint32_t size) {
     static uint64_t last;
     uint64_t now = rt_now_100ns();
@@ -795,6 +884,15 @@ static void gl_flip(void) {
     for (int i = 0; i < GL_SURFS; i++)
         if (!gl_surf[i].dirty) gl_surf[i].check = 1;
     if (gl_ready <= 0) return;
+    { /* the frame just finished: the screen-sized buffer drawn last */
+        GlSurf *f = NULL;
+        for (int i = 0; i < GL_SURFS; i++) {
+            GlSurf *e = &gl_surf[i];
+            if (e->fbo && e->k > 1 && e->bpp == 4 && !e->swz && e->w == 640 && e->h >= 480 && (!f || e->seq > f->seq)) f = e;
+        }
+        static unsigned done;
+        if (f && f->seq != done) gl_snapshot(f), done = f->seq;
+    }
     /* XBRT_GL_QUEUE=<1|2> frames may be queued on the GPU (default 1): each
      * one queued is a frame between the controller and the screen. */
     static int depth = 0;
@@ -1290,7 +1388,36 @@ static GLuint gl_texture(Texture *t) {
  * four mipmap combinations in OpenGL's order, 7 (min) or 4 (mag) the
  * Gaussian "convolution" filter, which linear stands in for. Depth
  * textures stay point sampled: the shader compares each texel itself. */
-static void gl_filter(GLenum target, const Texture *t, uint32_t filt) {
+/* A texture stage's sampling, as a sampler object: setting wrap, filter
+ * and LOD bias on the textures themselves at every draw made the driver
+ * check them all again at every draw (about 10 us a draw of the ~22). */
+typedef struct {
+    GLint ws, wt, min, mag;
+    float bias, aniso, border[4];
+} GlSampling;
+
+static GLuint gl_sampler(const GlSampling *k) {
+    static GlSampling keys[512];
+    static GLuint ids[512];
+    static int n;
+    for (int i = n - 1; i >= 0; i--)
+        if (!memcmp(&keys[i], k, sizeof *k)) return ids[i];
+    if (n == 512) n = 0; /* reused oldest first: the game uses a few dozen */
+    if (!ids[n]) glGenSamplers(1, &ids[n]);
+    GLuint id = ids[n];
+    keys[n++] = *k;
+    glSamplerParameteri(id, GL_TEXTURE_WRAP_S, k->ws), glSamplerParameteri(id, GL_TEXTURE_WRAP_T, k->wt);
+    glSamplerParameteri(id, GL_TEXTURE_WRAP_R, k->ws);
+    glSamplerParameteri(id, GL_TEXTURE_MIN_FILTER, k->min), glSamplerParameteri(id, GL_TEXTURE_MAG_FILTER, k->mag);
+    glSamplerParameterf(id, GL_TEXTURE_LOD_BIAS, k->bias);
+    glSamplerParameterf(id, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, k->aniso);
+    glSamplerParameterfv(id, GL_TEXTURE_BORDER_COLOR, k->border);
+    return id;
+}
+
+static void gl_filter_of(GlSampling *k, const Texture *t, uint32_t filt);
+
+static void gl_filter_of(GlSampling *k, const Texture *t, uint32_t filt) {
     static const GLint mins[8] = {GL_NEAREST, GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST,
                                   GL_NEAREST_MIPMAP_LINEAR, GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR};
     uint32_t mn = (filt >> 16) & 0x3F, mg = (filt >> 24) & 15;
@@ -1306,13 +1433,9 @@ static void gl_filter(GLenum target, const Texture *t, uint32_t filt) {
         aniso = getenv("XBRT_GL_ANISO") ? (float)atof(getenv("XBRT_GL_ANISO")) : 16.0f;
         if (aniso < 1) aniso = 1;
     }
-    if (aniso > 1 && !t->depth && t->levels > 1 && min != GL_NEAREST && min != GL_LINEAR) {
-        min = GL_LINEAR_MIPMAP_LINEAR;
-        glTexParameterf(target, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, aniso);
-    }
-    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, min);
-    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, mag);
-    glTexParameterf(target, GL_TEXTURE_LOD_BIAS, (float)bias / 256.0f);
+    k->aniso = 1;
+    if (aniso > 1 && !t->depth && t->levels > 1 && min != GL_NEAREST && min != GL_LINEAR) min = GL_LINEAR_MIPMAP_LINEAR, k->aniso = aniso;
+    k->min = min, k->mag = mag, k->bias = (float)bias / 256.0f;
 }
 
 /* Address modes: 1 wrap, 2 mirror, 3 clamp to edge, 4 border, 5 clamp
@@ -1446,22 +1569,24 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         glBindTexture(GL_TEXTURE_2D, tid);
         if (t && t->surface && !t->depth && !t->cube) /* X8R8G8B8 over a framebuffer that keeps alpha */
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, t->alpha_one ? GL_ONE : GL_ALPHA);
+        GlSampling k = {GL_REPEAT, GL_REPEAT, GL_NEAREST, GL_NEAREST, 0, 1, {0, 0, 0, 0}};
         if (t && !t->cube) {
             uint32_t addr = KT(SET_TEXTURE_ADDRESS);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_wrap(addr & 15));
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_wrap((addr >> 8) & 15));
+            k.ws = gl_wrap(addr & 15), k.wt = gl_wrap((addr >> 8) & 15);
             if ((addr & 15) == 4 || ((addr >> 8) & 15) == 4) { /* the border colour: ARGB; a depth map's (R32F, Xbox units) scaled up */
                 uint32_t bc = KT(0x1B24);
-                float col[4] = {(float)((bc >> 16) & 255) / 255.0f, (float)((bc >> 8) & 255) / 255.0f, (float)(bc & 255) / 255.0f,
-                                (float)(bc >> 24) / 255.0f};
-                if (t->depth && !t->surface) col[0] *= (float)t->depth;
-                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, col);
+                k.border[0] = (float)((bc >> 16) & 255) / 255.0f, k.border[1] = (float)((bc >> 8) & 255) / 255.0f;
+                k.border[2] = (float)(bc & 255) / 255.0f, k.border[3] = (float)(bc >> 24) / 255.0f;
+                if (t->depth && !t->surface) k.border[0] *= (float)t->depth;
             }
-            gl_filter(GL_TEXTURE_2D, t, KT(SET_TEXTURE_FILTER));
+            gl_filter_of(&k, t, KT(SET_TEXTURE_FILTER));
         }
+        glBindSampler((GLuint)i, gl_sampler(&k));
         glActiveTexture(GL_TEXTURE4 + (GLenum)i);
         glBindTexture(GL_TEXTURE_CUBE_MAP, t && t->cube ? gl_texture(t) : gl_dummycube);
-        if (t && t->cube) gl_filter(GL_TEXTURE_CUBE_MAP, t, KT(SET_TEXTURE_FILTER));
+        GlSampling kc = {GL_REPEAT, GL_REPEAT, GL_NEAREST, GL_NEAREST, 0, 1, {0, 0, 0, 0}};
+        if (t && t->cube) gl_filter_of(&kc, t, KT(SET_TEXTURE_FILTER));
+        glBindSampler(4 + (GLuint)i, gl_sampler(&kc));
     }
     glActiveTexture(GL_TEXTURE0);
     glUniform1iv(u_mode, 4, mode), glUniform1iv(u_kind, 4, kind), glUniform2fv(u_scale, 4, scale), glUniform1fv(u_dmax, 4, dmax);
