@@ -23,7 +23,7 @@ endif
 
 GEN_SRC = $(wildcard $(GEN)/*.c)
 GEN_OBJ = $(patsubst $(GEN)/%.c,build/gen/%.o,$(GEN_SRC))
-RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c apu_vp.c hle_input.c hle_net.c hle_fiber.c crypto.c display.c raster.c gl.c
+RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c apu_vp.c hle_input.c hle_net.c hle_fiber.c crypto.c display.c raster.c gl.c settings.c overlay.c
 RT_OBJ = $(patsubst %.c,build/%.o,$(RT_SRC))
 
 TARGET ?= forza$(EXE)
@@ -40,7 +40,7 @@ build/%.o: %.c rt.h nv2a.h $(GEN)/xbrt.h $(GEN)/names.h
 	$(CC) $(RTFLAGS) -c $< -o $@
 
 # Files #included by others, and the GL header.
-build/raster.o: glfill.c glvsh.c gl.h
+build/raster.o: glfill.c glvsh.c glover.c gl.h
 build/gl.o build/nv2a.o: gl.h
 
 clean:

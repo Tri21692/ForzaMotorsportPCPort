@@ -133,6 +133,22 @@ static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
 }
 
 volatile uint32_t rt_debug_keys;
+
+volatile int rt_display_fxaa = 1;
+
+int rt_display_widescreen(void) {
+    static int w = -1;
+    if (w < 0) w = getenv("XBRT_WIDESCREEN") && atoi(getenv("XBRT_WIDESCREEN"));
+    return w;
+}
+
+/* The largest 4:3 (or 16:9) rectangle centred in W x H. */
+void rt_display_fit(int W, int H, int *x, int *y, int *w, int *h) {
+    int aw = rt_display_widescreen() ? 16 : 4, ah = rt_display_widescreen() ? 9 : 3;
+    if ((long)W * ah > (long)H * aw) *h = H, *w = H * aw / ah;
+    else *w = W, *h = W * ah / aw;
+    *x = (W - *w) / 2, *y = (H - *h) / 2;
+}
 volatile uint64_t rt_gl_shown;
 
 /* The GPU draws the window (rt_gl_show) until it says RAM shows what is on
@@ -202,6 +218,8 @@ static void debug_key(WPARAM vk) {
     SetWindowTextA(window, title);
 }
 
+static void set_fullscreen(int on);
+
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: {
@@ -217,8 +235,12 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         bi.bmiHeader.biSize = sizeof bi.bmiHeader;
         bi.bmiHeader.biWidth = frame_w, bi.bmiHeader.biHeight = -frame_h; /* top-down */
         bi.bmiHeader.biPlanes = 1, bi.bmiHeader.biBitCount = 32, bi.bmiHeader.biCompression = BI_RGB;
+        int x, y, w, h;
+        rt_display_fit(r.right, r.bottom, &x, &y, &w, &h);
+        PatBlt(dc, 0, 0, r.right, y, BLACKNESS), PatBlt(dc, 0, y + h, r.right, r.bottom - y - h, BLACKNESS);
+        PatBlt(dc, 0, y, x, h, BLACKNESS), PatBlt(dc, x + w, y, r.right - x - w, h, BLACKNESS);
         SetStretchBltMode(dc, HALFTONE);
-        StretchDIBits(dc, 0, 0, r.right, r.bottom, 0, 0, frame_w, frame_h, frame, &bi, DIB_RGB_COLORS, SRCCOPY);
+        StretchDIBits(dc, x, y, w, h, 0, 0, frame_w, frame_h, frame, &bi, DIB_RGB_COLORS, SRCCOPY);
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -232,13 +254,63 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (!gl_showing()) InvalidateRect(hwnd, NULL, FALSE);
         return 0;
+    case WM_APP: /* rt_display_set_fullscreen, from another thread */
+        set_fullscreen((int)wp);
+        return 0;
     case WM_KEYDOWN:
+        if (wp == VK_F1) {
+            rt_overlay_toggle();
+            return 0;
+        }
+        if (rt_overlay_open()) {
+            int k = wp == VK_UP ? RT_OV_UP : wp == VK_DOWN ? RT_OV_DOWN : wp == VK_LEFT ? RT_OV_LEFT : wp == VK_RIGHT ? RT_OV_RIGHT
+                  : wp == VK_RETURN || wp == VK_SPACE ? RT_OV_OK : wp == VK_ESCAPE || wp == VK_BACK ? RT_OV_BACK : -1;
+            if (k >= 0) rt_overlay_key(k);
+            return 0;
+        }
+        if (wp == VK_F11) {
+            static int fs = -1;
+            if (fs < 0) fs = getenv("XBRT_FULLSCREEN") && atoi(getenv("XBRT_FULLSCREEN"));
+            set_fullscreen(fs = !fs);
+            return 0;
+        }
         debug_key(wp);
         break;
+    case WM_SYSKEYDOWN: /* Alt+Enter */
+        if (wp == VK_RETURN && (lp & (1 << 29))) {
+            SendMessageA(hwnd, WM_KEYDOWN, VK_F11, 0);
+            return 0;
+        }
+        break;
+    case WM_ERASEBKGND:
+        return 1;
     case WM_CLOSE:
         ExitProcess(0);
     }
     return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+/* Borderless fullscreen on the monitor the window is on, or back to the
+ * window as it was (Alt+Enter, F11, XBRT_FULLSCREEN=1 at the start). */
+static void set_fullscreen(int on) {
+    static int is;
+    static WINDOWPLACEMENT was;
+    was.length = sizeof was;
+    if (on == is) return;
+    if (on) {
+        GetWindowPlacement(window, &was);
+        MONITORINFO mi;
+        memset(&mi, 0, sizeof mi), mi.cbSize = sizeof mi;
+        GetMonitorInfoA(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &mi);
+        SetWindowLongA(window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(window, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else {
+        SetWindowLongA(window, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        SetWindowPlacement(window, &was);
+        SetWindowPos(window, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+    is = on;
 }
 
 static DWORD WINAPI window_main(LPVOID arg) {
@@ -251,10 +323,22 @@ static DWORD WINAPI window_main(LPVOID arg) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.lpszClassName = "ForzaPC";
     RegisterClassA(&wc);
-    RECT r = {0, 0, DISP_W * 2, DISP_H * 2};
+    /* XBRT_WINDOW_SIZE=<w>x<h>, else twice the Xbox picture at its aspect
+     * (1280x960, or 1280x720 for 16:9), shrunk to fit the screen. */
+    int cw = DISP_W * 2, ch = rt_display_widescreen() ? DISP_W * 2 * 9 / 16 : DISP_H * 2;
+    const char *ws = getenv("XBRT_WINDOW_SIZE");
+    int ww, wh;
+    if (ws && sscanf(ws, "%dx%d", &ww, &wh) == 2 && ww >= 320 && wh >= 240) cw = ww, ch = wh;
+    RECT work;
+    SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0);
+    int maxw = (work.right - work.left) * 9 / 10, maxh = (work.bottom - work.top) * 9 / 10;
+    if (cw > maxw) ch = ch * maxw / cw, cw = maxw;
+    if (ch > maxh) cw = cw * maxh / ch, ch = maxh;
+    RECT r = {0, 0, cw, ch};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     window = CreateWindowA("ForzaPC", "Forza Motorsport (PC port, work in progress)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                            CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+    if (getenv("XBRT_FULLSCREEN") && atoi(getenv("XBRT_FULLSCREEN"))) set_fullscreen(1);
     SetTimer(window, 1, 16, NULL); /* the picture from RAM (menus' 1x frames, movies) */
     for (;;) { /* and a new GPU picture as soon as it arrives */
         DWORD r = MsgWaitForMultipleObjects(1, &new_frame, FALSE, INFINITE, QS_ALLINPUT);
@@ -270,10 +354,14 @@ static DWORD WINAPI window_main(LPVOID arg) {
 }
 
 int rt_display_focused(void) { return window && GetForegroundWindow() == window; }
+void rt_display_set_fullscreen(int on) {
+    if (window) PostMessageA(window, WM_APP, (WPARAM)on, 0);
+}
 void *rt_display_hwnd(void) { return window; }
 int rt_display_wants_pixels(void) { return shot_dir || shot_wanted || recording(); }
 #else
 int rt_display_focused(void) { return 1; }
+void rt_display_set_fullscreen(int on) { (void)on; }
 void *rt_display_hwnd(void) { return NULL; }
 int rt_display_wants_pixels(void) { return shot_dir || recording(); }
 void rt_display_new_frame(void) {}

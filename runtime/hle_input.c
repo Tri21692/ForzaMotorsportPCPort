@@ -226,7 +226,11 @@ static void host_pad(uint32_t pad) {
     uint8_t analog[8] = {0};
     int16_t thumbs[4] = {0};
     pc_pad(&buttons, analog, thumbs);
-    keyboard(&buttons, analog, thumbs);
+    if (!rt_overlay_open()) keyboard(&buttons, analog, thumbs); /* the overlay takes the keys (display.c) */
+    if (rt_overlay_pad(buttons, analog, thumbs)) { /* and the pad: the game sees nothing while it is open */
+        buttons = 0;
+        memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
+    }
     if (autopress && rt_now_100ns() % 20000000 < 2000000) { /* 0.2 s of every 2 s */
         buttons |= 0x10;
         analog[A_A] = 255;

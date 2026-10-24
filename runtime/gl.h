@@ -190,6 +190,7 @@ extern PFNGLBUFFERSTORAGEPROC p_glBufferStorage; /* GL 4.4 / ARB_buffer_storage:
 /* On the device thread: make the context and load the functions. Returns 0
  * (and says why) if the host has no OpenGL 4.3. */
 int rt_gl_init(void);
-int rt_gl_show(GLuint fbo, int w, int h); /* the framebuffer into the game's window, scaled to it */
+int rt_gl_window_begin(int *W, int *H); /* draw into the game's window from here; its size */
+void rt_gl_window_swap(void);           /* and show what was drawn */
 
 #endif

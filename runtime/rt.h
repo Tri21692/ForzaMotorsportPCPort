@@ -54,6 +54,31 @@ extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
 #define RT_DBG_NO_CLIP 8u
 #define RT_DBG_CPU_VSH 16u
 extern volatile uint32_t rt_debug_keys;
+
+/* The player's settings (settings.c, forza.ini). */
+typedef struct {
+    const char *name, *env, *def, *help;
+} RtSetting;
+void rt_settings_load(void);                 /* first thing at start: fills the XBRT_* switches */
+int rt_settings_count(void);
+const RtSetting *rt_setting(int i);
+const char *rt_settings_get(const char *name);
+void rt_settings_set(const char *name, const char *value); /* and saves the file */
+
+/* The settings overlay (overlay.c; drawn by glfill.c). */
+enum { RT_OV_UP, RT_OV_DOWN, RT_OV_LEFT, RT_OV_RIGHT, RT_OV_OK, RT_OV_BACK };
+int rt_overlay_open(void);
+void rt_overlay_toggle(void);
+void rt_overlay_key(int key);
+int rt_overlay_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]); /* 1: the game sees nothing */
+int rt_overlay_items(void);
+int rt_overlay_selected(void);
+int rt_overlay_needs_restart(void);
+void rt_overlay_item(int i, const char **label, const char **value, int *live);
+const char *rt_overlay_help(int i);
+void rt_apu_set_volume(float v);
+extern volatile int rt_display_fxaa;          /* XBRT_AA: edge smoothing on the shown picture */
+void rt_display_set_fullscreen(int on);
 extern uint32_t rt_frame_interval_at; /* where the game keeps its frame interval in vertical blanks, or 0 */
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_backtrace(XbCtx *c); /* registers and likely return addresses, to stderr */
@@ -235,6 +260,8 @@ int rt_gl_frame(uint32_t fb, uint32_t *out, int max_pixels, int *w, int *h);
 void rt_display_new_frame(void); /* a new drawn-resolution picture: the window shows it now */
 int rt_display_focused(void);           /* the game's window has the keyboard */
 void *rt_display_hwnd(void);            /* the game's window (an HWND), or NULL */
+int rt_display_widescreen(void);        /* the picture is 16:9 (XBRT_WIDESCREEN), else 4:3 */
+void rt_display_fit(int W, int H, int *x, int *y, int *w, int *h); /* the picture's rectangle in a W x H window, letterboxed */
 int rt_display_video_on(void);          /* a movie shows through the video overlay */
 int rt_display_wants_pixels(void);      /* screenshots or a recording need the picture in memory */
 extern volatile uint64_t rt_gl_shown;   /* when the GPU last put a picture in the window itself */

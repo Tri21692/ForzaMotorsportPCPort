@@ -671,6 +671,9 @@ K(ExQueryNonVolatileSetting) {
     case 0x07: v = 1; break;     /* XC_LANGUAGE: English */
     case 0x104: v = 1; break;    /* XC_FACTORY_GAME_REGION: North America */
     case 0x10C: v = 0x400100; break; /* XC_FACTORY_AV_REGION: NTSC-M */
+    case 0x08: /* XC_VIDEO_FLAGS: XBRT_WIDESCREEN=1 says the TV is 16:9 (AV_FLAGS_WIDESCREEN) */
+        v = getenv("XBRT_WIDESCREEN") && atoi(getenv("XBRT_WIDESCREEN")) ? 0x00010000u : 0;
+        break;
     }
     if (index == 0xFFFF) {
         uint8_t eeprom[256] = {0};

@@ -534,6 +534,97 @@ static void gl_present_poll(int wait) {
     }
 }
 
+/* The picture into the game's window: letterboxed to 4:3 or 16:9
+ * (rt_display_fit), through FXAA (XBRT_AA=fxaa, the default) or scaled
+ * as it is. tex is the picture (w x h, rows running down), fbo the same
+ * as a framebuffer. 0: the window cannot be drawn with OpenGL. */
+static const char *present_vs =
+    "#version 430\n"
+    "out vec2 v_uv;\n"
+    "void main() {\n"
+    "    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n" /* one triangle over the viewport */
+    "    v_uv = vec2(p.x, 1.0 - p.y) * vec2(1.0, 1.0);\n"         /* our rows run down */
+    "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+/* FXAA: the edge-finding blur of NVIDIA's console version (Lottes): along
+ * the edge's direction where contrast says there is one, else the pixel. */
+static const char *present_fs =
+    "#version 430\n"
+    "in vec2 v_uv;\n"
+    "out vec4 o;\n"
+    "uniform sampler2D u_src;\n"
+    "uniform vec2 u_rcp;\n" /* one texel */
+    "uniform int u_fxaa;\n"
+    "float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+    "void main() {\n"
+    "    vec3 m = texture(u_src, v_uv).rgb;\n"
+    "    if (u_fxaa == 0) { o = vec4(m, 1.0); return; }\n"
+    "    vec3 nw = texture(u_src, v_uv + vec2(-1.0, -1.0) * u_rcp).rgb, ne = texture(u_src, v_uv + vec2(1.0, -1.0) * u_rcp).rgb;\n"
+    "    vec3 sw = texture(u_src, v_uv + vec2(-1.0, 1.0) * u_rcp).rgb, se = texture(u_src, v_uv + vec2(1.0, 1.0) * u_rcp).rgb;\n"
+    "    float lnw = luma(nw), lne = luma(ne), lsw = luma(sw), lse = luma(se), lm = luma(m);\n"
+    "    float lmin = min(lm, min(min(lnw, lne), min(lsw, lse))), lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));\n"
+    "    vec2 dir = vec2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));\n"
+    "    float reduce = max((lnw + lne + lsw + lse) * 0.03125, 1.0 / 128.0);\n"
+    "    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), vec2(-8.0), vec2(8.0)) * u_rcp;\n"
+    "    vec3 a = 0.5 * (texture(u_src, v_uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(u_src, v_uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
+    "    vec3 b = a * 0.5 + 0.25 * (texture(u_src, v_uv - dir * 0.5).rgb + texture(u_src, v_uv + dir * 0.5).rgb);\n"
+    "    float lb = luma(b);\n"
+    "    o = vec4(lb < lmin || lb > lmax ? a : b, 1.0);\n"
+    "}\n";
+
+static void gl_overlay_draw(int vx, int vy, int vw, int vh);
+
+static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
+    static GLuint prog, empty_vao;
+    static GLint u_src, u_rcp, u_fxaa;
+    static int fxaa = -1;
+    int W, H;
+    if (!rt_gl_window_begin(&W, &H)) return 0;
+    if (W <= 0 || H <= 0) return 1; /* minimised */
+    if (fxaa < 0) fxaa = 1, rt_display_fxaa = !getenv("XBRT_AA") || strcmp(getenv("XBRT_AA"), "off") != 0;
+    if (!prog) {
+        GLuint vs = compile(GL_VERTEX_SHADER, present_vs), fs = compile(GL_FRAGMENT_SHADER, present_fs);
+        prog = glCreateProgram();
+        if (vs && fs) glAttachShader(prog, vs), glAttachShader(prog, fs), glLinkProgram(prog);
+        u_src = glGetUniformLocation(prog, "u_src"), u_rcp = glGetUniformLocation(prog, "u_rcp"), u_fxaa = glGetUniformLocation(prog, "u_fxaa");
+        glGenVertexArrays(1, &empty_vao);
+    }
+    int x, y, cw, ch;
+    rt_display_fit(W, H, &x, &y, &cw, &ch);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST), glDisable(GL_DEPTH_TEST), glDisable(GL_BLEND), glDisable(GL_CULL_FACE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glViewport(0, 0, W, H);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    GLint linked = 0;
+    glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+    if (tex && linked) {
+        glViewport(x, H - y - ch, cw, ch);
+        glUseProgram(prog);
+        gl_using = NULL; /* the next draw sets its own program again */
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glBindSampler(0, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        /* Not on the 640x480 pictures from RAM (boot, menus, movies):
+         * smoothing edges that small smeared text and logos. */
+        glUniform1i(u_src, 0), glUniform2fv(u_rcp, 1, (float[2]){1.0f / (float)w, 1.0f / (float)h}), glUniform1i(u_fxaa, rt_display_fxaa && w > 640);
+        glBindVertexArray(empty_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(gl_vao);
+    } else { /* no shader: scaled as it is */
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        glBlitFramebuffer(0, 0, w, h, x, H - y, x + cw, H - y - ch, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    }
+    if (rt_overlay_open()) gl_overlay_draw(x, H - y - ch, cw, ch);
+    rt_gl_window_swap();
+    return 1;
+}
+
 /* What RAM shows (menus at 1x, movies through the overlay), into the
  * window through OpenGL too: once OpenGL has drawn a window, GDI's
  * pictures no longer show in it. */
@@ -553,7 +644,7 @@ static int gl_show_ram(void) {
     glBindTexture(GL_TEXTURE_2D, tex);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 640, 480, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, px);
-    int ok = rt_gl_show(fbo, 640, 480);
+    int ok = gl_window_show(tex, fbo, 640, 480);
     glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
     return ok;
 }
@@ -597,7 +688,7 @@ static void gl_present_vblank(uint32_t fb) {
     if (fifo_on && nv2a.drained && gl_fifo_n)
         gl_fifo_shown = gl_fifo_head, gl_fifo_head = (gl_fifo_head + 1) % GL_FIFO, gl_fifo_n--, nv2a_trace('D', gl_fifo[gl_fifo_shown].seq);
     GlSnap *fs = fifo_on && gl_fifo_shown >= 0 && gl_fifo[gl_fifo_shown].w == w ? &gl_fifo[gl_fifo_shown] : NULL;
-    if (rt_gl_show(fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h)) {
+    if (gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h)) {
         rt_gl_shown = rt_now_100ns();
         glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
         if (!rt_display_wants_pixels()) return;

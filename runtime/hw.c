@@ -8,6 +8,8 @@
  */
 #include <string.h>
 
+#include <stdlib.h>
+
 #include "rt.h"
 
 #define ARG(i) xb_rd32(c->esp + 4 + 4 * (i))
@@ -144,8 +146,8 @@ static uint32_t k_AvSendTVEncoderOption(XbCtx *c) {
     uint32_t result = ARG(3);
     if (!result) return 0;
     switch (ARG(1)) {
-    case 6: /* AV_QUERY_AV_CAPABILITIES: standard AV pack, NTSC-M */
-        xb_wr32(result, 0x00400101u);
+    case 6: /* AV_QUERY_AV_CAPABILITIES: NTSC-M; the standard AV pack, or with XBRT_WIDESCREEN the HDTV one */
+        xb_wr32(result, getenv("XBRT_WIDESCREEN") && atoi(getenv("XBRT_WIDESCREEN")) ? 0x00410106u : 0x00400101u); /* AV_FLAGS_WIDESCREEN too: the user settings are part of the answer */
         break;
     default:
         xb_wr32(result, 0);

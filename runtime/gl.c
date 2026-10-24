@@ -77,13 +77,17 @@ static HGLRC gl_ctx;
 static int gl_format;
 static PIXELFORMATDESCRIPTOR gl_pfd;
 
-/* Straight into the window: a blit to its back buffer and a swap that does
- * not wait for the screen. Reading the picture back for the window to
- * draw with GDI held the device thread at every vertical blank. The
- * context moves to the window's DC the first time (same pixel format as
- * the hidden window it was made on). 0: not possible, the caller reads
- * back instead. */
-int rt_gl_show(GLuint fbo, int w, int h) {
+/* Straight into the window: the caller draws into its back buffer
+ * (glfill.c, gl_window_show) and rt_gl_window_swap shows it, without
+ * waiting for the screen unless XBRT_VSYNC=1. Reading the picture back for
+ * the window to draw with GDI held the device thread at every vertical
+ * blank. The context moves to the window's DC the first time (same pixel
+ * format as the hidden window it was made on). 0: not possible, the
+ * caller reads back instead; else the client area's size in *W, *H (0
+ * when minimised). */
+static HDC win_dc;
+
+int rt_gl_window_begin(int *W, int *H) {
     static HWND shown;
     static HDC dc;
     static int failed;
@@ -98,18 +102,17 @@ int rt_gl_show(GLuint fbo, int w, int h) {
         }
         shown = wnd;
         PFNWGLSWAPINTERVALEXTPROC interval = (PFNWGLSWAPINTERVALEXTPROC)(void *)wglGetProcAddress("wglSwapIntervalEXT");
-        if (interval) interval(0);
+        if (interval) interval(getenv("XBRT_VSYNC") && atoi(getenv("XBRT_VSYNC")) ? 1 : 0);
     }
+    win_dc = dc;
     RECT r;
     GetClientRect(wnd, &r);
-    if (r.right <= 0 || r.bottom <= 0) return 1; /* minimised */
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glDisable(GL_SCISSOR_TEST);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glBlitFramebuffer(0, 0, w, h, 0, r.bottom, r.right, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR); /* our rows run down */
-    SwapBuffers(dc);
+    *W = r.right > 0 ? r.right : 0, *H = r.bottom > 0 ? r.bottom : 0;
     return 1;
+}
+
+void rt_gl_window_swap(void) {
+    if (win_dc) SwapBuffers(win_dc);
 }
 
 int rt_gl_init(void) {
@@ -170,7 +173,8 @@ int rt_gl_init(void) {
     return 1;
 }
 #else
-int rt_gl_show(GLuint fbo, int w, int h) { (void)fbo, (void)w, (void)h; return 0; }
+int rt_gl_window_begin(int *W, int *H) { (void)W, (void)H; return 0; }
+void rt_gl_window_swap(void) {}
 int rt_gl_init(void) {
     fprintf(stderr, "xbrt: XBRT_GPU=gl is Windows-only for now; drawing in software\n");
     return 0;

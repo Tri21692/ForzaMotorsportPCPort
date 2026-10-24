@@ -143,6 +143,7 @@ void rt_apu_tick(void) {
 #define OUT_BUFS 4
 
 static float volume = 0.7f; /* XBRT_VOLUME; below 1 for headroom: the mix of all bins can exceed full scale */
+void rt_apu_set_volume(float v) { volume = v < 0 ? 0 : v > 1 ? 1 : v; }
 static FILE *dump; /* XBRT_AUDIO_DUMP=<file>: the output as raw 48 kHz 16-bit stereo, for checking and for recordings */
 
 /* One buffer's worth of frames, as 16-bit stereo. */
