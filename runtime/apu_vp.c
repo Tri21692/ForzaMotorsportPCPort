@@ -542,8 +542,17 @@ static float attenuate(uint32_t vol) {
 }
 
 static void voice_process(unsigned v, float mix[BINS][FRAME]) {
-    uint32_t fmt = vget(v, V_CFG_FMT);
-    if (vget(v, V_PAR_STATE) & STATE_PAUSED) return;
+    uint32_t fmt = vget(v, V_CFG_FMT), st = vget(v, V_PAR_STATE);
+    if (st & STATE_PAUSED) {
+        /* Released while paused (DSOUND pauses every voice for Forza's
+         * pause menu, then stops some): silent anyway, so done now. Left
+         * paused in release it never went idle, and DSOUND waited 0.5 s
+         * for each such voice before giving up: the game froze for
+         * seconds at the pause menu, and hitched in races. */
+        uint32_t ea = (st >> STATE_EA_SHIFT) & 0xF;
+        if (ea == ENV_RELEASE || ea == ENV_FORCE_RELEASE) voice_off(v);
+        return;
+    }
     float ef = envelope(v, 0);
     int16_t pitch = (int16_t)(vget(v, V_TAR_PITCH_LINK) >> 16);
     int8_t pscale = (int8_t)(vget(v, V_CFG_ENV0) >> 24);
