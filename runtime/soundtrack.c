@@ -32,6 +32,7 @@
 
 typedef struct {
     char src[512], name[64];
+    char conv[512]; /* the file ffmpeg reads, when src cannot be given to it (a copy with an ASCII name) */
     long long size, mtime;
     uint32_t id, ms;
 } Song;
@@ -54,20 +55,129 @@ static int is_audio(const char *name) {
     return 0;
 }
 
+/* A name for the Xbox's 32 characters: "00 - Artist - Title.wma" shows
+ * as "Title", "Artist - unknown album" as "Artist". */
+static void tidy(char *out, size_t n, const char *in, int song) {
+    char t[512];
+    snprintf(t, sizeof t, "%s", in);
+    char *dot = song ? strrchr(t, '.') : NULL;
+    if (dot) *dot = 0;
+    char *p = t;
+    if (song) {
+        while (*p >= '0' && *p <= '9') p++;
+        if (p != t && !strncmp(p, " - ", 3)) p += 3; else p = t; /* a leading track number */
+        char *last = NULL;
+        for (char *q = strstr(p, " - "); q; q = strstr(q + 3, " - ")) last = q;
+        if (last && last[3]) p = last + 3;
+    } else {
+        char *u = strstr(t, " - unknown album");
+        if (u) *u = 0;
+    }
+    snprintf(out, n, "%s", p);
+}
+
 static void add_song(Track *t, const char *path, const char *file) {
     if (t->n >= MAX_SONGS) return;
-    struct stat st;
-    if (stat(path, &st) != 0) return;
+    struct stat st = {0};
+    if (path && stat(path, &st) != 0) return; /* NULL: the caller fills it in */
     if (t->n == t->cap) t->cap = t->cap ? t->cap * 2 : 16, t->songs = realloc(t->songs, (size_t)t->cap * sizeof *t->songs);
     Song *s = &t->songs[t->n++];
     memset(s, 0, sizeof *s);
     snprintf(s->src, sizeof s->src, "%s", path);
-    snprintf(s->name, sizeof s->name, "%.*s", (int)(strrchr(file, '.') - file), file);
+    tidy(s->name, sizeof s->name, file, 1);
     s->size = st.st_size, s->mtime = st.st_mtime;
 }
 
 static int cmp_song(const void *a, const void *b) { return strcasecmp(((const Song *)a)->name, ((const Song *)b)->name); }
 
+#ifdef _WIN32
+#include <windows.h>
+
+/* A file name as the Xbox can show it: ASCII, full-width forms (U+FF1F and
+ * the like) as their ASCII twins, anything else as '?'. */
+static void ascii_name(char *out, size_t n, const wchar_t *w) {
+    size_t k = 0;
+    for (; *w && k + 1 < n; w++) {
+        wchar_t c = *w;
+        if (c >= 0xFF01 && c <= 0xFF5E) c = (wchar_t)(c - 0xFEE0);
+        out[k++] = c < 128 ? (char)c : '?';
+    }
+    out[k] = 0;
+}
+
+/* The path the narrow file calls and ffmpeg's command line can take: the
+ * short (8.3) name, which is ASCII, when the long one is not. */
+static int narrow_path(char *out, size_t n, const wchar_t *w) {
+    wchar_t sh[MAX_PATH];
+    const wchar_t *use = w;
+    for (const wchar_t *c = w; *c; c++)
+        if (*c >= 128) {
+            if (GetShortPathNameW(w, sh, MAX_PATH)) use = sh;
+            break;
+        }
+    return WideCharToMultiByte(CP_ACP, 0, use, -1, out, (int)n, NULL, NULL) > 0 && !strchr(out, '?');
+}
+
+/* The folder through Windows' Unicode calls: songs with names outside the
+ * ANSI code page were not seen at all through readdir. */
+static void scan_w(const wchar_t *dir, const char *name, int depth) {
+    wchar_t pat[MAX_PATH];
+    _snwprintf(pat, MAX_PATH, L"%ls\\*", dir);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    Track *loose = NULL;
+    do {
+        if (fd.cFileName[0] == L'.') continue;
+        wchar_t full[MAX_PATH];
+        _snwprintf(full, MAX_PATH, L"%ls\\%ls", dir, fd.cFileName);
+        char shown[256], path[512];
+        ascii_name(shown, sizeof shown, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (depth == 0) {
+                char tn[64];
+                tidy(tn, sizeof tn, shown, 0);
+                scan_w(full, tn, 1);
+            }
+        } else if (is_audio(shown)) {
+            /* No ASCII path (8.3 names are often off): converted from a copy
+             * with one, the cache still keyed by the name as shown. */
+            int direct = narrow_path(path, sizeof path, full);
+            if (!direct) {
+                char dirn[512];
+                WideCharToMultiByte(CP_ACP, 0, dir, -1, dirn, sizeof dirn, NULL, NULL);
+                snprintf(path, sizeof path, "%s\\%s", dirn, shown);
+            }
+            if (!loose) {
+                if (ntracks == MAX_TRACKS) break;
+                loose = &tracks[ntracks++];
+                snprintf(loose->name, sizeof loose->name, "%s", name);
+            }
+            int before = loose->n;
+            add_song(loose, direct ? path : NULL, shown);
+            if (loose->n > before && !direct) {
+                Song *sg = &loose->songs[loose->n - 1];
+                snprintf(sg->src, sizeof sg->src, "%s", path);
+                sg->size = (long long)fd.nFileSizeHigh << 32 | fd.nFileSizeLow;
+                sg->mtime = (long long)(((unsigned long long)fd.ftLastWriteTime.dwHighDateTime << 32 | fd.ftLastWriteTime.dwLowDateTime) / 10000000ull);
+                wchar_t tmpw[MAX_PATH], copyw[MAX_PATH];
+                GetTempPathW(MAX_PATH, tmpw);
+                const wchar_t *ext = wcsrchr(fd.cFileName, L'.');
+                _snwprintf(copyw, MAX_PATH, L"%lsxbrt_song_%d%ls", tmpw, loose->n, ext ? ext : L"");
+                if (CopyFileW(full, copyw, FALSE)) WideCharToMultiByte(CP_ACP, 0, copyw, -1, sg->conv, sizeof sg->conv, NULL, NULL);
+                else loose->n--;
+            }
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    if (loose) qsort(loose->songs, (size_t)loose->n, sizeof *loose->songs, cmp_song);
+}
+
+static void scan(const char *dir, const char *name, int depth) {
+    wchar_t w[MAX_PATH];
+    if (MultiByteToWideChar(CP_ACP, 0, dir, -1, w, MAX_PATH)) scan_w(w, name, depth);
+}
+#else
 static void scan(const char *dir, const char *name, int depth) {
     DIR *d = opendir(dir);
     if (!d) return;
@@ -80,7 +190,9 @@ static void scan(const char *dir, const char *name, int depth) {
         struct stat st;
         if (stat(path, &st) != 0) continue;
         if (S_ISDIR(st.st_mode)) {
-            if (depth == 0) scan(path, e->d_name, 1);
+            char tn[64];
+            tidy(tn, sizeof tn, e->d_name, 0);
+            if (depth == 0) scan(path, tn, 1);
         } else if (is_audio(e->d_name)) {
             if (!loose) {
                 if (ntracks == MAX_TRACKS) break;
@@ -93,6 +205,7 @@ static void scan(const char *dir, const char *name, int depth) {
     closedir(d);
     if (loose) qsort(loose->songs, (size_t)loose->n, sizeof *loose->songs, cmp_song);
 }
+#endif
 
 /* "Duration: 00:03:21.45" in ffmpeg's report, in milliseconds. */
 static uint32_t duration_ms(const char *report) {
@@ -166,16 +279,25 @@ void rt_soundtracks_init(void) {
             snprintf(wma, sizeof wma, "%s/%08x.wma", dir, s->id);
             if (!converted++) fprintf(stderr, "xbrt: converting new songs for the custom soundtracks (once)...\n");
             fprintf(stderr, "xbrt:   %s / %s\n", tracks[t].name, s->name);
-            char cmd[2400];
-            snprintf(cmd, sizeof cmd, "\"\"%s\" -hide_banner -nostdin -y -i \"%s\" -vn -map_metadata -1 -c:a wmav2 -b:a 128k -ar 44100 -ac 2 \"%s\" 2>&1\"", ff, s->src, wma);
+            char cmd[2400], ffw[512], srcw[600], wmaw[700]; /* cmd.exe takes '/' in a program's path for a switch */
+            snprintf(ffw, sizeof ffw, "%s", ff), snprintf(srcw, sizeof srcw, "%s", s->conv[0] ? s->conv : s->src), snprintf(wmaw, sizeof wmaw, "%s", wma);
+#ifdef _WIN32
+            for (char *c = ffw; *c; c++) if (*c == '/') *c = '\\';
+            for (char *c = srcw; *c; c++) if (*c == '/') *c = '\\';
+            for (char *c = wmaw; *c; c++) if (*c == '/') *c = '\\';
+#endif
+            snprintf(cmd, sizeof cmd, "\"\"%s\" -hide_banner -nostdin -y -i \"%s\" -vn -map_metadata -1 -c:a wmav2 -b:a 128k -ar 44100 -ac 2 \"%s\" 2>&1\"", ffw, srcw, wmaw);
             FILE *p = popen(cmd, "r");
             char report[8192] = "";
             size_t got = 0;
             while (p && got < sizeof report - 1 && fgets(report + got, (int)(sizeof report - got), p)) got = strlen(report);
             int rc = p ? pclose(p) : -1;
+            if (s->conv[0]) remove(s->conv);
             struct stat st;
             if (rc != 0 || stat(wma, &st) != 0 || st.st_size == 0) {
-                fprintf(stderr, "xbrt:   could not convert it (is ffmpeg installed? forza.ini: ffmpeg)\n");
+                static int said; /* ffmpeg's own words, the first time */
+                fprintf(stderr, "xbrt:   could not convert it (is ffmpeg installed? forza.ini: ffmpeg)\n%s", said ? "" : report);
+                said = 1;
                 remove(wma);
                 s->id = 0;
                 continue;

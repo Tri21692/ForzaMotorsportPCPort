@@ -29,13 +29,13 @@ static RtSetting settings[] = {
 };
 #define NSETTINGS (int)(sizeof settings / sizeof settings[0])
 
-static char values[NSETTINGS][64];
+static char values[NSETTINGS][512]; /* paths, too */
 
 static void put_env(const char *name, const char *value) {
-    static char buf[NSETTINGS][160]; /* putenv keeps the string */
+    static char buf[NSETTINGS][600]; /* putenv keeps the string */
     for (int i = 0; i < NSETTINGS; i++)
         if (!strcmp(settings[i].env, name)) {
-            snprintf(buf[i], sizeof buf[i], "%.31s=%.120s", name, value);
+            snprintf(buf[i], sizeof buf[i], "%.31s=%.511s", name, value);
             putenv(buf[i]);
             return;
         }
@@ -80,7 +80,7 @@ void rt_settings_load(void) {
     for (int i = 0; i < NSETTINGS; i++) snprintf(values[i], sizeof values[i], "%s", settings[i].def);
     FILE *f = fopen(SETTINGS_FILE, "r");
     if (f) {
-        char line[256];
+        char line[1024];
         while (fgets(line, sizeof line, f)) {
             char *c = strpbrk(line, "#;");
             if (c) *c = 0;
