@@ -18,6 +18,7 @@ int rt_gl_on;
 GL_FUNCTIONS(GL_DEFINE)
 #undef GL_DEFINE
 PFNGLBUFFERSTORAGEPROC p_glBufferStorage;
+int rt_gl_parallel;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -157,6 +158,12 @@ int rt_gl_init(void) {
     if (!(p_##name = (type)load(gl, #name))) missing++, fprintf(stderr, "xbrt: GL function %s is missing\n", #name);
     GL_FUNCTIONS(GL_LOAD)
     p_glBufferStorage = (PFNGLBUFFERSTORAGEPROC)load(gl, "glBufferStorage"); /* optional */
+    { /* optional: compiling and linking on the driver's own threads (glfs.c asks without waiting) */
+        typedef void(APIENTRY * MaxThreads)(GLuint);
+        MaxThreads mt = (MaxThreads)load(gl, "glMaxShaderCompilerThreadsKHR");
+        if (!mt) mt = (MaxThreads)load(gl, "glMaxShaderCompilerThreadsARB");
+        if (mt && !(getenv("XBRT_GL_PARALLEL") && !atoi(getenv("XBRT_GL_PARALLEL")))) mt(0xFFFFFFFFu), rt_gl_parallel = 1;
+    }
 #undef GL_LOAD
     if (missing) {
         fprintf(stderr, "xbrt: XBRT_GPU=gl: %d GL functions missing; drawing in software\n", missing);

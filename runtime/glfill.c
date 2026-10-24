@@ -240,6 +240,15 @@ struct GlProg {
 
 static GlProg gl_main, *gl_using;
 
+/* Compiled on the driver's threads (rt_gl_parallel); a failure shows when
+ * the program it is linked into does not link. */
+static GLuint compile_nowait(GLenum type, const char *src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    return s;
+}
+
 static GLuint compile(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, NULL);
@@ -301,11 +310,30 @@ static GlProg *gl_variant(GlProg *p, int var) {
     return p->var[var];
 }
 
-static int gl_link_fs(GlProg *p, GLuint vs, GLuint fs) {
+/* Linking in two halves: started (the driver may link on its own thread,
+ * rt_gl_parallel), then finished when gl_link_done says it is, without
+ * waiting in between. */
+static void gl_link_start(GlProg *p, GLuint vs, GLuint fs) {
     p->prog = glCreateProgram();
     glAttachShader(p->prog, vs);
     glAttachShader(p->prog, fs);
     glLinkProgram(p->prog);
+}
+
+static int gl_link_done(const GlProg *p) {
+    GLint done = 1;
+    if (rt_gl_parallel) glGetProgramiv(p->prog, GL_COMPLETION_STATUS, &done);
+    return done;
+}
+
+static int gl_link_finish(GlProg *p);
+
+static int gl_link_fs(GlProg *p, GLuint vs, GLuint fs) {
+    gl_link_start(p, vs, fs);
+    return gl_link_finish(p);
+}
+
+static int gl_link_finish(GlProg *p) {
     GLint ok = 0;
     glGetProgramiv(p->prog, GL_LINK_STATUS, &ok);
     if (!ok) {

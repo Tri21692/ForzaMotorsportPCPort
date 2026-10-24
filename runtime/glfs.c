@@ -19,8 +19,8 @@ typedef struct {
 
 typedef struct {
     FsKey key;
-    GLuint fs; /* the compiled shader */
-    int ok;
+    GLuint fs;   /* the compiled shader */
+    int ok;      /* 1 compiled, 0 still compiling (rt_gl_parallel), -1 failed */
 } GlFs;
 
 static GlFs *gl_fs_cache;
@@ -262,23 +262,46 @@ static int gl_fs_on(void) {
  * not compile (fs_src then). */
 static GlFs *gl_fs_get(const FsKey *k) {
     static GlFs *last;
-    if (last && !memcmp(&last->key, k, sizeof *k)) return last->ok ? last : NULL;
-    for (int i = 0; i < gl_nfs; i++)
-        if (!memcmp(&gl_fs_cache[i].key, k, sizeof *k)) return (last = &gl_fs_cache[i])->ok ? last : NULL;
+    GlFs *f = NULL;
+    if (last && !memcmp(&last->key, k, sizeof *k)) f = last;
+    for (int i = 0; i < gl_nfs && !f; i++)
+        if (!memcmp(&gl_fs_cache[i].key, k, sizeof *k)) f = last = &gl_fs_cache[i];
+    if (f) {
+        if (!f->ok) { /* compiling: done yet? */
+            GLint done = 1, ok = 0;
+            glGetShaderiv(f->fs, GL_COMPLETION_STATUS, &done);
+            if (!done) return NULL;
+            glGetShaderiv(f->fs, GL_COMPILE_STATUS, &ok);
+            f->ok = ok ? 1 : -1;
+            if (!ok) {
+                char log[4096];
+                glGetShaderInfoLog(f->fs, sizeof log, NULL, log);
+                fprintf(stderr, "xbrt: a specialised shader does not compile:\n%s\n", log);
+            }
+        }
+        return f->ok > 0 ? f : NULL;
+    }
     if (gl_nfs == gl_fs_cap) {
         gl_fs_cap = gl_fs_cap ? gl_fs_cap * 2 : 128;
         gl_fs_cache = realloc(gl_fs_cache, (size_t)gl_fs_cap * sizeof *gl_fs_cache);
         last = NULL; /* it pointed into the old array */
     }
-    GlFs *f = &gl_fs_cache[gl_nfs++];
+    f = &gl_fs_cache[gl_nfs++];
     memset(f, 0, sizeof *f);
     f->key = *k;
     last = f;
     char *src = fs_generate(k);
+    if (rt_gl_parallel) { /* asked again at the next draw that needs it */
+        f->fs = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(f->fs, 1, (const char *const *)&src, NULL);
+        glCompileShader(f->fs);
+        free(src);
+        return NULL;
+    }
     f->fs = compile(GL_FRAGMENT_SHADER, src);
     free(src);
-    f->ok = f->fs != 0;
-    return f->ok ? f : NULL;
+    f->ok = f->fs ? 1 : -1;
+    return f->ok > 0 ? f : NULL;
 }
 
 /* Vertex shader vs linked with the fragment shader made for this draw:
@@ -289,7 +312,7 @@ static GlFs *gl_fs_get(const FsKey *k) {
 static GlProg *gl_fs_program(GLuint vs, const DrawState *d) {
     static struct {
         GLuint vs;
-        int fs;
+        int fs, state; /* state: 1 linked, 0 linking, -1 failed */
         GlProg *p;
     } pairs[8192];
     if (!vs || !gl_fs_on()) return NULL;
@@ -300,15 +323,16 @@ static GlProg *gl_fs_program(GLuint vs, const DrawState *d) {
     int fi = (int)(f - gl_fs_cache);
     uint32_t h = ((uint32_t)vs * 2654435761u ^ (uint32_t)fi * 40503u) & 8191;
     for (int n = 0; n < 8192; n++, h = (h + 1) & 8191) {
-        if (pairs[h].p && pairs[h].vs == vs && pairs[h].fs == fi) return pairs[h].p;
+        if (pairs[h].p && pairs[h].vs == vs && pairs[h].fs == fi) {
+            if (pairs[h].state == 0 && gl_link_done(pairs[h].p)) pairs[h].state = gl_link_finish(pairs[h].p) ? 1 : -1;
+            return pairs[h].state > 0 ? pairs[h].p : NULL;
+        }
         if (!pairs[h].p) break;
     }
     if (pairs[h].p) return NULL; /* full: tens of thousands of pairs never happen */
     GlProg *p = calloc(1, sizeof *p);
-    if (!gl_link_fs(p, vs, f->fs)) {
-        free(p);
-        return NULL;
-    }
-    pairs[h].vs = vs, pairs[h].fs = fi, pairs[h].p = p;
-    return p;
+    gl_link_start(p, vs, f->fs);
+    pairs[h].vs = vs, pairs[h].fs = fi, pairs[h].p = p, pairs[h].state = 0;
+    if (!rt_gl_parallel) pairs[h].state = gl_link_finish(p) ? 1 : -1;
+    return pairs[h].state > 0 ? p : NULL;
 }

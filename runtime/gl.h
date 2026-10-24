@@ -219,6 +219,8 @@ GL_FUNCTIONS(GL_DECLARE)
 
 extern int rt_gl_on; /* XBRT_GPU=gl and the context came up */
 extern PFNGLBUFFERSTORAGEPROC p_glBufferStorage; /* GL 4.4 / ARB_buffer_storage: NULL without it */
+extern int rt_gl_parallel; /* KHR_parallel_shader_compile: shaders compile and link on the driver's threads */
+#define GL_COMPLETION_STATUS 0x91B1
 #define glBufferStorage p_glBufferStorage
 
 /* On the device thread: make the context and load the functions. Returns 0

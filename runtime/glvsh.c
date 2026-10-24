@@ -18,7 +18,7 @@ typedef struct {
     uint32_t start, n;     /* slots */
     VshIns ins[136];
     GlProg prog;
-    int ok;
+    int ok, linking; /* linking: started, not finished (gl_link_done) */
     uint16_t inputs; /* the attributes it reads (bit per v register) */
 } GlVsh;
 
@@ -219,9 +219,13 @@ static GlVsh *gl_vsh_get(uint32_t n) {
         for (int k = 0; k < 3; k++)
             if (v->ins[i].in[k].mux == 2) v->inputs |= (uint16_t)(1u << (v->ins[i].attr & 15));
     char *src = vsh_glsl(v->ins, n);
-    GLuint vs = compile(GL_VERTEX_SHADER, src);
+    GLuint vs = rt_gl_parallel ? compile_nowait(GL_VERTEX_SHADER, src) : compile(GL_VERTEX_SHADER, src);
     free(src);
-    v->ok = vs && gl_link(&v->prog, vs);
+    if (vs) { /* linked on the driver's threads where it can: gl_draw_vsh draws on the CPU until it is */
+        v->prog.vs = vs, v->prog.var[0] = &v->prog;
+        gl_link_start(&v->prog, vs, gl_fs);
+        v->linking = 1;
+    }
     if (vs) glDeleteShader(vs);
     if (rt_log_level) rt_log("gl: vertex program %d (%u slots from %u)%s\n", gl_nvsh, n, vprog_start, v->ok ? "" : " does not compile");
     return last = v;
@@ -289,7 +293,8 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     if (!vsh_extent(&len)) return 0;
     uint64_t p0 = rt_now_100ns();
     GlVsh *v = gl_vsh_get(len);
-    if (!v->ok) return 0;
+    if (v->linking && gl_link_done(&v->prog)) v->linking = 0, v->ok = gl_link_finish(&v->prog);
+    if (!v->ok) return 0; /* not linked yet (or not at all): the CPU runs it */
 
     /* The index list, in add_tri's order. */
     static GLuint *idx;
@@ -313,7 +318,7 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     /* With the fragment shader made for this draw (glfs.c), else the one
      * that reads the state from uniforms. */
     GlProg *p = gl_fs_program(v->prog.vs, d);
-    if (!p) p = gl_variant(&v->prog, gl_frag_variant());
+    if (!p) p = rt_gl_parallel ? &v->prog : gl_variant(&v->prog, gl_frag_variant()); /* not the variants: linked when first asked for, they would wait */
     gl_use(p);
     if (!gl_vsh_vao) {
         glGenVertexArrays(1, &gl_vsh_vao);
