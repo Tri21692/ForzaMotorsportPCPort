@@ -266,16 +266,31 @@ void rt_soundtracks_init(void) {
             Known *k = NULL;
             for (int j = 0; j < nknown && !k; j++)
                 if (!strcmp(known[j].src, s->src) && known[j].size == s->size && known[j].mtime == s->mtime && known[j].track == (uint32_t)t) k = &known[j];
+            /* A song's id carries its soundtrack in the top 16 bits: XAPI
+             * opens "%04x\%08x.WMA" with id >> 16 and the id. Numbered
+             * straight through, only the first soundtrack's songs were found. */
+            uint32_t next_local = 0;
+            for (int j = 0; j < nknown; j++)
+                if (known[j].id >> 16 == (uint32_t)t && (known[j].id & 0xFFFF) > next_local) next_local = known[j].id & 0xFFFF;
+            for (int j = 0; j < i; j++)
+                if (tracks[t].songs[j].id >> 16 == (uint32_t)t && (tracks[t].songs[j].id & 0xFFFF) > next_local) next_local = tracks[t].songs[j].id & 0xFFFF;
             char wma[700];
             if (k) {
                 snprintf(wma, sizeof wma, "%s/%08x.wma", dir, k->id);
                 struct stat st;
                 if (stat(wma, &st) == 0) {
+                    if (k->id >> 16 != (uint32_t)t) { /* converted under the old numbering: renamed, not converted again */
+                        char to[700];
+                        uint32_t id = (uint32_t)t << 16 | (next_local + 1);
+                        snprintf(to, sizeof to, "%s/%08x.wma", dir, id);
+                        if (rename(wma, to) == 0) k->id = id;
+                    }
                     s->id = k->id, s->ms = k->ms;
                     continue;
                 }
             }
-            s->id = next_id++;
+            s->id = (uint32_t)t << 16 | (next_local + 1);
+            if (s->id >= next_id) next_id = s->id + 1;
             snprintf(wma, sizeof wma, "%s/%08x.wma", dir, s->id);
             if (!converted++) fprintf(stderr, "xbrt: converting new songs for the custom soundtracks (once)...\n");
             fprintf(stderr, "xbrt:   %s / %s\n", tracks[t].name, s->name);
