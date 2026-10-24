@@ -21,7 +21,7 @@ typedef struct {
 static const OvItem items[] = {
     {"fps", "Frame Rate", {"30", "60"}, {"30 FPS", "60 FPS"}, 0, "Forza runs its physics once a frame, so 60 is the most it can do."},
     {"scale", "Resolution", {"1", "2", "3", "4"}, {"1x  (640x480)", "2x  (1280x960)", "3x  (1920x1440)", "4x  (2560x1920)"}, 0,
-     "Draws the game at a multiple of the Xbox's 640x480. 3x and 4x need a strong GPU."},
+     "Draws the game at a multiple of the Xbox's 640x480. Lower it on slower GPUs."},
     {"widescreen", "Widescreen", {"0", "1"}, {"Off  (4:3)", "On  (16:9)"}, 0, "Forza draws a wider 16:9 view of the track itself."},
     {"fullscreen", "Fullscreen", {"0", "1"}, {"Off", "On"}, 1, "Borderless fullscreen. Alt+Enter or F11 switches at any time."},
     {"window", "Window Size", {"auto", "1280x960", "1600x1200", "1280x720", "1920x1080", "2560x1440"},

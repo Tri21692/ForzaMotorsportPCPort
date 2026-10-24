@@ -16,7 +16,7 @@
 
 static RtSetting settings[] = {
     {"fps", "XBRT_FPS", "60", "Frame rate: 30 or 60 (the game runs its physics once a frame, so no higher)"},
-    {"scale", "XBRT_GL_SCALE", "2", "Render scale over the Xbox's 640x480: 1 to 4 (2 = 1280x960, 3 = 1920x1440, 4 = 2560x1920)"},
+    {"scale", "XBRT_GL_SCALE", "4", "Render scale over the Xbox's 640x480: 1 to 4 (2 = 1280x960, 3 = 1920x1440, 4 = 2560x1920)"},
     {"widescreen", "XBRT_WIDESCREEN", "0", "16:9 picture: 1 on, 0 off (4:3). Forza draws a wider view itself"},
     {"fullscreen", "XBRT_FULLSCREEN", "0", "Borderless fullscreen: 1 on, 0 off (Alt+Enter or F11 switches while playing)"},
     {"window", "XBRT_WINDOW_SIZE", "auto", "Window size in pixels, as 1280x960, or auto (twice the Xbox picture, fitted to the screen)"},

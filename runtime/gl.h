@@ -67,6 +67,23 @@
     X(PFNGLGETPROGRAMIVPROC, glGetProgramiv)                                                                                \
     X(PFNGLGETPROGRAMINFOLOGPROC, glGetProgramInfoLog)                                                                      \
     X(PFNGLUSEPROGRAMPROC, glUseProgram)                                                                                    \
+    X(PFNGLPROGRAMUNIFORM1IVPROC, glProgramUniform1iv)                                                                      \
+    X(PFNGLPROGRAMUNIFORM1UIVPROC, glProgramUniform1uiv)                                                                    \
+    X(PFNGLPROGRAMUNIFORM1UIPROC, glProgramUniform1ui)                                                                      \
+    X(PFNGLPROGRAMUNIFORM1FVPROC, glProgramUniform1fv)                                                                      \
+    X(PFNGLPROGRAMUNIFORM3FVPROC, glProgramUniform3fv)                                                                      \
+    X(PFNGLVALIDATEPROGRAMPIPELINEPROC, glValidateProgramPipeline)                                                          \
+    X(PFNGLGETPROGRAMPIPELINEINFOLOGPROC, glGetProgramPipelineInfoLog)                                                      \
+    X(PFNGLCREATESHADERPROGRAMVPROC, glCreateShaderProgramv)                                                                \
+    X(PFNGLGENPROGRAMPIPELINESPROC, glGenProgramPipelines)                                                                  \
+    X(PFNGLBINDPROGRAMPIPELINEPROC, glBindProgramPipeline)                                                                  \
+    X(PFNGLUSEPROGRAMSTAGESPROC, glUseProgramStages)                                                                        \
+    X(PFNGLACTIVESHADERPROGRAMPROC, glActiveShaderProgram)                                                                  \
+    X(PFNGLPROGRAMUNIFORM1IPROC, glProgramUniform1i)                                                                        \
+    X(PFNGLPROGRAMUNIFORM1FPROC, glProgramUniform1f)                                                                        \
+    X(PFNGLPROGRAMUNIFORM2FVPROC, glProgramUniform2fv)                                                                      \
+    X(PFNGLPROGRAMUNIFORM4FVPROC, glProgramUniform4fv)                                                                      \
+    X(PFNGLDELETEPROGRAMPROC, glDeleteProgram)                                                                              \
     X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation)                                                                    \
     X(PFNGLUNIFORM1IPROC, glUniform1i)                                                                                      \
     X(PFNGLUNIFORM4FVPROC, glUniform4fv)                                                                                    \
@@ -155,6 +172,23 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glGetProgramiv p_glGetProgramiv
 #define glGetProgramInfoLog p_glGetProgramInfoLog
 #define glUseProgram p_glUseProgram
+#define glProgramUniform1iv p_glProgramUniform1iv
+#define glProgramUniform1uiv p_glProgramUniform1uiv
+#define glProgramUniform1ui p_glProgramUniform1ui
+#define glProgramUniform1fv p_glProgramUniform1fv
+#define glProgramUniform3fv p_glProgramUniform3fv
+#define glValidateProgramPipeline p_glValidateProgramPipeline
+#define glGetProgramPipelineInfoLog p_glGetProgramPipelineInfoLog
+#define glCreateShaderProgramv p_glCreateShaderProgramv
+#define glGenProgramPipelines p_glGenProgramPipelines
+#define glBindProgramPipeline p_glBindProgramPipeline
+#define glUseProgramStages p_glUseProgramStages
+#define glActiveShaderProgram p_glActiveShaderProgram
+#define glProgramUniform1i p_glProgramUniform1i
+#define glProgramUniform1f p_glProgramUniform1f
+#define glProgramUniform2fv p_glProgramUniform2fv
+#define glProgramUniform4fv p_glProgramUniform4fv
+#define glDeleteProgram p_glDeleteProgram
 #define glGetUniformLocation p_glGetUniformLocation
 #define glUniform1i p_glUniform1i
 #define glUniform4fv p_glUniform4fv

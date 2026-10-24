@@ -1694,6 +1694,7 @@ static void gl_put(float *v, const Pt *p) {
     v[28] = p->fog;
 }
 
+
 static void gl_uniform_argb(GLint loc, uint32_t v) {
     float f[4];
     argb(v, f);

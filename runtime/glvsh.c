@@ -310,7 +310,10 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     uint64_t p1 = rt_now_100ns();
     GlSurf *s = gl_bind(d);
     uint64_t p2 = rt_now_100ns();
-    GlProg *p = gl_variant(&v->prog, gl_frag_variant());
+    /* With the fragment shader made for this draw (glfs.c), else the one
+     * that reads the state from uniforms. */
+    GlProg *p = gl_fs_program(v->prog.vs, d);
+    if (!p) p = gl_variant(&v->prog, gl_frag_variant());
     gl_use(p);
     if (!gl_vsh_vao) {
         glGenVertexArrays(1, &gl_vsh_vao);

@@ -1363,6 +1363,7 @@ void nv2a_raster_poll(void) {
 #define SET_CLEAR_RECT_VERTICAL 0x1D9C
 #include "glfill.c"
 #include "glover.c"
+#include "glfs.c"
 #include "glvsh.c"
 
 /* CLEAR_SURFACE: on the GPU when it draws, else 0 and kelvin.c clears RAM. */
