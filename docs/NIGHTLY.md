@@ -533,6 +533,17 @@ Open bugs, in order:
     256-byte copy of `cur`) and gl_bind.
   - Race 52-57 fps headless at the heavy start; the user reports smooth,
     no flicker, pause no longer locks up.
+  - Then (autopilot): shown frames no longer read back at notifies while
+    frames come fast (a third of the device thread); fragment shader
+    variants without gl_FragDepth / discard so the early depth test works
+    (GPU-bound at 2x before: 60 fps at 1x, ~45 at 2x). Race start now
+    56-60 fps at 2x headless, ~same as 1x. Flip pacing drains at the
+    game's own interval (0x554944): XBRT_FPS=30 had run at 60.
+  - Benchmark: `run/race-rec.txt`, XBRT_FRAME_TRACE, then
+    frames.py-style per-5 s fps/idle (see the trace format in nv2a.c).
+    Headless with screenshots costs a read-back per blank: leave them off
+    when measuring. Next if needed: per-combiner specialised fragment
+    shaders (separable programs), vertex fetch (~6 us a draw).
 
 - 2026-10-19 (nightly, branch nightly/2026-10-18): GPU path from 9-10
   to ~15-20 fps in the race (3055 -> 8500-8700 flips over the 415 s run).
