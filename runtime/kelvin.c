@@ -113,7 +113,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     nv2a_raster_method(method, arg);
     switch (method) {
     case FLIP_INCREMENT_WRITE: {
-        nv2a.flips++;
+        nv2a.flips++, nv2a.queued++;
         nv2a_trace('F', nv2a.draws);
         nv2a_raster_flip(); /* the display gets its buffers at notifies (trap_method) */
         nv2a_raster_invalidate();
@@ -123,15 +123,25 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
         return;
     }
     case FLIP_STALL: {
-        /* Wait while the buffer about to be drawn is still the one shown
-         * (FLIP_READ == FLIP_WRITE): D3D's vertical-blank handler moves
-         * FLIP_READ on (NV_PGRAPH_INCREMENT, nv2a.c). Ignored, the GPU ran
-         * ahead of the display: at 90 fps the race ran 1.5 times too fast,
-         * since Forza steps its world once a frame. XBRT_NO_FLIP_STALL=1:
-         * as before. */
+        /* One frame a vertical blank, as with three buffers: wait while
+         * two finished frames are waiting to be shown (each blank shows
+         * one). Ignored, the GPU ran ahead of the
+         * display: at 90 fps the race ran 1.5 times too fast, since Forza
+         * steps its world once a frame. The hardware waits while the
+         * buffer about to be drawn is still the one shown (FLIP_READ ==
+         * FLIP_WRITE, D3D's vertical-blank handler moving FLIP_READ on):
+         * that hung a race when the handler fell a frame behind, and
+         * releasing such stalls by hand put D3D's count out of step (frames
+         * in bunches, menus sluggish). The display shows copies of
+         * finished frames, so drawing into the shown buffer does no harm.
+         * Waiting whenever a frame had flipped since the last blank (two
+         * buffers) cost a frame that missed a blank a second blank: ~40
+         * fps in the race. Also
+         * released at NV_PGRAPH_INCREMENT (nv2a.c). XBRT_NO_FLIP_STALL=1:
+         * no waiting. */
         static int off = -1;
         if (off < 0) off = getenv("XBRT_NO_FLIP_STALL") && atoi(getenv("XBRT_NO_FLIP_STALL"));
-        if (!off && nv2a.kelvin[FLIP_READ / 4] == nv2a.kelvin[FLIP_WRITE / 4]) nv2a.flip_stall = 1, nv2a.stalls++, nv2a_trace('S', 0);
+        if (!off && nv2a.queued >= 2) nv2a.flip_stall = 1, nv2a.stalls++, nv2a_trace('S', 0);
         return;
     }
     case BACK_END_WRITE_SEMAPHORE_RELEASE: {

@@ -430,7 +430,8 @@ typedef struct {
     int w, h;
     unsigned seq;
 } GlSnap;
-static GlSnap gl_snap[4];
+#define GL_SNAPS 8
+static GlSnap gl_snap[GL_SNAPS];
 
 static pthread_mutex_t hi_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t *hi_frame;
@@ -510,7 +511,7 @@ static void gl_present_vblank(uint32_t fb) {
     static unsigned last_seq;
     static int same;
     if (s && s->seq == last_seq) {
-        if (++same > 30) s = NULL;
+        if (++same > 6) s = NULL; /* loading screens: their text and icon are drawn on the CPU, into RAM */
     } else if (s) {
         last_seq = s->seq, same = 0;
     }
@@ -524,7 +525,7 @@ static void gl_present_vblank(uint32_t fb) {
     }
     int w = 640 * s->k, h = 480 * s->k;
     GlSnap *snap = NULL;
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < GL_SNAPS; i++)
         if (gl_snap[i].fbo && gl_snap[i].base == s->cbase && gl_snap[i].w == w && gl_snap[i].h == h) snap = &gl_snap[i];
     if (rt_gl_show(snap ? snap->fbo : s->fbo, w, h)) {
         rt_gl_shown = rt_now_100ns();
@@ -837,10 +838,10 @@ static void gl_depth_stays(GlSurf *s) {
 static void gl_snapshot(GlSurf *e) {
     if (e->k < 2 || e->bpp != 4 || e->swz || e->w != 640 || e->h < 480) return;
     GlSnap *n = NULL;
-    for (int i = 0; i < 4 && !n; i++)
+    for (int i = 0; i < GL_SNAPS && !n; i++)
         if (gl_snap[i].base == e->cbase) n = &gl_snap[i];
     if (!n) /* the oldest */
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < GL_SNAPS; i++)
             if (!n || gl_snap[i].seq < n->seq) n = &gl_snap[i];
     int w = 640 * e->k, h = 480 * e->k;
     if (n->w != w || n->h != h) {
@@ -884,14 +885,20 @@ static void gl_flip(void) {
     for (int i = 0; i < GL_SURFS; i++)
         if (!gl_surf[i].dirty) gl_surf[i].check = 1;
     if (gl_ready <= 0) return;
-    { /* the frame just finished: the screen-sized buffer drawn last */
-        GlSurf *f = NULL;
-        for (int i = 0; i < GL_SURFS; i++) {
-            GlSurf *e = &gl_surf[i];
-            if (e->fbo && e->k > 1 && e->bpp == 4 && !e->swz && e->w == 640 && e->h >= 480 && (!f || e->seq > f->seq)) f = e;
-        }
-        static unsigned done;
-        if (f && f->seq != done) gl_snapshot(f), done = f->seq;
+    /* Every screen-sized buffer drawn since its last copy: not only the
+     * one drawn last, which in the menus is often a buffer of their own
+     * (the shown one's copy then stayed frames old, and flashed up). */
+    for (int i = 0; i < GL_SURFS; i++) {
+        GlSurf *e = &gl_surf[i];
+        if (!e->fbo || e->k < 2 || e->bpp != 4 || e->swz || e->w != 640 || e->h < 480) continue;
+        int newer = 0; /* framebuffers over the same bytes (with and without depth): only the one drawn last */
+        for (int j = 0; j < GL_SURFS; j++)
+            if (gl_surf[j].fbo && gl_surf[j].cbase == e->cbase && gl_surf[j].seq > e->seq) newer = 1;
+        if (newer) continue;
+        int fresh = 0;
+        for (int j = 0; j < GL_SNAPS; j++)
+            if (gl_snap[j].base == e->cbase && gl_snap[j].seq == e->seq) fresh = 1;
+        if (!fresh) gl_snapshot(e);
     }
     /* XBRT_GL_QUEUE=<1|2> frames may be queued on the GPU (default 1): each
      * one queued is a frame between the controller and the screen. */

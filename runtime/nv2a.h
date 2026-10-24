@@ -14,7 +14,8 @@ typedef struct {
 
     uint32_t vblanks, draws, clears, flips, traps, skipped;
     volatile int flip_stall; /* FLIP_STALL: the push buffer waits until the CPU moves FLIP_READ on */
-    uint32_t stalls, stall_breaks; /* flip stalls; ones the device thread had to release itself */
+    uint32_t stalls;
+    volatile int queued; /* frames flipped and not yet shown: each vertical blank shows one */
 } Nv2a;
 
 extern Nv2a nv2a;

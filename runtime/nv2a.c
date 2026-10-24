@@ -611,23 +611,9 @@ static void *device_main(void *arg) {
             vblank_due = next_vblank;
             nv2a.vblanks++;
             nv2a_trace('V', nv2a.vblanks);
-            /* A flip stall D3D's handler never releases: seen once a second
-             * into a race (the handler's count of frames to show had
-             * fallen behind), and the game hung for good, the GPU parked
-             * and the game waiting for it. After 2 blanks (33 ms) the
-             * display moves on by itself, as the handler would have. */
-            static uint32_t stall_since;
-            if (!nv2a.flip_stall) {
-                stall_since = 0;
-            } else if (!stall_since) {
-                stall_since = nv2a.vblanks;
-            } else if (nv2a.vblanks - stall_since >= 2) {
-                uint32_t mod = nv2a.kelvin[0x128 / 4], r = nv2a.kelvin[0x120 / 4] + 1;
-                nv2a.kelvin[0x120 / 4] = mod ? r % mod : r;
-                nv2a.flip_stall = 0, stall_since = 0, nv2a.stall_breaks++;
-                nv2a_trace('X', nv2a.stall_breaks);
-                if (nv2a.stall_breaks <= 5) fprintf(stderr, "xbrt: a flip stall went unreleased for 2 blanks; released (%u)\n", nv2a.stall_breaks);
-            }
+            /* A blank shows one waiting frame: a stalled one may go on (kelvin.c, FLIP_STALL). */
+            if (nv2a.queued) nv2a.queued--;
+            if (nv2a.flip_stall && nv2a.queued < 2) nv2a.flip_stall = 0, nv2a_trace('R', 1);
             if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
                 static const char *spec;
