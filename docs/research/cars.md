@@ -188,3 +188,39 @@ XML, at four upgrade levels (`l0`-`l3`) where parts can be upgraded:
   `Flare`.
 - How the game builds its car list (the list of names, prices, classes and
   icons), for adding cars rather than replacing them.
+
+## Need for Speed Underground cars (the converter's source)
+
+`tools/nfsu.py` reads a PC NFSU car folder (`CARS\<car>\`): `list` for the
+parts of `GEOMETRY.BIN`, `textures` for `TEXTURES.BIN`. Both are EA's chunk
+format (u32 id, u32 size; bit 31 marks a container; data that needs
+alignment starts with 0x11 padding, the index lists included).
+
+- Geometry: 400 parts on the 240SX, each with a name, texture and shader
+  hash lists and one mesh: 36-byte vertices (float3 position with x
+  forward, y left, z up in metres; float3 normal; RGBA colour; float2 uv),
+  u16 triangle lists, and groups (bounds, index count and first index,
+  texture index at 0x1C, shader index at 0x20).
+- Names: `240SX_KIT00_*` is the stock car (body, roof, hood, trunk, both
+  bumpers, skirts, spoiler, head and brake lights, exhaust, engine, one
+  wheel drawn four times), `KIT01`-`KIT15` body kits, `STYLE01`-`STYLE20`
+  hoods, spoilers and roofs; `_A` to `_D` are detail levels. The stock car
+  at `_A` is about 3,900 triangles (Forza's 240SX body alone is 22,000).
+- Textures: a texture pack; each texture is JDLZ-compressed on its own
+  (EA's LZ, implemented in `nfsu.jdlz`), DXT1/DXT3 or 32-bit BGRA, not
+  swizzled; 117 of the 240SX's 119 unpack to exactly their stated size.
+  Names hash with EA's usual function (h = h * 33 + c from 0xFFFFFFFF).
+  `240SX_SKIN1`, which the body panels use, is in no file: the game builds
+  it from the paint and vinyls, so those parts become Forza's Body material
+  and take the livery colour.
+
+Rendered from these readers, the stock 240SX comes out whole, with its
+headlights, badge and third brake light textured in place.
+
+For the converter: NFSU's kit-of-parts maps onto Forza's (KIT bumpers and
+skirts to Forza's `a`-`h` variants, STYLE hoods and spoilers to its hoods and
+wings); positions need x/y/z swapped to Forza's axes (z along the car) and
+scaling to int16 x 4096; normals to int16; triangle lists to strips (or
+strips of three); textures packed into one Forza atlas with the uvs moved
+into their places; and handling, sounds, damage shapes and the driver
+borrowed from a similar Forza car (its own 240SX for this one).
