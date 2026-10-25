@@ -33,6 +33,8 @@ void nv2a_raster_invalidate(void);                      /* textures may have cha
 void nv2a_raster_dump_state(FILE *f, uint32_t flip);    /* XBRT_GPU_DUMP: the vertex program and constants */
 void nv2a_raster_flush(void);                           /* finish the batched drawing */
 void nv2a_raster_sync(void);
+void nv2a_raster_cpu_reads(uint32_t base, uint32_t size); /* the GPU's drawing over these bytes reaches RAM (device thread) */
+void nv2a_cpu_reads(uint32_t base, uint32_t size);        /* ... asked from the CPU's side, which waits for it */
 void nv2a_raster_sync_range(uint32_t base, uint32_t size); /* the colour drawn over these bytes on its way to RAM */
 void nv2a_raster_flip(void);                            /* at FLIP_INCREMENT_WRITE */
 void nv2a_raster_poll(void);                            /* a finished picture copy goes to the display at once */

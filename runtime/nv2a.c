@@ -615,6 +615,26 @@ static void record_vblank(void) {
 
 /* ---- the device thread ---- */
 
+/* The CPU is about to look at bytes the GPU may have drawn (a LockRect,
+ * hle_d3d.c): the device thread brings them to RAM between push-buffer
+ * runs, and the CPU waits for that, without the big lock (the device
+ * thread may need it to get there). Only with XBRT_GPU=gl; the software
+ * rasteriser draws into RAM. */
+static struct { uint32_t base, size; int pending; } cpu_reads;
+static pthread_cond_t cpu_reads_done = PTHREAD_COND_INITIALIZER;
+
+void nv2a_cpu_reads(uint32_t base, uint32_t size) {
+    if (!rt_gl_on) return;
+    pthread_mutex_unlock(&rt_gil);
+    pthread_mutex_lock(&lock);
+    while (cpu_reads.pending) pthread_cond_wait(&cpu_reads_done, &lock);
+    cpu_reads.base = base, cpu_reads.size = size, cpu_reads.pending = 1;
+    pthread_cond_signal(&kick);
+    while (cpu_reads.pending) pthread_cond_wait(&cpu_reads_done, &lock);
+    pthread_mutex_unlock(&lock);
+    rt_gil_lock();
+}
+
 static void *device_main(void *arg) {
     (void)arg;
     const char *gpu = getenv("XBRT_GPU");
@@ -665,6 +685,14 @@ static void *device_main(void *arg) {
             update_irq();
         }
         nv2a_raster_poll();
+        if (cpu_reads.pending) {
+            uint32_t base = cpu_reads.base, size = cpu_reads.size;
+            pthread_mutex_unlock(&lock);
+            nv2a_raster_cpu_reads(base, size);
+            pthread_mutex_lock(&lock);
+            cpu_reads.pending = 0;
+            pthread_cond_broadcast(&cpu_reads_done);
+        }
         if (REG(PFIFO_CACHE1_DMA_GET) != REG(PFIFO_CACHE1_DMA_PUT)) {
             pthread_mutex_unlock(&lock);
             uint64_t t0 = rt_now_100ns();

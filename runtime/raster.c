@@ -1418,6 +1418,11 @@ void nv2a_raster_sync(void) {
     if (rt_gl_on) gl_sync_cpu();
 }
 
+void nv2a_raster_cpu_reads(uint32_t base, uint32_t size) {
+    nv2a_raster_flush();
+    if (rt_gl_on) gl_sync_range(base, size);
+}
+
 void nv2a_raster_sync_range(uint32_t base, uint32_t size) {
     nv2a_raster_flush();
     if (rt_gl_on) gl_sync_color_async(base, size);
