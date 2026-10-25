@@ -26,10 +26,12 @@
 
 void rt_vp_method(uint32_t method, uint32_t arg);
 int rt_vp_frame(float out[32][2], int *raise_irq);
+void rt_vp_write_fectl(uint32_t v);
 
 #define REG(off) (*(volatile uint32_t *)(xb_mem + RT_APU_BASE + (off)))
 
 #define NV_PAPU_ISTS 0x1000      /* interrupt status, write one to clear */
+#define NV_PAPU_FECTL 0x1100     /* front end control: the trap DSOUND's ISR releases */
 #define NV_PAPU_IEN 0x1004       /* interrupt enable; bit 0 (GINTSTS) the global one */
 #define NV_PAPU_FEMEMADDR 0x1324 /* front end: where a notify is written */
 #define NV_PAPU_FEMEMDATA 0x1334 /* front end: the notify value */
@@ -44,10 +46,10 @@ static volatile uint32_t frames; /* made by the voice processor; XGSCNT is 32 sa
 static void apu_irq(void) {
     uint32_t pending = REG(NV_PAPU_ISTS) & ~1u & REG(NV_PAPU_IEN);
     if ((REG(NV_PAPU_IEN) & 1) && pending) {
-        REG(NV_PAPU_ISTS) |= 1;
+        __atomic_or_fetch(&REG(NV_PAPU_ISTS), 1u, __ATOMIC_SEQ_CST); /* atomic: the voice processor sets bits from its own thread */
         rt_interrupt_raise(0x30 + APU_IRQ);
     } else {
-        REG(NV_PAPU_ISTS) &= ~1u;
+        __atomic_and_fetch(&REG(NV_PAPU_ISTS), ~1u, __ATOMIC_SEQ_CST);
     }
 }
 
@@ -98,8 +100,11 @@ void rt_apu_write(uint32_t off, int bytes, uint32_t v) {
             if ((REG(off) & 3) != 3 && (v & 3) == 3) dsp_bootstrap(off & ~0xFFFFu, off == 0x3FFFC ? 0x2040 : 0x2048);
             break;
         case NV_PAPU_ISTS:
-            REG(off) &= ~v;
+            __atomic_and_fetch(&REG(off), ~v, __ATOMIC_SEQ_CST);
             apu_irq();
+            return;
+        case NV_PAPU_FECTL:
+            rt_vp_write_fectl(v);
             return;
         case NV_PAPU_FEMEMDATA:
             xb_wr32(RT_PHYS_VIEW + (REG(NV_PAPU_FEMEMADDR) & (RT_PHYS_SIZE - 1)), v);

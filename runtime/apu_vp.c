@@ -169,8 +169,16 @@ static void notify(unsigned v, int which) {
     uint32_t at = REG(NV_PAPU_FENADDR) + 16 * (2 + v * 4 + (uint32_t)which) + 15; /* the last byte is the status */
     *pa(at) = 1;                                                                 /* NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS */
     *pa(at - 1) = 1;
-    REG(NV_PAPU_ISTS) |= ISTS_FEVINTSTS | ISTS_FENINTSTS;
+    __atomic_or_fetch(&REG(NV_PAPU_ISTS), ISTS_FEVINTSTS | ISTS_FENINTSTS, __ATOMIC_SEQ_CST); /* the ISR clears bits at the same time */
     irq_pending = 1;
+}
+
+/* The ISR's write of FECTL (releasing a trap), under the lock the frame
+ * takes to trap the next idle voice: neither overwrites the other. */
+void rt_vp_write_fectl(uint32_t v) {
+    pthread_mutex_lock(&vp_lock);
+    REG(NV_PAPU_FECTL) = v;
+    pthread_mutex_unlock(&vp_lock);
 }
 
 static void voice_off(unsigned v) {
@@ -665,7 +673,12 @@ int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
                 if (!trapped && (REG(NV_PAPU_FETFORCE1) & FETFORCE1_SE2FE_IDLE_VOICE)) { /* hand it back: DSOUND unlinks it in its ISR */
                     REG(NV_PAPU_FEDECMETH) = SE2FE_IDLE_VOICE, REG(NV_PAPU_FEDECPARAM) = v;
                     REG(NV_PAPU_FECTL) = (REG(NV_PAPU_FECTL) & ~(FECTL_FEMETHMODE | FECTL_FETRAPREASON)) | FECTL_TRAPPED | FECTL_REQUESTED;
-                    REG(NV_PAPU_ISTS) |= ISTS_FETINTSTS;
+                    /* Atomic: a plain |= racing the ISR's clearing of other
+                     * bits lost this one now and then. DSOUND never saw the
+                     * trap, no voice was handed back again, and every stop
+                     * waited out DSOUND's 0.5 s timeout: the pause menu took
+                     * ~10 s to come up. */
+                    __atomic_or_fetch(&REG(NV_PAPU_ISTS), ISTS_FETINTSTS, __ATOMIC_SEQ_CST);
                     irq_pending = 1;
                     trapped = 1; /* one at a time */
                 }
