@@ -107,27 +107,10 @@ static void resolve_links(const char *in, char *out, size_t n) {
     snprintf(out, n, "%s", in);
 }
 
-/* Find a host path for a device-relative name, matching each component
- * case-insensitively. Missing trailing components are kept as written,
- * so creating a new file works. */
-static int host_path(const char *xbox, char *out, size_t n) {
-    char dev[600];
-    resolve_links(xbox, dev, sizeof dev);
-    const char *rest;
-    char root[1100];
-    if (!strncasecmp(dev, "\\Device\\CdRom0", 14)) {
-        snprintf(root, sizeof root, "%s", disc_dir);
-        rest = dev + 14;
-    } else if (!strncasecmp(dev, "\\Device\\Harddisk0\\Partition", 27)) {
-        int part = atoi(dev + 27);
-        snprintf(root, sizeof root, "%s/Partition%d", hdd_dir, part);
-        mkdir(hdd_dir, 0755);
-        mkdir(root, 0755);
-        rest = dev + 27;
-        while (*rest >= '0' && *rest <= '9') rest++;
-    } else {
-        return 0;
-    }
+/* root, then rest's components matched case-insensitively one directory at
+ * a time; a missing one is kept as written. Returns 0 if any was missing. */
+static int walk(const char *root, const char *rest, char *out, size_t n) {
+    int found = 1;
     snprintf(out, n, "%s", root);
     char comp[256];
     while (*rest) {
@@ -139,7 +122,7 @@ static int host_path(const char *xbox, char *out, size_t n) {
         rest += k;
         if (!strcmp(comp, ".")) continue;
         DIR *d = opendir(out);
-        const char *match = comp;
+        const char *match = NULL;
         struct dirent *e;
         while (d && (e = readdir(d))) {
             if (!strcasecmp(e->d_name, comp)) {
@@ -147,10 +130,64 @@ static int host_path(const char *xbox, char *out, size_t n) {
                 break;
             }
         }
+        if (!match) match = comp, found = 0;
         size_t len = strlen(out);
         snprintf(out + len, n - len, "/%s", match);
         if (d) closedir(d);
     }
+    return found;
+}
+
+/* The mods folder (forza.ini: mods): a file there, at the same path as on
+ * the disc (mods/media/cabs/car_nissan240sx.cab), is read instead of the
+ * disc's. Files only; directories are still listed from the disc. */
+static int mod_file(const char *rest, char *out, size_t n) {
+    static char dir[1024];
+    static int checked;
+    if (!checked) {
+        checked = 1;
+        const char *m = getenv("XBRT_MODS");
+        snprintf(dir, sizeof dir, "%s", m ? m : "");
+        if (dir[0]) mkdir(dir, 0755); /* there to be found and filled */
+        struct stat st;
+        if (dir[0] && stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) rt_log("mods: %s\n", dir);
+        else dir[0] = 0;
+    }
+    if (!dir[0]) return 0;
+    char path[1200];
+    struct stat st;
+    if (!walk(dir, rest, path, sizeof path) || stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return 0;
+    snprintf(out, n, "%s", path);
+    return 1;
+}
+
+/* Find a host path for a device-relative name, matching each component
+ * case-insensitively. Missing trailing components are kept as written,
+ * so creating a new file works. */
+static int host_path(const char *xbox, char *out, size_t n) {
+    char dev[600];
+    resolve_links(xbox, dev, sizeof dev);
+    const char *rest;
+    char root[1100];
+    if (!strncasecmp(dev, "\\Device\\CdRom0", 14)) {
+        snprintf(root, sizeof root, "%s", disc_dir);
+        rest = dev + 14;
+        if (mod_file(rest, out, n)) {
+            static int said;
+            if (said < 100) said++, fprintf(stderr, "xbrt: mods: %s\n", out);
+            return 1;
+        }
+    } else if (!strncasecmp(dev, "\\Device\\Harddisk0\\Partition", 27)) {
+        int part = atoi(dev + 27);
+        snprintf(root, sizeof root, "%s/Partition%d", hdd_dir, part);
+        mkdir(hdd_dir, 0755);
+        mkdir(root, 0755);
+        rest = dev + 27;
+        while (*rest >= '0' && *rest <= '9') rest++;
+    } else {
+        return 0;
+    }
+    walk(root, rest, out, n);
     return 1;
 }
 
