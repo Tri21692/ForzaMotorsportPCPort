@@ -29,6 +29,12 @@ runtime/file.c), starting from what is already there:
 
 The game's own data only: nothing here comes from another game.
 
+Not reached: the shop's power, torque and weight. The game works them out
+at boot from the disc's Cars.ca2, which it checks chunk by chunk against
+SHA-1 hashes built into the executable (a table of offset, packed size and
+hash per 4 MB chunk), so a rebuilt .ca2 is refused ("a problem with the
+disc"). Races read the cache's cars.cab, which the mods folder does reach.
+
 Never writes the saves (hdd/Partition1, UDATA): the game keeps copies of
 the icon packs in each profile (CarIcons1-5.xpr), signed (CarIcons.sig),
 and deletes a profile whose files do not match their signature. Patching
@@ -226,7 +232,8 @@ def main(disc, mods, slot, src, name=None, year=None, mass=None, icon=None, pric
             print('engine %s: stock torque %.0f -> %.0f lb-ft (x%.3f to the torque peak, the power peak as it was)'
                   % (engine, peak_torque(l0) / 1.3558179, torque, k))
     out = os.path.join(mods, 'hdd', 'Partition4', 'cars.cab')
-    open(out, 'wb').write(forzacab.pack(files, root))
+    blob = forzacab.pack(files, root)
+    open(out, 'wb').write(blob)
     print('cars.cab: tooldata (price, engines, tyres, weight) and %d physics files from %s' % (n, src))
     # the car's cab: the other engine's sound
     car_in = os.path.join(mods, 'media', 'cabs', 'car_%s.cab' % slot)

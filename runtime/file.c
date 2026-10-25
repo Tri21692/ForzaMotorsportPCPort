@@ -379,6 +379,11 @@ uint32_t k_file_NtReadFile(XbCtx *c) {
         n = ARG(6);
     }
     o->pos = pos + (uint64_t)n;
+    static int file_log = -1; /* debugging: XBRT_FILE_LOG=1 logs every read, without the rest of XBRT_LOG=2 */
+    if (file_log < 0) file_log = getenv("XBRT_FILE_LOG") && atoi(getenv("XBRT_FILE_LOG"));
+    if (file_log)
+        fprintf(stderr, "xbrt: [%.3f] read %s (%s) at %llx: %lld bytes\n", rt_now_100ns() / 1e7, o->path ? o->path : "?",
+                o->host ? o->host : "", (unsigned long long)pos, (long long)n);
     if (rt_log_level >= 2)
         rt_log("  read %s at %llx: %lld bytes, %08x %08x\n", o->path ? o->path : "?", (unsigned long long)pos,
                (long long)n, n >= 4 ? xb_rd32(ARG(5)) : 0, n >= 8 ? xb_rd32(ARG(5) + 4) : 0);

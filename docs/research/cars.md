@@ -56,6 +56,15 @@ into the S13: 1991, 1,250 kg, 24,000 credits, on sale from the start, its
 own engine copy (Nissan240SXS13, so the S14 is unchanged) at 160 lb-ft
 with the power peak kept (155 hp).
 
+The shop's power, torque and weight are worked out at boot from the
+disc's `Cars.ca2` itself, not the cache copy, and the game checks that
+archive's 4 MB zlib chunks against a table in the executable (per chunk:
+u32 offset, u32 packed size, 20-byte SHA-1; Cars.ca2's at xbe offset
+0x5b8c64), so a rebuilt .ca2 is refused ("a problem with the disc"). Races
+read the cache's cars.cab through the mods folder: on track the S13 has
+its own figures, while the shop shows the S14's. Fixing the shop would take
+the runtime patching that table for a modded .ca2.
+
 Removing a mod is safe: the overlay only reads. A car *added* (not in a
 slot) that a save refers to will need a fallback once its mod is gone: a
 stock Mazda MX-5.

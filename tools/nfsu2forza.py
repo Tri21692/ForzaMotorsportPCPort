@@ -607,16 +607,24 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
         for sp in part['subparts']:
             if sp['material'] in (TAILLIGHTS, HEADLIGHTS):  # the Civic's third brake light, on its parcel shelf: a grey slab under the hatch glass
                 sp['indices'] = [0, 0, 0]
+        def tuck(v):
+            # a corner through the glass or roof, brought down just under the shell
+            # above it (the triangles it belongs to stay, so nothing tears)
+            x, y, z = v[0] / 4096, v[1] / 4096, v[2] / 4096
+            hs = above[0].get((int(x // above[1]), int(z // above[1])), ())
+            if hs and y > min(hs) - margin:
+                return (v[0], int(round((min(hs) - margin) * 4096))) + tuple(v[2:])
+            return v
+        part['verts'] = [tuck(v) for v in part['verts']]
         out = [outside(v) for v in part['verts']]
         for sp in part['subparts']:
             ix, tris = sp['indices'], []
             for k in range(len(ix) - 2):
                 a, b, c = (ix[k], ix[k + 1], ix[k + 2]) if k % 2 == 0 else (ix[k + 1], ix[k], ix[k + 2])
-                if len({a, b, c}) < 3 or out[a] or out[b] or out[c]: continue
-                va, vb, vc = (part['verts'][i] for i in (a, b, c))  # long thin ones can cross with their corners inside
-                mids = [tuple((p0 + p1) / 2 for p0, p1 in zip(u[:3], w[:3])) for u, w in ((va, vb), (vb, vc), (vc, va))]
-                mids.append(tuple((p0 + p1 + p2) / 3 for p0, p1, p2 in zip(va[:3], vb[:3], vc[:3])))
-                if not any(outside(m) for m in mids): tris.append((a, b, c))
+                # only what is wholly outside goes: dropping any triangle with a corner
+                # out tore the dashboard and seats apart
+                if len({a, b, c}) < 3 or (out[a] and out[b] and out[c]): continue
+                tris.append((a, b, c))
             sp['indices'] = strip(tris) if tris else [0, 0, 0]
         cnt = struct.unpack_from('<I', part['Damage'][1])[0]
         if cnt == len(part['verts']):  # its damage shape too
@@ -704,7 +712,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
     done = []
     for part in car['parts']:
         if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name'])  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
-                or part['name'].startswith(('BADGE', 'bands', 'exhaust'))):  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
+                or part['name'].startswith(('BADGE', 'bands', 'exhaust', 'cagerace'))):  # (the race cage too: not on a stock car, and its bars showed through the glass)  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
             done.append(part['name'] + '(hidden)')
