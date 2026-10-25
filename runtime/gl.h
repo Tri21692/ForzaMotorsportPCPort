@@ -67,6 +67,8 @@
     X(PFNGLGETPROGRAMIVPROC, glGetProgramiv)                                                                                \
     X(PFNGLGETPROGRAMINFOLOGPROC, glGetProgramInfoLog)                                                                      \
     X(PFNGLUSEPROGRAMPROC, glUseProgram)                                                                                    \
+    X(PFNGLLINEWIDTHPROC, glLineWidth)                                                                                      \
+    X(PFNGLPOINTSIZEPROC, glPointSize)                                                                                      \
     X(PFNGLPROGRAMUNIFORM1IVPROC, glProgramUniform1iv)                                                                      \
     X(PFNGLPROGRAMUNIFORM1UIVPROC, glProgramUniform1uiv)                                                                    \
     X(PFNGLPROGRAMUNIFORM1UIPROC, glProgramUniform1ui)                                                                      \
@@ -172,6 +174,8 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glGetProgramiv p_glGetProgramiv
 #define glGetProgramInfoLog p_glGetProgramInfoLog
 #define glUseProgram p_glUseProgram
+#define glLineWidth p_glLineWidth
+#define glPointSize p_glPointSize
 #define glProgramUniform1iv p_glProgramUniform1iv
 #define glProgramUniform1uiv p_glProgramUniform1uiv
 #define glProgramUniform1ui p_glProgramUniform1ui

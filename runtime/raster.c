@@ -1025,6 +1025,7 @@ typedef struct {
     int blend;
     uint32_t sf, df, eq, wm;
     float cc[4];
+    int lines; /* points or lines, drawn as quads: never culled */
 } DrawState;
 
 typedef struct {
@@ -1353,6 +1354,32 @@ static void add_tri(int state, int ia, int ib, int ic) {
     }
 }
 
+/* A line from pts[ia] to pts[ib] (a point when they are one), as two
+ * triangles from four corners put after the draw's n vertices. */
+static int line_extra;
+static void line_quad(int state, int n, int ia, int ib) {
+    const DrawState *d = &bstates[state];
+    float w = (float)(K(0x380) & 0x1FF) / 8.0f; /* SET_LINE_WIDTH */
+    if (w < 1.0f) w = 1.0f;
+    float hx = w * 0.5f * (float)d->sx, hy = w * 0.5f * (float)d->sy;
+    Pt *a = &pts[ia], *b = &pts[ib];
+    float dx = b->x - a->x, dy = b->y - a->y, len = sqrtf(dx * dx + dy * dy);
+    float nx, ny, ex = 0, ey = 0; /* across, and along (points only) */
+    if (ia == ib || len < 1e-4f) {
+        if (ia != ib) return;
+        nx = 0, ny = hy, ex = hx, ey = 0;
+    } else {
+        nx = -dy / len * hx, ny = dx / len * hy;
+    }
+    int c = n + line_extra;
+    line_extra += 4;
+    pts[c] = *a, pts[c].x += nx - ex, pts[c].y += ny - ey;
+    pts[c + 1] = *a, pts[c + 1].x -= nx + ex, pts[c + 1].y -= ny + ey;
+    pts[c + 2] = *b, pts[c + 2].x += nx + ex, pts[c + 2].y += ny + ey;
+    pts[c + 3] = *b, pts[c + 3].x -= nx - ex, pts[c + 3].y -= ny - ey;
+    add_tri(state, c, c + 1, c + 2), add_tri(state, c + 1, c + 3, c + 2);
+}
+
 void nv2a_raster_flush(void) {
     if (!ntris) {
         nstates = 0;
@@ -1447,9 +1474,10 @@ static void draw(void) {
     uint64_t t1 = rt_now_100ns();
     raster_t_state += t1 - t0;
     if (!ok) return;
+    d.lines = prim >= 1 && prim <= 4;
     if (workers < 0) start_workers();
     int n = nverts;
-    if (n < 3) return;
+    if (n < (prim == 1 ? 1 : prim >= 2 && prim <= 4 ? 2 : 3)) return; /* points need one, lines two */
     if (nstates == states_cap) {
         states_cap = states_cap ? states_cap * 2 : 256;
         bstates = realloc(bstates, (size_t)states_cap * sizeof *bstates);
@@ -1465,14 +1493,21 @@ static void draw(void) {
         vsh_decode();
         if (rt_gl_on && gl_vsh_on() && !(rt_debug_keys & RT_DBG_CPU_VSH) && gl_draw_vsh(&d, verts, n, prim)) return; /* the GPU runs the program */
     }
-    if (n > pts_cap) {
-        pts_cap = n > 4096 ? n : 4096;
+    if (n * 5 > pts_cap) { /* lines add four corners a segment */
+        pts_cap = n * 5 > 4096 ? n * 5 : 4096;
         pts = realloc(pts, (size_t)pts_cap * sizeof *pts);
     }
     if (workers > 1 && n >= 64) run_pool(project_job);
     else
         for (int i = 0; i < n; i++) pts[i] = project(&verts[i]);
+    line_extra = 0;
     switch (prim) {
+    /* Points and lines, as quads SET_LINE_WIDTH wide (6.3 fixed point,
+     * Xbox pixels): the cars' panel seams are line strips. */
+    case 1: for (int i = 0; i < n; i++) line_quad(st, n, i, i); break;
+    case 2: for (int i = 0; i + 1 < n; i += 2) line_quad(st, n, i, i + 1); break;
+    case 3: for (int i = 0; i < n; i++) line_quad(st, n, i, (i + 1) % n); break;
+    case 4: for (int i = 0; i + 1 < n; i++) line_quad(st, n, i, i + 1); break;
     case 5: for (int i = 0; i + 2 < n; i += 3) add_tri(st, i, i + 1, i + 2); break;
     case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? add_tri(st, i + 1, i, i + 2) : add_tri(st, i, i + 1, i + 2); break;
     case 7: case 10: for (int i = 1; i + 1 < n; i++) add_tri(st, 0, i, i + 1); break;

@@ -288,27 +288,45 @@ uint64_t prof_t[6], prof_n, prof_verts;
 
 static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     if (gl_ready < 0) gl_ready = gl_setup();
-    if (!gl_ready || n < 3) return gl_ready ? 1 : 0;
+    if (!gl_ready || n < 1) return gl_ready ? 1 : 0;
     uint32_t len;
     if (!vsh_extent(&len)) return 0;
     uint64_t p0 = rt_now_100ns();
     GlVsh *v = gl_vsh_get(len);
     if (v->linking && gl_link_done(&v->prog)) v->linking = 0, v->ok = gl_link_finish(&v->prog);
     if (!v->ok) return 0; /* not linked yet (or not at all): the CPU runs it */
+    /* Forza's suggested line: chevrons written straight into the push
+     * buffer as an inline triangle list of a position and a colour, whose
+     * program samples the anti-aliased scene through projective texture
+     * coordinates. Run on the GPU they sampled black and the line never
+     * showed; the CPU path draws it right, and it is 162 vertices a frame. */
+    if (prim == 5 && ninline && (K(SET_VERTEX_DATA_ARRAY_FORMAT) & 0xFF) == 0x32 && (K(SET_VERTEX_DATA_ARRAY_FORMAT + 12) & 0xFF) == 0x40) {
+        int other = 0;
+        for (int a = 1; a < 16; a++)
+            if (a != 3 && (K(SET_VERTEX_DATA_ARRAY_FORMAT + 4 * a) & 0xF0)) other = 1;
+        if (!other) return 0;
+    }
 
     /* The index list, in add_tri's order. */
     static GLuint *idx;
     static int idx_cap;
     if (n * 6 > idx_cap) idx_cap = n * 6, idx = realloc(idx, (size_t)idx_cap * sizeof *idx);
     int k = 0;
+    GLenum mode = GL_TRIANGLES;
 #define TRI(a, b, c) (idx[k++] = (GLuint)(a), idx[k++] = (GLuint)(b), idx[k++] = (GLuint)(c))
     switch (prim) {
+    /* Points and lines, as GL draws them: Forza draws ~30 line strips a
+     * frame in a race, the cars' panel seams, and they were dropped. */
+    case 1: mode = GL_POINTS; for (int i = 0; i < n; i++) idx[k++] = (GLuint)i; break;
+    case 2: mode = GL_LINES; for (int i = 0; i + 1 < n; i += 2) idx[k++] = (GLuint)i, idx[k++] = (GLuint)(i + 1); break;
+    case 3: mode = GL_LINE_LOOP; for (int i = 0; i < n; i++) idx[k++] = (GLuint)i; break;
+    case 4: mode = GL_LINE_STRIP; for (int i = 0; i < n; i++) idx[k++] = (GLuint)i; break;
     case 5: for (int i = 0; i + 2 < n; i += 3) TRI(i, i + 1, i + 2); break;
     case 6: for (int i = 0; i + 2 < n; i++) i & 1 ? TRI(i + 1, i, i + 2) : TRI(i, i + 1, i + 2); break;
     case 7: case 10: for (int i = 1; i + 1 < n; i++) TRI(0, i, i + 1); break;
     case 8: for (int i = 0; i + 3 < n; i += 4) TRI(i, i + 1, i + 2), TRI(i, i + 2, i + 3); break;
     case 9: for (int i = 0; i + 3 < n; i += 2) TRI(i, i + 1, i + 3), TRI(i, i + 3, i + 2); break;
-    default: return 1; /* points and lines: not drawn, as on the CPU path */
+    default: return 1;
     }
 #undef TRI
     if (!k) return 1;
@@ -370,7 +388,12 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     uint64_t p4 = rt_now_100ns();
     gl_frag_state(d, s);
     uint64_t p5 = rt_now_100ns();
-    glDrawElements(GL_TRIANGLES, k, GL_UNSIGNED_INT, NULL);
+    if (mode != GL_TRIANGLES) { /* an Xbox pixel wide, at the render scale */
+        float lw = (float)(K(0x380) & 0x1FF) / 8.0f; /* SET_LINE_WIDTH, 6.3 fixed point */
+        if (lw < 1.0f) lw = 1.0f;
+        glLineWidth(lw * (float)s->k), glPointSize(lw * (float)s->k);
+    }
+    glDrawElements(mode, k, GL_UNSIGNED_INT, NULL);
     uint64_t p6 = rt_now_100ns();
     prof_t[0] += p1 - p0, prof_t[1] += p2 - p1, prof_t[2] += p3 - p2, prof_t[3] += p4 - p3, prof_t[4] += p5 - p4, prof_t[5] += p6 - p5;
     prof_n++, prof_verts += (uint64_t)n;

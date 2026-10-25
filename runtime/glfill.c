@@ -1899,7 +1899,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
      * the scene lost most of its faces). XBRT_GL_CULL=0 turns it off. */
     static int cull = -1;
     if (cull < 0) cull = getenv("XBRT_GL_CULL") ? atoi(getenv("XBRT_GL_CULL")) : 1;
-    if (cull && !(rt_debug_keys & RT_DBG_NO_CULL) && K(0x308) && (K(0x39C) == GL_FRONT || K(0x39C) == GL_BACK || K(0x39C) == GL_FRONT_AND_BACK)) {
+    if (cull && !d->lines && !(rt_debug_keys & RT_DBG_NO_CULL) && K(0x308) && (K(0x39C) == GL_FRONT || K(0x39C) == GL_BACK || K(0x39C) == GL_FRONT_AND_BACK)) {
         glEnable(GL_CULL_FACE);
         glCullFace((GLenum)K(0x39C));
         GLenum ff = K(0x3A0) == GL_CW ? GL_CW : GL_CCW;
