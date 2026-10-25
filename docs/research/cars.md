@@ -327,6 +327,17 @@ needs, learned the hard way:
   the middles of its wheel-arch liners to put each arch over its hub
   (x1.758 between them on the Civic, 1.658 elsewhere). Scaled evenly, the
   S13's shorter wheelbase left the rear wheels 0.18 behind their arches.
+- Badges: decals placed by a ray from outside onto the body and set 3 cm
+  off it (closer, the flat decals fought the curved panels), in the
+  bumpers at their end of the car (every variant). Material 26 (Badge)
+  reads its texture coordinates doubled, u16 / 32768 into the atlas: at
+  / 65536 the decals drew a quarter of the atlas squeezed into them, and
+  NFSU's own nose emblem the marker lamps beside it. Material 25 (the
+  Civic's badges) drew nothing of them. In the body part the same decals
+  drew nothing usable either. `--badges <folder>` takes logo.* and model.*
+  (any image ffmpeg reads) for the emblem and the lettering; they are the
+  user's own files (trademarks), kept out of the repository. Without it
+  the NFSU badge sheet's small ones stand in.
 - Still to do: real damage shapes, the NFSU wheel's tyre (the template's
   is kept), and body kits as Forza's bumper and skirt
   variants.

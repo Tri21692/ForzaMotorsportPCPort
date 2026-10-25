@@ -24,11 +24,15 @@ now, so parts are flat-coloured. Damage shapes are the undamaged shape
 (no dents yet).
 
 Usage:
-  python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass]
+  python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass] [--badges <folder>]
 
 The NFSU car's windows are holes in its body: they are filled with glass
 (window_panes), put in the template's glass parts. --keep-glass keeps the
 template's own windows instead (they stand out of a lower roof).
+--badges: a folder with logo.* (the maker's emblem: nose and tail) and
+model.* (the model's lettering, under it at the tail), any image ffmpeg
+reads, used instead of the NFSU badge sheet's small ones. Your own files:
+trademarks, so they stay out of anything shared.
 """
 import os
 import struct
@@ -42,6 +46,8 @@ WHITE_UV = (int(0.55 * 65536), int(0.55 * 65536))  # blank (paint) area of the l
 BODY, WINDOW, TAILLIGHTS, HEADLIGHTS, BLACKGLASS, CHROME, BLACK, REDGLASS = 1, 2, 3, 4, 6, 7, 9, 16
 WINDOWS = -1  # the converter's own: Body material on an opaque black texel
 PLASTIC, BADGE, HEADLIGHTGLASS = 20, 26, 30
+BADGE_UV = 32768  # Badge's texture coordinates count double: u16 / 32768 into the atlas (at / 65536 the decals drew the sheet squeezed, and the nose emblem the marker lamps beside it)
+DECAL = BADGE  # 26: draws the atlas as it is, clear texels too (25, the Civic's badges', drew nothing of these; as Body they drew a plain patch)
 INSET = int(0.02 * 4096)  # how far a panel's black inside sits in from it, carbin units (about a centimetre)
 CABIN = ('interior', 'bands', 'cage', 'steering_wheel')  # template parts fitted under the new roof
 
@@ -255,7 +261,8 @@ def dark_uv(xpr_path):
     return (int((best[0] + 0.5) / w * 65536), int((best[1] + 0.5) / h * 65536))
 
 
-def convert(template_path, nfsu_dir, out_path, keep_glass=False):
+def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
+    import numpy as np
     car = carbin.read(open(template_path, 'rb').read())
     nparts = nfsu.read(os.path.join(nfsu_dir, 'GEOMETRY.BIN'))
     textures = nfsu.read_textures(os.path.join(nfsu_dir, 'TEXTURES.BIN'))
@@ -293,9 +300,25 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
     own = {th for key in ('BODY', 'ROOF', 'HOOD', 'TRUNK', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT', 'HEADLIGHT', 'BRAKELIGHT', 'LEFT_SIDE_MIRRO', 'RIGHT_SIDE_MIRR')
            for p in find(key) for th in p['textures'] if th in textures}
     livery_dir = os.path.join(os.path.dirname(template_path), 'liveries', 'standard')
-    atlas = pack_atlas({h: nfsu_rgba(textures[h]) for h in own}, livery_dir,
+    images = {h: nfsu_rgba(textures[h]) for h in own}
+    extra = badge_images(badges)  # the --badges folder's, by name
+    for h in images:
+        if textures[h]['name'].endswith('_BADGING'):
+            # The lettering is mid grey, which NFSU tinted; here it is drawn as is,
+            # and on grey paint it could not be read. Greys become silver.
+            img = images[h].astype(int)
+            grey = (img[..., :3].max(-1) - img[..., :3].min(-1) < 24) & (img[..., 3] > 0)
+            img[grey, :3] = np.clip(img[grey, :3] * 2.1, 0, 235)
+            if 'logo' in extra:  # the nose emblem (the sheet's top left) becomes the given logo
+                x0, y0, x1, y1 = SHEET_BADGES['logo']
+                logo = load_image(os.path.join(badges, next(f for f in os.listdir(badges) if os.path.splitext(f)[0].lower() == 'logo')),
+                                  (x1 - x0 + 1, y1 - y0 + 1))
+                img[y0:y1 + 1, x0:x1 + 1] = logo
+            images[h] = img.astype(np.uint8)
+    images.update(extra)
+    atlas = pack_atlas(images, livery_dir,
                        os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), keep=[paint, dark])
-    print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
+    print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (h if isinstance(h, str) else textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
     # Wheels: the template's hubs (its brake rotors) stay where its physics
     # puts them, so the NFSU body is stretched between its wheel arches
@@ -402,10 +425,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                         subs.append((lod, WINDOWS, strip(trim)))
                 if tris and th in atlas:  # its texture is in the livery atlas: its own coordinates, moved there
                     u0, v0, u1, v1 = atlas[th]
+                    one = 65536 if m != BADGE else BADGE_UV  # (see BADGE_UV)
                     for i in {i for t in tris for i in t}:
                         nv = p['verts'][i - base]
                         u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)
-                        verts[i] = verts[i][:10] + (int((u0 + u * (u1 - u0)) * 65536), int((v0 + v * (v1 - v0)) * 65536), 'atlas')
+                        verts[i] = verts[i][:10] + (int((u0 + u * (u1 - u0)) * one), int((v0 + v * (v1 - v0)) * one), 'atlas')
                 if tris:
                     subs.append((lod, m, strip(tris)))
                 if tris and inner and m != WINDOW:
@@ -693,6 +717,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                 break
     if not keep_glass:
         fit_glass()
+    add_badges(car, textures, atlas, {k: (v.shape[1], v.shape[0]) for k, v in extra.items()})
     new_shell = shell()
     new_fit = roof(new_shell), sides(new_shell), cover(), plan_heights(arches)
     for part in car['parts']:
@@ -711,6 +736,147 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
     car['tail'] = kept + t[o:]
     open(out_path, 'wb').write(carbin.write(car))
     print('replaced %d parts: %s' % (len(done), ' '.join(done)))
+
+
+# Badges put on the car as flat decals where a ray from outside first meets
+# the body: the image (the NFSU badge sheet, <CAR>_BADGING, or one from the
+# --badges folder) and its rectangle in texels (x0, y0, x1, y1; None, all
+# of it), the centre (x, y, z), the direction it is seen from, width and
+# height, all in carbin units / 4096 (about 1.6 a metre). Forza: x right,
+# y up, z forward. The NFSU model itself uses only the sheet's nose emblem.
+# Each goes in the bumpers at its end of the car (every variant): in the
+# body part the decals drew the whole sheet squeezed into them (the body's
+# texture coordinates are not taken as they are), as the nose emblem, in
+# the front bumper, never did.
+BADGES = [
+    ('logo', None, (0.0, 1.04, None), (0, 0, -1), 0.17, 0.146),        # on the garnish between the tail lights
+    ('model', None, (0.0, 0.91, None), (0, 0, -1), 0.34, 0.028),      # under it
+    ('sheet', (62, 24, 92, 44), (None, 0.52, 2.72), (1, 0, 0), 0.15, 0.10),   # amber markers behind the front bumper's corners
+    ('sheet', (62, 24, 92, 44), (None, 0.52, 2.72), (-1, 0, 0), 0.15, 0.10),
+    ('sheet', (62, 3, 92, 23), (None, 0.58, -2.80), (1, 0, 0), 0.15, 0.10),   # red, at the rear
+    ('sheet', (62, 3, 92, 23), (None, 0.58, -2.80), (-1, 0, 0), 0.15, 0.10),
+]
+# Without a --badges folder the sheet's own lettering stands in
+SHEET_BADGES = {'logo': (0, 0, 59, 38), 'model': (0, 39, 61, 48)}
+
+
+def load_image(path, size):
+    """An image file (PNG, WebP, JPEG: anything ffmpeg reads) as RGBA,
+    cropped to what is not clear and fitted into `size` (w, h; multiples of
+    4) on a clear background. ffmpeg: XBRT_FFMPEG, or on the PATH."""
+    import subprocess
+    import numpy as np
+    ff = os.environ.get('XBRT_FFMPEG') or 'ffmpeg'
+    fp = os.path.join(os.path.dirname(ff), os.path.basename(ff).replace('ffmpeg', 'ffprobe'))
+    probe = subprocess.run([fp, '-v', 'error', '-show_entries', 'stream=width,height',
+                            '-of', 'csv=p=0', path], capture_output=True, text=True, check=True)
+    w, h = (int(x) for x in probe.stdout.split()[0].split(','))
+    raw = subprocess.run([ff, '-v', 'error', '-i', path, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], capture_output=True, check=True).stdout
+    img = np.frombuffer(raw[:w * h * 4], np.uint8).reshape(h, w, 4)
+    ys, xs = np.nonzero(img[..., 3] > 16)
+    img = img[ys.min():ys.max() + 1, xs.min():xs.max() + 1].astype(np.float32)
+    W, H = size
+    k = min(W / img.shape[1], H / img.shape[0])
+    tw, th = max(1, int(img.shape[1] * k)), max(1, int(img.shape[0] * k))
+    # box filter down to the target size (area averaging, colour weighted by alpha)
+    yi = (np.arange(img.shape[0]) * th // img.shape[0]); xi = (np.arange(img.shape[1]) * tw // img.shape[1])
+    acc = np.zeros((th, tw, 4)); cnt = np.zeros((th, tw, 1))
+    a = img[..., 3:4] / 255
+    np.add.at(acc, (yi[:, None], xi[None, :]), np.concatenate([img[..., :3] * a, img[..., 3:4]], -1))
+    np.add.at(cnt, (yi[:, None], xi[None, :]), 1)
+    out = np.zeros((H, W, 4), np.uint8)
+    rgb = acc[..., :3] / np.maximum(acc[..., 3:4] / 255, 1e-6)
+    al = acc[..., 3:4] / cnt
+    oy, ox = (H - th) // 2, (W - tw) // 2
+    out[oy:oy + th, ox:ox + tw] = np.clip(np.concatenate([rgb, al], -1), 0, 255).astype(np.uint8)
+    return out
+
+
+def badge_images(folder):
+    """The --badges folder's logo.* (the maker's emblem, for the nose and the
+    tail) and model.* (the model's lettering), as atlas images."""
+    out = {}
+    for key, size in (('logo', (64, 56)), ('model', (160, 16))):
+        found = [f for f in os.listdir(folder) if os.path.splitext(f)[0].lower() == key] if folder else []
+        if found: out[key] = load_image(os.path.join(folder, found[0]), size)
+    return out
+
+
+def add_badges(car, textures, atlas, sizes={}, lift=0.03):  # lift: off the surface (at 0.006 the flat decals fought the curved panels)
+    """The BADGES on the converted car, as Badge subparts of the bumpers at
+    their first two detail levels. Images missing from the atlas are left
+    out (or stood in for from the sheet, SHEET_BADGES)."""
+    import numpy as np
+    sheet = next((h for h, t in textures.items() if t['name'].endswith('_BADGING') and h in atlas), None)
+    tris = []
+    for p in car['parts']:
+        n = p['name']
+        if not n.endswith('_LOD1') or not n.startswith(('body', 'trunk', 'bumperFa', 'bumperRa', 'taillightL', 'taillightR', 'skirtLa', 'skirtRa', 'hood')): continue
+        if n.startswith(('taillightLb', 'taillightRb')): continue
+        V = np.array([v[:3] for v in p['verts']], float) / 4096
+        for sp in p['subparts']:
+            if sp['id'] != 1: continue
+            ix = sp['indices']
+            for k in range(len(ix) - 2):
+                if len(set(ix[k:k + 3])) == 3:
+                    tris.append(V[ix[k:k + 3]])
+    T = np.array(tris)
+    def hit(origin, d):
+        e1, e2 = T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]
+        pv = np.cross(d, e2); det = (e1 * pv).sum(1)
+        ok = np.abs(det) > 1e-12
+        inv = np.where(ok, 1 / np.where(ok, det, 1), 0)
+        tv = origin - T[:, 0]; u = (tv * pv).sum(1) * inv
+        qv = np.cross(tv, e1); v = (qv * d).sum(1) * inv; t = (qv * e2).sum(1) * inv
+        good = ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 0)
+        if not good.any(): return None, None
+        i = np.where(good, t, np.inf).argmin()
+        # the face's own normal: the panels' smoothed vertex normals point well off
+        # it on the tail garnish, and decals set by them lay flat, seen edge on
+        n = np.cross(e1[i], e2[i]); n /= np.linalg.norm(n)
+        if np.dot(n, d) > 0: n = -n
+        return origin + t[i] * d, n
+    made = {True: [], False: []}  # four corners per decal, by end of the car (front: True)
+    for source, rect, centre, seen, w, h in BADGES:
+        if source in sizes:
+            key, (W, H) = source, sizes[source]
+            rect = rect or (0, 0, W, H)
+        elif sheet is not None and (source == 'sheet' or source in SHEET_BADGES):
+            key, W, H = sheet, textures[sheet]['width'], textures[sheet]['height']
+            rect = rect if source == 'sheet' else SHEET_BADGES[source]
+        else:
+            continue
+        x0, y0, x1, y1 = rect
+        u0, v0, u1, v1 = atlas[key]
+        look = -np.array(seen, float)  # the ray goes from where it is seen towards the car
+        o = np.array([c if c is not None else s * 4.0 for c, s in zip(centre, seen)], float)  # out where it is seen from
+        p, n = hit(o, look)
+        if p is None:
+            print('badge %s: missed the body' % source); continue
+        up = np.array([0, 1.0, 0]) - n * n[1]; up /= np.linalg.norm(up)
+        right = np.cross(n, up)  # as seen from outside, to the viewer's right (up x n mirrored the lettering)
+        p = p + n * lift
+        tu = lambda px: int((u0 + (px / W) * (u1 - u0) * W / (W - 1)) * BADGE_UV)
+        tv = lambda py: int((v0 + (py / H) * (v1 - v0) * H / (H - 1)) * BADGE_UV)
+        corners = []
+        for sx, sy, px, py in ((-1, 1, x0, y0), (1, 1, x1, y0), (1, -1, x1, y1), (-1, -1, x0, y1)):
+            q = p + right * sx * w / 2 + up * sy * h / 2
+            corners.append(tuple(int(round(c * 4096)) for c in q) + tuple(int(round(c * 32767)) for c in n)
+                           + (255, 255, 0, 0, tu(px + 0.5 if sx < 0 else px - 0.5), tv(py + 0.5 if sy > 0 else py - 0.5)))
+        made[bool(p[2] > 0)].append(corners)
+    for front, decals in made.items():
+        for part in (p for p in car['parts'] if p['name'].startswith('bumperF' if front else 'bumperR') and p['name'].endswith('_LOD1')):
+            if not decals: break
+            base = len(part['verts'])
+            quads = [t for k in range(len(decals)) for t in ((base + 4 * k, base + 4 * k + 2, base + 4 * k + 1),
+                                                             (base + 4 * k, base + 4 * k + 3, base + 4 * k + 2))]  # wound as the body's outsides
+            part['verts'] = part['verts'] + [v for c in decals for v in c]
+            if struct.unpack_from('<I', part['Damage'][1])[0]:
+                part['Damage'] = (part['Damage'][0], struct.pack('<I', len(part['verts'])) + b''.join(struct.pack('<6h', *v[:6]) for v in part['verts']))
+            tmpl = part['subparts'][0]
+            part['subparts'] += [{'version': tmpl['version'], 'id': lod, 'material': DECAL, 'prim': 6, 'extra': bytes(16),
+                                  'indices': strip(quads), 'tail': b''} for lod in sorted({sp['id'] for sp in part['subparts']})[:2]]
+    print('badges: %d decals' % sum(len(d) for d in made.values()))
 
 
 RIM = 11       # a Forza wheel's spokes and rim face, textured from the top-left quarter of wheel.xpr
@@ -801,6 +967,11 @@ if __name__ == '__main__':
         convert_wheel(*sys.argv[2:])
         raise SystemExit
     args = [a for a in sys.argv[1:] if a != '--keep-glass']
+    badges = None
+    if '--badges' in args:
+        i = args.index('--badges')
+        badges = args[i + 1]
+        del args[i:i + 2]
     if len(args) != 3:
         raise SystemExit(__doc__)
-    convert(*args, keep_glass='--keep-glass' in sys.argv)
+    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges)
