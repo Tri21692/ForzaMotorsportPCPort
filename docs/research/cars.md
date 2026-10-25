@@ -273,13 +273,22 @@ needs, learned the hard way:
   draws both sides); they are turned to face their normals.
 - The template's cabin (interior, cage, bands, steering wheel) is fitted
   into the new shell (body, hood, trunk and the glass) by height and by
-  width, then anything still outside is pulled in: the Civic's cabin is
-  wider and longer than the S13's greenhouse and poked through its roof
-  edge and hatch.
+  width; triangles still outside are then dropped: those with nothing of
+  the shell over them within 6 cm (the shell's triangles rasterised over
+  the ground plan) and those down in a wheel arch (under the NFSU car's
+  arch liners, 010cb64a). Pulling stray corners in instead stretched
+  triangles across the glass. The Civic's cabin is wider and longer than
+  the S13's greenhouse: its headliner and cage stood out of the rear
+  glass, and its rear wheel tubs out of the S13's arches.
+- Window panes follow the glass's curve: heights over each pane's plane
+  are fitted to its rim as a quadric, and two rings of points inside take
+  them (a flat fan sagged under the S13's curved hatch glass and the cage
+  showed through).
 - Every template wing becomes the NFSU car's own spoiler; the Civic's
   floated behind the hatch. Its badges are hidden.
-- Still to do: small dark marks on the rear quarters and rear panel, real
-  damage shapes, wheels, and body kits as Forza's bumper and skirt
+- The dark vertical bands on the rear panel are the software renderer's
+  shadows; with XBRT_GPU=gl they are not there.
+- Still to do: real damage shapes, wheels, and body kits as Forza's bumper and skirt
   variants.
 
 ### The missing roof (solved, 25 Oct)

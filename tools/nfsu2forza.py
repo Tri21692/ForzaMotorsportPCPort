@@ -303,6 +303,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
         x, y, z = -v[4], v[5], v[3]
         return [max(-32768, min(32767, int(round(c * 32767)))) for c in (x, y, z)]
 
+    arches = []
+
     def build(sources, side=0, glass=None, inner=False):
         """Forza vertices and subparts from NFSU parts (lists of detail
         levels, finest first); side -1/+1 keeps the triangles on the car's
@@ -338,6 +340,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                     if sum(g[k] * (va[3 + k] + vb[3 + k] + vc[3 + k]) for k in range(3)) < 0:
                         b, c = c, b  # wound against its normals (19 on the 240SX's roof): NFSU drew them anyway; here they were holes, and their black insides stood out
                     tris.append((base + a, base + b, base + c))  # the axis swap mirrors them and Forza's strips wind the other way: the two cancel
+                if sh == 0x010CB64A and lod == 1:  # the inside of the wheel arches: what the cabin must stay above (fit_cabin)
+                    arches.extend(tuple(pos(p['verts'][i - base]) for i in t) for t in tris)
                 m = material_for(names.get(th, ''), sh)
                 is_glass = m in (WINDOW, BLACKGLASS)
                 if glass is None and is_glass:
@@ -460,25 +464,58 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
             top[c] = max(top.get(c, -1e9), abs(v[0]) / 4096)
         return top, cell
 
-    def shell():
+    def shell_parts():
         """The outside of the car the cabin must fit in: the body, hood and
         trunk, and the glass that is drawn."""
-        out = []
         for p in car['parts']:
             n = p['name']
-            if n.startswith(('body', 'hood', 'trunk')) and n.endswith('_LOD1') or                     n.startswith('glass') and 'HL_' not in n and any(sp['indices'] != [0, 0, 0] for sp in p['subparts']):
-                out += p['verts']
-        return out
+            body = n.startswith(('body', 'hood', 'trunk')) and n.endswith('_LOD1')
+            glass = n.startswith('glass') and 'HL_' not in n and any(sp['indices'] != [0, 0, 0] for sp in p['subparts'])
+            if body or glass: yield p
+
+    def shell():
+        return [v for p in shell_parts() for v in p['verts']]
+
+    def plan_heights(tris, cell=0.03):
+        """Every height of these triangles (carbin units) over each cell of
+        the ground plan, sampled at the cell's middle."""
+        out = {}
+        for A, B, C in tris:
+            A, B, C = ([c / 4096 for c in q] for q in (A, B, C))
+            d = (B[2] - C[2]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[2] - C[2])
+            if abs(d) < 1e-12: continue
+            xs, zs = (A[0], B[0], C[0]), (A[2], B[2], C[2])
+            for cx in range(int(min(xs) // cell), int(max(xs) // cell) + 1):
+                for cz in range(int(min(zs) // cell), int(max(zs) // cell) + 1):
+                    x, z = (cx + 0.5) * cell, (cz + 0.5) * cell
+                    l1 = ((B[2] - C[2]) * (x - C[0]) + (C[0] - B[0]) * (z - C[2])) / d
+                    l2 = ((C[2] - A[2]) * (x - C[0]) + (A[0] - C[0]) * (z - C[2])) / d
+                    if min(l1, l2, 1 - l1 - l2) >= 0:
+                        out.setdefault((cx, cz), []).append(l1 * A[1] + l2 * B[1] + (1 - l1 - l2) * C[1])
+        return out, cell
+
+    def cover():
+        """The shell's finest triangles' heights over the ground plan: what
+        is above a point of the cabin."""
+        tris = []
+        for p in shell_parts():
+            for sp in p['subparts']:
+                if sp['id'] != 1: continue
+                ix = sp['indices']
+                tris += [tuple(p['verts'][i][:3] for i in ix[k:k + 3]) for k in range(len(ix) - 2) if len(set(ix[k:k + 3])) == 3]
+        return plan_heights(tris)
 
     def fit_cabin(part, old, new, floor, margin=0.03):
         """Squash a template part inside the cabin (the interior, the cage)
         into the new shell: each vertex keeps its share of the height between
         the floor and the roof (or glass) above it, then of the width at
-        that height; what still stands out is pulled in to just inside. The
-        Civic's black headliner stood out of the 240SX's lower roof and
-        covered it, and its wider, longer cabin poked through the S13's
-        pillars, roof edge and hatch."""
-        (old_roof, old_side), (new_roof, new_side) = old, new
+        that height. Triangles still outside after that are dropped: with
+        nothing of the shell over them, wider than it, or down in a wheel arch (pulling their
+        corners in instead stretched them across the glass). The Civic's
+        black headliner stood out of the 240SX's lower roof and covered it,
+        and its wider, longer cabin poked through the S13's pillars, roof
+        edge, rear glass and rear arches."""
+        (old_roof, old_side), (new_roof, new_side, above, arch_top) = old, new
         def move(v):
             x, y, z = v[0] / 4096, v[1] / 4096, v[2] / 4096
             if y <= floor: return v
@@ -486,10 +523,28 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
             ny = floor + (y - floor) * (n - floor) / (t - floor) if t is not None and n is not None and n < t else y
             wo, wn = height(old_side, y, z), height(new_side, ny, z)
             nx = x * wn / wo if wo and wn is not None and 0 < wn < wo else x
-            if n is not None: ny = min(ny, n - margin)
-            if wn is not None and abs(nx) > wn - margin: nx = (wn - margin) * (1 if nx > 0 else -1)
             return (int(round(nx * 4096)), int(round(ny * 4096))) + tuple(v[2:])
+        def outside(v):
+            x, y, z = v[0] / 4096, v[1] / 4096, v[2] / 4096
+            # nothing of the shell over it, nor within 6 cm (between the roof's edge and
+            # the steep side glass, plan view has gaps over points well inside)
+            cx, cz = int(x // above[1]), int(z // above[1])
+            hs = [h for i in range(-2, 3) for j in range(-2, 3) for h in above[0].get((cx + i, cz + j), ())]
+            if hs and not any(h > y + margin for h in hs): return True
+            a = arch_top[0].get((int(x // arch_top[1]), int(z // arch_top[1])))  # the arch liner over it, if any
+            return a is not None and y < max(a) + margin
         part['verts'] = [move(v) for v in part['verts']]
+        out = [outside(v) for v in part['verts']]
+        for sp in part['subparts']:
+            ix, tris = sp['indices'], []
+            for k in range(len(ix) - 2):
+                a, b, c = (ix[k], ix[k + 1], ix[k + 2]) if k % 2 == 0 else (ix[k + 1], ix[k], ix[k + 2])
+                if len({a, b, c}) < 3 or out[a] or out[b] or out[c]: continue
+                va, vb, vc = (part['verts'][i] for i in (a, b, c))  # long thin ones can cross with their corners inside
+                mids = [tuple((p0 + p1) / 2 for p0, p1 in zip(u[:3], w[:3])) for u, w in ((va, vb), (vb, vc), (vc, va))]
+                mids.append(tuple((p0 + p1 + p2) / 3 for p0, p1, p2 in zip(va[:3], vb[:3], vc[:3])))
+                if not any(outside(m) for m in mids): tris.append((a, b, c))
+            sp['indices'] = strip(tris) if tris else [0, 0, 0]
         cnt = struct.unpack_from('<I', part['Damage'][1])[0]
         if cnt == len(part['verts']):  # its damage shape too
             dv = [move(struct.unpack_from('<6h', part['Damage'][1], 4 + 12 * i)) for i in range(cnt)]
@@ -515,19 +570,36 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
             old = np.array([v[:3] for v in p['verts']], np.float32)
             verts, tris = [], []
             for mid, ring in got[p['name']]:
-                pts = [np.array(pos(q)) for q in [mid] + list(ring)]
+                R = np.array([pos(q) for q in ring], float)
+                c0 = R.mean(0)
                 # outward: the normal of the pane's best plane, away from the car's middle
-                n = np.linalg.svd(np.array(pts[1:], float) - pts[0])[2][2]
-                if np.dot(n, pts[0] - mid_car) < 0: n = -n
+                e = np.linalg.svd(R - c0)[2]
+                n = e[2] if np.dot(e[2], c0 - mid_car) >= 0 else -e[2]
+                # The glass is curved (the S13's hatch strongly): a flat fan from the
+                # middle sagged under it and the cage showed through. Heights over the
+                # pane's plane fitted as a quadric to the rim; rings of points on it.
+                uv = (R - c0) @ e[:2].T
+                hgt = (R - c0) @ n
+                A = np.c_[np.ones(len(uv)), uv, uv[:, :1] ** 2, uv[:, :1] * uv[:, 1:], uv[:, 1:] ** 2]
+                co = np.linalg.lstsq(A, hgt, rcond=None)[0]
+                def surf(u, v):
+                    return c0 + u * e[0] + v * e[1] + n * (co[0] + co[1] * u + co[2] * v + co[3] * u * u + co[4] * u * v + co[5] * v * v)
+                k = len(ring)
+                rings = [[surf(0.0, 0.0)]] + [[surf(*(t * uv[i])) for i in range(k)] for t in (1 / 3, 2 / 3)] + [list(R)]
                 nn = [int(round(c * 32767)) for c in n / np.linalg.norm(n)]
                 base = len(verts)
-                for q in pts:
+                for q in [q for r in rings for q in r]:
                     j = int(((old - q) ** 2).sum(1).argmin())
-                    verts.append(tuple(int(c) for c in q) + tuple(nn) + tuple(p['verts'][j][6:12]))
-                k = len(ring)
-                for i in range(k):
+                    verts.append(tuple(int(round(c)) for c in q) + tuple(nn) + tuple(p['verts'][j][6:12]))
+                for i in range(k):  # the fan round the middle, then the bands out to the rim
                     a, b = base + 1 + i, base + 1 + (i + 1) % k
                     tris += [(base, a, b), (base, b, a)]
+                for r in range(2):
+                    s0, s1 = base + 1 + r * k, base + 1 + (r + 1) * k
+                    for i in range(k):
+                        i1 = (i + 1) % k
+                        for t in ((s0 + i, s1 + i, s1 + i1), (s0 + i, s1 + i1, s0 + i1)):
+                            tris += [t, (t[0], t[2], t[1])]
             ids = sorted({sp['id'] for sp in p['subparts']})
             tmpl = p['subparts'][0]
             p['verts'] = verts
@@ -569,7 +641,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
     if not keep_glass:
         fit_glass()
     new_shell = shell()
-    new_fit = roof(new_shell), sides(new_shell)
+    new_fit = roof(new_shell), sides(new_shell), cover(), plan_heights(arches)
     for part in car['parts']:
         if part['name'].startswith(CABIN):
             fit_cabin(part, old_fit, new_fit, floor)
