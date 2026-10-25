@@ -219,6 +219,12 @@ static GlVsh *gl_vsh_get(uint32_t n) {
         for (int k = 0; k < 3; k++)
             if (v->ins[i].in[k].mux == 2) v->inputs |= (uint16_t)(1u << (v->ins[i].attr & 15));
     char *src = vsh_glsl(v->ins, n);
+    if (getenv("XBRT_GL_VSH_DUMP")) { /* debugging: each program's GLSL, to <folder>/vsh<n>.glsl */
+        char path[600];
+        snprintf(path, sizeof path, "%s/vsh%d.glsl", getenv("XBRT_GL_VSH_DUMP"), gl_nvsh);
+        FILE *f = fopen(path, "w");
+        if (f) fputs(src, f), fclose(f);
+    }
     GLuint vs = rt_gl_parallel ? compile_nowait(GL_VERTEX_SHADER, src) : compile(GL_VERTEX_SHADER, src);
     free(src);
     if (vs) { /* linked on the driver's threads where it can: gl_draw_vsh draws on the CPU until it is */
@@ -293,6 +299,15 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     if (!vsh_extent(&len)) return 0;
     uint64_t p0 = rt_now_100ns();
     GlVsh *v = gl_vsh_get(len);
+    if (getenv("XBRT_GL_VSH_DUMP")) { /* debugging: which program each draw ran, to <folder>/use.txt */
+        static FILE *use;
+        if (!use) {
+            char path[600];
+            snprintf(path, sizeof path, "%s/use.txt", getenv("XBRT_GL_VSH_DUMP"));
+            use = fopen(path, "w");
+        }
+        if (use) fprintf(use, "%u %u %d %d\n", nv2a.flips, nv2a.draws, (int)(v - gl_vsh) + 1, n);
+    }
     if (v->linking && gl_link_done(&v->prog)) v->linking = 0, v->ok = gl_link_finish(&v->prog);
     if (!v->ok) return 0; /* not linked yet (or not at all): the CPU runs it */
     /* Forza's suggested line: chevrons written straight into the push

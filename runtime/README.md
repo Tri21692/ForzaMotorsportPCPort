@@ -42,7 +42,10 @@ first build takes a while.
 | `XBRT_SCREENSHOT_EVERY` | seconds between screenshots | 5 |
 | `XBRT_TEX_DUMP` | a folder to save every decoded texture to, as BMP | off |
 | `XBRT_RAM_DUMP` | `<file>:<seconds>` saves the 64 MB of RAM once | off |
-| `XBRT_GPU_DUMP` | `<file>:<first flip>:<flips>` logs every GPU method | off |
+| `XBRT_GPU_DUMP` | `<file>:<first flip>:<flips>` logs every GPU method, after the vertex program and constants as they stand; a first flip of `@<seconds>` starts at that time | off |
+| `XBRT_GL_VSH_DUMP` | a folder to save each vertex program's GLSL to (`vsh<n>.glsl`), and which one every draw ran (`use.txt`: flip, draw, program, vertices) | off |
+| `XBRT_GL_NO_SHADOW` | any value lights every shadow-map lookup (debugging) | off |
+| `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1
 (shoulder buttons are WHITE and BLACK); without one, the keyboard

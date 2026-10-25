@@ -3,6 +3,7 @@
 #define NV2A_H
 
 #include <stdint.h>
+#include <stdio.h>
 
 typedef struct {
     /* push buffer parser, kept across runs */
@@ -29,6 +30,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg);
 void nv2a_trace(char what, uint32_t arg); /* XBRT_FRAME_TRACE: one event of the frame timeline (nv2a.c) */
 void nv2a_raster_method(uint32_t method, uint32_t arg); /* raster.c: draws in software */
 void nv2a_raster_invalidate(void);                      /* textures may have changed */
+void nv2a_raster_dump_state(FILE *f, uint32_t flip);    /* XBRT_GPU_DUMP: the vertex program and constants */
 void nv2a_raster_flush(void);                           /* finish the batched drawing */
 void nv2a_raster_sync(void);
 void nv2a_raster_sync_range(uint32_t base, uint32_t size); /* the colour drawn over these bytes on its way to RAM */

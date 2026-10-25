@@ -585,6 +585,18 @@ static uint32_t program[136][4];
 static uint32_t constants[192][4];
 static uint32_t program_load, constant_load;
 
+/* XBRT_GPU_DUMP: the program and constants as they stand when the dump
+ * starts, written as the methods that would load them. */
+void nv2a_raster_dump_state(FILE *f, uint32_t flip) {
+    fprintf(f, "%u 97 1e9c 00000000\n", flip);
+    for (int i = 0; i < 136; i++)
+        for (int k = 0; k < 4; k++) fprintf(f, "%u 97 0b00 %08x\n", flip, program[i][k]);
+    fprintf(f, "%u 97 1ea4 00000000\n", flip);
+    for (int i = 0; i < 192; i++)
+        for (int k = 0; k < 4; k++) fprintf(f, "%u 97 0b80 %08x\n", flip, constants[i][k]);
+    fprintf(f, "%u 97 1e9c %08x\n%u 97 1ea4 %08x\n", flip, program_load, flip, constant_load);
+}
+
 enum { O_POS = 0, O_D0 = 3, O_D1 = 4, O_FOG = 5, O_PTS = 6, O_B0 = 7, O_B1 = 8, O_T0 = 9 };
 
 typedef struct {
@@ -1026,6 +1038,7 @@ typedef struct {
     uint32_t sf, df, eq, wm;
     float cc[4];
     int lines; /* points or lines, drawn as quads: never culled */
+    int mark;  /* debugging (XBRT_MARK): drawn magenta */
 } DrawState;
 
 typedef struct {
@@ -1216,6 +1229,7 @@ static void fill(const DrawState *d, const Tri *t, int first, int step) {
             }
             uint32_t out = (uint32_t)(o[3] * 255 + 0.5f) << 24 | (uint32_t)(o[0] * 255 + 0.5f) << 16 | (uint32_t)(o[1] * 255 + 0.5f) << 8 |
                            (uint32_t)(o[2] * 255 + 0.5f);
+            if (d->mark) out = 0xFFFF00FF;
             out = (dst & ~d->wm) | (out & d->wm);
             if (d->bpp == 4) memcpy(row + x * 4, &out, 4);
             else {
@@ -1477,6 +1491,12 @@ static void draw(void) {
     d.lines = prim >= 1 && prim <= 4;
     if (workers < 0) start_workers();
     int n = nverts;
+    { /* XBRT_MARK=<vertices>: draws of that many vertices in magenta; XBRT_MARK_NOZ=1 without the depth test */
+        static int mark = -2, noz;
+        if (mark == -2) mark = getenv("XBRT_MARK") ? atoi(getenv("XBRT_MARK")) : -1, noz = getenv("XBRT_MARK_NOZ") != NULL;
+        d.mark = n == mark;
+        if (d.mark && noz) d.ztest = 0, d.zwrite = 0;
+    }
     if (n < (prim == 1 ? 1 : prim >= 2 && prim <= 4 ? 2 : 3)) return; /* points need one, lines two */
     if (nstates == states_cap) {
         states_cap = states_cap ? states_cap * 2 : 256;

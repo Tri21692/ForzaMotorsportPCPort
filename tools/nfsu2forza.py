@@ -12,7 +12,9 @@ of its body parts with the NFSU car's stock (KIT00, finest detail) parts:
 
 NFSU is x forward, y left, z up in metres; Forza is x right, y up, z
 forward. The NFSU car is scaled and moved so its body's length and its
-front, back and bottom match the template body's; the axis swap mirrors
+front, back and bottom match the template body's (the template's
+interior, cage and steering wheel are then squashed to fit under the new
+roof, which they otherwise stuck out of); the axis swap mirrors
 it, which Forza's opposite winding cancels (turning them round put every
 panel inside out in the game). Each NFSU material group becomes a
 subpart (a triangle strip): the generated skin becomes Body (the livery's
@@ -39,6 +41,7 @@ WHITE_UV = (int(0.55 * 65536), int(0.55 * 65536))  # blank (paint) area of the l
 BODY, WINDOW, TAILLIGHTS, HEADLIGHTS, BLACKGLASS, CHROME, BLACK, REDGLASS = 1, 2, 3, 4, 6, 7, 9, 16
 WINDOWS = -1  # the converter's own: Body material on an opaque black texel
 PLASTIC, BADGE, HEADLIGHTGLASS = 20, 26, 30
+CABIN = ('interior', 'bands', 'cage', 'steering_wheel')  # template parts fitted under the new roof
 
 
 def bhash(s, h=0xFFFFFFFF):
@@ -253,6 +256,46 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
         part['subparts'] = [{'version': tmpl['version'], 'id': lod, 'material': BODY if m == WINDOWS else m, 'prim': 6,
                              'extra': bytes(16), 'indices': s, 'tail': b''} for lod, m, s in subs]
 
+    def roof(verts, cell=0.15):
+        """The highest body vertex over each cell of the ground plan, in
+        carbin units (x, z cells of `cell`)."""
+        top = {}
+        for v in verts:
+            c = (int(v[0] / 4096 // cell), int(v[2] / 4096 // cell))
+            top[c] = max(top.get(c, -1e9), v[1] / 4096)
+        return top, cell
+
+    def height(top, x, z):
+        hm, cell = top
+        cx, cz = int(x // cell), int(z // cell)
+        for r in range(8):  # the nearest cell with a vertex, rings outwards
+            hs = [hm[(cx + i, cz + j)] for i in range(-r, r + 1) for j in range(-r, r + 1)
+                  if max(abs(i), abs(j)) == r and (cx + i, cz + j) in hm]
+            if hs: return max(hs)
+        return None
+
+    def fit_cabin(part, old_roof, new_roof, floor):
+        """Squash a template part inside the cabin (the interior, the cage)
+        under the new roof: each vertex keeps its share of the height
+        between the floor and the roof above it. The Civic's black headliner
+        stood out of the 240SX's lower roof and covered it, so the roof drew
+        black from above."""
+        def move(v):
+            x, z = v[0] / 4096, v[2] / 4096
+            t, n = height(old_roof, x, z), height(new_roof, x, z)
+            y = v[1] / 4096
+            if t is None or n is None or n >= t or y <= floor: return v
+            y = floor + (y - floor) * (n - floor) / (t - floor)
+            return (v[0], int(round(y * 4096))) + tuple(v[2:])
+        part['verts'] = [move(v) for v in part['verts']]
+        cnt = struct.unpack_from('<I', part['Damage'][1])[0]
+        if cnt == len(part['verts']):  # its damage shape too
+            dv = [move(struct.unpack_from('<6h', part['Damage'][1], 4 + 12 * i)) for i in range(cnt)]
+            part['Damage'] = (part['Damage'][0], struct.pack('<I', cnt) + b''.join(struct.pack('<6h', *v) for v in dv) + part['Damage'][1][4 + 12 * cnt:])
+
+    old_roof = roof(tbody['verts'])
+    floor = min(ty)
+
     plan = {
         'body': ([find('BODY'), find('ROOF')], 0), 'hood': ([find('HOOD')], 0), 'trunk': ([find('TRUNK')], 0),
         'bumperF': ([find('FRONT_BUMPER')], 0), 'bumperR': ([find('REAR_BUMPER')], 0),
@@ -276,6 +319,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                 put(part, *built[key])
                 done.append(part['name'])
                 break
+    new_roof = roof(tbody['verts'])
+    for part in car['parts']:
+        if part['name'].startswith(CABIN):
+            fit_cabin(part, old_roof, new_roof, floor)
+            done.append(part['name'] + '(fitted)')
     open(out_path, 'wb').write(carbin.write(car))
     print('replaced %d parts: %s' % (len(done), ' '.join(done)))
 

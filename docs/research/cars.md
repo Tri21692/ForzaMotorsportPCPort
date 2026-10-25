@@ -252,7 +252,33 @@ needs, learned the hard way:
   NFSU textures in the atlas (lights, badges), wheels, and body kits as
   Forza's bumper and skirt variants.
 
-### The missing roof (open, 25 Oct)
+### The missing roof (solved, 25 Oct)
+
+The template's interior covered it. The Civic's headliner (in
+`interior_LOD1`, black) and its roll-cage bands reach y 1.90 and 1.80; the
+fitted S13's roof tops out at 1.76, so they stood out of it and drew over
+it from above. From the car-select camera, which is a little above the roof, that
+read as a black or missing roof. The converter now squashes the
+template's cabin parts (interior, bands, cage, steering wheel) under the
+new roof: each vertex keeps its share of the height between the floor
+and the roof over it (`fit_cabin` in tools/nfsu2forza.py).
+
+How it was found, for next time: an `XBRT_GPU_DUMP` of a car-select frame
+shows the car drawn three times: into a 768x768 shadow map (colour
+masked, draws 9-60), the car itself, then the floor's mirror image
+(culling flipped). Stage 1 is that shadow map (PROJECT3D on a depth
+texture), stage 3 a cube reflection, and stage 2's coordinates come from
+an all-zero matrix (constants 100-103). Running the car's vertex program
+(`XBRT_GL_VSH_DUMP`) over the test squares gave the same outputs over the
+cabin as over the hood; `XBRT_GL_NO_SHADOW` changed nothing;
+`XBRT_MARK=25` showed the squares drawn (as a sliver: the camera is
+at about their height). Hiding the interior and the bands brought the roof
+back.
+
+The notes below, from before the trace, were wrong on one point:
+hiding the interior does change it (that test must not have taken).
+
+### Notes from before the trace
 
 On the Civic template the converted car draws everywhere except where a
 surface faces up over the cabin: the S13's roof panel, its sunroof and its

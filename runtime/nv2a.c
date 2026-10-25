@@ -483,18 +483,30 @@ static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
 /* Channel methods (below 0x100) are PFIFO's own; the rest go to the
  * object bound to the subchannel. */
 /* Debugging: XBRT_GPU_DUMP=<file>:<first flip>:<flips> writes every method
- * from that flip on, for that many flips, as "flip class method value". */
+ * from that flip on, for that many flips, as "flip class method value".
+ * A first flip of @<seconds> starts at the first flip after that time. */
 static void dump_method(uint32_t subch, uint32_t method, uint32_t arg) {
     static FILE *f;
-    static int state; /* 0 unparsed, 1 armed, 2 off */
-    static uint32_t first, count;
+    static int state; /* 0 unparsed, 1 armed, 2 off, 3 writing */
+    static uint32_t first, count, at;
     if (state == 0) {
-        const char *e = getenv("XBRT_GPU_DUMP");
+        const char *e = getenv("XBRT_GPU_DUMP"), *c2 = e ? strrchr(e, ':') : NULL, *c1 = c2;
         char path[512];
         state = 2;
-        if (e && sscanf(e, "%511[^:]:%u:%u", path, &first, &count) == 3 && (f = fopen(path, "w"))) state = 1;
+        while (c1 && c1 > e && *--c1 != ':') {} /* the path may hold a drive's colon */
+        if (!c2 || !c1 || *c1 != ':' || c1 - e >= (ptrdiff_t)sizeof path) return;
+        snprintf(path, sizeof path, "%.*s", (int)(c1 - e), e);
+        if (sscanf(c1 + 1, "@%u:%u", &at, &count) == 2) first = ~0u, at *= 60;
+        else if (sscanf(c1 + 1, "%u:%u", &first, &count) != 2) return;
+        if ((f = fopen(path, "w"))) state = 1;
     }
-    if (state != 1 || nv2a.flips < first) return;
+    if (state != 1 && state != 3) return;
+    if (first == ~0u) {
+        if (nv2a.vblanks < at) return;
+        first = nv2a.flips + 1;
+    }
+    if (nv2a.flips < first) return;
+    if (state == 1) state = 3, nv2a_raster_dump_state(f, nv2a.flips);
     if (nv2a.flips >= first + count) {
         fclose(f);
         state = 2;
