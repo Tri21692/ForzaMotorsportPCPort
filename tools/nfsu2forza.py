@@ -49,6 +49,7 @@ PLASTIC, BADGE, HEADLIGHTGLASS = 20, 26, 30
 BADGE_UV = 32768  # Badge's texture coordinates count double: u16 / 32768 into the atlas (at / 65536 the decals drew the sheet squeezed, and the nose emblem the marker lamps beside it)
 DECAL = BADGE  # 26: draws the atlas as it is, clear texels too (25, the Civic's badges', drew nothing of these; as Body they drew a plain patch)
 INSET = int(0.02 * 4096)  # how far a panel's black inside sits in from it, carbin units (about a centimetre)
+CABIN_SHADE = 0.4  # the cabin's shading bytes scaled by this
 CABIN = ('interior', 'bands', 'cage', 'steering_wheel')  # template parts fitted under the new roof
 
 
@@ -356,11 +357,21 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
         return [max(-32768, min(32767, int(round(c * 32767)))) for c in (x, y, z)]
 
     arches = []
+    CARSKIN_HASH = bhash('CARSKIN')
+    _shell = [v[:3] for key in ('BODY', 'ROOF', 'TRUNK') for lv in find(key)[:1] for v in lv['verts']]
+    shell_mid = [sum(v[k] for v in _shell) / len(_shell) for k in range(3)]
+    shell_mid[2] = min(v[2] for v in _shell) + 0.45 * (max(v[2] for v in _shell) - min(v[2] for v in _shell))
     rgbas = {}
 
     def rgba_of(th):
         if th not in rgbas: rgbas[th] = nfsu_rgba(textures[th])
         return rgbas[th]
+
+    _stock = [lv for key in ('BODY', 'ROOF', 'TRUNK', 'HOOD', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT') for lv in find(key)[:1]]
+    _panes = window_panes(_stock)
+    rims = np.concatenate([r for _, r in _panes]) if _panes else None  # the window holes' edges, NFSU metres
+
+    mid_f = pos(shell_mid)  # the shell's middle, carbin units
 
     def build(sources, side=0, glass=None, inner=False):
         """Forza vertices and subparts from NFSU parts (lists of detail
@@ -392,14 +403,37 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                         cx = sum(-p['verts'][i][1] for i in (a, b, c))
                         if (cx < 0) != (side < 0): continue
                     va, vb, vc = (p['verts'][i] for i in (a, b, c))
+                    if sh == 0x010CB64A and max(va[2], vb[2], vc[2]) < 0.15:
+                        continue  # the arch liner's bottom: it hung below the body behind the front wheels
                     e1 = [vb[k] - va[k] for k in range(3)]; e2 = [vc[k] - va[k] for k in range(3)]
                     g = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
-                    if sum(g[k] * (va[3 + k] + vb[3 + k] + vc[3 + k]) for k in range(3)) < 0:
-                        b, c = c, b  # wound against its normals (19 on the 240SX's roof): NFSU drew them anyway; here they were holes, and their black insides stood out
+                    if inner and sh != bhash('WINDSHIELD'):
+                        # the outer skin faces away from the car's middle: its normals are wrong
+                        # in places (19 roof triangles; on the hatch lid's trim, wedges by the
+                        # spoiler faced in, and their black insides showed)
+                        cen = [(va[k] + vb[k] + vc[k]) / 3 - shell_mid[k] for k in range(3)]
+                        if sum(g[k] * cen[k] for k in range(3)) < 0: b, c = c, b
+                    elif sum(g[k] * (va[3 + k] + vb[3 + k] + vc[3 + k]) for k in range(3)) < 0:
+                        b, c = c, b  # wound against its normals: NFSU drew them anyway; here they were holes, and their black insides stood out
                     tris.append((base + a, base + b, base + c))  # the axis swap mirrors them and Forza's strips wind the other way: the two cancel
                 if sh == 0x010CB64A and lod == 1:  # the inside of the wheel arches: what the cabin must stay above (fit_cabin)
                     arches.extend(tuple(pos(p['verts'][i - base]) for i in t) for t in tris)
                 m = material_for(names.get(th, ''), sh)
+                if sh == 0x12C9453C and p['name'].startswith(prefix + '_KIT00_TRUNK'):
+                    # On the hatch lid this group is the black border round the rear glass and
+                    # the tail panel. The border's bottom edge widens into wedges by the
+                    # spoiler that stood out as black; that edge (on the lid's top, behind the
+                    # glass: NFSU x < -1.4 m, above 0.7 m) is painted, on its own copies of the
+                    # corners (shared, paint and black speckled the glass's edge).
+                    far = [t for t in tris if np.mean([p['verts'][i - base][0] for i in t]) < -1.4
+                           and np.mean([p['verts'][i - base][2] for i in t]) > 0.7]
+                    if far:
+                        copy = {}
+                        for t in far:
+                            for i in t:
+                                if i not in copy: copy[i] = len(verts); verts.append(verts[i])
+                        subs.append((lod, BODY, strip([tuple(copy[i] for i in t) for t in far])))
+                        tris = [t for t in tris if t not in far]
                 is_glass = m in (WINDOW, BLACKGLASS)
                 if glass is None and is_glass:
                     # Windows become black paint for now (WINDOWS, see
@@ -439,7 +473,12 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                         flip[i] = len(verts)
                         # set in along the normal: on the panel itself it fought it in
                         # the shadow map and speckled the paint black
-                        verts.append(tuple(int(round(q - c * INSET / 32767)) for q, c in zip(v[:3], v[3:6]))
+                        # towards the car's middle (along the vertex normal, where a normal
+                        # pointed out of the panel the black copy ended up outside it, as a
+                        # black wedge at the hatch's corners)
+                        d = [v[k] - mid_f[k] for k in range(3)]
+                        l = max(1e-6, sum(x * x for x in d) ** 0.5)
+                        verts.append(tuple(int(round(v[k] - d[k] / l * INSET)) for k in range(3))
                                      + tuple(-c for c in v[3:6]) + tuple(v[6:12]))
                     subs.append((lod, WINDOWS, strip([(flip[a], flip[c], flip[b]) for a, b, c in tris])))
         # drop vertices no triangle uses, so mirrored halves stay small
@@ -616,6 +655,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                 return (v[0], int(round((min(hs) - margin) * 4096))) + tuple(v[2:])
             return v
         part['verts'] = [tuck(v) for v in part['verts']]
+        # darker: the Civic's cabin squashed under a lower roof has flattened panels
+        # that caught the light through the glass as pale patches and brown bits
+        part['verts'] = [tuple(v[:6]) + (int(v[6] * CABIN_SHADE), int(v[7] * CABIN_SHADE)) + tuple(v[8:]) for v in part['verts']]
         out = [outside(v) for v in part['verts']]
         for sp in part['subparts']:
             ix, tris = sp['indices'], []
@@ -725,6 +767,21 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                 break
     if not keep_glass:
         fit_glass()
+    # The side skirts' ends by the wheels, below the sill: stretched to the template's
+    # wheelbase, the front ones hung down behind the front wheels as black flaps
+    hub_y = min(sum(v[1] for v in p['verts']) / len(p['verts']) for p in car['parts'] if p['name'].startswith('rotor')) / 4096 if hubs else None
+    for part in car['parts']:
+        if hub_y is None or not part['name'].startswith('skirt') or not part['name'].endswith('_LOD1'): continue
+        V = [(v[0] / 4096, v[1] / 4096, v[2] / 4096) for v in part['verts']]
+        for sp in part['subparts']:
+            ix, tris = sp['indices'], []
+            for k in range(len(ix) - 2):
+                a, b, c = (ix[k], ix[k + 1], ix[k + 2]) if k % 2 == 0 else (ix[k + 1], ix[k], ix[k + 2])
+                if len({a, b, c}) < 3: continue
+                low = min(V[i][1] for i in (a, b, c)) < hub_y - 0.25  # reaches below the sill
+                near = any(abs(sum(V[i][2] for i in (a, b, c)) / 3 - h) < 0.75 for h in hubs)
+                if not (low and near): tris.append((a, b, c))
+            sp['indices'] = strip(tris) if tris else [0, 0, 0]
     add_badges(car, textures, atlas, {k: (v.shape[1], v.shape[0]) for k, v in extra.items()})
     new_shell = shell()
     new_fit = roof(new_shell), sides(new_shell), cover(), plan_heights(arches)
@@ -741,9 +798,10 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
     if cargo and rear:
         G = np.array([v[:3] for v in rear['verts']], float) / 4096
         B = np.array([v[:3] for v in tbody['verts'] + cargo['verts']], float) / 4096
-        y = G[:, 1].min() - 0.03                                   # under the glass's lower edge
-        band = B[abs(B[:, 1] - y) < 0.05]                          # the shell at that height
-        z0 = band[:, 2].min() + 0.10                               # inside the hatch's lip
+        y = G[:, 1].min() - 0.06                                   # under the glass's lower edge
+        # only under the glass: further back, past it, the floor's corners came up
+        # through the hatch lid as it slopes down to its lip (black wedges by the spoiler)
+        z0 = G[:, 2].min() + 0.02
         z1 = G[:, 2].max() - 0.45                                  # short of the rear seats
         half = abs(G[:, 0]).max()                                  # as wide as the glass
         corners = [(-half, y, z0), (half, y, z0), (half, y, z1), (-half, y, z1)]
