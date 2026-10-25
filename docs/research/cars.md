@@ -50,6 +50,18 @@ it through `std::transform`, and hashes it at 0x103290). It matches all
 48,049 entries in the disc's 239 cabs and the three cache cabs;
 `forzacab.name_hash` computes it.
 
+The other header fields: 0x0C is 1 when any entry is compressed (0 in
+`mini.cab`, all stored); 0x14 is the data start plus every unpacked size;
+0x18 and 0x1C are both the length of the names. Names are sorted, the data
+follows in the same order with no gaps, and zlib level 9 reproduces the
+disc's streams: `forzacab.py pack` rebuilds `car_nissan240sx.cab` and
+`engine_eng_c5r427.cab` byte for byte.
+
+Tested in the game (25 Oct): the Civic SI's three liveries recoloured to
+green (40, 230, 40), packed, and put in the mods folder as
+`media\cabs\car_CivicSI.cab`; the car select, the player's car and an AI
+Civic all showed green.
+
 ## car_nissan240sx.cab (122 entries)
 
 - `cars\nissan240sx\car.carbin`, 1.2 MB: the model.
