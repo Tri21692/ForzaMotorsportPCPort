@@ -24,6 +24,42 @@ partitions too (`mods/hdd/Partition4/mega.cab`), read only: opens that
 write, deletes and renames get the real file, or the game's reinstall
 deleted the mod.
 
+## Car icons and the saves
+
+The car-select thumbnails are `media/caricons1-5.xpr`: a 128x4096 DXT5
+texture each, 64 tiles of 128x64, car `Ordinal` n at pack n // 64 + 1,
+tile n % 64. The game copies them into every profile's save
+(`UDATA/4d53006e/<profile>/CarIcons1-5.xpr`, signed by `CarIcons.sig`) and
+draws those copies. **Never edit save files:** on 25 Oct patching one tile
+in those copies made the game delete each profile so changed (the backup
+taken first was the only way back). Change the disc's pack through the
+mods folder only (`tools/caridentity.py --icon`); the mods overlay does not
+cover the save partitions (1 and 2) at all, by design (runtime/file.c).
+
+## A car's identity (tools/caridentity.py)
+
+What the menus show and the car drives like, all reachable through the
+mods folder: `carlist.xml` (only Ordinal, shortName and Name are read,
+per the executable's strings), `forzadb\cardb\model.dat` (104-byte rows
+by ordinal: make id from make.dat, year, two prices, specs, and at 92 the
+flags that make it buyable from the start, zero on a career prize) and
+`gamecars.dat` (176-byte rows: physics summary, at 124 the ratings the
+menu shows) in mega.cab; `cars\<car>	ooldata.xml` (its `<E0 Name>` is the
+model name shown, its `File` the engine) and physics in cars.cab;
+`engines\<engine>\physics` in cars.cab and `engines\<engine>udio` in the
+car's own cab (the wave bank paths name the engine); the model name again
+in `media/Loc/*/CarDataStrings.str`. Career prizes are events'
+`<rewards CareerCarUnlock="<ordinal>">`.
+
+The Civic SI slot is now Forza's 240SX SE (an S14, a career prize) made
+into the S13: 1991, 1,250 kg, 24,000 credits, on sale from the start, its
+own engine copy (Nissan240SXS13, so the S14 is unchanged) at 160 lb-ft
+with the power peak kept (155 hp).
+
+Removing a mod is safe: the overlay only reads. A car *added* (not in a
+slot) that a save refers to will need a fallback once its mod is gone: a
+stock Mazda MX-5.
+
 ## Wheels
 
 A car's stock wheel is `tires\art\<File>\` with `<File>` from its
