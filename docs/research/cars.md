@@ -87,6 +87,47 @@ bumpers `a`-`h` plus `race`, skirts `b`-`h` each side, wings `a`-`g` and three
 race wings. An NFS Underground car is also a kit of parts, which helps a
 converter.
 
+## Materials
+
+A subpart's material number indexes this list, from the executable's
+strings (file offset 0x481500), which matches what the 240SX's parts use
+(body panels 1, glass 2, tail lights 3, headlights 4, interior 14, race
+wings 19, front grilles 35):
+
+0 None, 1 Body, 2 Window, 3 TailLights, 4 HeadLights, 5 ReverseLights,
+6 BlackGlass, 7 Chrome, 8 Tire, 9 Black, 10 Tire2, 11 Rim, 12 InnerRim,
+13 BlurredRim, 14 Interior, 15 Frame, 16 RedGlass, 17 RimChrome, 18 Matte,
+19 CarbonFiber, 20 Plastic, 21 Plastic2, 22 RubberTrim, 23 InnerRimChrome,
+24 BlurredRimChrome, 25 NamePlate, 26 Badge, 27 Number, 28 Misc, 29 Misc2,
+30 HeadlightGlass, 31 WhiteTailLights, 32 TailLightsOn, 33 Reflectors,
+34 Grille1, 35 Grille2
+
+Each has day and night shader settings (specular, metal, fresnel, top and
+bottom colours) in `cars\globalmaterialsettings.xml` in `Mega.ca2` (cache
+`mega.cab`); paint finishes are `cars\shadersettings\*.xml` there.
+
+## Textures
+
+A car's paint and details are one atlas per livery, in XPR0 packs (the
+Xbox's resource format: `XPR0`, total size, header size, 20-byte D3D
+resource headers ending in 0xFFFFFFFF, data from the header size). On the
+240SX:
+
+| File | Texture |
+|---|---|
+| `livery0.xpr` | 512x512 volume, 2 slices, DXT5 |
+| `livery0nc.xpr` | the same, uncompressed A8R8G8B8 (swizzled) |
+| `livery0hi.xpr` | 1024x1024, DXT5, 11 mip levels |
+
+Slice 0 is the clean car: lights, badges, grille, dashboard, with white
+where the paint colour shows through. Slice 1 is the same atlas damaged
+(scratches, cracked lights); the game blends towards it with damage. DXT
+volumes keep each 4x4 block's slices together. Vertex u, v are u16 / 65536
+into the atlas; rendering the 240SX this way puts the headlights, grille
+and exhaust where they belong, with the livery's colour on material 1.
+Shared textures (`grille1.xpr`, `grille2.xpr`, wheels in `tires\art\`,
+drop shadows) are in `MegaXPR.ca2` (cache `megaxpr.cab`).
+
 ## Physics (Cars.ca2 / cars.cab), per car
 
 XML, at four upgrade levels (`l0`-`l3`) where parts can be upgraded:
@@ -103,7 +144,8 @@ XML, at four upgrade levels (`l0`-`l3`) where parts can be upgraded:
 
 ## Still to find
 
-- Materials: what the material numbers mean and which texture each uses.
+- Which materials take a shared texture or only shader colours (the tail
+  lights rendered pale from the atlas alone).
 - The 16 bytes in each subpart, the `Damage`, `Pivots` and `Attributes`
   blocks, `Attribs`, `Driver` and `Flare`.
 - The cab name hash.
