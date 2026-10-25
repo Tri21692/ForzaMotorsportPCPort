@@ -25,7 +25,7 @@ static RtSetting settings[] = {
     {"vsync", "XBRT_VSYNC", "0", "Wait for the monitor's refresh when showing a frame: 1 on, 0 off"},
     {"volume", "XBRT_VOLUME", "0.7", "Sound volume: 0 to 1"},
     {"music", "XBRT_MUSIC", "music", "Folder of your own songs for Forza's custom soundtracks: one subfolder per soundtrack (mp3, flac, wav, ogg, m4a, wma)"},
-    {"mods", "XBRT_MODS", "mods", "Folder of mods: a file there at the same path as on the disc (media\\cabs\\car_nissan240sx.cab) is read instead of the disc's; hdd\\Partition4\\mega.cab for the cache partitions"},
+    {"mods", "XBRT_MODS", "mods", "Folder of mods: a file there at the same path as on the disc (media\\cabs\\car_nissan240sx.cab) is read instead of the disc's; a .ca2 archive there passes the installer's check and is installed to the cache"},
     {"ffmpeg", "XBRT_FFMPEG", "ffmpeg", "ffmpeg.exe, which converts the songs once (and records clips); the full path if it is not on the PATH"},
 };
 #define NSETTINGS (int)(sizeof settings / sizeof settings[0])

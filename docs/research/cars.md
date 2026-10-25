@@ -13,16 +13,19 @@ unpacks the archives.
 | `media/cars/<Name>.liveries.bin` | Livery data for the paint shop (not decoded) |
 | `media/caricons1-5.xpr` | Menu icons (copied to each save as `CarIcons*.xpr`) |
 
-`Cars.ca2` is a whole cab compressed with zlib. The installer unpacks it to
+`Cars.ca2` is a cab in 4 MB zlib streams. The installer unpacks it to
 the cache partition as `hdd/Partition4/cars.cab`, and the game reads that
-copy, so a changed `Cars.ca2` in the mods folder will not reach the game
-until the cache copy is rebuilt as well. `Mega.ca2` and `MegaXPR.ca2` (cache:
-`mega.cab` on N: = Partition4, `megaxpr.cab` on Z: = Partition5) hold the
-shared files, wheels among them. The game deletes and installs `mega.cab`
-again from the disc at every boot. The mods folder covers the cache
-partitions too (`mods/hdd/Partition4/mega.cab`), read only: opens that
-write, deletes and renames get the real file, or the game's reinstall
-deleted the mod.
+copy. `Mega.ca2` and `MegaXPR.ca2` (cache: `mega.cab` on N: = Partition4,
+`megaxpr.cab` on Z: = Partition5) hold the shared files, wheels among
+them. The game deletes and installs `mega.cab` again from the disc at
+every boot. **Mod these as the disc's archives** (`mods/media/cabs/Mega.ca2`,
+`tools/forzacab.py ca2`; see below), and the installer builds the cache
+from them. The mods folder covers the cache partitions too
+(`mods/hdd/Partition4/mega.cab`, read only), but do not put the installed
+archives there: the installer checks the size of what it has just
+written, the overlay answers with the mod's, and it truncates the real
+copy, which was left zeros (on 25 Oct mega.cab, megaxpr.cab and cars.cab
+on both disks, hidden by the mods' copies).
 
 ## Car icons and the saves
 
@@ -69,13 +72,11 @@ again and its SHA-1 checked (a mismatch: "a problem with the disc"). For a
 last size and the section's header digest at boot (file.c), when it has
 as many streams as the disc's; `tools/forzacab.py ca2` writes one from a
 cab. With the S13's Cars.ca2 there the shop shows 155 hp, 160 lb-ft and
-2,756 lb. Leave its `hdd/Partition4/cars.cab` out of the mods folder then:
-the installer makes that cache copy from the mod.
+2,756 lb; Mega.ca2 and MegaXPR.ca2 (the wheel, the car's identity) go
+the same way.
 
 "A problem with the disc" also comes from any file that fails to load
-(0x107830). On 25 Oct the cached `megaxpr.cab` on both disks was zeros
-at the start, from the overlay bug that let the game's reinstall go
-astray; a mods folder's copy hid it.
+(0x107830), a blank cache copy among them.
 
 My Cars thumbnails are not the icon packs' tiles: the game renders each
 owned car and writes it into the profile's `CarIcons1.xpr` (tiles 0, 1,
