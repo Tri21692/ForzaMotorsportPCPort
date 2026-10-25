@@ -138,7 +138,12 @@ static void keyboard(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) { 
  *   <seconds> auto <seconds>      tap START and A every 2 s until then
  * Times count from start-up. Buttons: A B X Y BLACK WHITE LT RT START
  * BACK UP DOWN LEFT RIGHT. Steps happen in file order; a step whose time
- * has passed waits for the one before it to finish. */
+ * has passed waits for the one before it to finish.
+ *
+ * XBRT_INPUT_LIVE=<file>: the same steps without the time, read as lines
+ * are added to the file while the game runs, each played as soon as the
+ * one before it is done; with periodic screenshots (XBRT_SCREENSHOT_EVERY)
+ * a run can be driven from outside, a look at the screen between presses. */
 typedef struct {
     double at, hold, until; /* until > 0: an auto window */
     uint16_t buttons;
@@ -148,37 +153,46 @@ typedef struct {
 static Step *steps;
 static int nsteps;
 
-static void load_script(const char *path) {
-    FILE *f = fopen(path, "r");
-    if (!f) rt_fatal(NULL, "XBRT_INPUT_SCRIPT: cannot open %s", path);
+/* One step from a line (live: no time); 0 if it holds none, -1 if a button is unknown. */
+static int parse_step(char *line, int live, Step *st) {
     static const struct { const char *name; uint16_t button; int analog; } names[] = {
         {"A", 0, A_A}, {"B", 0, A_B}, {"X", 0, A_X}, {"Y", 0, A_Y}, {"BLACK", 0, A_BLACK}, {"WHITE", 0, A_WHITE},
         {"LT", 0, A_LT}, {"RT", 0, A_RT}, {"UP", 0x1, -1}, {"DOWN", 0x2, -1}, {"LEFT", 0x4, -1}, {"RIGHT", 0x8, -1},
         {"START", 0x10, -1}, {"BACK", 0x20, -1},
     };
+    char *hash = strchr(line, '#');
+    if (hash) *hash = 0;
+    double at = 0, extra = 0;
+    char what[128];
+    int got = live ? sscanf(line, "%127s %lf", what, &extra) + 1 : sscanf(line, "%lf %127s %lf", &at, what, &extra);
+    if (got < 2) return 0;
+    *st = (Step){at, got == 3 ? extra : 0.3, 0, 0, 0};
+    if (!live && !strcmp(what, "auto")) {
+        st->until = extra;
+        return 1;
+    }
+    for (char *tok = strtok(what, "+"); tok; tok = strtok(NULL, "+")) {
+        size_t i;
+        for (i = 0; i < sizeof names / sizeof names[0]; i++)
+            if (!strcmp(tok, names[i].name)) break;
+        if (i == sizeof names / sizeof names[0]) return -1;
+        st->buttons |= names[i].button;
+        if (names[i].analog >= 0) st->analog |= (uint8_t)(1 << names[i].analog);
+    }
+    return 1;
+}
+
+static void load_script(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) rt_fatal(NULL, "XBRT_INPUT_SCRIPT: cannot open %s", path);
     char line[256];
     int n = 0;
     while (fgets(line, sizeof line, f)) {
         n++;
-        char *hash = strchr(line, '#');
-        if (hash) *hash = 0;
-        double at, extra = 0;
-        char what[128];
-        int got = sscanf(line, "%lf %127s %lf", &at, what, &extra);
-        if (got < 2) continue;
-        Step st = {at, got == 3 ? extra : 0.3, 0, 0, 0};
-        if (!strcmp(what, "auto")) {
-            st.until = extra;
-        } else {
-            for (char *tok = strtok(what, "+"); tok; tok = strtok(NULL, "+")) {
-                size_t i;
-                for (i = 0; i < sizeof names / sizeof names[0]; i++)
-                    if (!strcmp(tok, names[i].name)) break;
-                if (i == sizeof names / sizeof names[0]) rt_fatal(NULL, "XBRT_INPUT_SCRIPT line %d: no button %s", n, tok);
-                st.buttons |= names[i].button;
-                if (names[i].analog >= 0) st.analog |= (uint8_t)(1 << names[i].analog);
-            }
-        }
+        Step st;
+        int r = parse_step(line, 0, &st);
+        if (r < 0) rt_fatal(NULL, "XBRT_INPUT_SCRIPT line %d: no such button", n);
+        if (!r) continue;
         steps = realloc(steps, (size_t)(nsteps + 1) * sizeof *steps);
         steps[nsteps++] = st;
     }
@@ -186,11 +200,36 @@ static void load_script(const char *path) {
     rt_log("input: %d scripted steps from %s\n", nsteps, path);
 }
 
+/* XBRT_INPUT_LIVE: the lines added since the last look, as steps from now. */
+static void live_lines(const char *path) {
+    static long seen;
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    fseek(f, seen, SEEK_SET);
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        if (!strchr(line, '\n')) break; /* still being written: next time */
+        seen = ftell(f);
+        Step st;
+        int r = parse_step(line, 1, &st);
+        if (r < 0) fprintf(stderr, "xbrt: XBRT_INPUT_LIVE: no such button in: %s", line);
+        if (r <= 0) continue;
+        st.at = rt_now_100ns() / 1e7;
+        steps = realloc(steps, (size_t)(nsteps + 1) * sizeof *steps);
+        steps[nsteps++] = st;
+    }
+    fclose(f);
+}
+
 /* What the script holds down now. */
 static void scripted(uint16_t *buttons, uint8_t analog[8]) {
     static int next;             /* the step being played */
     static double started = -1;  /* when it began */
+    static const char *live;
+    static double looked;
     double now = rt_now_100ns() / 1e7;
+    if (!live) live = getenv("XBRT_INPUT_LIVE") ? getenv("XBRT_INPUT_LIVE") : "";
+    if (*live && now - looked > 0.1) looked = now, live_lines(live);
     while (next < nsteps) {
         Step *st = &steps[next];
         if (started < 0) {

@@ -32,6 +32,7 @@ first build takes a while.
 | `XBRT_LOG` | `1` logs every kernel call, `2` more | quiet |
 | `XBRT_AUTOPRESS` | `1` taps START and A every two seconds | off |
 | `XBRT_INPUT_SCRIPT` | a file of timed button presses (format in `hle_input.c`; example in `tools/input`) | off |
+| `XBRT_INPUT_LIVE` | a file read while the game runs: each line added (`A`, `DOWN 0.12`) is pressed at once; with `XBRT_SCREENSHOT_EVERY` a run can be driven from outside | off |
 | `XBRT_LOG_FROM` | with `XBRT_LOG`, start logging only after this many seconds | 0 |
 | `XBRT_GPU` | `gl` fills on the GPU with OpenGL 4.3 (docs/GPU.md); several times faster | software |
 | `XBRT_STATS` | `1` prints the GPU stats line every 5 s without logging kernel calls | off |
@@ -45,6 +46,7 @@ first build takes a while.
 | `XBRT_GPU_DUMP` | `<file>:<first flip>:<flips>` logs every GPU method, after the vertex program and constants as they stand; a first flip of `@<seconds>` starts at that time | off |
 | `XBRT_GL_VSH_DUMP` | a folder to save each vertex program's GLSL to (`vsh<n>.glsl`), and which one every draw ran (`use.txt`: flip, draw, program, vertices) | off |
 | `XBRT_GL_NO_SHADOW` | any value lights every shadow-map lookup (debugging) | off |
+| `XBRT_GL_IDLE_READBACK` | `0`: framebuffers the game stopped drawing stay on the GPU (before 25 Oct; the Garage menu went black after the decal editor) | on |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1

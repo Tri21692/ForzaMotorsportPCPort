@@ -407,6 +407,7 @@ typedef struct {
     int check;             /* RAM may have changed: compare hashes before the next draw (only when not dirty) */
     unsigned used;
     unsigned seq;          /* when it last drew, in gl_seq's order */
+    unsigned flip;         /* ... and in flips (gl_flips) */
     int zgpu;              /* a shadow map sampled where it was drawn: its depth lives only on the GPU (gl_depth_stays) */
     uint64_t csig, zsig;   /* hash_sparse of RAM at the last full comparison (gl_upload_if_changed) */
     uint32_t sig_checks;
@@ -420,7 +421,7 @@ typedef struct {
 #define GL_SURFS 32 /* a race frame draws to about 21 */
 static GlSurf gl_surf[GL_SURFS];
 static GlSurf *gl_cur;
-static unsigned gl_tick, gl_seq;
+static unsigned gl_tick, gl_seq, gl_flips;
 
 static int gl_fits(uint32_t base, uint32_t pitch, int h) {
     return (uint64_t)(base & (RT_PHYS_SIZE - 1)) + (uint64_t)pitch * (uint64_t)h <= RT_PHYS_SIZE;
@@ -1146,6 +1147,20 @@ static void gl_flip(void) {
     for (int i = 0; i < GL_SURFS; i++)
         if (!gl_surf[i].dirty) gl_surf[i].check = 1;
     if (gl_ready <= 0) return;
+    /* Colour the game stopped drawing two flips ago goes to RAM now, before
+     * the CPU reuses those bytes: the vinyl editor's strips lay over the
+     * Garage menu's background picture, which the game then loads there
+     * again; that load wrote the bytes RAM already held (the strips never
+     * reached it), no hash could see it, and the strips' read-back when the
+     * menu sampled its picture left it black. A real GPU writes RAM as it
+     * draws. Buffers drawn every frame stay on the GPU. XBRT_GL_IDLE_READBACK=0: off. */
+    static int idle = -1;
+    if (idle < 0) idle = !getenv("XBRT_GL_IDLE_READBACK") || atoi(getenv("XBRT_GL_IDLE_READBACK"));
+    gl_flips++;
+    for (int i = 0; idle && i < GL_SURFS; i++) {
+        GlSurf *e = &gl_surf[i];
+        if (e->fbo && e->cdirty && !e->zgpu && gl_flips - e->flip >= 2) gl_readback_color_async(e); /* not a shadow map's (gl_depth_stays) */
+    }
     /* Every screen-sized buffer drawn since its last copy: not only the
      * one drawn last, which in the menus is often a buffer of their own
      * (the shown one's copy then stayed frames old, and flashed up). */
@@ -1630,7 +1645,7 @@ static int gl_clear(uint32_t flags) {
         bits |= GL_STENCIL_BUFFER_BIT;
     }
     glClear(bits);
-    s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
+    s->dirty = s->cdirty = 1, s->seq = ++gl_seq, s->flip = gl_flips;
     if (flags & 3) s->zdirty = 1, s->zgpu = 0;
     gl_drawn(s, (int)x1 * d.sx, (int)y1 * d.sy, (int)(x2 + 1) * d.sx, (int)(y2 + 1) * d.sy);
     return 1;
@@ -1789,7 +1804,7 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * 3 * GL_VERT * sizeof(float), gl_verts, GL_STREAM_DRAW);
     gl_frag_state(d, s);
     glDrawArrays(GL_TRIANGLES, 0, n * 3);
-    s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
+    s->dirty = s->cdirty = 1, s->seq = ++gl_seq, s->flip = gl_flips;
     if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1, s->zgpu = 0;
     gl_drawn(s, d->cx0, d->cy0, d->cx0 + d->cw, d->cy0 + d->ch);
 }
