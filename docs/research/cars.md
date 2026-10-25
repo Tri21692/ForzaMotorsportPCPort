@@ -46,7 +46,7 @@ flags that make it buyable from the start, zero on a career prize) and
 `gamecars.dat` (176-byte rows: physics summary, at 124 the ratings the
 menu shows) in mega.cab; `cars\<car>	ooldata.xml` (its `<E0 Name>` is the
 model name shown, its `File` the engine) and physics in cars.cab;
-`engines\<engine>\physics` in cars.cab and `engines\<engine>udio` in the
+`engines\<engine>\physics` in cars.cab and `engines\<engine>\audio` in the
 car's own cab (the wave bank paths name the engine); the model name again
 in `media/Loc/*/CarDataStrings.str`. Career prizes are events'
 `<rewards CareerCarUnlock="<ordinal>">`.
