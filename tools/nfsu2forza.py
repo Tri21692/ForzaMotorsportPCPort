@@ -131,6 +131,13 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
     print('fit: scale %.3f, forward offset %.3f, up offset %.3f' % (k, dz, dy))
 
     dark = dark_uv(os.path.join(os.path.dirname(template_path), 'liveries', 'standard', 'livery0nc.xpr'))
+    # The paint texel: the one the template body's door uses (its Body
+    # vertex nearest the middle of the car's side at half height).
+    tb = [v for sp in tbody['subparts'] if sp['id'] == 1 and sp['material'] == BODY for v in (tbody['verts'][i] for i in sp['indices'])]
+    xs = max(v[0] for v in tb); ym = (max(v[1] for v in tb) + min(v[1] for v in tb)) / 2
+    door = min(tb, key=lambda v: (v[0] - xs) ** 2 + (v[1] - ym * 0.8) ** 2 + v[2] ** 2)
+    paint = (door[10], door[11])
+    print('paint: texel at u, v = %.3f, %.3f' % (paint[0] / 65536, paint[1] / 65536))
     print('windows: black texel at u, v = %.3f, %.3f' % (dark[0] / 65536, dark[1] / 65536))
 
     def pos(v):
@@ -231,8 +238,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                     q = qi[a:a + 512]
                     d2 = ((Q[q, None, :] - P[None, pi, :]) ** 2).sum(-1)
                     near[q] = pi[d2.argmin(1)]
-            verts = [v[:6] + (tuple(old[j][6:10]) + dark if Qm[i] == WINDOWS else tuple(old[j][6:12]))
-                     for i, (v, j) in enumerate(zip(verts, near))]
+            def tex(i, j):
+                if Qm[i] == WINDOWS: return tuple(old[j][6:10]) + dark
+                if Qm[i] == BODY: return (255, 255, 0, 0) + paint  # one known paint texel, full shading: copied, panels near the template's windows came out black or clear
+                return tuple(old[j][6:12])
+            verts = [v[:6] + tex(i, j) for i, (v, j) in enumerate(zip(verts, near))]
         part['verts'] = verts
         # A part that had a damage shape keeps one, the same as the car
         # undamaged (so no dents yet): left empty, the game drew those parts
