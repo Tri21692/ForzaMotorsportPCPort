@@ -29,8 +29,8 @@ Usage:
 The NFSU car's windows are holes in its body: they are filled with glass
 (window_panes), put in the template's glass parts. --keep-glass keeps the
 template's own windows instead (they stand out of a lower roof).
---badges: a folder with logo.* (the maker's emblem: nose and tail) and
-model.* (the model's lettering, under it at the tail), any image ffmpeg
+--badges: a folder with logo.* (the maker's emblem, on the nose) and
+model.* (the model's lettering, on the tail), any image ffmpeg
 reads, used instead of the NFSU badge sheet's small ones. Your own files:
 trademarks, so they stay out of anything shared.
 """
@@ -749,8 +749,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
 # texture coordinates are not taken as they are), as the nose emblem, in
 # the front bumper, never did.
 BADGES = [
-    ('logo', None, (0.0, 1.04, None), (0, 0, -1), 0.17, 0.146),        # on the garnish between the tail lights
-    ('model', None, (0.0, 0.91, None), (0, 0, -1), 0.34, 0.028),      # under it
+    ('model', None, (0.0, 0.895, None), (0, 0, -1), 0.46, 0.038),     # centred on the panel between the tail lights (y 0.76 to 1.03)
     ('sheet', (62, 24, 92, 44), (None, 0.52, 2.72), (1, 0, 0), 0.15, 0.10),   # amber markers behind the front bumper's corners
     ('sheet', (62, 24, 92, 44), (None, 0.52, 2.72), (-1, 0, 0), 0.15, 0.10),
     ('sheet', (62, 3, 92, 23), (None, 0.58, -2.80), (1, 0, 0), 0.15, 0.10),   # red, at the rear
@@ -802,7 +801,7 @@ def badge_images(folder):
     return out
 
 
-def add_badges(car, textures, atlas, sizes={}, lift=0.03):  # lift: off the surface (at 0.006 the flat decals fought the curved panels)
+def add_badges(car, textures, atlas, sizes={}, lift=0.004):  # lift: off the surface
     """The BADGES on the converted car, as Badge subparts of the bumpers at
     their first two detail levels. Images missing from the atlas are left
     out (or stood in for from the sheet, SHEET_BADGES)."""
@@ -855,22 +854,37 @@ def add_badges(car, textures, atlas, sizes={}, lift=0.03):  # lift: off the surf
             print('badge %s: missed the body' % source); continue
         up = np.array([0, 1.0, 0]) - n * n[1]; up /= np.linalg.norm(up)
         right = np.cross(n, up)  # as seen from outside, to the viewer's right (up x n mirrored the lettering)
-        p = p + n * lift
         tu = lambda px: int((u0 + (px / W) * (u1 - u0) * W / (W - 1)) * BADGE_UV)
         tv = lambda py: int((v0 + (py / H) * (v1 - v0) * H / (H - 1)) * BADGE_UV)
-        corners = []
-        for sx, sy, px, py in ((-1, 1, x0, y0), (1, 1, x1, y0), (1, -1, x1, y1), (-1, -1, x0, y1)):
-            q = p + right * sx * w / 2 + up * sy * h / 2
-            corners.append(tuple(int(round(c * 4096)) for c in q) + tuple(int(round(c * 32767)) for c in n)
-                           + (255, 255, 0, 0, tu(px + 0.5 if sx < 0 else px - 0.5), tv(py + 0.5 if sy > 0 else py - 0.5)))
-        made[bool(p[2] > 0)].append(corners)
+        # A grid over the decal, each point dropped onto the panel along the
+        # decal's normal and set `lift` off it: flat, set off far enough to
+        # clear the curve, they stood off the tail's corners.
+        nx, ny = max(2, int(w / 0.04) + 1), max(2, int(h / 0.04) + 1)
+        grid, tris = [], []
+        for j in range(ny):
+            for i in range(nx):
+                fx, fy = i / (nx - 1), j / (ny - 1)
+                q = p + right * (fx - 0.5) * w + up * (0.5 - fy) * h
+                at, an = hit(q + n * 0.3, -n)
+                if at is None or np.linalg.norm(at - q) > 0.25: at, an = q, n
+                q = at + an * lift
+                px = x0 + 0.5 + fx * (x1 - x0 - 1); py = y0 + 0.5 + fy * (y1 - y0 - 1)
+                grid.append(tuple(int(round(c * 4096)) for c in q) + tuple(int(round(c * 32767)) for c in an)
+                            + (255, 255, 0, 0, tu(px), tv(py)))
+        for j in range(ny - 1):
+            for i in range(nx - 1):
+                a, b, c, d = j * nx + i, j * nx + i + 1, (j + 1) * nx + i + 1, (j + 1) * nx + i
+                tris += [(a, c, b), (a, d, c)]  # wound as the body's outsides
+        made[bool(p[2] > 0)].append((grid, tris))
     for front, decals in made.items():
         for part in (p for p in car['parts'] if p['name'].startswith('bumperF' if front else 'bumperR') and p['name'].endswith('_LOD1')):
             if not decals: break
-            base = len(part['verts'])
-            quads = [t for k in range(len(decals)) for t in ((base + 4 * k, base + 4 * k + 2, base + 4 * k + 1),
-                                                             (base + 4 * k, base + 4 * k + 3, base + 4 * k + 2))]  # wound as the body's outsides
-            part['verts'] = part['verts'] + [v for c in decals for v in c]
+            quads, add = [], []
+            for grid, tris in decals:
+                base = len(part['verts']) + len(add)
+                quads += [tuple(base + k for k in t) for t in tris]
+                add += grid
+            part['verts'] = part['verts'] + add
             if struct.unpack_from('<I', part['Damage'][1])[0]:
                 part['Damage'] = (part['Damage'][0], struct.pack('<I', len(part['verts'])) + b''.join(struct.pack('<6h', *v[:6]) for v in part['verts']))
             tmpl = part['subparts'][0]
