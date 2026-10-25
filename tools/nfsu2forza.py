@@ -297,8 +297,35 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                        os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), keep=[paint, dark])
     print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
+    # Wheels: the template's hubs (its brake rotors) stay where its physics
+    # puts them, so the NFSU body is stretched between its wheel arches
+    # (the middles of their liners, 010cb64a) to put each arch over its
+    # hub; ahead of the front arch and behind the rear one it keeps the
+    # scale k. Scaled evenly, the S13's shorter wheelbase left the rear
+    # wheels standing behind their arches.
+    hubs = [(min(v[2] for v in p['verts']) + max(v[2] for v in p['verts'])) / 2 / 4096
+            for p in car['parts'] if p['name'].startswith('rotor')]
+    nbody = find('BODY')[0]
+    nidx = [i for t in nbody['tris'] for i in t]
+    liner = [nbody['verts'][i][0] for g in nbody['groups'] if nbody['shaders'][struct.unpack_from('<I', g, 0x20)[0]] == 0x010CB64A
+             for i in nidx[struct.unpack_from('<I', g, 0x34)[0]:struct.unpack_from('<I', g, 0x34)[0] + struct.unpack_from('<I', g, 12)[0]]]
+    if hubs and any(z > 0 for z in hubs) and any(z < 0 for z in hubs) and any(x > 0 for x in liner) and any(x < 0 for x in liner):
+        hf = sum(z for z in hubs if z > 0) / sum(1 for z in hubs if z > 0)
+        hr = sum(z for z in hubs if z < 0) / sum(1 for z in hubs if z < 0)
+        af = (min(x for x in liner if x > 0) + max(x for x in liner if x > 0)) / 2
+        ar = (min(x for x in liner if x < 0) + max(x for x in liner if x < 0)) / 2
+        print('wheels: arches at %.3f, %.3f go to the hubs at %.3f, %.3f (between them x%.3f)' % (k * af + dz, k * ar + dz, hf, hr, (hf - hr) / (af - ar)))
+    else:
+        af = ar = None
+
+    def along(x):
+        if af is None: return k * x + dz
+        if x > af: return hf + k * (x - af)
+        if x < ar: return hr + k * (x - ar)
+        return hr + (x - ar) * (hf - hr) / (af - ar)
+
     def pos(v):
-        x, y, z = -k * v[1], k * v[2] + dy, k * v[0] + dz
+        x, y, z = -k * v[1], k * v[2] + dy, along(v[0])
         return [max(-32768, min(32767, int(round(c * 4096)))) for c in (x, y, z)]
 
     def nrm(v):

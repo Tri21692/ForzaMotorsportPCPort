@@ -322,6 +322,11 @@ needs, learned the hard way:
   clear, and the cabin floor was see-through). Lamp triangles on black
   texels (the S13's centre garnish) are black trim: the lamp material lit
   them pale.
+- The wheels stay where the template's physics puts them (its brake
+  rotors mark the hubs), so the body is stretched along its length between
+  the middles of its wheel-arch liners to put each arch over its hub
+  (x1.758 between them on the Civic, 1.658 elsewhere). Scaled evenly, the
+  S13's shorter wheelbase left the rear wheels 0.18 behind their arches.
 - Still to do: real damage shapes, the NFSU wheel's tyre (the template's
   is kept), and body kits as Forza's bumper and skirt
   variants.
