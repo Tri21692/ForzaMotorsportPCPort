@@ -410,6 +410,7 @@ typedef struct {
     int zgpu;              /* a shadow map sampled where it was drawn: its depth lives only on the GPU (gl_depth_stays) */
     uint64_t csig, zsig;   /* hash_sparse of RAM at the last full comparison (gl_upload_if_changed) */
     uint32_t sig_checks;
+    uint64_t rsig;         /* hash_sparse of its colour's bytes when RAM last matched it (read back, or compared); 0 unknown */
     int swz;               /* a swizzled surface: its colour is in Morton order in RAM (gl_to_ram, gl_from_ram) */
     int k;                 /* drawn at k times its size (XBRT_GL_SCALE); RAM sees it through the proxy below */
     GLuint pfbo, ptex, pztex; /* the proxy: the same surface at its own size, for read-backs and uploads */
@@ -789,16 +790,30 @@ static void gl_from_ram(GlSurf *s) {
 static void gl_ram_written(const void *by, uint32_t base, uint32_t size) {
     for (int i = 0; i < GL_SURFS; i++) {
         GlSurf *e = &gl_surf[i];
-        if (e == by || !e->fbo || e->dirty) continue;
+        if (e == by || !e->fbo) continue;
         uint32_t c = e->cpitch * (uint32_t)e->h, z = e->ztex ? e->zpitch * (uint32_t)e->h : 0;
+        if (gl_span_hit(e->cbase, c, base, size)) e->rsig = 0; /* changed by us, not the game */
+        if (e->dirty) continue;
         if (gl_span_hit(e->cbase, c, base, size)) e->chash = 0; /* 0: adopt what RAM holds at the next check (gl_upload_if_changed) */
         if (z && gl_span_hit(e->zbase, z, base, size)) e->zhash = 0;
     }
 }
 
+/* The colour's bytes changed since RAM last matched the framebuffer, and
+ * not by a read-back of ours: the game has used that memory for something
+ * else since (a menu's track logo, read from disc into a framebuffer's old
+ * bytes, came out with a white band under a read-back asked for after it
+ * arrived). The game's bytes are the newer; the framebuffer takes them from
+ * RAM before it next draws. gl_complete_first catches what changes while a
+ * read-back is on its way. */
+static int gl_ram_reused(const GlSurf *s) {
+    return s->rsig && gl_fits(s->cbase, s->cpitch, s->h) && hash_sparse(phys(s->cbase), s->cpitch * (uint32_t)s->h) != s->rsig;
+}
+
 static void gl_readback_one(GlSurf *s) {
     gl_complete_range(s->cbase, s->cpitch * (uint32_t)s->h); /* older colour on its way must not land over this */
     if (s->ztex) gl_complete_range(s->zbase, s->zpitch * (uint32_t)s->h);
+    if (s->cdirty && gl_ram_reused(s)) s->cdirty = 0, s->check = 1;
     gl_read_bind(s, (s->cdirty ? GL_COLOR_BUFFER_BIT : 0) | (s->ztex && s->zdirty ? gl_zbits(s) : 0));
     if (s->cdirty && gl_fits(s->cbase, s->cpitch, s->h)) { /* colour already read back, or on its way, is not read again */
         glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(s->cpitch / (uint32_t)s->bpp));
@@ -807,6 +822,7 @@ static void gl_readback_one(GlSurf *s) {
         else if (s->bpp == 4) glReadPixels(0, 0, s->w, s->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, phys(s->cbase));
         else glReadPixels(0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, phys(s->cbase));
         s->chash = hash_bytes(phys(s->cbase), s->cpitch * (uint32_t)s->h);
+        s->rsig = hash_sparse(phys(s->cbase), s->cpitch * (uint32_t)s->h);
     }
     /* Depth only when something wrote it: Forza's 2D passes keep the depth
      * mask on with no depth buffer (zeta offset 0), which made a 1.2 MB
@@ -941,6 +957,7 @@ static void gl_complete_first(int n) {
         }
         if (p->sync) glDeleteSync(p->sync), p->sync = 0;
         if (!p->s->cdirty) p->s->chash = 0; /* RAM is what the GPU drew: adopted at the next check */
+        p->s->rsig = hash_sparse(phys(p->base), p->size);
         gl_ram_written(p->s, p->base, p->size);
         for (int j = i + 1; j < gl_npend; j++) /* later ones over these bytes: this write was ours */
             if (gl_span_hit(gl_pend[j].base, gl_pend[j].size, p->base, p->size)) gl_pend[j].ram_sig = hash_sparse(phys(gl_pend[j].base), gl_pend[j].size);
@@ -998,6 +1015,11 @@ static void gl_readback_color_async(GlSurf *s) {
         else gl_readback_color_async(older);
     }
     if (!gl_fits(s->cbase, s->cpitch, s->h)) return;
+    if (gl_ram_reused(s)) {
+        static int said; if (said++ < 10) fprintf(stderr, "xbrt: read-back of %08x skipped: the memory was reused\n", s->cbase);
+        s->cdirty = 0, s->dirty = s->zdirty, s->check = 1;
+        return;
+    }
     if (gl_npend == 16) gl_complete();
     GlPending *p = &gl_pend[gl_npend++];
     p->s = s, p->base = s->cbase, p->size = c;
@@ -1228,6 +1250,7 @@ static void gl_upload_if_changed(GlSurf *s) {
     int full = s->sig_checks++ % 32 == 0;
     uint64_t cs = gl_fits(s->cbase, s->cpitch, s->h) ? hash_sparse(phys(s->cbase), s->cpitch * (uint32_t)s->h) : 0;
     uint64_t zs = s->ztex && gl_fits(s->zbase, s->zpitch, s->h) ? hash_sparse(phys(s->zbase), s->zpitch * (uint32_t)s->h) : 0;
+    s->rsig = cs; /* RAM and the framebuffer agree once this check is done */
     if (!full && cs == s->csig && zs == s->zsig) return;
     s->csig = cs, s->zsig = zs;
     if (gl_fits(s->cbase, s->cpitch, s->h)) {
