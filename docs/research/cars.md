@@ -251,3 +251,29 @@ needs, learned the hard way:
   the roof's colour (it picks up dark texels), real damage shapes, the
   NFSU textures in the atlas (lights, badges), wheels, and body kits as
   Forza's bumper and skirt variants.
+
+### The missing roof (open, 25 Oct)
+
+On the Civic template the converted car draws everywhere except where a
+surface faces up over the cabin: the S13's roof panel, its sunroof and its
+hatch glass are missing, while its pillars and windshield header draw.
+Tests in scripted races, each one change from the working build:
+
+- Not the data: the triangles are in the level-1 strip, wound and lit like
+  the rest; drawn from both sides they are still missing.
+- Not the part, material, texel or shading bytes: moved into `bands` or
+  `nocage`, as paint or black, they are still missing.
+- Not the height: lowered 0.5 they draw (at dashboard height, inside the
+  cabin outline from above?); raised 0.3, the frame floats visibly but the
+  panel does not. Synthetic flat squares draw beside the car at any height
+  and over the hood at roof height, but not over the cabin, even at 2.6.
+- Not covered by something: nothing of the template reaches 2.6, and
+  hiding its interior, cage and window surrounds changes nothing. Keeping
+  its sunroof glass changes nothing.
+- No texture the game decodes on the car-select screen looks like a mask.
+  The squares beside the car also came out black with the paint texel,
+  so the body shader takes something from the position.
+
+Next: trace the car's draw calls (XBRT_GPU_DUMP) for the body and compare
+the state for the roof's triangles with the hood's: texture stages,
+texkill or alpha test, and any texture coordinates computed from position.
