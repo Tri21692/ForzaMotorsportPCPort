@@ -243,14 +243,21 @@ needs, learned the hard way:
   nearest template vertex of the same material.
 - One subpart per detail level and material (as Forza's own).
 - Parts that had a damage shape keep one (the undamaged shape for now).
-- The NFSU shader 12c9453c is the roof, pillars and hatch (paint); the
-  side windows are holes in the NFSU model. On a taller template the
-  template's glass stands out of the roof, so it is hidden; on the 240SX
-  it fits and is kept (`--keep-glass`), all but the headlight glass.
-- Still to do: glass of the NFSU car's own (as Window it drew fully clear),
-  the roof's colour (it picks up dark texels), real damage shapes, the
-  NFSU textures in the atlas (lights, badges), wheels, and body kits as
-  Forza's bumper and skirt variants.
+- NFSU shaders without a known name: 12c9453c is the rubber round the
+  windows, the B pillar and the trim strips, 010cb64a the inside of the
+  wheel arches; 52bf4c34 (texture bd1f0e0a) is the floor pan. The first
+  two are drawn black now (paint on a black texel of the atlas).
+- The NFSU car has no window glass: its windows are holes in the body.
+  The converter welds the stock parts, finds the large closed holes high
+  on the car (windshield, rear glass, door and quarter windows: six on the
+  240SX) and fills each with a fan, from both sides, in the template's
+  nearest glass part with that part's texture coordinates. Glass samples
+  its own texture, not the livery: in the Civic's body part, with paint
+  coordinates, Window drew fully clear. `--keep-glass` keeps the
+  template's glass instead.
+- Still to do: real damage shapes, the NFSU textures in the atlas
+  (lights, badges), wheels, and body kits as Forza's bumper and skirt
+  variants.
 
 ### The missing roof (solved, 25 Oct)
 

@@ -26,8 +26,9 @@ now, so parts are flat-coloured. Damage shapes are the undamaged shape
 Usage:
   python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass]
 
---keep-glass keeps the template's windows (the NFSU car's side windows are
-holes); otherwise they are hidden, as they stand out of a lower roof.
+The NFSU car's windows are holes in its body: they are filled with glass
+(window_panes), put in the template's glass parts. --keep-glass keeps the
+template's own windows instead (they stand out of a lower roof).
 """
 import os
 import struct
@@ -50,10 +51,12 @@ def bhash(s, h=0xFFFFFFFF):
     return h
 
 
-# NFSU shaders (by name hash) -> Forza materials. 12c9453c has no known name:
-# on the 240SX it is the roof, the pillars and window frames, the hatch and
-# trim on the bumpers (the side windows are holes, not glass), so it is paint.
-SHADERS = {bhash('CARSKIN'): BODY, bhash('WINDSHIELD'): WINDOW, 0x12C9453C: BODY,
+# NFSU shaders (by name hash) -> Forza materials. Two have no known name: on
+# the 240SX 12c9453c is the rubber round the windows, the B pillar and the
+# trim strips, 010cb64a the inside of the wheel arches; both black (WINDOWS:
+# Forza's own black trim drew clear). The windows themselves are holes (see
+# window_panes).
+SHADERS = {bhash('CARSKIN'): BODY, bhash('WINDSHIELD'): WINDOW, 0x12C9453C: WINDOWS, 0x010CB64A: WINDOWS,
            bhash('DULLPLASTIC'): PLASTIC, bhash('CHROME'): CHROME, bhash('HEADLIGHTGLASS'): HEADLIGHTGLASS,
            bhash('BRAKELIGHTGLASS'): REDGLASS, bhash('DECAL'): BADGE, bhash('HEADLIGHT'): HEADLIGHTS,
            bhash('BRAKELIGHT'): TAILLIGHTS, bhash('RUBBER'): BLACK, bhash('ENGINE'): BLACK}
@@ -81,6 +84,48 @@ def strip(tris):
             if len(s) % 2: s.append(a)
         s += [a, b, c]
     return s
+
+
+def window_panes(parts):
+    """Glass for an NFSU car, whose windows are holes: the stock parts are
+    welded by position and each large closed hole high on the car (the
+    windshield, the rear glass, the side windows) is filled with a fan from
+    its middle. Returns (middle, ring) per pane, NFSU positions; the
+    lights' and handles' holes are left alone."""
+    import collections
+    import numpy as np
+    key, P, edges = {}, [], collections.Counter()
+    for p in parts:
+        ids = []
+        for v in p['verts']:
+            k = (round(v[0] / 0.004), round(v[1] / 0.004), round(v[2] / 0.004))
+            if k not in key: key[k] = len(P); P.append(v[:3])
+            ids.append(key[k])
+        for t in p['tris']:
+            if max(t) >= len(ids): continue
+            a, b, c = (ids[i] for i in t)
+            if len({a, b, c}) == 3:
+                for e in ((a, b), (b, c), (c, a)): edges[tuple(sorted(e))] += 1
+    P = np.array(P)
+    adj = collections.defaultdict(list)
+    for (a, b), n in edges.items():
+        if n == 1: adj[a].append(b); adj[b].append(a)
+    length, top = P[:, 0].max() - P[:, 0].min(), P[:, 2].max()
+    seen, panes = set(), []
+    for s in list(adj):
+        if s in seen: continue
+        ring, prev, cur = [s], None, s
+        seen.add(s)
+        while True:
+            nx = [n for n in adj[cur] if n != prev and n not in seen]
+            if not nx: break
+            prev, cur = cur, nx[0]
+            ring.append(cur); seen.add(cur)
+        Q = P[ring]
+        perim = np.linalg.norm(np.diff(np.vstack([Q, Q[:1]]), axis=0), axis=1).sum()
+        if s in adj[ring[-1]] and len(ring) >= 8 and perim > 0.4 * length and Q[:, 2].mean() > 0.6 * top:  # a 4-point opening under the 240SX's roof skin is not a window
+            panes.append((Q.mean(0), Q))
+    return panes
 
 
 def dark_uv(xpr_path):
@@ -293,6 +338,46 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
             dv = [move(struct.unpack_from('<6h', part['Damage'][1], 4 + 12 * i)) for i in range(cnt)]
             part['Damage'] = (part['Damage'][0], struct.pack('<I', cnt) + b''.join(struct.pack('<6h', *v) for v in dv) + part['Damage'][1][4 + 12 * cnt:])
 
+    def fit_glass():
+        """The NFSU car's window holes filled (window_panes), each pane put
+        in the template glass part nearest it, with that part's texture
+        coordinates and shading (the glass texture is not the livery), from
+        both sides. Template glass parts with no pane stay hidden."""
+        import numpy as np
+        glass = [p for p in car['parts'] if p['name'].startswith('glass') and 'HL_' not in p['name'] and p['verts']]
+        centre = {p['name']: np.mean([v[:3] for v in p['verts']], 0) for p in glass}
+        stock = [lv for key in ('BODY', 'ROOF', 'TRUNK', 'HOOD', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT') for lv in find(key)[:1]]
+        mid_car = np.mean([pos(v) for p in stock for v in p['verts']], 0)
+        got = {}
+        for mid, ring in window_panes(stock):
+            pm = np.array(pos(mid))
+            name = min(centre, key=lambda n: np.linalg.norm(centre[n] - pm))
+            got.setdefault(name, []).append((mid, ring))
+        for p in glass:
+            if p['name'] not in got: continue
+            old = np.array([v[:3] for v in p['verts']], np.float32)
+            verts, tris = [], []
+            for mid, ring in got[p['name']]:
+                pts = [np.array(pos(q)) for q in [mid] + list(ring)]
+                # outward: the normal of the pane's best plane, away from the car's middle
+                n = np.linalg.svd(np.array(pts[1:], float) - pts[0])[2][2]
+                if np.dot(n, pts[0] - mid_car) < 0: n = -n
+                nn = [int(round(c * 32767)) for c in n / np.linalg.norm(n)]
+                base = len(verts)
+                for q in pts:
+                    j = int(((old - q) ** 2).sum(1).argmin())
+                    verts.append(tuple(int(c) for c in q) + tuple(nn) + tuple(p['verts'][j][6:12]))
+                k = len(ring)
+                for i in range(k):
+                    a, b = base + 1 + i, base + 1 + (i + 1) % k
+                    tris += [(base, a, b), (base, b, a)]
+            ids = sorted({sp['id'] for sp in p['subparts']})
+            tmpl = p['subparts'][0]
+            p['verts'] = verts
+            p['subparts'] = [{'version': tmpl['version'], 'id': i, 'material': WINDOW, 'prim': 6, 'extra': bytes(16),
+                              'indices': strip(tris), 'tail': b''} for i in ids]
+            done.append(p['name'] + '(%d panes)' % len(got[p['name']]))
+
     old_roof = roof(tbody['verts'])
     floor = min(ty)
 
@@ -319,6 +404,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                 put(part, *built[key])
                 done.append(part['name'])
                 break
+    if not keep_glass:
+        fit_glass()
     new_roof = roof(tbody['verts'])
     for part in car['parts']:
         if part['name'].startswith(CABIN):
