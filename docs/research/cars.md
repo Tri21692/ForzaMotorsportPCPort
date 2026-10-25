@@ -56,14 +56,30 @@ into the S13: 1991, 1,250 kg, 24,000 credits, on sale from the start, its
 own engine copy (Nissan240SXS13, so the S14 is unchanged) at 160 lb-ft
 with the power peak kept (155 hp).
 
-The shop's power, torque and weight are worked out at boot from the
-disc's `Cars.ca2` itself, not the cache copy, and the game checks that
-archive's 4 MB zlib chunks against a table in the executable (per chunk:
-u32 offset, u32 packed size, 20-byte SHA-1; Cars.ca2's at xbe offset
-0x5b8c64), so a rebuilt .ca2 is refused ("a problem with the disc"). Races
-read the cache's cars.cab through the mods folder: on track the S13 has
-its own figures, while the shop shows the S14's. Fixing the shop would take
-the runtime patching that table for a modded .ca2.
+The shop's power, torque and weight come from the disc's `Cars.ca2`,
+which the background installer (code at 0x27E3E0) unpacks to the cache.
+Its table is the BKGDINST section (xbe offset 0x5b5000, not preloaded):
+per archive an entry of five u32 (two name offsets, first record index,
+stream count, the last stream's unpacked size), and per 4 MB zlib stream
+a record (u32 offset, u32 stream length, SHA-1 of the *unpacked* 4 MB;
+Cars.ca2's at xbe offset 0x5b8c64). `InstallMarker1/2.dat` on Z: hold the
+copy from the last install; a stream whose record differs is unpacked
+again and its SHA-1 checked (a mismatch: "a problem with the disc"). For a
+.ca2 in the mods folder the runtime rewrites its records, its entry's
+last size and the section's header digest at boot (file.c), when it has
+as many streams as the disc's; `tools/forzacab.py ca2` writes one from a
+cab. With the S13's Cars.ca2 there the shop shows 155 hp, 160 lb-ft and
+2,756 lb. Leave its `hdd/Partition4/cars.cab` out of the mods folder then:
+the installer makes that cache copy from the mod.
+
+"A problem with the disc" also comes from any file that fails to load
+(0x107830). On 25 Oct the cached `megaxpr.cab` on both disks was zeros
+at the start, from the overlay bug that let the game's reinstall go
+astray; a mods folder's copy hid it.
+
+My Cars thumbnails are not the icon packs' tiles: the game renders each
+owned car and writes it into the profile's `CarIcons1.xpr` (tiles 0, 1,
+... by garage slot), and those renders come out black in the port.
 
 Removing a mod is safe: the overlay only reads. A car *added* (not in a
 slot) that a save refers to will need a fallback once its mod is gone: a

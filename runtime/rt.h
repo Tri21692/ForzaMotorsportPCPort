@@ -134,7 +134,7 @@ static inline char *rt_str(uint32_t a) { return (char *)(xb_mem + a); }
 
 /* ---- the loaded XBE (main.c) ---- */
 typedef struct {
-    uint32_t base, entry, thunk, tls_dir;
+    uint32_t base, size, entry, thunk, tls_dir;
     uint32_t tls_size; /* per-thread TLS area, as the kernel computes it */
     char path[1024];   /* host path of default.xbe */
     char dir[1024];    /* its directory: the default disc root */
@@ -227,6 +227,9 @@ int rt_run_user_apcs(XbCtx *c);
 void rt_kernel_init(void);
 void rt_fibers_init(void); /* hle_fiber.c: fiber stacks */
 void rt_crypto_init(void); /* crypto.c: the Xc* exports */
+void rt_sha1(const uint8_t *p, size_t n, uint8_t out[20]);
+/* inflate.c: the zlib stream at in into out; the bytes written or -1, *used its length */
+long rt_inflate(const uint8_t *in, size_t n, uint8_t *out, size_t cap, size_t *used);
 /* Other files add handlers for their part of the kernel. A handler reads
  * its arguments from the guest stack and returns EAX; see kernel.c. */
 typedef uint32_t (*RtHandler)(XbCtx *c);
@@ -280,6 +283,7 @@ void rt_aci_write(uint32_t off, int bytes, uint32_t v);
 
 /* ---- files (file.c) ---- */
 void rt_files_init(void);
+void rt_mods_installer_records(void); /* after rt_files_init: modded .ca2/.xb2 archives pass the installer's check */
 uint32_t rt_symlink(const char *link, const char *target);
 uint32_t rt_open(uint32_t *handle, uint32_t obj_attr, uint32_t access, uint32_t share, uint32_t disposition,
                  uint32_t options, uint32_t *info);

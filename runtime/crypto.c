@@ -74,6 +74,15 @@ static void sha1_final(Sha1 *s, uint8_t out[20]) {
         out[4 * i + 2] = (uint8_t)(s->h[i] >> 8), out[4 * i + 3] = (uint8_t)s->h[i];
 }
 
+/* For the runtime itself (file.c: the installer's archives). */
+void rt_sha1(const uint8_t *p, size_t n, uint8_t out[20]) {
+    Sha1 s;
+    sha1_init(&s);
+    for (; n > 0x40000000u; p += 0x40000000u, n -= 0x40000000u) sha1_update(&s, p, 0x40000000u);
+    sha1_update(&s, p, (uint32_t)n);
+    sha1_final(&s, out);
+}
+
 /* The context is kept in guest memory between calls. */
 static void ctx_load(uint32_t a, Sha1 *s) {
     memcpy(s->h, xb_mem + a, 20);

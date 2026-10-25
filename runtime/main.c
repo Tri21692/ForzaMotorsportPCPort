@@ -144,6 +144,7 @@ static void load_xbe(const char *path) {
     }
 
     rt_image.base = base;
+    rt_image.size = img;
     rt_image.entry = e;
     rt_image.thunk = k;
     rt_image.tls_dir = le32(raw + 0x12C);
@@ -223,6 +224,7 @@ int main(int argc, char **argv) {
     rt_fibers_init();
     rt_crypto_init();
     rt_files_init();
+    rt_mods_installer_records();
     rt_hw_init();
     rt_nv2a_init();
     rt_apu_init();

@@ -21,15 +21,18 @@ Not Microsoft CABs. Layout, as read from the disc's files:
         data: one zlib stream per entry, or the bytes as they are when the
         packed size equals the unpacked size.
 
-media/cabs/Cars.ca2 is one of these, zlib-compressed whole; the installer
-unpacks it to the cache partition as cars.cab (hdd/Partition4): every
-car's physics, engine, liveries and config as XML.
+media/cabs/Cars.ca2 is one of these in zlib streams of 4 MB each, every
+stream padded to 2048 bytes; the installer unpacks it to the cache
+partition as cars.cab (hdd/Partition4): every car's physics, engine,
+liveries and config as XML. The executable checks each stream (the
+runtime rewrites those records for a .ca2 in the mods folder, file.c).
 
 Usage:
   python tools/forzacab.py list <file.cab>
   python tools/forzacab.py unpack <file.cab> <folder>
   python tools/forzacab.py pack <folder> <file.cab> [root path]
   python tools/forzacab.py replace <in.cab> <out.cab> <name>=<file>...   (names with / for the backslashes)
+  python tools/forzacab.py ca2 <file.cab> <out.ca2>   (as the disc's Cars.ca2)
 
 Header fields the packer writes: 0x0C is 1 when any entry is compressed;
 0x14 is the data start plus every unpacked size (the archive unpacked);
@@ -133,7 +136,23 @@ def pack(files, root=''):
     return bytes(head) + table + name_block + b''.join(blobs)
 
 
+def ca2(blob, chunk=4 << 20):
+    """An installer archive of `blob`, as the disc's .ca2: a zlib stream
+    per 4 MB, each padded with zeros to 2048 bytes."""
+    out = b''
+    for i in range(0, len(blob), chunk):
+        z = zlib.compress(blob[i:i + chunk], 9)
+        out += z + bytes(-len(z) % 2048)
+    return out
+
+
 def main(argv):
+    if len(argv) == 4 and argv[1] == 'ca2':
+        blob = ca2(open(argv[2], 'rb').read())
+        with open(argv[3], 'wb') as f:
+            f.write(blob)
+        print('%d bytes into %s' % (len(blob), argv[3]))
+        return
     if len(argv) >= 4 and argv[1] == 'pack':
         folder, out = argv[2], argv[3]
         root = argv[4] if len(argv) > 4 else ''

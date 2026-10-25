@@ -143,7 +143,7 @@ static int walk(const char *root, const char *rest, char *out, size_t n) {
  * disc's. Files only; directories are still listed from the disc. */
 static int mods_off;   /* set while an open that writes looks a path up: those go to the real file */
 static int from_mods;  /* the last host_path came from the mods folder */
-static int mod_file(const char *rest, char *out, size_t n) {
+static const char *mods_dir(void) {
     static char dir[1024];
     static int checked;
     if (!checked) {
@@ -155,6 +155,10 @@ static int mod_file(const char *rest, char *out, size_t n) {
         if (dir[0] && stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) rt_log("mods: %s\n", dir);
         else dir[0] = 0;
     }
+    return dir;
+}
+static int mod_file(const char *rest, char *out, size_t n) {
+    const char *dir = mods_dir();
     if (!dir[0] || mods_off) return 0;
     char path[1200];
     struct stat st;
@@ -162,6 +166,112 @@ static int mod_file(const char *rest, char *out, size_t n) {
     snprintf(out, n, "%s", path);
     from_mods = 1;
     return 1;
+}
+
+/* The disc's installer archives (the .ca2 in media/cabs; the tracks' .xb2 have
+ * such records too, and are not looked at): zlib
+ * streams of 4 MB each, padded to 2048 bytes, that the game unpacks to the
+ * cache partitions. The executable holds a record per stream (u32 offset,
+ * u32 length, the SHA-1 of what it inflates to) and refuses an archive that
+ * differs ("a problem with the disc"). For one in the mods folder, the disc
+ * file's records are found in the loaded image and rewritten to describe
+ * the mod's, when it has as many streams. */
+typedef struct {
+    uint32_t off, len;
+    uint8_t sha[20];
+} Stream;
+
+static int archive_streams(const char *path, Stream *out, int max, uint32_t *last) {
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    n = (size_t)ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *d = malloc(n ? n : 1), *raw = malloc(8 << 20);
+    int k = 0;
+    if (fread(d, 1, n, f) != n) k = -1;
+    fclose(f);
+    size_t off = 0;
+    while (k >= 0 && off + 2 <= n && d[off] == 0x78) {
+        size_t used;
+        long got = rt_inflate(d + off, n - off, raw, 8 << 20, &used);
+        if (got < 0 || k == max) {
+            k = -1;
+            break;
+        }
+        out[k].off = (uint32_t)off, out[k].len = (uint32_t)used;
+        rt_sha1(raw, (size_t)got, out[k].sha);
+        *last = (uint32_t)got;
+        k++;
+        off = (off + used + 2047) & ~(size_t)2047;
+    }
+    for (; k >= 0 && off < n; off++)
+        if (d[off]) k = -1; /* something that is not padding */
+    free(d), free(raw);
+    return k;
+}
+
+static void installer_records(const char *rel) {
+    char mod[1200], disc[1200];
+    if (!mod_file(rel, mod, sizeof mod) || !walk(disc_dir, rel, disc, sizeof disc)) return;
+    from_mods = 0;
+    Stream want[64], have[64];
+    uint32_t last_d = 0, last_m = 0;
+    int nd = archive_streams(disc, want, 64, &last_d);
+    if (nd <= 0) return; /* not one of the installer's archives */
+    uint8_t *img = xb_mem + rt_image.base, *at = NULL;
+    size_t span = nd * sizeof(Stream);
+    for (size_t i = 0; i + span <= rt_image.size && !at; i += 4)
+        if (!memcmp(img + i, want, span)) at = img + i;
+    if (!at) return;
+    /* Each archive also has an entry of five u32 in that section: two name
+     * offsets, its first record's index, the stream count and the last
+     * stream's unpacked size (the cache file's size is (count - 1) * 4 MB
+     * plus that). Found by the last two. */
+    uint32_t va = (uint32_t)(at - xb_mem), sva = 0, sraw = 0, hdr = 0, entry = 0;
+    uint32_t nsec = xb_rd32(rt_image.base + 0x11C), sec = xb_rd32(rt_image.base + 0x120);
+    for (uint32_t i = 0; i < nsec; i++) {
+        uint32_t s = sec + i * 0x38;
+        if (va >= xb_rd32(s + 4) && va < xb_rd32(s + 4) + xb_rd32(s + 16)) hdr = s, sva = xb_rd32(s + 4), sraw = xb_rd32(s + 16);
+    }
+    for (uint32_t a = sva; hdr && a + 8 <= sva + sraw; a += 4)
+        if (xb_rd32(a) == (uint32_t)nd && xb_rd32(a + 4) == last_d) entry = entry ? 1 : a + 4;
+    if (entry <= 1) {
+        fprintf(stderr, "xbrt: mods: %s: the installer's entry for it is not where it was expected; left as it is\n", mod);
+        return;
+    }
+    int nm = archive_streams(mod, have, 64, &last_m);
+    if (nm != nd) {
+        fprintf(stderr, "xbrt: mods: %s: %d zlib streams of 4 MB (the disc's has %d); the game will refuse it\n", mod, nm, nd);
+        return;
+    }
+    memcpy(at, have, span);
+    xb_wr32(entry, last_m);
+    /* and the section's digest in the image header, SHA-1 of its size and bytes, made anew */
+    uint8_t *buf = malloc(sraw + 4);
+    memcpy(buf, &sraw, 4);
+    memcpy(buf + 4, xb_mem + sva, sraw);
+    rt_sha1(buf, sraw + 4, xb_mem + hdr + 0x24);
+    free(buf);
+    fprintf(stderr, "xbrt: mods: %s passes the installer's check\n", mod);
+}
+
+void rt_mods_installer_records(void) {
+    const char *dir = mods_dir();
+    if (!dir[0]) return;
+    char path[1200];
+    walk(dir, "\\media\\cabs", path, sizeof path);
+    DIR *d = opendir(path);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        size_t len = strlen(e->d_name);
+        if (len < 4 || strcasecmp(e->d_name + len - 4, ".ca2")) continue;
+        char rel[300];
+        snprintf(rel, sizeof rel, "\\media\\cabs\\%s", e->d_name);
+        installer_records(rel);
+    }
+    if (d) closedir(d);
 }
 
 /* Find a host path for a device-relative name, matching each component
