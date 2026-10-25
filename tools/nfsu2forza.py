@@ -724,6 +724,32 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
         if part['name'].startswith(CABIN):
             fit_cabin(part, old_fit, new_fit, floor)
             done.append(part['name'] + '(fitted)')
+    # A cargo floor: black, both faces, across the hatch just under its lip,
+    # from inside the tail to behind the rear seats. The S13's hatch area is
+    # empty (the Civic's cabin ends at its seats), and through the rear glass
+    # the inside of the body showed untextured.
+    cargo = next((p for p in car['parts'] if p['name'].startswith('trunk') and p['name'].endswith('_LOD1')), None)
+    rear = next((p for p in car['parts'] if p['name'].startswith('glassR_') and any(sp['indices'] != [0, 0, 0] for sp in p['subparts'])), None)
+    if cargo and rear:
+        G = np.array([v[:3] for v in rear['verts']], float) / 4096
+        B = np.array([v[:3] for v in tbody['verts'] + cargo['verts']], float) / 4096
+        y = G[:, 1].min() - 0.03                                   # under the glass's lower edge
+        band = B[abs(B[:, 1] - y) < 0.05]                          # the shell at that height
+        z0 = band[:, 2].min() + 0.10                               # inside the hatch's lip
+        z1 = G[:, 2].max() - 0.45                                  # short of the rear seats
+        half = abs(G[:, 0]).max()                                  # as wide as the glass
+        corners = [(-half, y, z0), (half, y, z0), (half, y, z1), (-half, y, z1)]
+        base = len(cargo['verts'])
+        for x_, y_, z_ in corners:
+            cargo['verts'].append((int(round(x_ * 4096)), int(round(y_ * 4096)), int(round(z_ * 4096)), 0, 32767, 0, 255, 255, 0, 0) + dark)
+        quad = [(base, base + 1, base + 2), (base, base + 2, base + 3)]
+        quad += [(a, c, b) for a, b, c in quad]
+        if struct.unpack_from('<I', cargo['Damage'][1])[0]:
+            cargo['Damage'] = (cargo['Damage'][0], struct.pack('<I', len(cargo['verts'])) + b''.join(struct.pack('<6h', *v[:6]) for v in cargo['verts']))
+        tmpl = cargo['subparts'][0]
+        cargo['subparts'] += [{'version': tmpl['version'], 'id': lod, 'material': BODY, 'prim': 6, 'extra': bytes(16),
+                               'indices': strip(quad), 'tail': b''} for lod in sorted({sp['id'] for sp in cargo['subparts']})[:2]]
+        done.append('cargo floor at %.2f' % y)
     # The template's panel seams (Line chunks after the parts: polylines on its
     # body, drawn as thin blended lines) followed the Civic's hood, doors and
     # trunk lid, and floated off the new body as grey lines and bands; the
