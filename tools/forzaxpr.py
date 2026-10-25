@@ -109,5 +109,6 @@ def decode(path, outdir):
         o += 20; k += 1
 
 
-for p in sys.argv[2:]:
-    decode(p, sys.argv[1])
+if __name__ == '__main__':
+    for p in sys.argv[2:]:
+        decode(p, sys.argv[1])

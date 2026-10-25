@@ -224,3 +224,30 @@ scaling to int16 x 4096; normals to int16; triangle lists to strips (or
 strips of three); textures packed into one Forza atlas with the uvs moved
 into their places; and handling, sounds, damage shapes and the driver
 borrowed from a similar Forza car (its own 240SX for this one).
+
+## The converter (tools/nfsu2forza.py), first version (25 Oct)
+
+`python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass]`
+puts an NFSU car's stock body on a Forza car; `tools/carbin.py` reads and
+writes car.carbin (it rebuilds the disc's files byte for byte). Tested in
+races on the Civic SI and built on Forza's 240SX for driving. What the game
+needs, learned the hard way:
+
+- A subpart's id is its detail level (1 nearest, 2-4 further, 5 on the
+  body): numbered 0, 1, 2 ..., most of the car was never drawn up close.
+- Forza strips wind opposite to NFSU's triangles once the axes are swapped
+  (Forza = 1.70 x (-y, z, x) for the 240SX); the two cancel, so triangles
+  keep NFSU's order. Reversed, every panel was inside out.
+- Texture coordinates matter even for paint: one fixed "white" spot drew
+  the body black. Each new vertex copies the uv and shading bytes of the
+  nearest template vertex of the same material.
+- One subpart per detail level and material (as Forza's own).
+- Parts that had a damage shape keep one (the undamaged shape for now).
+- The NFSU shader 12c9453c is the roof, pillars and hatch (paint); the
+  side windows are holes in the NFSU model. On a taller template the
+  template's glass stands out of the roof, so it is hidden; on the 240SX
+  it fits and is kept (`--keep-glass`), all but the headlight glass.
+- Still to do: glass of the NFSU car's own (as Window it drew fully clear),
+  the roof's colour (it picks up dark texels), real damage shapes, the
+  NFSU textures in the atlas (lights, badges), wheels, and body kits as
+  Forza's bumper and skirt variants.

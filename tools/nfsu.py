@@ -55,12 +55,14 @@ def read(path):
         for pid, po, psize in chunks(d, o, o + size):
             if pid != 0x80134010:
                 continue
-            part = {'name': '', 'textures': [], 'verts': [], 'tris': [], 'groups': []}
+            part = {'name': '', 'textures': [], 'shaders': [], 'verts': [], 'tris': [], 'groups': []}
             for sid, so, ssize in chunks(d, po, po + psize):
                 if sid == 0x00134011:
                     part['name'] = d[so + 0x94:d.index(b'\0', so + 0x94)].decode('latin-1')
                 elif sid == 0x00134012:
                     part['textures'] = list(struct.unpack_from('<%dI' % (ssize // 4), d, so)[::2])
+                elif sid == 0x00134013:
+                    part['shaders'] = list(struct.unpack_from('<%dI' % (ssize // 4), d, so)[::2])
                 elif sid == 0x80134100:
                     for mid, mo, msize in chunks(d, so, so + ssize):
                         if mid == 0x00134b01:

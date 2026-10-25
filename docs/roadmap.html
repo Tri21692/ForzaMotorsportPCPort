@@ -66,9 +66,9 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
 
   <div class="strip">
     <div><b>10</b><span>tasks left</span></div>
-    <div><b>57–112 h</b><span>estimated work in total</span></div>
+    <div><b>53–104 h</b><span>estimated work in total</span></div>
     <div><b>9–17</b><span>nights at the nightly task's pace (11 pm–8 am)</span></div>
-    <div><b>4</b><span>waiting on you</span></div>
+    <div><b>5</b><span>waiting on you</span></div>
   </div>
 
   <section>
@@ -117,7 +117,7 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
           <tr><td class="task"><b>Mods folder</b><span>A <code>mods</code> folder beside the game: a file there loads instead of the disc's copy (replace a car to test quickly).</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Decode Forza's car format</b><span>Started 25 Oct: the archives unpack, the model's parts, vertices and triangles are read (the 240SX renders correctly), and handling is plain XML. Materials, livery textures, damage shapes, hinges and the archive name hash are decoded too. Cabs can be repacked (byte-identical to the disc's), and a recoloured Civic loaded from the mods folder showed green in the game. Left: light flares and a few unknown fields. See docs/research/cars.md.</span></td><td><span class="pill next">In progress</span></td><td class="est">5–10 h</td></tr>
           <tr><td class="task"><b>Read NFS Underground cars</b><span>Done 25 Oct: tools/nfsu.py reads the parts (vertices, triangles, texture groups) and the JDLZ-compressed textures; the stock 240SX renders whole and textured.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
-          <tr><td class="task"><b>Converter</b><span>NFSU parts into a Forza car, with handling, engine and sound from a similar Forza car (e.g. Forza's own 240SX). Milestone: your NFSU 240SX driving in place of Forza's.</span></td><td><span class="pill later">Later</span></td><td class="est">10–20 h</td></tr>
+          <tr><td class="task"><b>Converter</b><span>First version 25 Oct: the NFSU 240SX body on Forza's 240SX (and Civic), painted with the livery, its own lights, Forza's handling. Left: its own glass, textures in the atlas, dents, wheels, body kits.</span></td><td><span class="pill wait">Your check</span></td><td class="est">6–12 h</td></tr>
           <tr><td class="task"><b>Add cars as new entries</b><span>Decode the car list (Cars.ca2, Mega.ca2) so a mod adds a car with its own slot, icon, liveries and sound instead of replacing one. Converted cars stay in your own copy; they can't ship with the port.</span></td><td><span class="pill later">Later</span></td><td class="est">15–30 h</td></tr>
 
           <tr class="group"><td colspan="3">Hardware and release</td></tr>
