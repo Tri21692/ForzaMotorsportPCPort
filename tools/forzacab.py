@@ -1,4 +1,4 @@
-"""Forza Motorsport's .cab archives (media/cabs/car_*.cab and others).
+r"""Forza Motorsport's .cab archives (media/cabs/car_*.cab and others).
 
 Not Microsoft CABs. Layout, as read from the disc's files:
 
@@ -9,11 +9,15 @@ Not Microsoft CABs. Layout, as read from the disc's files:
   0x10  u32 file size
   0x14  u32 total unpacked size (a little over the entries' sum)
   0x18  u32, u32 (equal; meaning unknown)
-  ...   zeros up to 0x12E
-  0x12E entries, 24 bytes each, sorted by hash:
-          u32 hash of the name, u32 offset of the data in the file,
-          u32 packed size, u32 unpacked size, u32 name offset, u32 0
-  then  u32 (unknown), the names (NUL-terminated, backslashes), and the
+  0x30  u16 1
+  0x32  the archive's root path, NUL-terminated: empty in car cabs,
+        engines\eng_c5r427\ in a shared engine cab (names are relative to it)
+  ...   zeros up to 0x132
+  0x132 entries, 24 bytes each, sorted by hash:
+          u32 offset of the data in the file, u32 packed size, u32
+          unpacked size, u32 name offset, u32 0, u32 hash of the name
+          (name_hash below)
+  then  the names (NUL-terminated, backslashes), and the
         data: one zlib stream per entry, or the bytes as they are when the
         packed size equals the unpacked size.
 
@@ -31,8 +35,43 @@ import sys
 import zlib
 
 MAGIC = 0xC0C0AAAA
-TABLE = 0x12E
+TABLE = 0x132
 ENTRY = 24
+
+
+def name_hash(name):
+    """Bob Jenkins' lookup2 (initial value 0) of the root path and name,
+    lower-cased, backslashes kept, as the game's cab lookup (0x103630)
+    computes it."""
+    k = name.lower().encode('latin-1')
+    M = 0xFFFFFFFF
+
+    def mix(a, b, c):
+        a = (a - b - c) & M; a ^= c >> 13
+        b = (b - c - a) & M; b ^= (a << 8) & M
+        c = (c - a - b) & M; c ^= b >> 13
+        a = (a - b - c) & M; a ^= c >> 12
+        b = (b - c - a) & M; b ^= (a << 16) & M
+        c = (c - a - b) & M; c ^= b >> 5
+        a = (a - b - c) & M; a ^= c >> 3
+        b = (b - c - a) & M; b ^= (a << 10) & M
+        c = (c - a - b) & M; c ^= b >> 15
+        return a, b, c
+    a = b = 0x9E3779B9
+    c = 0
+    i = 0
+    while len(k) - i >= 12:
+        a = (a + int.from_bytes(k[i:i + 4], 'little')) & M
+        b = (b + int.from_bytes(k[i + 4:i + 8], 'little')) & M
+        c = (c + int.from_bytes(k[i + 8:i + 12], 'little')) & M
+        a, b, c = mix(a, b, c)
+        i += 12
+    c = (c + len(k)) & M
+    for j, ch in enumerate(k[i:]):
+        if j >= 8: c = (c + (ch << (8 * (j - 7)))) & M
+        elif j >= 4: b = (b + (ch << (8 * (j - 4)))) & M
+        else: a = (a + (ch << (8 * j))) & M
+    return mix(a, b, c)[2]
 
 
 def read(path):
@@ -40,12 +79,13 @@ def read(path):
     magic, version, count = struct.unpack_from('<3I', d, 0)
     if magic != MAGIC:
         raise SystemExit('%s: not a Forza cab (magic %08x)' % (path, magic))
-    names_at = TABLE + ENTRY * count + 4
+    names_at = TABLE + ENTRY * count
+    root = d[0x32:d.index(b'\0', 0x32)].decode('latin-1')
     entries = []
     for i in range(count):
-        h, off, packed, size, name_off, _ = struct.unpack_from('<6I', d, TABLE + ENTRY * i)
+        off, packed, size, name_off, _, h = struct.unpack_from('<6I', d, TABLE + ENTRY * i)
         end = d.index(b'\0', names_at + name_off)
-        entries.append({'hash': h, 'offset': off, 'packed': packed, 'size': size,
+        entries.append({'hash': h, 'offset': off, 'packed': packed, 'size': size, 'root': root,
                         'name': d[names_at + name_off:end].decode('latin-1')})
     return d, version, entries
 

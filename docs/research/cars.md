@@ -32,15 +32,23 @@ Not a Microsoft CAB. Little-endian throughout:
 | 0x10 | file size |
 | 0x14 | total unpacked size (a little over the entries' sum) |
 | 0x18 | two equal u32s, meaning unknown |
-| 0x12E | entries, 24 bytes each, sorted by hash |
+| 0x30 | u16 1 |
+| 0x32 | the root path, NUL-terminated: empty in car cabs, `engines\eng_c5r427\` in a shared engine cab |
+| 0x132 | entries, 24 bytes each, sorted by hash |
 
-An entry is: u32 name hash, u32 data offset (from the start of the file),
-u32 packed size, u32 unpacked size, u32 name offset, u32 0. After the table
-come a u32 (unknown) and the names, NUL-terminated, with backslashes
+The game reads the first 0x12E bytes as the header (0x103890 for version
+14, 0x103910 for 15). An entry is: u32 data offset (from the start of the
+file), u32 packed size, u32 unpacked size, u32 name offset, u32 0, u32
+name hash. The names follow the table, NUL-terminated, with backslashes
 (`cars\nissan240sx\car.carbin`); name offsets count from the first name.
 Each entry's data is a zlib stream, or stored as is when the packed size
-equals the unpacked size. The hash function is not identified yet; it is
-needed to write new cabs.
+equals the unpacked size.
+
+The hash is Bob Jenkins' lookup2 with initial value 0, over the root path
+and name, lower-cased (the lookup at 0x103630 copies the name, lower-cases
+it through `std::transform`, and hashes it at 0x103290). It matches all
+48,049 entries in the disc's 239 cabs and the three cache cabs;
+`forzacab.name_hash` computes it.
 
 ## car_nissan240sx.cab (122 entries)
 
@@ -58,9 +66,15 @@ needed to write new cabs.
 A chunk is u32 size (its whole length), u32 version, a NUL-terminated name,
 then its contents. The file is one chunk, `Car` (version 3):
 
-- `Attribs` (version 1, 0x48 bytes): a count (1) of five-float... records
-  (positions; not decoded).
-- `Driver` (version 1): the driver's position (floats).
+- `Attribs` (version 1, 0x48 bytes): u32 1, u32 5, then floats in mirrored
+  left/right pairs (positions; not decoded further).
+- `Driver` (version 1): 15 floats, positions for the shared driver's IK
+  targets (seat, hands on the wheel, feet). The driver itself is one skinned
+  model for every car, `drivers\driver.bin` in `Mega.ca2` with its skeleton
+  in `temp\driver.xml` (butt, chest, shoulders, hands, feet, head); the
+  car's own limb parts (`Head`, `Chest`, `Left_Thigh` ...) are 32-vertex
+  boxes with no pivots. A converted car can keep its donor's `Driver` chunk
+  and limb parts.
 - u32 part count (84 on the 240SX), then that many `Part` chunks (version 3).
 - `Flare` records after the parts (light flares; not decoded).
 
@@ -70,8 +84,19 @@ A part: u32 (unknown), a length-prefixed name, two u32s, then:
   z runs along the car), int16 normal x, y, z (unit length / 32768), 4 bytes
   (two equal bytes and two zeros: likely shading or ambient occlusion), u16
   u, v.
-- `Damage`, `Pivots`, `Attributes` blocks (not decoded; the driver's limbs
-  are in their own space, so the pivots place them).
+- Three chunks (version 0), in this order:
+  - `Damage`: u32 count, 0 or the part's vertex count, then 12 bytes a
+    vertex: int16 position and int16 unit normal of the crushed shape, which
+    the game blends towards in a crash. Body panels, bumpers, skirts, lights
+    and the hood have one; glass, the interior, mirrors and brakes do not.
+  - `Pivots`: u32 count (0 or 1), then a hinge for parts that swing or hang
+    loose when damaged (hood, mirrors, wings, exhaust, some bumpers): float3
+    hinge point in the car's space (the rear bumper's at z = -1.94), float3 x
+    3 axes, two small angle limits (0.02, 0.04), two spring constants (200 on
+    bumpers, 120 on wings, 130 on mirrors and the hood) and two dampings (2).
+  - `Attributes`: three floats, (1, 0, 0) on fixed parts and (1, 0.2, x) on
+    hinged ones; x (3 on the rear bumper, 0.1 on mirrors and race wings, 0.8
+    on the exhaust) is likely how easily it breaks off.
 - u32 subpart count, then `Subpart` chunks (version 2): u32 subpart id, u32
   material (1-35 on the 240SX), u32 primitive (always 6: the Xbox's
   triangle strip), u32 index count, 16 bytes (unknown; sometimes a float),
@@ -146,8 +171,8 @@ XML, at four upgrade levels (`l0`-`l3`) where parts can be upgraded:
 
 - Which materials take a shared texture or only shader colours (the tail
   lights rendered pale from the atlas alone).
-- The 16 bytes in each subpart, the `Damage`, `Pivots` and `Attributes`
-  blocks, `Attribs`, `Driver` and `Flare`.
-- The cab name hash.
+- The 16 bytes in each subpart, the u32 at the start of each part (it looks
+  like an id: `33a72b01` to `33b92b01` across the wings), `Attribs` and
+  `Flare`.
 - How the game builds its car list (the list of names, prices, classes and
   icons), for adding cars rather than replacing them.
