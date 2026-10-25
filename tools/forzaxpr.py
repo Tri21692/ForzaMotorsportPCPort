@@ -70,6 +70,53 @@ def dxt(data, w, h, kind):
     return out[:h, :w]
 
 
+def encode_dxt5(img):
+    """RGBA (h, w, 4), sides multiples of 4 -> DXT5 blocks, row by row: the
+    colours' bounding box as end points (four-colour mode), alpha from its
+    minimum to maximum in eight steps."""
+    h, w, _ = img.shape
+    px = img.reshape(h // 4, 4, w // 4, 4, 4).transpose(0, 2, 1, 3, 4).reshape(-1, 16, 4).astype(np.int32)
+    out = np.zeros((len(px), 16), np.uint8)
+    a = px[:, :, 3]
+    a0, a1 = a.max(1), a.min(1)
+    ap = np.stack([a0, a1] + [((8 - i) * a0 + (i - 1) * a1) // 7 for i in range(2, 8)], 1)
+    asel = np.abs(a[:, :, None] - ap[:, None, :]).argmin(2).astype(np.int64)
+    asel[a0 == a1] = 0
+    out[:, 0], out[:, 1] = a0, a1
+    ab = sum(asel[:, i] << (3 * i) for i in range(16))
+    for i in range(6): out[:, 2 + i] = (ab >> (8 * i)) & 255
+    rgb = px[:, :, :3]
+    hi, lo = rgb.max(1), rgb.min(1)
+    q = lambda c: (c[:, 0] * 31 // 255) << 11 | (c[:, 1] * 63 // 255) << 5 | (c[:, 2] * 31 // 255)
+    c0, c1 = q(hi), q(lo)
+    swap = c0 < c1
+    c0, c1 = np.where(swap, c1, c0), np.where(swap, c0, c1)
+    p0, p1 = rgb565(c0).astype(np.int32), rgb565(c1).astype(np.int32)
+    pal = np.stack([p0, p1, (2 * p0 + p1) // 3, (p0 + 2 * p1) // 3], 1)
+    sel = ((rgb[:, :, None, :] - pal[:, None, :, :]) ** 2).sum(3).argmin(2).astype(np.int64)
+    sel[c0 == c1] = 0
+    out[:, 8], out[:, 9], out[:, 10], out[:, 11] = c0 & 255, c0 >> 8, c1 & 255, c1 >> 8
+    bits = sum(sel[:, i] << (2 * i) for i in range(16))
+    for i in range(4): out[:, 12 + i] = (bits >> (8 * i)) & 255
+    return out.tobytes()
+
+
+def textures(d):
+    """The texture resources of an XPR0 pack: dicts of width, height,
+    depth, format byte, mip levels and the data's offset in the file."""
+    hdr = struct.unpack_from('<I', d, 8)[0]
+    out, o = [], 12
+    while struct.unpack_from('<I', d, o)[0] != 0xFFFFFFFF:
+        common, data, _, fmt, _ = struct.unpack_from('<5I', d, o)
+        if (common >> 16) & 7 == 4:
+            dims = (fmt >> 4) & 15
+            out.append({'w': 1 << ((fmt >> 20) & 15), 'h': 1 << ((fmt >> 24) & 15),
+                        'd': 1 << ((fmt >> 28) & 15) if dims == 3 else 1, 'format': (fmt >> 8) & 0xFF,
+                        'mips': (fmt >> 16) & 15, 'start': hdr + data})
+        o += 20
+    return out
+
+
 def decode(path, outdir):
     d = open(path, 'rb').read()
     magic, total, hdr = struct.unpack_from('<4sII', d, 0)

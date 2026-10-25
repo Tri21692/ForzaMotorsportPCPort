@@ -255,8 +255,31 @@ needs, learned the hard way:
   its own texture, not the livery: in the Civic's body part, with paint
   coordinates, Window drew fully clear. `--keep-glass` keeps the
   template's glass instead.
-- Still to do: real damage shapes, the NFSU textures in the atlas
-  (lights, badges), wheels, and body kits as Forza's bumper and skirt
+- The NFSU car's own textures (lights, badges) go into the livery atlas
+  (`pack_atlas`): Civic's atlas is badges on clear texels (clear shows the
+  paint), so there is room. livery0hi.xpr (1024, DXT5, 11 mips) is what the
+  car-select screen draws; livery0.xpr (512, DXT5, two slices: clean and
+  damaged, each block's slices together) and livery0nc.xpr (the same,
+  swizzled BGRA) are the race's. Free room is judged on the clean slice
+  and the hi atlas only: the damaged slice is scratches laid out for the
+  Civic's own body. Only the 4x4 blocks touched are encoded again
+  (`forzaxpr.encode_dxt5`); the paint and black texels are kept clear of.
+- The body and hatch get a black inside (copies facing in, set in about a
+  centimetre): drawn from outside only, the far side of the S13's empty
+  hatch area was missing through the quarter windows and the studio showed
+  through. On the panels themselves the copies speckled the paint black
+  (they fought the outside in the shadow map).
+- 19 triangles of the 240SX's roof are wound against their normals (NFSU
+  draws both sides); they are turned to face their normals.
+- The template's cabin (interior, cage, bands, steering wheel) is fitted
+  into the new shell (body, hood, trunk and the glass) by height and by
+  width, then anything still outside is pulled in: the Civic's cabin is
+  wider and longer than the S13's greenhouse and poked through its roof
+  edge and hatch.
+- Every template wing becomes the NFSU car's own spoiler; the Civic's
+  floated behind the hatch. Its badges are hidden.
+- Still to do: small dark marks on the rear quarters and rear panel, real
+  damage shapes, wheels, and body kits as Forza's bumper and skirt
   variants.
 
 ### The missing roof (solved, 25 Oct)

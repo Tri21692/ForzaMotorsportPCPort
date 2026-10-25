@@ -8,7 +8,7 @@ of its body parts with the NFSU car's stock (KIT00, finest detail) parts:
   bumperF*  <- FRONT_BUMPER         bumperR*  <- REAR_BUMPER
   skirtL* / skirtR*                 <- SKIRT, its left and right halves
   headlightL/R, taillightL/R        <- HEADLIGHT, BRAKELIGHT halves
-  mirrorL/R <- LEFT/RIGHT_SIDE_MIRROR
+  mirrorL/R <- LEFT/RIGHT_SIDE_MIRROR   wing* (every one) <- SPOILER
 
 NFSU is x forward, y left, z up in metres; Forza is x right, y up, z
 forward. The NFSU car is scaled and moved so its body's length and its
@@ -42,6 +42,7 @@ WHITE_UV = (int(0.55 * 65536), int(0.55 * 65536))  # blank (paint) area of the l
 BODY, WINDOW, TAILLIGHTS, HEADLIGHTS, BLACKGLASS, CHROME, BLACK, REDGLASS = 1, 2, 3, 4, 6, 7, 9, 16
 WINDOWS = -1  # the converter's own: Body material on an opaque black texel
 PLASTIC, BADGE, HEADLIGHTGLASS = 20, 26, 30
+INSET = int(0.02 * 4096)  # how far a panel's black inside sits in from it, carbin units (about a centimetre)
 CABIN = ('interior', 'bands', 'cage', 'steering_wheel')  # template parts fitted under the new roof
 
 
@@ -128,6 +129,104 @@ def window_panes(parts):
     return panes
 
 
+def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4):
+    """Put NFSU textures ({hash: RGBA}) into free (fully clear) room of the
+    template's livery atlas: livery0nc.xpr and livery0.xpr (512x512, both
+    slices, clean and damaged) and livery0hi.xpr (1024x1024, every mip
+    level), writing the three to out_dir. Only the 4x4 blocks touched are
+    encoded again. Each texture gets `pad` texels of its own edge round it
+    (filtering and mip levels would blend in the clear room). Returns
+    {hash: (u0, v0, u1, v1)}, the texel centres of its corners in 0..1.
+    keep: (u, v) spots (u16) that must stay as they are, such as the paint
+    texel, which is clear too."""
+    import numpy as np
+    import forzaxpr as fx
+    names = ('livery0nc.xpr', 'livery0.xpr', 'livery0hi.xpr')
+    files = {n: bytearray(open(os.path.join(livery_dir, n), 'rb').read()) for n in names}
+    nc = fx.textures(files['livery0nc.xpr'])[0]
+    vol = fx.textures(files['livery0.xpr'])[0]
+    hi = fx.textures(files['livery0hi.xpr'])[0]
+    W, H, D = nc['w'], nc['h'], nc['d']
+    assert (vol['w'], vol['h'], vol['d'], vol['format'], nc['format'], hi['format']) == (W, H, D, 0x0F, 0x06, 0x0F)
+    assert hi['w'] == 2 * W and hi['h'] == 2 * H
+    sw = fx.unswizzle_index(W, H, D)
+    raw = np.frombuffer(bytes(files['livery0nc.xpr'][nc['start']:nc['start'] + W * H * D * 4]), np.uint8).reshape(-1, 4).copy()
+    ncimg = raw[sw][..., [2, 1, 0, 3]]  # D, H, W, RGBA
+    n = (W // 4) * (H // 4)
+    vblocks = np.frombuffer(bytes(files['livery0.xpr'][vol['start']:vol['start'] + n * D * 16]), np.uint8).reshape(n, D, 16).copy()
+    volimg = np.stack([fx.dxt(vblocks[:, z].tobytes(), W, H, 5) for z in range(D)])
+    hiimg = fx.dxt(bytes(files['livery0hi.xpr'][hi['start']:]), 2 * W, 2 * H, 5).copy()
+    # Free room: clear in the clean slice and the hi atlas. The damaged
+    # slice is scratches laid out for the template's own body, which the
+    # new body does not follow (it takes one paint texel), so it may go.
+    used = (ncimg[0, ..., 3] > 0) | (volimg[0, ..., 3] > 0) | (hiimg[..., 3].reshape(H, 2, W, 2) > 0).any((1, 3))
+    for u, v in keep:
+        x, y = u * W // 65536, v * H // 65536
+        used[max(0, y - 8):y + 8, max(0, x - 8):x + 8] = True
+    rects, where = {}, {}
+    for h in sorted(images, key=lambda h: -images[h].shape[0] * images[h].shape[1]):
+        img = images[h]
+        th, tw = img.shape[0] + 2 * pad, img.shape[1] + 2 * pad
+        th, tw = (th + 3) // 4 * 4, (tw + 3) // 4 * 4
+        spot = next(((x, y) for y in range(0, H - th + 1, 4) for x in range(0, W - tw + 1, 4)
+                     if not used[y:y + th, x:x + tw].any()), None)
+        if spot is None: raise SystemExit('no room in the livery atlas for a %dx%d texture' % img.shape[:2])
+        x, y = spot
+        used[y:y + th, x:x + tw] = True
+        big = np.pad(img, ((pad, th - img.shape[0] - pad), (pad, tw - img.shape[1] - pad), (0, 0)), mode='edge')
+        ncimg[:, y:y + th, x:x + tw] = big
+        volimg[:, y:y + th, x:x + tw] = big
+        hiimg[2 * y:2 * (y + th), 2 * x:2 * (x + tw)] = big.repeat(2, 0).repeat(2, 1)
+        rects[h] = (x, y, tw, th)
+        ih, iw = img.shape[:2]
+        where[h] = ((x + pad + 0.5) / W, (y + pad + 0.5) / H, (x + pad + iw - 0.5) / W, (y + pad + ih - 0.5) / H)
+    # livery0nc: swizzled BGRA, every slice
+    raw[sw.reshape(-1)] = ncimg[..., [2, 1, 0, 3]].reshape(-1, 4)
+    files['livery0nc.xpr'][nc['start']:nc['start'] + raw.size] = raw.tobytes()
+    # livery0: DXT5, each block's slices together
+    for x, y, tw, th in rects.values():
+        for z in range(D):
+            enc = np.frombuffer(fx.encode_dxt5(np.ascontiguousarray(volimg[z, y:y + th, x:x + tw])), np.uint8).reshape(th // 4, tw // 4, 16)
+            for by in range(th // 4):
+                b0 = (y // 4 + by) * (W // 4) + x // 4
+                vblocks[b0:b0 + tw // 4, z] = enc[by]
+    files['livery0.xpr'][vol['start']:vol['start'] + vblocks.size] = vblocks.tobytes()
+    # livery0hi: DXT5 with its mip levels, made again by halving where the textures went
+    level, off, s = hiimg.astype(np.float32), hi['start'], 2 * W
+    for lv in range(hi['mips']):
+        bs = max(1, s // 4)
+        if lv:
+            level = level.reshape(s, 2, s, 2, 4).mean((1, 3))
+        img = np.clip(level + 0.5, 0, 255).astype(np.uint8)
+        if s < 4: img = np.pad(img, ((0, 4 - s), (0, 4 - s), (0, 0)), mode='edge')
+        for x, y, tw, th in rects.values():
+            k = s / W  # this level's texels per 512-texel
+            bx0, by0 = int(x * k) // 4, int(y * k) // 4
+            bx1, by1 = min(bs, -(-int((x + tw) * k) // 4)), min(bs, -(-int((y + th) * k) // 4))
+            bx1, by1 = max(bx1, bx0 + 1), max(by1, by0 + 1)
+            enc = fx.encode_dxt5(np.ascontiguousarray(img[4 * by0:4 * by1, 4 * bx0:4 * bx1]))
+            for by in range(by1 - by0):
+                row = enc[16 * (bx1 - bx0) * by:16 * (bx1 - bx0) * (by + 1)]
+                o = off + 16 * ((by0 + by) * bs + bx0)
+                files['livery0hi.xpr'][o:o + len(row)] = row
+        off += bs * bs * 16
+        s = max(1, s // 2)
+    os.makedirs(out_dir, exist_ok=True)
+    for name, data in files.items():
+        open(os.path.join(out_dir, name), 'wb').write(bytes(data))
+    return where
+
+
+def nfsu_rgba(t):
+    """An NFSU texture's top level as RGBA."""
+    import numpy as np
+    import forzaxpr as fx
+    w, h = t['width'], t['height']
+    if t['fourcc'] in ('DXT1', 'DXT3', 'DXT5'):
+        return fx.dxt(t['data'], w, h, int(t['fourcc'][3]))
+    return np.frombuffer(t['data'][:w * h * 4], np.uint8).reshape(h, w, 4)[..., [2, 1, 0, 3]]
+
+
 def dark_uv(xpr_path):
     """An opaque black texel of the template's livery atlas (slice 0), in
     the middle of a black patch, as u16 u, v. Body material blends paint and
@@ -187,6 +286,14 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
     paint = (door[10], door[11])
     print('paint: texel at u, v = %.3f, %.3f' % (paint[0] / 65536, paint[1] / 65536))
     print('windows: black texel at u, v = %.3f, %.3f' % (dark[0] / 65536, dark[1] / 65536))
+    # The NFSU car's own textures (lights, badges) go into the livery atlas,
+    # written beside the output (liveries/standard).
+    own = {th for key in ('BODY', 'ROOF', 'HOOD', 'TRUNK', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT', 'HEADLIGHT', 'BRAKELIGHT', 'LEFT_SIDE_MIRRO', 'RIGHT_SIDE_MIRR')
+           for p in find(key) for th in p['textures'] if th in textures}
+    livery_dir = os.path.join(os.path.dirname(template_path), 'liveries', 'standard')
+    atlas = pack_atlas({h: nfsu_rgba(textures[h]) for h in own}, livery_dir,
+                       os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), keep=[paint, dark])
+    print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
     def pos(v):
         x, y, z = -k * v[1], k * v[2] + dy, k * v[0] + dz
@@ -196,13 +303,16 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
         x, y, z = -v[4], v[5], v[3]
         return [max(-32768, min(32767, int(round(c * 32767)))) for c in (x, y, z)]
 
-    def build(sources, side=0, glass=None):
+    def build(sources, side=0, glass=None, inner=False):
         """Forza vertices and subparts from NFSU parts (lists of detail
         levels, finest first); side -1/+1 keeps the triangles on the car's
         left/right (Forza x < 0 / > 0) only. A subpart's id is its detail
         level, 1 the finest: numbered otherwise, most of them were never
         drawn up close. glass=False leaves the windows out, glass=True keeps
-        only them (as Window)."""
+        only them (as Window). inner=True gives the panels a black inside
+        (copies facing in): drawn from outside only, the far side of the
+        body was missing through the windows, and the studio showed
+        through the 240SX's empty hatch area."""
         verts, subs = [], []
         for lod, p in [(i + 1, lv) for src in sources for i, lv in enumerate(src[:4])]:
             base = len(verts)
@@ -222,6 +332,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                     if side:
                         cx = sum(-p['verts'][i][1] for i in (a, b, c))
                         if (cx < 0) != (side < 0): continue
+                    va, vb, vc = (p['verts'][i] for i in (a, b, c))
+                    e1 = [vb[k] - va[k] for k in range(3)]; e2 = [vc[k] - va[k] for k in range(3)]
+                    g = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+                    if sum(g[k] * (va[3 + k] + vb[3 + k] + vc[3 + k]) for k in range(3)) < 0:
+                        b, c = c, b  # wound against its normals (19 on the 240SX's roof): NFSU drew them anyway; here they were holes, and their black insides stood out
                     tris.append((base + a, base + b, base + c))  # the axis swap mirrors them and Forza's strips wind the other way: the two cancel
                 m = material_for(names.get(th, ''), sh)
                 is_glass = m in (WINDOW, BLACKGLASS)
@@ -235,8 +350,24 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                 if glass:  # windows drawn from both sides: NFSU's face either way
                     m = WINDOW
                     tris = tris + [(x, z, y) for x, y, z in tris]
+                if tris and th in atlas:  # its texture is in the livery atlas: its own coordinates, moved there
+                    u0, v0, u1, v1 = atlas[th]
+                    for i in {i for t in tris for i in t}:
+                        nv = p['verts'][i - base]
+                        u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)
+                        verts[i] = verts[i][:10] + (int((u0 + u * (u1 - u0)) * 65536), int((v0 + v * (v1 - v0)) * 65536), 'atlas')
                 if tris:
                     subs.append((lod, m, strip(tris)))
+                if tris and inner and m != WINDOW:
+                    flip = {}
+                    for i in sorted({i for t in tris for i in t}):
+                        v = verts[i]
+                        flip[i] = len(verts)
+                        # set in along the normal: on the panel itself it fought it in
+                        # the shadow map and speckled the paint black
+                        verts.append(tuple(int(round(q - c * INSET / 32767)) for q, c in zip(v[:3], v[3:6]))
+                                     + tuple(-c for c in v[3:6]) + tuple(v[6:12]))
+                    subs.append((lod, WINDOWS, strip([(flip[a], flip[c], flip[b]) for a, b, c in tris])))
         # drop vertices no triangle uses, so mirrored halves stay small
         used = sorted({i for _, _, s in subs for i in s})
         remap = {o: n for n, o in enumerate(used)}
@@ -289,9 +420,10 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
             def tex(i, j):
                 if Qm[i] == WINDOWS: return tuple(old[j][6:10]) + dark
                 if Qm[i] == BODY: return (255, 255, 0, 0) + paint  # one known paint texel, full shading: copied, panels near the template's windows came out black or clear
+                if len(verts[i]) > 12: return tuple(old[j][6:10]) + verts[i][10:12]  # its own texture, packed into the atlas
                 return tuple(old[j][6:12])
             verts = [v[:6] + tex(i, j) for i, (v, j) in enumerate(zip(verts, near))]
-        part['verts'] = verts
+        part['verts'] = [v[:12] for v in verts]
         # A part that had a damage shape keeps one, the same as the car
         # undamaged (so no dents yet): left empty, the game drew those parts
         # black and partly see-through, as if it lights them from it.
@@ -319,19 +451,44 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
             if hs: return max(hs)
         return None
 
-    def fit_cabin(part, old_roof, new_roof, floor):
+    def sides(verts, cell=0.15):
+        """The widest shell vertex (|x|) in each cell of the car's side view
+        (y, z cells of `cell`), in carbin units."""
+        top = {}
+        for v in verts:
+            c = (int(v[1] / 4096 // cell), int(v[2] / 4096 // cell))
+            top[c] = max(top.get(c, -1e9), abs(v[0]) / 4096)
+        return top, cell
+
+    def shell():
+        """The outside of the car the cabin must fit in: the body, hood and
+        trunk, and the glass that is drawn."""
+        out = []
+        for p in car['parts']:
+            n = p['name']
+            if n.startswith(('body', 'hood', 'trunk')) and n.endswith('_LOD1') or                     n.startswith('glass') and 'HL_' not in n and any(sp['indices'] != [0, 0, 0] for sp in p['subparts']):
+                out += p['verts']
+        return out
+
+    def fit_cabin(part, old, new, floor, margin=0.03):
         """Squash a template part inside the cabin (the interior, the cage)
-        under the new roof: each vertex keeps its share of the height
-        between the floor and the roof above it. The Civic's black headliner
-        stood out of the 240SX's lower roof and covered it, so the roof drew
-        black from above."""
+        into the new shell: each vertex keeps its share of the height between
+        the floor and the roof (or glass) above it, then of the width at
+        that height; what still stands out is pulled in to just inside. The
+        Civic's black headliner stood out of the 240SX's lower roof and
+        covered it, and its wider, longer cabin poked through the S13's
+        pillars, roof edge and hatch."""
+        (old_roof, old_side), (new_roof, new_side) = old, new
         def move(v):
-            x, z = v[0] / 4096, v[2] / 4096
+            x, y, z = v[0] / 4096, v[1] / 4096, v[2] / 4096
+            if y <= floor: return v
             t, n = height(old_roof, x, z), height(new_roof, x, z)
-            y = v[1] / 4096
-            if t is None or n is None or n >= t or y <= floor: return v
-            y = floor + (y - floor) * (n - floor) / (t - floor)
-            return (v[0], int(round(y * 4096))) + tuple(v[2:])
+            ny = floor + (y - floor) * (n - floor) / (t - floor) if t is not None and n is not None and n < t else y
+            wo, wn = height(old_side, y, z), height(new_side, ny, z)
+            nx = x * wn / wo if wo and wn is not None and 0 < wn < wo else x
+            if n is not None: ny = min(ny, n - margin)
+            if wn is not None and abs(nx) > wn - margin: nx = (wn - margin) * (1 if nx > 0 else -1)
+            return (int(round(nx * 4096)), int(round(ny * 4096))) + tuple(v[2:])
         part['verts'] = [move(v) for v in part['verts']]
         cnt = struct.unpack_from('<I', part['Damage'][1])[0]
         if cnt == len(part['verts']):  # its damage shape too
@@ -378,38 +535,44 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                               'indices': strip(tris), 'tail': b''} for i in ids]
             done.append(p['name'] + '(%d panes)' % len(got[p['name']]))
 
-    old_roof = roof(tbody['verts'])
+    old_shell = shell()
+    old_fit = roof(old_shell), sides(old_shell)
     floor = min(ty)
 
     plan = {
-        'body': ([find('BODY'), find('ROOF')], 0), 'hood': ([find('HOOD')], 0), 'trunk': ([find('TRUNK')], 0),
+        'body': ([find('BODY'), find('ROOF')], 0, None, True), 'hood': ([find('HOOD')], 0), 'trunk': ([find('TRUNK')], 0, None, True),
         'bumperF': ([find('FRONT_BUMPER')], 0), 'bumperR': ([find('REAR_BUMPER')], 0),
         'skirtL': ([find('SKIRT')], -1), 'skirtR': ([find('SKIRT')], 1),
         'headlightL': ([find('HEADLIGHT')], -1), 'headlightR': ([find('HEADLIGHT')], 1),
         'taillightL': ([find('BRAKELIGHT')], -1), 'taillightR': ([find('BRAKELIGHT')], 1),
         'mirrorL': ([find('LEFT_SIDE_MIRRO')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRR')], 0),
+        # every wing the template offers becomes the NFSU car's own spoiler: left
+        # as they were, the Civic's floated behind the hatch where its trunk was
+        'wing': ([find('SPOILER')], 0),
     }
-    plan = {k: v if len(v) == 3 else v + (None,) for k, v in plan.items()}
+    plan = {k: v + (None, False)[len(v) - 2:] for k, v in plan.items()}
     built = {}
     done = []
     for part in car['parts']:
-        if part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name']):  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
+        if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name'])  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
+                or part['name'].startswith('BADGE')):  # the template's badges floated where its own trunk and flanks were
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
             done.append(part['name'] + '(hidden)')
             continue
-        for key, (src, side, glass) in plan.items():
+        for key, (src, side, glass, inner) in plan.items():
             if part['name'].startswith(key) and part['name'].endswith('_LOD1') and all(src):
-                if key not in built: built[key] = build(src, side, glass)
+                if key not in built: built[key] = build(src, side, glass, inner)
                 put(part, *built[key])
                 done.append(part['name'])
                 break
     if not keep_glass:
         fit_glass()
-    new_roof = roof(tbody['verts'])
+    new_shell = shell()
+    new_fit = roof(new_shell), sides(new_shell)
     for part in car['parts']:
         if part['name'].startswith(CABIN):
-            fit_cabin(part, old_roof, new_roof, floor)
+            fit_cabin(part, old_fit, new_fit, floor)
             done.append(part['name'] + '(fitted)')
     open(out_path, 'wb').write(carbin.write(car))
     print('replaced %d parts: %s' % (len(done), ' '.join(done)))
