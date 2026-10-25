@@ -686,7 +686,93 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
     print('replaced %d parts: %s' % (len(done), ' '.join(done)))
 
 
+RIM = 11       # a Forza wheel's spokes and rim face, textured from the top-left quarter of wheel.xpr
+RIM_GROUP = 0x22719FA9  # the NFSU wheel's rim (its tyre is 78743ca1)
+
+
+def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
+    """The NFSU car's stock wheel (KIT00_WHEEL) on a Forza wheel set
+    (tires\\art\\<car>\\tire.carbin and wheel.xpr, in mega.cab and
+    megaxpr.cab): its rim replaces the template's spokes (material 11,
+    detail levels 1 and 2); the template's tyre, barrel and spinning disc
+    stay. NFSU's wheel has its axle along y and its outer face at the low y;
+    Forza's along x, outer face at its lowest x. Scaled so the rims' radii
+    match. wheel.xpr becomes 128x128: the template's, scaled up, with the
+    NFSU wheel texture (tyre, rim, centre cap) in the top-left quarter the
+    rim samples."""
+    import numpy as np
+    import forzaxpr as fx
+    tire = carbin.read(open(tire_path, 'rb').read())
+    part = tire['parts'][0]
+    nparts = nfsu.read(os.path.join(nfsu_dir, 'GEOMETRY.BIN'))
+    textures = nfsu.read_textures(os.path.join(nfsu_dir, 'TEXTURES.BIN'))
+    prefix = os.path.basename(os.path.normpath(nfsu_dir)).upper()
+    levels = sorted([p for p in nparts if p['name'].startswith(prefix + '_KIT00_WHEEL')], key=lambda p: -len(p['verts']))
+    V = np.array([v[:3] for v in part['verts']], float) / 4096
+    rim_ix = sorted({i for sp in part['subparts'] if sp['material'] == RIM for i in sp['indices']})
+    R = V[rim_ix]
+    face, rim_r = R[:, 0].min(), np.sqrt(R[:, 1] ** 2 + R[:, 2] ** 2).max()
+    shade = tuple(part['verts'][rim_ix[0]][6:10])
+    out_verts, subs, tex = list(part['verts']), [], None
+    for lod, p in enumerate(levels[:2], 1):
+        idx = [i for t in p['tris'] for i in t]
+        for g in p['groups']:
+            cnt, = struct.unpack_from('<I', g, 12)
+            first, = struct.unpack_from('<I', g, 0x34)
+            ti, si = struct.unpack_from('<II', g, 0x1C)
+            if p['shaders'][si] != RIM_GROUP: continue
+            tex = p['textures'][ti]
+            used = sorted({i for i in idx[first:first + cnt] if i < len(p['verts'])})
+            P = np.array([p['verts'][i][:3] for i in used])
+            k = rim_r / np.sqrt(P[:, 0] ** 2 + P[:, 2] ** 2).max()
+            y0 = P[:, 1].min()
+            remap = {}
+            for i in used:
+                x, y, z, nx, ny, nz, _, u, v = p['verts'][i]
+                remap[i] = len(out_verts)
+                pos3 = (face + (y - y0) * k, x * k, z * k)
+                out_verts.append(tuple(int(round(c * 4096)) for c in pos3)
+                                 + tuple(int(round(c * 32767)) for c in (ny, nx, nz)) + shade
+                                 + (int(min(max(u, 0), 1) * 0.5 * 65535), int(min(max(v, 0), 1) * 0.5 * 65535)))
+            tris = []
+            for j in range(first, first + cnt - 2, 3):
+                a, b, c = idx[j:j + 3]
+                if max(a, b, c) >= len(p['verts']): continue
+                va, vb, vc = (p['verts'][i] for i in (a, b, c))
+                e1 = [vb[n] - va[n] for n in range(3)]; e2 = [vc[n] - va[n] for n in range(3)]
+                gn = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+                if sum(gn[n] * (va[3 + n] + vb[3 + n] + vc[3 + n]) for n in range(3)) < 0: b, c = c, b
+                tris.append((remap[a], remap[b], remap[c]))  # the axis swap mirrors them, as the body's: Forza's strips wind the other way
+            subs.append((lod, strip(tris)))
+    if not subs or tex is None:
+        raise SystemExit('%s: no stock wheel rim' % nfsu_dir)
+    tmpl = next(sp for sp in part['subparts'] if sp['material'] == RIM)
+    part['subparts'] = [sp for sp in part['subparts'] if sp['material'] != RIM] + \
+        [{'version': tmpl['version'], 'id': lod, 'material': RIM, 'prim': 6, 'extra': tmpl['extra'], 'indices': s, 'tail': b''}
+         for lod, s in subs]
+    part['verts'] = out_verts
+    assert len(out_verts) < 65536
+    if struct.unpack_from('<I', part['Damage'][1])[0]:
+        part['Damage'] = (part['Damage'][0], struct.pack('<I', len(out_verts)) + b''.join(struct.pack('<6h', *v[:6]) for v in out_verts))
+    open(out_tire, 'wb').write(carbin.write(tire))
+    # wheel.xpr: the template's at 128x128, the NFSU wheel texture in the top-left quarter
+    xd = open(xpr_path, 'rb').read()
+    t = fx.textures(xd)[0]
+    old = fx.dxt(xd[t['start']:], t['w'], t['h'], 5)
+    img = np.ascontiguousarray(old.repeat(128 // t['w'], 0).repeat(128 // t['h'], 1))
+    src = nfsu_rgba(textures[tex]).astype(np.float32)
+    sh, sw = src.shape[:2]
+    small = src.reshape(64, sh // 64, 64, sw // 64, 4).mean((1, 3)) if sh >= 64 else src.repeat(64 // sh, 0).repeat(64 // sw, 1)
+    img[:64, :64] = np.clip(small + 0.5, 0, 255).astype(np.uint8)
+    img[:64, :64, 3] = 255
+    open(out_xpr, 'wb').write(fx.write_dxt5(xd, img))
+    print('wheel: %d rim triangles in %d levels, scale %.3f' % (sum(len(s) for _, s in subs), len(subs), rim_r / 0.223))
+
+
 if __name__ == '__main__':
+    if len(sys.argv) == 7 and sys.argv[1] == '--wheel':
+        convert_wheel(*sys.argv[2:])
+        raise SystemExit
     args = [a for a in sys.argv[1:] if a != '--keep-glass']
     if len(args) != 3:
         raise SystemExit(__doc__)

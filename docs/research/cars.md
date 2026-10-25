@@ -17,7 +17,28 @@ unpacks the archives.
 the cache partition as `hdd/Partition4/cars.cab`, and the game reads that
 copy, so a changed `Cars.ca2` in the mods folder will not reach the game
 until the cache copy is rebuilt as well. `Mega.ca2` and `MegaXPR.ca2` (cache:
-`mega.cab`, `megaxpr.cab`) are not looked at yet.
+`mega.cab` on N: = Partition4, `megaxpr.cab` on Z: = Partition5) hold the
+shared files, wheels among them. The game deletes and installs `mega.cab`
+again from the disc at every boot. The mods folder covers the cache
+partitions too (`mods/hdd/Partition4/mega.cab`), read only: opens that
+write, deletes and renames get the real file, or the game's reinstall
+deleted the mod.
+
+## Wheels
+
+A car's stock wheel is `tires\art\<File>\` with `<File>` from its
+tooldata.xml (`<WheelStyle><P0 File="CivicSI"/>`; upgrade wheels are listed
+in mega.cab's `cars\wheelstyle.xml`): `tire.carbin` in mega.cab, and
+`wheel.xpr` (64x64 DXT5) and `wheel_vol.xpr` (64x64x4) in megaxpr.cab. The
+game fits the model to the tyre size in the physics (scaling it changes
+nothing). tire.carbin is one part, `wheel_LOD1`, axle along x, outer face
+at its lowest x: material 8 the tyre, 11 the spokes and rim face (textured
+from the top-left quarter of wheel.xpr), 12 the barrel, 13 a disc behind the
+spokes (drawn only spinning). A copy of the files in the car's own cab is
+not read. `nfsu2forza.py --wheel` puts the NFSU car's stock rim on material
+11 (wheel.xpr then 128x128, the NFSU texture in that quarter); the cabs go
+in the mods folder with `forzacab.py replace`.
+
 
 ## The .cab container
 
@@ -301,7 +322,8 @@ needs, learned the hard way:
   clear, and the cabin floor was see-through). Lamp triangles on black
   texels (the S13's centre garnish) are black trim: the lamp material lit
   them pale.
-- Still to do: real damage shapes, wheels, and body kits as Forza's bumper and skirt
+- Still to do: real damage shapes, the NFSU wheel's tyre (the template's
+  is kept), and body kits as Forza's bumper and skirt
   variants.
 
 ### The missing roof (solved, 25 Oct)

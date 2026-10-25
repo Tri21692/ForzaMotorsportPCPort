@@ -141,6 +141,8 @@ static int walk(const char *root, const char *rest, char *out, size_t n) {
 /* The mods folder (forza.ini: mods): a file there, at the same path as on
  * the disc (mods/media/cabs/car_nissan240sx.cab), is read instead of the
  * disc's. Files only; directories are still listed from the disc. */
+static int mods_off;   /* set while an open that writes looks a path up: those go to the real file */
+static int from_mods;  /* the last host_path came from the mods folder */
 static int mod_file(const char *rest, char *out, size_t n) {
     static char dir[1024];
     static int checked;
@@ -153,11 +155,12 @@ static int mod_file(const char *rest, char *out, size_t n) {
         if (dir[0] && stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) rt_log("mods: %s\n", dir);
         else dir[0] = 0;
     }
-    if (!dir[0]) return 0;
+    if (!dir[0] || mods_off) return 0;
     char path[1200];
     struct stat st;
     if (!walk(dir, rest, path, sizeof path) || stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return 0;
     snprintf(out, n, "%s", path);
+    from_mods = 1;
     return 1;
 }
 
@@ -165,6 +168,7 @@ static int mod_file(const char *rest, char *out, size_t n) {
  * case-insensitively. Missing trailing components are kept as written,
  * so creating a new file works. */
 static int host_path(const char *xbox, char *out, size_t n) {
+    from_mods = 0;
     char dev[600];
     resolve_links(xbox, dev, sizeof dev);
     const char *rest;
@@ -184,6 +188,16 @@ static int host_path(const char *xbox, char *out, size_t n) {
         mkdir(root, 0755);
         rest = dev + 27;
         while (*rest >= '0' && *rest <= '9') rest++;
+        /* The cache partitions too (mods/hdd/Partition4/mega.cab): the archives
+         * the game installed there from the disc (wheels are in mega.cab and
+         * megaxpr.cab). Not saves: partitions 1 and 2 are left alone. */
+        char modrest[700];
+        snprintf(modrest, sizeof modrest, "\\hdd\\Partition%d%s", part, rest);
+        if (part >= 3 && mod_file(modrest, out, n)) {
+            static int said;
+            if (said < 100) said++, fprintf(stderr, "xbrt: mods: %s\n", out);
+            return 1;
+        }
     } else {
         return 0;
     }
@@ -271,6 +285,14 @@ uint32_t rt_open(uint32_t *handle, uint32_t oa, uint32_t desired, uint32_t share
         rt_log("  open %s: no such device\n", xbox);
         return STATUS_OBJECT_PATH_NOT_FOUND;
     }
+    /* Mods are read: an open that writes or truncates (the game reinstalling
+     * its cache, say) gets the real file, not the mod. */
+    if (from_mods && ((access_bits(desired) & (SHARE_WRITE | SHARE_DELETE)) || disposition == 0 || disposition == 4 || disposition == 5)) {
+        mods_off = 1;
+        host_path(xbox, host, sizeof host);
+        mods_off = 0;
+    }
+    int read_only = from_mods;
     struct stat st;
     int exists = stat(host, &st) == 0;
     int is_dir = exists && S_ISDIR(st.st_mode);
@@ -293,7 +315,7 @@ uint32_t rt_open(uint32_t *handle, uint32_t oa, uint32_t desired, uint32_t share
         if (!exists && mkdir(host, 0755) != 0) return STATUS_OBJECT_PATH_NOT_FOUND;
         h = rt_handle_new(OBJ_DIR);
     } else {
-        int fd = open(host, flags, 0644);
+        int fd = read_only ? open(host, O_RDONLY | O_BINARY) : open(host, flags, 0644);
         if (fd < 0 && (errno == EACCES || errno == EROFS)) fd = open(host, O_RDONLY | O_BINARY); /* a read-only disc copy */
         if (fd < 0) goto missing;
         h = rt_handle_new(OBJ_FILE);
@@ -548,7 +570,10 @@ uint32_t k_file_NtSetInformationFile(XbCtx *c) {
 
 void rt_file_delete(const char *xbox) {
     char host[1200];
-    if (!xbox || !host_path(xbox, host, sizeof host)) return;
+    mods_off = 1; /* never a mod: the game deletes its cache archives to install them again */
+    int found = xbox && host_path(xbox, host, sizeof host);
+    mods_off = 0;
+    if (!found) return;
     int r = remove(host);
 #ifdef _WIN32
     if (r != 0) r = rmdir(host); /* remove() does not take directories there */
@@ -566,8 +591,10 @@ static uint32_t rename_file(RtObject *o, int replace, uint32_t root, uint32_t na
     else if (rel[0] != '\\' && !strchr(rel, ':') && o->path && strrchr(o->path, '\\'))
         snprintf(xbox, sizeof xbox, "%.*s%s", (int)(strrchr(o->path, '\\') - o->path + 1), o->path, rel);
     else snprintf(xbox, sizeof xbox, "%s", rel);
-    if (!o->path || !host_path(o->path, from, sizeof from) || !host_path(xbox, to, sizeof to))
-        return STATUS_OBJECT_PATH_NOT_FOUND;
+    mods_off = 1; /* never a mod (see rt_file_delete) */
+    int found = o->path && host_path(o->path, from, sizeof from) && host_path(xbox, to, sizeof to);
+    mods_off = 0;
+    if (!found) return STATUS_OBJECT_PATH_NOT_FOUND;
     struct stat st;
     if (stat(to, &st) == 0) {
         if (!replace) return STATUS_OBJECT_NAME_COLLISION;

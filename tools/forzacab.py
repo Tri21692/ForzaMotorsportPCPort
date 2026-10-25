@@ -29,6 +29,7 @@ Usage:
   python tools/forzacab.py list <file.cab>
   python tools/forzacab.py unpack <file.cab> <folder>
   python tools/forzacab.py pack <folder> <file.cab> [root path]
+  python tools/forzacab.py replace <in.cab> <out.cab> <name>=<file>...   (names with / for the backslashes)
 
 Header fields the packer writes: 0x0C is 1 when any entry is compressed;
 0x14 is the data start plus every unpacked size (the archive unpacked);
@@ -145,6 +146,20 @@ def main(argv):
         with open(out, 'wb') as f:
             f.write(blob)
         print('%d files, %d bytes into %s' % (len(files), len(blob), out))
+        return
+    if len(argv) >= 5 and argv[1] == 'replace':
+        d, version, entries = read(argv[2])
+        files = {e['name']: data(d, e) for e in entries}
+        for arg in argv[4:]:
+            name, path = arg.split('=', 1)
+            name = name.replace('/', '\\')
+            if name not in files:
+                raise SystemExit('%s: no %s' % (argv[2], name))
+            files[name] = open(path, 'rb').read()
+        blob = pack(files, entries[0]['root'] if entries else '')
+        with open(argv[3], 'wb') as f:
+            f.write(blob)
+        print('%d of %d entries replaced, %d bytes into %s' % (len(argv) - 4, len(files), len(blob), argv[3]))
         return
     if len(argv) < 3 or argv[1] not in ('list', 'unpack'):
         raise SystemExit(__doc__)

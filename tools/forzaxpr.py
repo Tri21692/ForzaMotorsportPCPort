@@ -117,6 +117,22 @@ def textures(d):
     return out
 
 
+def write_dxt5(template, img):
+    """A one-texture XPR0 pack like `template` (its header kept), holding
+    `img` (RGBA, power-of-two sides) as one DXT5 level: the format word's
+    sizes and level count and the pack's total size are set to match."""
+    t = textures(template)[0]
+    h, w = img.shape[:2]
+    data = encode_dxt5(img)
+    head = bytearray(template[:t['start']])
+    o = 12  # the first resource header: common, data, lock, format, size
+    fmt = struct.unpack_from('<I', head, o + 12)[0]
+    fmt = (fmt & ~(0xFFF << 16)) | (1 << 16) | ((w.bit_length() - 1) << 20) | ((h.bit_length() - 1) << 24)
+    struct.pack_into('<I', head, o + 12, fmt)
+    struct.pack_into('<I', head, 4, len(head) + len(data))
+    return bytes(head) + data
+
+
 def decode(path, outdir):
     d = open(path, 'rb').read()
     magic, total, hdr = struct.unpack_from('<4sII', d, 0)
