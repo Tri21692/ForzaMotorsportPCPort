@@ -54,13 +54,15 @@ def bhash(s, h=0xFFFFFFFF):
 
 # NFSU shaders (by name hash) -> Forza materials. Two have no known name: on
 # the 240SX 12c9453c is the rubber round the windows, the B pillar and the
-# trim strips, 010cb64a the inside of the wheel arches; both black (WINDOWS:
+# trim strips, 010cb64a the inside of the wheel arches, 52bf4c34 the floor pan; all black (WINDOWS:
 # Forza's own black trim drew clear). The windows themselves are holes (see
 # window_panes).
 SHADERS = {bhash('CARSKIN'): BODY, bhash('WINDSHIELD'): WINDOW, 0x12C9453C: WINDOWS, 0x010CB64A: WINDOWS,
+           0x52BF4C34: WINDOWS,  # the floor pan: as Black (its texture is not in the car's pack) it drew clear and the cabin's floor was see-through
            bhash('DULLPLASTIC'): PLASTIC, bhash('CHROME'): CHROME, bhash('HEADLIGHTGLASS'): HEADLIGHTGLASS,
            bhash('BRAKELIGHTGLASS'): REDGLASS, bhash('DECAL'): BADGE, bhash('HEADLIGHT'): HEADLIGHTS,
-           bhash('BRAKELIGHT'): TAILLIGHTS, bhash('RUBBER'): BLACK, bhash('ENGINE'): BLACK}
+           bhash('BRAKELIGHT'): TAILLIGHTS, bhash('RUBBER'): BLACK, bhash('ENGINE'): BLACK,
+           bhash('MIRROR'): CHROME}  # the mirrors' glass, as the Civic's (as paint it was a flat blue slab)
 
 
 def material_for(texname, shader=0):
@@ -304,6 +306,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
         return [max(-32768, min(32767, int(round(c * 32767)))) for c in (x, y, z)]
 
     arches = []
+    rgbas = {}
+
+    def rgba_of(th):
+        if th not in rgbas: rgbas[th] = nfsu_rgba(textures[th])
+        return rgbas[th]
 
     def build(sources, side=0, glass=None, inner=False):
         """Forza vertices and subparts from NFSU parts (lists of detail
@@ -354,6 +361,18 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                 if glass:  # windows drawn from both sides: NFSU's face either way
                     m = WINDOW
                     tris = tris + [(x, z, y) for x, y, z in tris]
+                if tris and m == TAILLIGHTS and th in textures:
+                    # Lamp triangles on black texels (the S13's centre garnish between
+                    # the lamps) are black trim: Forza's lamp material lit them pale.
+                    img = rgba_of(th)
+                    def dark(t):
+                        h, w = img.shape[:2]
+                        return all(img[min(h - 1, int(min(max(p['verts'][i - base][8], 0), 1) * h)),
+                                       min(w - 1, int(min(max(p['verts'][i - base][7], 0), 1) * w)), :3].max() < 24 for i in t)
+                    trim = [t for t in tris if dark(t)]
+                    if trim:
+                        tris = [t for t in tris if not dark(t)]
+                        subs.append((lod, WINDOWS, strip(trim)))
                 if tris and th in atlas:  # its texture is in the livery atlas: its own coordinates, moved there
                     u0, v0, u1, v1 = atlas[th]
                     for i in {i for t in tris for i in t}:
@@ -534,6 +553,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
             a = arch_top[0].get((int(x // arch_top[1]), int(z // arch_top[1])))  # the arch liner over it, if any
             return a is not None and y < max(a) + margin
         part['verts'] = [move(v) for v in part['verts']]
+        for sp in part['subparts']:
+            if sp['material'] in (TAILLIGHTS, HEADLIGHTS):  # the Civic's third brake light, on its parcel shelf: a grey slab under the hatch glass
+                sp['indices'] = [0, 0, 0]
         out = [outside(v) for v in part['verts']]
         for sp in part['subparts']:
             ix, tris = sp['indices'], []
@@ -575,9 +597,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                 # outward: the normal of the pane's best plane, away from the car's middle
                 e = np.linalg.svd(R - c0)[2]
                 n = e[2] if np.dot(e[2], c0 - mid_car) >= 0 else -e[2]
-                # The glass is curved (the S13's hatch strongly): a flat fan from the
-                # middle sagged under it and the cage showed through. Heights over the
-                # pane's plane fitted as a quadric to the rim; rings of points on it.
+                # The glass is curved (the S13's hatch strongly): a fan from the rim's
+                # middle sagged under it and the cage showed through. Its middle is lifted
+                # onto a quadric fitted to the rim's heights over the pane's plane.
                 uv = (R - c0) @ e[:2].T
                 hgt = (R - c0) @ n
                 A = np.c_[np.ones(len(uv)), uv, uv[:, :1] ** 2, uv[:, :1] * uv[:, 1:], uv[:, 1:] ** 2]
@@ -585,7 +607,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
                 def surf(u, v):
                     return c0 + u * e[0] + v * e[1] + n * (co[0] + co[1] * u + co[2] * v + co[3] * u * u + co[4] * u * v + co[5] * v * v)
                 k = len(ring)
-                rings = [[surf(0.0, 0.0)]] + [[surf(*(t * uv[i])) for i in range(k)] for t in (1 / 3, 2 / 3)] + [list(R)]
+                # the middle on the fitted curve, the rings on straight lines from it to
+                # the rim: on the curve itself they bulged out past the C pillars near the
+                # rim and showed there as pale slivers
+                mid = surf(0.0, 0.0)
+                rings = [[mid]] + [[mid + t * (R[i] - mid) for i in range(k)] for t in (1 / 3, 2 / 3)] + [list(R)]
                 nn = [int(round(c * 32767)) for c in n / np.linalg.norm(n)]
                 base = len(verts)
                 for q in [q for r in rings for q in r]:
@@ -627,7 +653,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
     done = []
     for part in car['parts']:
         if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name'])  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
-                or part['name'].startswith('BADGE')):  # the template's badges floated where its own trunk and flanks were
+                or part['name'].startswith(('BADGE', 'bands', 'exhaust'))):  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
             done.append(part['name'] + '(hidden)')
@@ -646,6 +672,16 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False):
         if part['name'].startswith(CABIN):
             fit_cabin(part, old_fit, new_fit, floor)
             done.append(part['name'] + '(fitted)')
+    # The template's panel seams (Line chunks after the parts: polylines on its
+    # body, drawn as thin blended lines) followed the Civic's hood, doors and
+    # trunk lid, and floated off the new body as grey lines and bands; the
+    # NFSU body has its gaps modelled. Its two Flare chunks stay.
+    t, o, kept = car['tail'], 0, b''
+    while o + 8 <= len(t) and struct.unpack_from('<I', t, o)[0] >= 8:
+        size = struct.unpack_from('<I', t, o)[0]
+        if t[o + 8:t.index(b'\0', o + 8)] != b'Line': kept += t[o:o + size]
+        o += size
+    car['tail'] = kept + t[o:]
     open(out_path, 'wb').write(carbin.write(car))
     print('replaced %d parts: %s' % (len(done), ' '.join(done)))
 

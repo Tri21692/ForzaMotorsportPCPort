@@ -288,6 +288,19 @@ needs, learned the hard way:
   floated behind the hatch. Its badges are hidden.
 - The dark vertical bands on the rear panel are the software renderer's
   shadows; with XBRT_GPU=gl they are not there.
+- The template's panel seams (30 `Line` chunks after the parts: polylines
+  of points and normals on its body, which the game draws as thin blended
+  line strips) followed the Civic's hood, doors and trunk lid and floated
+  off the new body as grey lines and bands; they are dropped. Its two
+  `Flare` chunks stay. Also dropped: the template's `bands` (strips under
+  its rear glass), its exhausts (the tailpipe hung out under the S13's
+  bumper; NFSU's EXHAUST part sits at the origin, placed by the game) and
+  the light-material bits of its interior (a third brake light).
+- NFSU shader `MIRROR` (the mirrors' glass) becomes Chrome, as the Civic's
+  mirror glass; 52bf4c34 (the floor pan) black trim (as Black it drew
+  clear, and the cabin floor was see-through). Lamp triangles on black
+  texels (the S13's centre garnish) are black trim: the lamp material lit
+  them pale.
 - Still to do: real damage shapes, wheels, and body kits as Forza's bumper and skirt
   variants.
 
