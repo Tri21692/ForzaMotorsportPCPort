@@ -513,6 +513,24 @@ Open bugs, in order:
 
 ## Log
 
+- **2026-10-25 (interactive, the user driving): suggested line, logos, pause.**
+  - Suggested line: inline TRIANGLES (float3 + D3DCOLOR) whose vertex
+    program samples the AA scene projectively; the GPU path sampled black
+    (cause unknown), so these draws go to the CPU path. Lines and points
+    are drawn too (SET_LINE_WIDTH 6.3 fixed point). The user saw it.
+  - Event menu track logos: a read-back of a surface whose RAM the game
+    had already reused (white band); now skipped (`rsig` per surface).
+  - "Engine cuts out" was the pause menu: XACT pauses the race sounds as
+    CPauseMenu opens (found via RTTI from the pause's call stack), and
+    the menu came up ~10 s later. DSOUND's stop loop (0x3F8E23) waited
+    0.5 s for each of ~20 voices that had finished but were never handed
+    back: after one handback, none followed, because the voice
+    processor's `ISTS |= FETINTSTS` raced the ISR's `ISTS &= ~v` and the
+    bit was lost, leaving the front end trapped. ISTS changes are atomic
+    now, and the ISR's FECTL write takes the voice processor's lock.
+    Debugging aid kept out of the tree: XBRT_VP_LOG with per-voice
+    levels, timing marks matching XBRT_AUDIO_DUMP, and the guest stack
+    at each pause (scratch `vp-logging2.patch`).
 - **2026-10-24 (interactive, the user driving): speed, pacing, hangs.**
   - Hill-corner scenery: draws over 4096 vertices were cut off (fixed
     arrays); now they grow. The user confirmed the cliff shows.
