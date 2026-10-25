@@ -834,18 +834,22 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
 # the body: the image (the NFSU badge sheet, <CAR>_BADGING, or one from the
 # --badges folder) and its rectangle in texels (x0, y0, x1, y1; None, all
 # of it), the centre (x, y, z), the direction it is seen from, width and
-# height, all in carbin units / 4096 (about 1.6 a metre). Forza: x right,
-# y up, z forward. The NFSU model itself uses only the sheet's nose emblem.
+# height (and optionally how far off the panel), all in carbin units / 4096
+# (about 1.6 a metre). Forza: x right, y up, z forward. The NFSU model
+# itself uses only the sheet's nose emblem.
 # Each goes in the bumpers at its end of the car (every variant): in the
 # body part the decals drew the whole sheet squeezed into them (the body's
 # texture coordinates are not taken as they are), as the nose emblem, in
 # the front bumper, never did.
 BADGES = [
     ('model', None, (0.0, 0.895, None), (0, 0, -1), 0.46, 0.038),     # centred on the panel between the tail lights (y 0.76 to 1.03)
-    ('sheet', (62, 24, 92, 44), (None, 0.52, 2.72), (1, 0, 0), 0.15, 0.10),   # amber markers behind the front bumper's corners
-    ('sheet', (62, 24, 92, 44), (None, 0.52, 2.72), (-1, 0, 0), 0.15, 0.10),
-    ('sheet', (62, 3, 92, 23), (None, 0.58, -2.80), (1, 0, 0), 0.15, 0.10),   # red, at the rear
-    ('sheet', (62, 3, 92, 23), (None, 0.58, -2.80), (-1, 0, 0), 0.15, 0.10),
+    # amber markers on the front bumper's corners, red at the rear. Lifted
+    # further off: the fender's end lies under the bumper's corner there, and at
+    # the usual lift its paint fought the marker's lower half through
+    ('sheet', (62, 24, 92, 44), (None, 0.52, 2.77), (1, 0, 0), 0.15, 0.10, 0.012),
+    ('sheet', (62, 24, 92, 44), (None, 0.52, 2.77), (-1, 0, 0), 0.15, 0.10, 0.012),
+    ('sheet', (62, 3, 92, 23), (None, 0.58, -2.80), (1, 0, 0), 0.15, 0.10, 0.012),
+    ('sheet', (62, 3, 92, 23), (None, 0.58, -2.80), (-1, 0, 0), 0.15, 0.10, 0.012),
 ]
 # Without a --badges folder the sheet's own lettering stands in
 SHEET_BADGES = {'logo': (0, 0, 59, 38), 'model': (0, 39, 61, 48)}
@@ -928,7 +932,8 @@ def add_badges(car, textures, atlas, sizes={}, lift=0.004):  # lift: off the sur
         if np.dot(n, d) > 0: n = -n
         return origin + t[i] * d, n
     made = {True: [], False: []}  # four corners per decal, by end of the car (front: True)
-    for source, rect, centre, seen, w, h in BADGES:
+    for source, rect, centre, seen, w, h, *off in BADGES:
+        off = off[0] if off else lift
         if source in sizes:
             key, (W, H) = source, sizes[source]
             rect = rect or (0, 0, W, H)
@@ -951,15 +956,17 @@ def add_badges(car, textures, atlas, sizes={}, lift=0.004):  # lift: off the sur
         # A grid over the decal, each point dropped onto the panel along the
         # decal's normal and set `lift` off it: flat, set off far enough to
         # clear the curve, they stood off the tail's corners.
-        nx, ny = max(2, int(w / 0.04) + 1), max(2, int(h / 0.04) + 1)
+        nx, ny = max(2, int(w / 0.02) + 1), max(2, int(h / 0.02) + 1)
         grid, tris = [], []
         for j in range(ny):
             for i in range(nx):
                 fx, fy = i / (nx - 1), j / (ny - 1)
                 q = p + right * (fx - 0.5) * w + up * (0.5 - fy) * h
                 at, an = hit(q + n * 0.3, -n)
-                if at is None or np.linalg.norm(at - q) > 0.25: at, an = q, n
-                q = at + an * lift
+                # (a point that fell onto another panel, one facing well away, as the
+                # fender's edge under the bumper's corner, folded the decal over it)
+                if at is None or np.linalg.norm(at - q) > 0.25 or np.dot(an, n) < 0.7: at, an = q, n
+                q = at + an * off
                 px = x0 + 0.5 + fx * (x1 - x0 - 1); py = y0 + 0.5 + fy * (y1 - y0 - 1)
                 grid.append(tuple(int(round(c * 4096)) for c in q) + tuple(int(round(c * 32767)) for c in an)
                             + (255, 255, 0, 0, tu(px), tv(py)))
