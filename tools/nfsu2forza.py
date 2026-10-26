@@ -48,6 +48,11 @@ BODY, WINDOW, TAILLIGHTS, HEADLIGHTS, BLACKGLASS, CHROME, BLACK, REDGLASS = 1, 2
 WINDOWS = -1  # the converter's own: Body material on an opaque black texel
 PLASTIC, BADGE, HEADLIGHTGLASS = 20, 26, 30
 BADGE_UV = 32768  # Badge's texture coordinates count double: u16 / 32768 into the atlas (at / 65536 the decals drew the sheet squeezed, and the nose emblem the marker lamps beside it)
+# ATLAS_UV: so do the other materials' (the Civic's own lamps and paint are
+# all under 32768 and land on its lamp pictures and white read so). A Most
+# Wanted car's lamps placed at / 65536 drew plain grey discs; they and the
+# kept template parts' texel boxes count / 32768 now. (The 240SX's are left
+# as they were.)
 DECAL = BADGE  # 26: draws the atlas as it is, clear texels too (25, the Civic's badges', drew nothing of these; as Body they drew a plain patch)
 INSET = int(0.02 * 4096)  # how far a panel's black inside sits in from it, carbin units (about a centimetre)
 CABIN_SHADE = 0.4  # the cabin's shading bytes scaled by this
@@ -445,7 +450,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                 for j in range(len(ix) - 2):  # (not k: that is the fit's scale, which pos() reads; as k this moved every vertex to the edge of the range, and the car vanished)
                     tri = [p['verts'][i] for i in ix[j:j + 3]]
                     if len(set(ix[j:j + 3])) < 3 or len(tri[0]) < 12: continue
-                    us, vs = [v[10] / 65536 for v in tri], [v[11] / 65536 for v in tri]
+                    us, vs = [v[10] / BADGE_UV % 1 for v in tri], [v[11] / BADGE_UV % 1 for v in tri]  # (see ATLAS_UV)
                     if max(us) - min(us) < 0.5 and max(vs) - min(vs) < 0.5:  # (wrapped ones left out)
                         protect.append((min(us), min(vs), max(us), max(vs)))
     atlas = pack_atlas(images, livery_dir,
@@ -612,7 +617,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                         subs.append((lod, WINDOWS, strip(trim)))
                 if tris and th in atlas:  # its texture is in the livery atlas: its own coordinates, moved there
                     u0, v0, u1, v1 = atlas[th]
-                    one = 65536 if m != BADGE else BADGE_UV  # (see BADGE_UV)
+                    one = BADGE_UV if m == BADGE or mw else 65536  # (see BADGE_UV and ATLAS_UV)
                     for i in {i for t in tris for i in t}:
                         nv = p['verts'][i - base]
                         u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)

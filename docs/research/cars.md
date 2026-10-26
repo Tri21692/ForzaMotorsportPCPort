@@ -444,6 +444,11 @@ needs, learned the hard way:
   white read so); the Cobalt's paint texel was white read as 65536 a span
   but black (packed headlight glass) read as 32768. The converter now picks
   one that is white either way and keeps both spots clear of the atlas.
+- The lamps read the same way (the Civic's own lamp coordinates are all
+  under 32768 and land on its lamp pictures so). A Most Wanted car's
+  packed textures and the kept template parts' texel boxes count / 32768
+  now; placed at / 65536 its taillights drew as plain grey discs. (The
+  240SX's are left as they were.)
 - One subpart per detail level and material (as Forza's own).
 - Parts that had a damage shape keep one (the undamaged shape for now).
 - NFSU shaders without a known name: 12c9453c is the rubber round the
