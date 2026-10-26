@@ -30,6 +30,8 @@ static const OvItem items[] = {
     {"antialiasing", "Anti-Aliasing", {"off", "fxaa"}, {"Off", "FXAA"}, 1, "FXAA smooths jagged edges at almost no cost."},
     {"anisotropic", "Texture Filtering", {"1", "2", "4", "8", "16"}, {"Off", "2x Anisotropic", "4x Anisotropic", "8x Anisotropic", "16x Anisotropic"}, 0,
      "Keeps the road and verges sharp when seen at a shallow angle."},
+    {"draw_distance", "Draw Distance", {"1", "2", "3", "4"}, {"Original", "2x", "3x", "4x"}, 1,
+     "Trees, the cars' reflections and trackside detail drawn further away."},
     {"vsync", "V-Sync", {"0", "1"}, {"Off", "On"}, 0, "Waits for the monitor's refresh to show a frame. Can add delay."},
     {"volume", "Volume", {"0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1"},
      {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}, 1, "Sound volume."},
@@ -80,6 +82,7 @@ static void apply(const OvItem *it, const char *v) {
     if (!strcmp(it->setting, "volume")) rt_apu_set_volume((float)atof(v));
     else if (!strcmp(it->setting, "antialiasing")) rt_display_fxaa = strcmp(v, "off") != 0;
     else if (!strcmp(it->setting, "fullscreen")) rt_display_set_fullscreen(atoi(v));
+    else if (!strcmp(it->setting, "draw_distance")) rt_draw_distance = (float)atof(v);
     else changed_restart = 1;
 }
 

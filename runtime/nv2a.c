@@ -695,6 +695,42 @@ void nv2a_cpu_reads(uint32_t base, uint32_t size) {
     rt_gil_lock();
 }
 
+/* XBRT_DRAW_DISTANCE=<factor>: Forza's render distances times this, as the
+ * tracks set them (tracks\default.ini, then each track.ini, at every track
+ * load; the files are hash-checked, so they are changed here in memory,
+ * after the game has set them): trees drawn and faded in, what the cars'
+ * reflection cube map sees, and the bands of the track's near-detail
+ * objects. Each value the game writes is kept and scaled, twice a second,
+ * so the settings overlay changes it live. Only for the Forza
+ * build the frame-rate patch knows (rt_frame_interval_at). */
+volatile float rt_draw_distance;
+
+static void draw_distance(void) {
+    static const uint32_t at[] = {
+        0x5E0318, /* GeneralRender\Trees\MaxDistance (600) */
+        0x5E031C, /* GeneralRender\Trees\AlphaDistance (500) */
+        0x554914, /* GeneralRender\Cubemap\CubemapFarPlane (60) */
+        0x5545E4, 0x5545E8, 0x5545EC, /* GeneralRender\LOD\Range\LOD0-2 (10, 20, 30 m) */
+    };
+    static uint32_t orig[sizeof at / sizeof at[0]], wrote[sizeof at / sizeof at[0]];
+    if (!rt_frame_interval_at) return;
+    if (rt_draw_distance == 0) rt_draw_distance = getenv("XBRT_DRAW_DISTANCE") ? (float)atof(getenv("XBRT_DRAW_DISTANCE")) : 1.0f;
+    float factor = rt_draw_distance;
+    if (!(factor >= 1.0f && factor <= 8.0f)) factor = 1.0f;
+    for (size_t i = 0; i < sizeof at / sizeof at[0]; i++) {
+        uint32_t u = xb_rd32(at[i]);
+        if (u != wrote[i]) orig[i] = u; /* the game set it (a track load) */
+        float f;
+        memcpy(&f, &orig[i], 4);
+        if (!(f > 0 && f < 100000)) continue;
+        f *= factor;
+        uint32_t want;
+        memcpy(&want, &f, 4);
+        if (want != u) xb_wr32(at[i], want);
+        wrote[i] = want;
+    }
+}
+
 /* Wakes the device loop when a vertical blank is due. Its own timed wait
  * goes by winpthreads' millisecond clock and woke up to 15 ms late, which
  * the game saw as a dropped frame. */
@@ -740,6 +776,7 @@ static void *device_main(void *arg) {
             if (++since >= interval && nv2a.queued) nv2a.queued--, since = 0, nv2a.drained = 1;
             if (nv2a.flip_stall && nv2a.queued < 2) nv2a.flip_stall = 0, nv2a_trace('R', 1);
             if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
+            if (nv2a.vblanks % 30 == 0) draw_distance();
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
                 static const char *spec;
                 static int checked;

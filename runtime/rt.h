@@ -82,6 +82,7 @@ const char *rt_overlay_help(int i);
 void rt_apu_set_volume(float v);
 extern volatile uint8_t rt_gamma[256][3]; /* the DAC palette, D3D's gamma ramp (nv2a.c); applied as shown */
 extern volatile uint32_t rt_gamma_seq;     /* counts palette entries written */
+extern volatile float rt_draw_distance;       /* XBRT_DRAW_DISTANCE, or as the overlay set it (nv2a.c); 0: not read yet */
 extern volatile int rt_display_fxaa;          /* XBRT_AA: edge smoothing on the shown picture */
 void rt_display_set_fullscreen(int on);
 extern uint32_t rt_frame_interval_at; /* where the game keeps its frame interval in vertical blanks, or 0 */
