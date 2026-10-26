@@ -414,10 +414,10 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
             if p['name'].startswith(replaced): continue
             for sp in p['subparts']:
                 ix = sp['indices']
-                for k in range(len(ix) - 2):
-                    t = [p['verts'][i] for i in ix[k:k + 3]]
-                    if len(set(ix[k:k + 3])) < 3 or len(t[0]) < 12: continue
-                    us, vs = [v[10] / 65536 for v in t], [v[11] / 65536 for v in t]
+                for j in range(len(ix) - 2):  # (not k: that is the fit's scale, which pos() reads; as k this moved every vertex to the edge of the range, and the car vanished)
+                    tri = [p['verts'][i] for i in ix[j:j + 3]]
+                    if len(set(ix[j:j + 3])) < 3 or len(tri[0]) < 12: continue
+                    us, vs = [v[10] / 65536 for v in tri], [v[11] / 65536 for v in tri]
                     if max(us) - min(us) < 0.5 and max(vs) - min(vs) < 0.5:  # (wrapped ones left out)
                         protect.append((min(us), min(vs), max(us), max(vs)))
     atlas = pack_atlas(images, livery_dir,
