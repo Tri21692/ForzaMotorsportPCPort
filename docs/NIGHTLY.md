@@ -513,6 +513,35 @@ Open bugs, in order:
 
 ## Log
 
+- **2026-10-26 (interactive into the night; then unattended): the Cobalt's paint and lamps, the paint shop.**
+  - Cobalt paint black whatever the colour: the paint is the stage-3
+    combiner constant times the livery texel; the game reads car texture
+    coordinates as if 32768 spans the atlas (not 65536, as the converter
+    assumed), so the paint texel sat on packed headlight glass. Fixed in
+    the converter (paint texel white either way; Most Wanted lamps and the
+    kept parts' texel boxes at / 32768). The user confirmed both.
+  - Lamps gone once the paint menu opens, on every car: the paint shop
+    draws `<car>.liveries.bin`'s detail (256 colours by index) through a
+    dependent texture lookup (stage mode 0x0F), which the GPU path dropped.
+    Now done (glfs.c, glfill.c, raster.c). Converted cars also need their
+    own liveries.bin (nfsu2forza.py --liveries; addcar.py --liveries).
+    Left: some speckle and white edge lines in the paint menu ("not as bad");
+    point sampling the lookups did not help and was reverted.
+  - New: F3 (next frame's GPU methods) and F4 (RAM) to screenshots/;
+    XBRT_RT_LOG=<hex offset> (draws and clears into one colour offset,
+    with their textures' RAM).
+  - Converter: long strips for Most Wanted cars (509,151 indices to
+    232,092, same triangles); not yet seen in game.
+  - Race benchmark (run/race-rec.txt) still reaches a race (Civic, not
+    New York; the recorded input no longer drives well): 57 fps, p50 15 ms,
+    ~11% of frames 33 ms. On those the device thread idles ~15 ms waiting
+    for work; guest threads mostly wait in rt_wait (f_00268B30). The
+    Cobalt launcher now writes XBRT_FRAME_TRACE to run/screenshots/frames.trace
+    for the user's New York spikes.
+  - A profile that owns an added car is "damaged" when run without that
+    car's mods (seen on a throwaway copy): the save fallback is still open.
+  - Shop camera (free rotation, the user's request): see the memory note;
+    plan is two F4 dumps in the upgrade shop (bumper vs wing) and a diff.
 - **2026-10-25 (interactive, the user driving): suggested line, logos, pause.**
   - Suggested line: inline TRIANGLES (float3 + D3DCOLOR) whose vertex
     program samples the AA scene projectively; the GPU path sampled black
