@@ -1538,7 +1538,14 @@ static GlSurf *gl_bind(const DrawState *d) {
             gl_free_surf(s);
             s->cbase = d->base, s->cpitch = d->pitch, s->cfmt = cfmt, s->zbase = zbase, s->zfmt = zfmt, s->zpitch = zpitch;
             s->w = w, s->h = h, s->bpp = d->bpp, s->zbpp = zfmt == 1 ? 2 : 4, s->swz = swz;
-            s->k = swz ? 1 : gl_k;
+            s->k = gl_k;
+            /* Swizzled ones too (the cars' reflection cube faces, the shade
+             * map): at 1x their reflections were blocky against the sharp
+             * scene. Up to 2048 a side: the vinyl editor's livery is 1024. */
+            static int swz_scale = -1; /* XBRT_GL_SWZ_SCALE=0: those at 1x as before */
+            if (swz_scale < 0) swz_scale = !getenv("XBRT_GL_SWZ_SCALE") || atoi(getenv("XBRT_GL_SWZ_SCALE"));
+            if (swz && !swz_scale) s->k = 1;
+            while (swz && s->k > 1 && (w > h ? w : h) * s->k > 2048) s->k--;
             glGenTextures(1, &s->ctex);
             glBindTexture(GL_TEXTURE_2D, s->ctex);
             glTexStorage2D(GL_TEXTURE_2D, 1, d->bpp == 4 ? GL_RGBA8 : GL_RGB565, w * s->k, h * s->k);

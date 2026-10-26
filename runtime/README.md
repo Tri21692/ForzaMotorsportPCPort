@@ -54,6 +54,7 @@ first build takes a while.
 | `XBRT_RT_LOG` | `<hex offset>`: each draw (program, textures) and clear into that colour offset, all session (`2a29300`: the paint shop's livery); the RAM under the first 8 draws' textures to `screenshots/rt_<draw>_<stage>.bin` | off |
 | `XBRT_F4_AT` | `<seconds>`: presses F4 once at that time (unattended runs) | off |
 | `XBRT_PROFILE` | `<file>`: where the device thread spends its time, sampled every millisecond (the instruction and two callers), rewritten every 5 s; a `base` line first, for addr2line | off |
+| `XBRT_GL_SWZ_SCALE` | `0`: swizzled framebuffers (the cars' reflection cube faces, the shade map, the vinyl editor's livery) at the Xbox's size instead of the render scale | 1 |
 | `XBRT_WAIT_LOG` | `<ms>`: each guest wait that took at least that long, signalled or timed out, with the guest's stack (stalls where the game stops) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
