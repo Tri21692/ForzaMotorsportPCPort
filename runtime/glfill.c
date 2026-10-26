@@ -37,10 +37,7 @@ static const char *vs_src =
     "out vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
     "out float v_fog;\n"
     "noperspective out float v_zs;\n" /* screen z, Xbox units */
-    "noperspective out float v_w;\n"  /* w, the w-buffer's depth: linear in screen space, as xemu (and the
-                                         * hardware's depth); with perspective it differed from passes of the
-                                         * same surface without the w-buffer inside large triangles, and walls
-                                         * showed what was behind them (Pacific Shipyards) */
+    "out float v_w;\n"                /* w, interpolated with perspective: the w-buffer's depth */
     "void main() {\n"
     "    float w = a_pos.w != 0.0 ? 1.0 / a_pos.w : 1.0;\n"
     "    v_zs = a_pos.z; v_w = w;\n"
@@ -56,7 +53,7 @@ static const char *fs_src =
     "in vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
     "in float v_fog;\n"
     "noperspective in float v_zs;\n"
-    "noperspective in float v_w;\n"
+    "in float v_w;\n"
     "out vec4 o_color;\n"
     "uniform vec4 u_zr;\n"   /* depth: units in the buffer (65535 or 16777215), clip min, clip max, w-buffer on */
     "uniform vec3 u_zoff;\n" /* polygon offset: bias, factor, the render scale (slopes are per Xbox pixel) */

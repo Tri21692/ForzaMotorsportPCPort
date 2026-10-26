@@ -101,7 +101,7 @@ static char *fs_generate(const FsKey *k) {
     FsStr s = {malloc(32768), 0, 32768};
     fsput(&s, "#version 430\n"
               "in vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
-              "in float v_fog;\nnoperspective in float v_zs;\nnoperspective in float v_w;\n"
+              "in float v_fog;\nnoperspective in float v_zs;\nin float v_w;\n"
               "out vec4 o_color;\n"
               "uniform vec4 u_zr;\nuniform vec3 u_zoff;\nuniform vec3 u_fogc;\n"
               "uniform vec4 u_c0[8], u_c1[8], u_fc0, u_fc1;\n"
