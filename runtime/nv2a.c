@@ -237,6 +237,16 @@ uint32_t xb_mmio_read(uint32_t a, int bytes) {
     return *(volatile uint8_t *)(xb_mem + a);
 }
 
+/* The gamma ramp, as the DAC applies it to everything shown: Forza fades
+ * in and out with it, and in a race sets one that about doubles the
+ * middle tones (64 shows as 119), its exposure. Without it the picture
+ * was much darker than on an Xbox or xemu. */
+volatile uint8_t rt_gamma[256][3];
+volatile uint32_t rt_gamma_seq;
+__attribute__((constructor)) static void gamma_init(void) {
+    for (int i = 0; i < 256; i++) rt_gamma[i][0] = rt_gamma[i][1] = rt_gamma[i][2] = (uint8_t)i;
+}
+
 void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
     if (a - RT_APU_BASE < RT_APU_SIZE) {
         rt_apu_write(a - RT_APU_BASE, bytes, v);
@@ -253,6 +263,14 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
         return;
     }
     uint32_t off = a - RT_NV2A_BASE;
+    if (off == 0x6813C8 || off == 0x6813C9) { /* PRMDIO: the DAC's palette, D3D's gamma ramp */
+        static int index, comp;
+        if (off == 0x6813C8) index = (int)(v & 255), comp = 0; /* WRITE_MODE_ADDRESS */
+        else {                                                  /* PALETTE_DATA: R, G, B, then the next entry */
+            rt_gamma[index][comp] = (uint8_t)v;
+            if (++comp == 3) comp = 0, index = (index + 1) & 255, rt_gamma_seq++;
+        }
+    }
     if (bytes != 4) { /* nothing with effects is written in parts */
         if (bytes == 2) *(volatile uint16_t *)(xb_mem + a) = (uint16_t)v;
         else *(volatile uint8_t *)(xb_mem + a) = (uint8_t)v;

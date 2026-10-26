@@ -124,7 +124,8 @@ static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
     for (int y = H - 1; y >= 0; y--) {
         for (int x = 0; x < W; x++) {
             uint32_t p = px[y * W + x];
-            line[3 * x] = (uint8_t)p, line[3 * x + 1] = (uint8_t)(p >> 8), line[3 * x + 2] = (uint8_t)(p >> 16);
+            /* through the gamma ramp, as shown (rt_gamma) */
+            line[3 * x] = rt_gamma[p & 255][2], line[3 * x + 1] = rt_gamma[(p >> 8) & 255][1], line[3 * x + 2] = rt_gamma[(p >> 16) & 255][0];
         }
         fwrite(line, 1, row, f);
     }

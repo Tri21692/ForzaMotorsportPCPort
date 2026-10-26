@@ -588,10 +588,15 @@ static const char *present_fs =
     "uniform sampler2D u_src;\n"
     "uniform vec2 u_rcp;\n" /* one texel */
     "uniform int u_fxaa;\n"
+    "uniform sampler2D u_gamma;\n" /* the DAC's ramp, 256x1 (rt_gamma) */
     "float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+    "vec3 ramp(vec3 c) {\n"
+    "    vec3 u = (clamp(c, 0.0, 1.0) * 255.0 + 0.5) / 256.0;\n"
+    "    return vec3(texture(u_gamma, vec2(u.r, 0.5)).r, texture(u_gamma, vec2(u.g, 0.5)).g, texture(u_gamma, vec2(u.b, 0.5)).b);\n"
+    "}\n"
     "void main() {\n"
     "    vec3 m = texture(u_src, v_uv).rgb;\n"
-    "    if (u_fxaa == 0) { o = vec4(m, 1.0); return; }\n"
+    "    if (u_fxaa == 0) { o = vec4(ramp(m), 1.0); return; }\n"
     "    vec3 nw = texture(u_src, v_uv + vec2(-1.0, -1.0) * u_rcp).rgb, ne = texture(u_src, v_uv + vec2(1.0, -1.0) * u_rcp).rgb;\n"
     "    vec3 sw = texture(u_src, v_uv + vec2(-1.0, 1.0) * u_rcp).rgb, se = texture(u_src, v_uv + vec2(1.0, 1.0) * u_rcp).rgb;\n"
     "    float lnw = luma(nw), lne = luma(ne), lsw = luma(sw), lse = luma(se), lm = luma(m);\n"
@@ -602,14 +607,16 @@ static const char *present_fs =
     "    vec3 a = 0.5 * (texture(u_src, v_uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(u_src, v_uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
     "    vec3 b = a * 0.5 + 0.25 * (texture(u_src, v_uv - dir * 0.5).rgb + texture(u_src, v_uv + dir * 0.5).rgb);\n"
     "    float lb = luma(b);\n"
-    "    o = vec4(lb < lmin || lb > lmax ? a : b, 1.0);\n"
+    "    o = vec4(ramp(lb < lmin || lb > lmax ? a : b), 1.0);\n"
     "}\n";
 
 static void gl_overlay_draw(int vx, int vy, int vw, int vh);
 
 static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     static GLuint prog, empty_vao;
-    static GLint u_src, u_rcp, u_fxaa;
+    static GLint u_src, u_rcp, u_fxaa, u_gamma;
+    static GLuint gamma_tex;
+    static uint32_t gamma_seq = ~0u;
     static int fxaa = -1;
     int W, H;
     if (!rt_gl_window_begin(&W, &H)) return 0;
@@ -620,6 +627,14 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         prog = glCreateProgram();
         if (vs && fs) glAttachShader(prog, vs), glAttachShader(prog, fs), glLinkProgram(prog);
         u_src = glGetUniformLocation(prog, "u_src"), u_rcp = glGetUniformLocation(prog, "u_rcp"), u_fxaa = glGetUniformLocation(prog, "u_fxaa");
+        u_gamma = glGetUniformLocation(prog, "u_gamma");
+        glGenTextures(1, &gamma_tex);
+        glBindTexture(GL_TEXTURE_2D, gamma_tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 256, 1);
         glGenVertexArrays(1, &empty_vao);
     }
     int x, y, cw, ch;
@@ -636,6 +651,15 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glViewport(x, H - y - ch, cw, ch);
         glUseProgram(prog);
         gl_using = NULL; /* the next draw sets its own program again */
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, gamma_tex);
+        glBindSampler(1, 0);
+        if (gamma_seq != rt_gamma_seq) { /* only when the game set another ramp */
+            uint8_t px[256][4];
+            gamma_seq = rt_gamma_seq;
+            for (int i = 0; i < 256; i++) px[i][0] = rt_gamma[i][0], px[i][1] = rt_gamma[i][1], px[i][2] = rt_gamma[i][2], px[i][3] = 255;
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        }
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, tex);
         glBindSampler(0, 0);
@@ -645,7 +669,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         /* Not on the 640x480 pictures from RAM (boot, menus, movies):
          * smoothing edges that small smeared text and logos. */
-        glUniform1i(u_src, 0), glUniform2fv(u_rcp, 1, (float[2]){1.0f / (float)w, 1.0f / (float)h}), glUniform1i(u_fxaa, rt_display_fxaa && w > 640);
+        glUniform1i(u_src, 0), glUniform2fv(u_rcp, 1, (float[2]){1.0f / (float)w, 1.0f / (float)h}), glUniform1i(u_fxaa, rt_display_fxaa && w > 640), glUniform1i(u_gamma, 1);
         glBindVertexArray(empty_vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(gl_vao);
