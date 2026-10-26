@@ -173,7 +173,10 @@ static char *vsh_glsl(const VshIns *prog, uint32_t n) {
         if (d->o_mask && (d->mac || d->ilu) && d->orb == 1 &&
             ((d->o_mux == 0 && d->mac && d->mac != 13) || (d->o_mux == 1 && d->ilu))) {
             vsh_mask(&s, d->o_mask, mk);
-            put(&s, "    o[%d].%s = %c.%s;\n", d->o_addr & 15, mk, d->o_mux ? 'l' : 'm', mk);
+            if ((d->o_addr & 15) == 5) /* oFog: the last masked component lands in x, where fog is read (as xemu) */
+                put(&s, "    o[5].x = %c.%c;\n", d->o_mux ? 'l' : 'm', mk[strlen(mk) - 1]);
+            else
+                put(&s, "    o[%d].%s = %c.%s;\n", d->o_addr & 15, mk, d->o_mux ? 'l' : 'm', mk);
         }
     }
     /* What project() and the CPU path's vertex shader do with the outputs:

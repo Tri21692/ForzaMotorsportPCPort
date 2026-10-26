@@ -749,7 +749,11 @@ static void run_program(const Vertex *in, VshOut *out) {
         if (o_mask && (mac || ilu)) {
             const float *v = o_mux ? l : m;
             if ((o_mux == 0 && mac && mac != 13) || (o_mux == 1 && ilu)) {
-                if (orb == 1) write_masked(out->o[o_addr & 15], v, o_mask);
+                if (orb == 1 && (o_addr & 15) == O_FOG) { /* oFog: the last masked component lands in x, where fog is read (as xemu) */
+                    int k = 3;
+                    while (k > 0 && !(o_mask & (8u >> k))) k--;
+                    out->o[O_FOG][0] = v[k];
+                } else if (orb == 1) write_masked(out->o[o_addr & 15], v, o_mask);
                 else if (o_addr < 192)
                     for (int k = 0; k < 4; k++)
                         if (o_mask & (8u >> k)) memcpy(&constants[o_addr][k], &v[k], 4);
