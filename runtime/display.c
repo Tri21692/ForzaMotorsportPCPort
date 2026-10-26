@@ -169,14 +169,14 @@ static int recording(void) {
 }
 
 static const char *shot_dir;
-static double shot_every = 5;
+static double shot_every = 5, shot_from; /* XBRT_SCREENSHOT_FROM: the first at this time (every frame of a stretch, with a small EVERY) */
 static int shot_count;
 static uint64_t next_shot;
 
 static void maybe_screenshot(const uint32_t *px, int w, int h) {
     if (!shot_dir) return;
     uint64_t now = rt_now_100ns();
-    if (now < next_shot) return;
+    if (now < next_shot || now < (uint64_t)(shot_from * 1e7)) return;
     next_shot = now + (uint64_t)(shot_every * 1e7);
     char path[1024];
     snprintf(path, sizeof path, "%s/shot_%04d_%06.1fs.bmp", shot_dir, shot_count++, now / 1e7);
@@ -403,6 +403,7 @@ void rt_display_init(void) {
     if (shot_dir && !*shot_dir) shot_dir = NULL;
     const char *every = getenv("XBRT_SCREENSHOT_EVERY");
     if (every && atof(every) > 0) shot_every = atof(every);
+    if (getenv("XBRT_SCREENSHOT_FROM")) shot_from = atof(getenv("XBRT_SCREENSHOT_FROM"));
     const char *w = getenv("XBRT_WINDOW");
     int want_window = !w || atoi(w);
 #ifdef _WIN32

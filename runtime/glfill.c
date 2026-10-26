@@ -543,6 +543,67 @@ static GLsync hi_sync;
 /* The copy started at the last vertical blank, as soon as the GPU has
  * finished it (polled from the device loop): waiting for the next blank
  * to collect it put another 16 ms between the game and the screen. */
+/* Debugging: XBRT_FLICKER=<from s>:<for s>:<out.ppm> counts, from each
+ * shown frame to the next, pixels that jump by more than 24 (brightness)
+ * for one frame and come back: flicker, as opposed to motion. Logs the
+ * count a frame; at the end writes the last frame dimmed with every pixel
+ * that popped in red (brighter for more). Needs the frames read back
+ * (XBRT_SCREENSHOT, with XBRT_SCREENSHOT_FROM past the end). */
+static void gl_flicker(const uint32_t *px, int w, int h) {
+    static int state = -1;
+    static double from, len;
+    static char out[512];
+    static uint8_t *l[3];
+    static uint16_t *count;
+    static int lw, lh, nf;
+    if (state < 0) {
+        const char *e = getenv("XBRT_FLICKER");
+        state = e && sscanf(e, "%lf:%lf:%511s", &from, &len, out) == 3 ? 1 : 0;
+    }
+    if (state != 1) return;
+    double now = rt_now_100ns() / 1e7;
+    if (now < from) return;
+    if (!count || lw != w || lh != h) {
+        for (int i = 0; i < 3; i++) free(l[i]), l[i] = calloc((size_t)w * h, 1);
+        free(count), count = calloc((size_t)w * h, 2);
+        lw = w, lh = h, nf = 0;
+    }
+    uint8_t *t = l[0];
+    l[0] = l[1], l[1] = l[2], l[2] = t; /* l[0] two frames back, l[1] the last, l[2] this one */
+    for (int i = 0; i < w * h; i++) {
+        uint32_t p = px[i];
+        l[2][i] = (uint8_t)((((p >> 16) & 255) * 2 + ((p >> 8) & 255) * 5 + (p & 255)) >> 3);
+    }
+    if (++nf >= 3) {
+        int pops = 0;
+        for (int i = 0; i < w * h; i++) {
+            int a = l[0][i], b = l[1][i], c = l[2][i];
+            if (abs(b - a) > 24 && abs(b - c) > 24 && (b > a) == (b > c) && abs(c - a) < 12) {
+                pops++;
+                if (count[i] < 65535) count[i]++;
+            }
+        }
+        fprintf(stderr, "[%9.3f] flicker: %d pixels popped\n", now, pops);
+    }
+    if (now >= from + len) {
+        FILE *f = fopen(out, "wb");
+        if (f) {
+            fprintf(f, "P6\n%d %d\n255\n", w, h);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++) {
+                    int i = y * w + x, k = count[i];
+                    uint32_t p = px[i];
+                    uint8_t rgb[3] = {(uint8_t)(((p >> 16) & 255) / 3), (uint8_t)(((p >> 8) & 255) / 3), (uint8_t)((p & 255) / 3)};
+                    if (k) rgb[0] = (uint8_t)(k * 40 + 120 > 255 ? 255 : k * 40 + 120), rgb[1] = rgb[2] = 0;
+                    fwrite(rgb, 1, 3, f);
+                }
+            fclose(f);
+        }
+        fprintf(stderr, "xbrt: flicker map of %d frames to %s\n", nf, out);
+        state = 2;
+    }
+}
+
 static void gl_present_poll(int wait) {
     if (!hi_pend) return;
     if (hi_sync) {
@@ -558,6 +619,7 @@ static void gl_present_poll(int wait) {
             if (hi_w * hi_h < hi_pw * hi_ph) free(hi_frame), hi_frame = malloc((size_t)hi_pw * hi_ph * 4);
             memcpy(hi_frame, m, (size_t)hi_pw * hi_ph * 4);
             hi_w = hi_pw, hi_h = hi_ph, hi_fb = hi_pfb, hi_when = rt_now_100ns();
+            gl_flicker(hi_frame, hi_w, hi_h);
             pthread_mutex_unlock(&hi_lock);
         }
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
@@ -1943,7 +2005,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s);
  * same conditions as gl_frag_state's depth and alpha test. */
 static int gl_frag_variant(void) {
     static int wbuf = -1, on = -1;
-    if (wbuf < 0) wbuf = getenv("XBRT_GL_WBUFFER") && atoi(getenv("XBRT_GL_WBUFFER"));
+    if (wbuf < 0) wbuf = !getenv("XBRT_GL_WBUFFER") || atoi(getenv("XBRT_GL_WBUFFER"));
     if (on < 0) on = !getenv("XBRT_GL_EARLY_Z") || atoi(getenv("XBRT_GL_EARLY_Z"));
     if (!on) return 0;
     int var = 0;
@@ -2015,11 +2077,15 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         uint32_t fb = K(0x388), ff = K(0x384); /* POLYGON_OFFSET_BIAS / SCALE_FACTOR, if POLY_OFFSET_FILL_ENABLE */
         float zoff[3] = {0, 0, (float)s->k}; /* slopes per Xbox pixel: k GL pixels each */
         if (K(0x338) & 1) memcpy(&zoff[0], &fb, 4), memcpy(&zoff[1], &ff, 4);
-        /* W-buffering only with XBRT_GL_WBUFFER=1: taking the program's w as
-         * the depth left the lower half of the cars dark (their passes
-         * failed the depth test), so its scale is not understood yet. */
+        /* W-buffering (CONTROL0 Z_PERSPECTIVE), as Forza asks for it: the
+         * depth is w, linear, so it keeps its precision far away. Screen z
+         * in 24 bits steps ~5 mm at 200 m and ~3 cm at 500 m, so road lines,
+         * kerbs and signs a few cm off their surfaces fought them in the
+         * distance while the camera moved: the scenery flicker on every
+         * track. (At first it left the lower half of the cars dark; later
+         * depth fixes cured that.) XBRT_GL_WBUFFER=0: screen z. */
         static int wbuf = -1;
-        if (wbuf < 0) wbuf = getenv("XBRT_GL_WBUFFER") && atoi(getenv("XBRT_GL_WBUFFER"));
+        if (wbuf < 0) wbuf = !getenv("XBRT_GL_WBUFFER") || atoi(getenv("XBRT_GL_WBUFFER"));
         if (!wbuf) zr[3] = 0;
         glUniform4fv(u_zr, 1, zr);
         glUniform3fv(u_zoff, 1, zoff);
