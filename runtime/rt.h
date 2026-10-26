@@ -53,6 +53,7 @@ extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
 #define RT_DBG_NO_ALPHA 4u
 #define RT_DBG_NO_CLIP 8u
 #define RT_DBG_CPU_VSH 16u
+#define RT_DBG_NO_WBUF 32u /* F2: screen z instead of the w-buffer */
 extern volatile uint32_t rt_debug_keys;
 extern volatile int rt_ram_dump_wanted; /* F4 (display.c): nv2a.c saves the RAM */
 extern volatile int rt_gpu_dump_wanted; /* F3 (display.c): nv2a.c writes a frame's GPU methods */

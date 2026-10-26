@@ -226,12 +226,14 @@ static void debug_key(WPARAM vk) {
         save_bmp(path, frame, frame_w, frame_h);
         return;
     }
-    if (vk < VK_F5 || vk > VK_F9) return;
-    rt_debug_keys ^= 1u << (vk - VK_F5);
+    if (vk == VK_F2) rt_debug_keys ^= RT_DBG_NO_WBUF;
+    else if (vk < VK_F5 || vk > VK_F9) return;
+    else rt_debug_keys ^= 1u << (vk - VK_F5);
     char title[512];
     int n = snprintf(title, sizeof title, "Forza Motorsport (PC port, work in progress)");
     for (int i = 0; i < 5; i++)
         if (rt_debug_keys & (1u << i)) n += snprintf(title + n, sizeof title - n, " | F%d %s", 5 + i, names[i]);
+    if (rt_debug_keys & RT_DBG_NO_WBUF) snprintf(title + n, sizeof title - n, " | F2 w-buffer off");
     SetWindowTextA(window, title);
 }
 

@@ -2010,7 +2010,7 @@ static int gl_frag_variant(void) {
     if (!on) return 0;
     int var = 0;
     int offset = (K(0x338) & 1) && (K(0x388) != 0 || K(0x384) != 0); /* POLY_OFFSET_FILL_ENABLE with a bias or a factor */
-    if (!offset && !(wbuf && (K(0x290) & (1u << 16)))) var |= 1;
+    if (!offset && !(wbuf && !(rt_debug_keys & RT_DBG_NO_WBUF) && (K(0x290) & (1u << 16)))) var |= 1;
     if (!K(SET_ALPHA_TEST_ENABLE) || (rt_debug_keys & RT_DBG_NO_ALPHA)) var |= 2;
     return var;
 }
@@ -2086,7 +2086,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
          * depth fixes cured that.) XBRT_GL_WBUFFER=0: screen z. */
         static int wbuf = -1;
         if (wbuf < 0) wbuf = !getenv("XBRT_GL_WBUFFER") || atoi(getenv("XBRT_GL_WBUFFER"));
-        if (!wbuf) zr[3] = 0;
+        if (!wbuf || (rt_debug_keys & RT_DBG_NO_WBUF)) zr[3] = 0;
         glUniform4fv(u_zr, 1, zr);
         glUniform3fv(u_zoff, 1, zoff);
     }

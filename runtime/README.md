@@ -61,6 +61,7 @@ first build takes a while.
 | `XBRT_FLICKER` | `<from s>:<for s>:<out.ppm>`: counts pixels that jump for one shown frame and come back, logs them a frame, and maps them over the last frame (needs `XBRT_SCREENSHOT`, with `XBRT_SCREENSHOT_FROM` past the end) | off |
 | `XBRT_SCREENSHOT_FROM` | `<seconds>`: the first screenshot then (with a small `XBRT_SCREENSHOT_EVERY`, every frame of a stretch) | 0 |
 | `XBRT_XRM_HEAP` | `0`: Forza's resource heap at its own 30.5 MB instead of its development size, 42.9 MB (room for streaming further ahead) | 1 |
+| `XBRT_HANG_DUMP` | `0`: no thread dump when the game shows no frame for 8 s (otherwise every thread's last kernel call and stack, once a stall, for hangs) | 1 |
 | `XBRT_WAIT_LOG` | `<ms>`: each guest wait that took at least that long, signalled or timed out, with the guest's stack (stalls where the game stops) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
@@ -73,7 +74,7 @@ Debugging keys: F12 saves the picture to `screenshots/`; F4 saves the
 64 MB of RAM there (`ram_<seconds>.bin`, with the GPU's drawing read back
 into it), with every framebuffer's depth (`zmap_<address>.pgm`, shadow maps
 among them) and the colour of the small ones (`cmap_<address>.ppm`); F3 writes every GPU method of the next frame there
-(`gpu_<seconds>.txt`, as `XBRT_GPU_DUMP`); F5-F9 turn off culling, the
+(`gpu_<seconds>.txt`, as `XBRT_GPU_DUMP`); F2 turns the w-buffer off (screen z), F5-F9 turn off culling, the
 depth test, the alpha test, depth clipping, and GPU vertex programs (the
 window title says which are on).
 

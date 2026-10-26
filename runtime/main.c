@@ -200,6 +200,21 @@ void rt_log_tick(void) {
         dumps = strchr(dumps, ',');
         dump_at = dumps ? atof(++dumps) : 0;
     }
+    { /* A hang: no frame for 8 s once the game has shown some. Every
+       * thread's state, once a stall, for the log (XBRT_HANG_DUMP=0: off);
+       * a wait that never ends is otherwise never logged. */
+        static int on = -1, dumped;
+        static uint32_t flips;
+        static uint64_t since;
+        if (on < 0) on = !getenv("XBRT_HANG_DUMP") || atoi(getenv("XBRT_HANG_DUMP"));
+        uint64_t now = rt_now_100ns();
+        if (nv2a.flips != flips || nv2a.flips < 100) flips = nv2a.flips, since = now, dumped = 0;
+        else if (on && !dumped && now - since > 80000000) {
+            fprintf(stderr, "---- no frame for 8 s at %.1f s (after %u): threads ----\n", now / 1e7, flips);
+            rt_thread_dump();
+            dumped = 1;
+        }
+    }
     if (log_deferred && rt_now_100ns() >= (uint64_t)(log_from * 1e7)) {
         rt_log_level = log_deferred, log_deferred = 0;
         rt_log("logging from here on (XBRT_LOG_FROM)\n");
