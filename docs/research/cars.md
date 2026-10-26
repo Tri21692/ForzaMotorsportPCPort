@@ -449,6 +449,15 @@ needs, learned the hard way:
   packed textures and the kept template parts' texel boxes count / 32768
   now; placed at / 65536 its taillights drew as plain grey discs. (The
   240SX's are left as they were.)
+- The paint shop has its own copy of the livery: `media/cars/<car>.liveries.bin`
+  (zlib; a 1136-byte header of D3D texture headers, then the car's views for
+  the vinyl editor, `damage` and `detail`: 1024x1024 8-bit indices into 256
+  BGRA colours, sorted by alpha then brightness). On entering the menu and
+  at each repaint the game clears its livery (2a29300) and draws detail over
+  the paint through a dependent texture lookup (stage mode 0x0F); the car
+  wears that from then on. Detail's alpha is opaque where paint must not go.
+  A converted car needs its own (nfsu2forza.py --liveries, addcar.py
+  --liveries): the Civic's drew the Civic's atlas over the Cobalt's lamps.
 - One subpart per detail level and material (as Forza's own).
 - Parts that had a damage shape keep one (the undamaged shape for now).
 - NFSU shaders without a known name: 12c9453c is the rubber round the

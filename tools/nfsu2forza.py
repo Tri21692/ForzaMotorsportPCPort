@@ -24,7 +24,7 @@ now, so parts are flat-coloured. Damage shapes are the undamaged shape
 (no dents yet).
 
 Usage:
-  python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass] [--badges <folder>]
+  python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass] [--badges <folder>] [--liveries <template .liveries.bin>]
 
 The NFSU car's windows are holes in its body: they are filled with glass
 (window_panes), put in the template's glass parts. --keep-glass keeps the
@@ -33,6 +33,9 @@ template's own windows instead (they stand out of a lower roof).
 model.* (the model's lettering, on the tail), any image ffmpeg
 reads, used instead of the NFSU badge sheet's small ones. Your own files:
 trademarks, so they stay out of anything shared.
+--liveries: the template's media/cars/<car>.liveries.bin; writes the
+paint shop's copy of the new livery to liveries.bin beside the output
+(addcar.py --liveries), or every repaint takes the new lamps' texture.
 """
 import os
 import re
@@ -321,7 +324,7 @@ def dark_uv(xpr_path):
     return (int((best[0] + 0.5) / w * 65536), int((best[1] + 0.5) / h * 65536))
 
 
-def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
+def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None):
     import numpy as np
     car = carbin.read(open(template_path, 'rb').read())
     nparts = nfsu.read(os.path.join(nfsu_dir, 'GEOMETRY.BIN'))
@@ -457,6 +460,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                        os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'),
                        keep=[paint, dark] + ([(paint[0] * 2 % 65536, paint[1] * 2 % 65536)] if mw else []),  # (both readings: see the paint texel)
                        protect=protect)
+    if liveries:
+        paint_shop(liveries, os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries.bin'),
+                   os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), list(atlas.values()))
     print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (h if isinstance(h, str) else textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
     # Wheels: the template's hubs (its brake rotors) stay where its physics
@@ -1303,6 +1309,64 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     print('wheel: %d rim triangles in %d levels, scale %.3f' % (sum(len(s) for _, s in subs), len(subs), rim_r / 0.223))
 
 
+def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4):
+    """The paint shop's copy of the livery: <car>.liveries.bin (zlib) holds,
+    after a 1136-byte header of D3D texture headers, the car's views for the
+    vinyl editor, 'damage' and 'detail': 1024x1024 8-bit indices (linear)
+    into 256 BGRA colours. A repaint draws detail over the paint into the
+    livery the car then wears; its alpha is opaque where paint must not go
+    (lamps, badges, the cabin). The template's, kept, drew the Civic's
+    atlas over the new car's lamps (packed where the Civic is paint): every
+    repaint took their texture. Here detail is the new atlas (livery0hi)
+    in 256 colours, its alpha the template's with the packed textures'
+    boxes (0..1) opaque."""
+    import zlib
+    import numpy as np
+    import forzaxpr as fx
+    d = bytearray(zlib.decompress(open(template_bin, 'rb').read()))
+    head = 1136
+    idx_at = pal_at = None
+    for o in range(0, head - 20, 4):  # detail's texture headers: indices (format 0x1B) then the palette
+        com, data, _, fmt, _ = struct.unpack_from('<5I', d, o)
+        if com == 0x00040001 and (fmt >> 8) & 0xFF == 0x1B and b'detail' in d[max(0, o - 120):o]:
+            idx_at = head + data
+            pal_at = head + struct.unpack_from('<I', d, o + 24)[0]
+            break
+    assert idx_at, 'no detail texture in %s' % template_bin
+    old_i = np.frombuffer(bytes(d[idx_at:idx_at + (1 << 20)]), np.uint8).reshape(1024, 1024)
+    old_p = np.frombuffer(bytes(d[pal_at:pal_at + 1024]), np.uint8).reshape(256, 4)
+    alpha = old_p[old_i][..., 3].copy()
+    for u0, v0, u1, v1 in boxes:
+        alpha[max(0, int(v0 * 1024) - pad):int(v1 * 1024) + pad + 1, max(0, int(u0 * 1024) - pad):int(u1 * 1024) + pad + 1] = 255
+    hd = open(os.path.join(livery_dir, 'livery0hi.xpr'), 'rb').read()
+    t = fx.textures(hd)[0]
+    img = fx.dxt(hd[t['start']:], 1024, 1024, 5)[..., :3].astype(np.float32)
+    px = np.concatenate([img.reshape(-1, 3), alpha.reshape(-1, 1).astype(np.float32)], 1)  # RGBA
+    # 256 colours: k-means from a spread of the pixels
+    rng = np.random.default_rng(0)
+    cent = px[rng.choice(len(px), 256, replace=False)].copy()
+    for _ in range(8):
+        lab = np.empty(len(px), np.int64)
+        cc = (cent ** 2).sum(1)
+        for a in range(0, len(px), 32768):
+            q = px[a:a + 32768]
+            lab[a:a + 32768] = (cc[None] - 2 * q @ cent.T).argmin(1)
+        for k in range(256):
+            m = lab == k
+            if m.any(): cent[k] = px[m].mean(0)
+    # In order of alpha, then brightness, as the template's: the game blends
+    # neighbouring entries (unsorted, the lamps came out speckled grey)
+    order = np.lexsort((-(cent[:, :3] @ np.array([0.299, 0.587, 0.114], np.float32)), cent[:, 3]))
+    cent = cent[order]
+    lab = np.argsort(order)[lab]
+    pal = np.clip(cent + 0.5, 0, 255).astype(np.uint8)[:, [2, 1, 0, 3]]  # BGRA
+    d[idx_at:idx_at + (1 << 20)] = lab.astype(np.uint8).tobytes()
+    d[pal_at:pal_at + 1024] = pal.tobytes()
+    open(out_bin, 'wb').write(zlib.compress(bytes(d), 9))
+    err = np.abs(cent[lab] - px).mean(0)
+    print('paint shop: detail in 256 colours (mean error %s), %d boxes opaque (%s)' % (err.round(1).tolist(), len(boxes), out_bin))
+
+
 if __name__ == '__main__':
     if len(sys.argv) == 7 and sys.argv[1] == '--wheel':
         convert_wheel(*sys.argv[2:])
@@ -1313,6 +1377,11 @@ if __name__ == '__main__':
         i = args.index('--badges')
         badges = args[i + 1]
         del args[i:i + 2]
+    liveries = None
+    if '--liveries' in args:  # the template's <car>.liveries.bin: writes liveries.bin beside the output (see paint_shop)
+        i = args.index('--liveries')
+        liveries = args[i + 1]
+        del args[i:i + 2]
     if len(args) != 3:
         raise SystemExit(__doc__)
-    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges)
+    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges, liveries=liveries)

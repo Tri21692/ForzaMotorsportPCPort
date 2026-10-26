@@ -9,6 +9,7 @@ to a new car, and --restore gives the Civic SI back its own files.
                          [--cab <car cab>] [--make <car>] [--year <year>] [--price <credits>]
                          [--engine-like <car> [--engine <name>] [--power <hp>] [--torque <lb-ft>]]
                          [--mass <kg>] [--stats-like <car>] [--upgrades <upgrades.xml>]
+                         [--liveries <liveries.bin>]
   e.g.  <disc>  run/mods  CivicSI  Nissan240SXS13  --name "240SX" --restore
 
 <from> and <new> are car names as in cars\\carlist.xml (<new> must not be
@@ -35,7 +36,8 @@ dealer and logo). --year: the model year. --engine-like: its own copy of
 that car's engine and sound (named --engine), scaled to --power and
 --torque. --mass: the weight. --stats-like: the menus' figures and ratings
 of a similar car. --upgrades: the shop's body kits, hoods and wings that
-nfsu2forza.py writes for a Most Wanted car.
+nfsu2forza.py writes for a Most Wanted car. --liveries: the paint shop's copy of the
+livery (nfsu2forza.py --liveries) instead of <from>'s.
 
 The ordinal is a number no car has and nothing names as a car
 (carlist, AI opponents, career prizes): the lists skip 13 numbers, and
@@ -244,7 +246,7 @@ def write_strings(d, add):
 # ----
 
 def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False, cab=None, make=None, year=None,
-         engine_like=None, engine=None, power=None, torque=None, mass=None, stats_like=None, price=None, upgrades=None):
+         engine_like=None, engine=None, power=None, torque=None, mass=None, stats_like=None, price=None, upgrades=None, liveries=None):
     mega, cars, xpr = Archive(disc, mods, 'Mega.ca2'), Archive(disc, mods, 'Cars.ca2'), Archive(disc, mods, 'MegaXPR.ca2')
     m = mega.files
     key = 'cars' + B + 'carlist.xml'
@@ -428,6 +430,7 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     lv = disc_file(disc, 'media', 'cars', '%s.liveries.bin' % src)
     mlv = os.path.join(mods, 'media', 'cars', '%s.liveries.bin' % src)
     if os.path.exists(mlv): lv = mlv
+    if liveries: lv = liveries  # a converted car's own (nfsu2forza.py --liveries)
     if lv:
         os.makedirs(os.path.join(mods, 'media', 'cars'), exist_ok=True)
         open(os.path.join(mods, 'media', 'cars', '%s.liveries.bin' % new), 'wb').write(open(lv, 'rb').read())
@@ -478,7 +481,7 @@ if __name__ == '__main__':
     it = iter(sys.argv[1:])
     for a in it:
         if a in ('--ordinal', '--name', '--short', '--cab', '--make', '--year', '--engine-like', '--engine', '--power', '--torque',
-                 '--mass', '--stats-like', '--price', '--upgrades'): opts[a[2:].replace('-', '_')] = next(it)
+                 '--mass', '--stats-like', '--price', '--upgrades', '--liveries'): opts[a[2:].replace('-', '_')] = next(it)
         elif a == '--restore': opts['restore'] = True
         else: args.append(a)
     if len(args) != 4: raise SystemExit(__doc__)
@@ -488,5 +491,5 @@ if __name__ == '__main__':
          cab=opts.get('cab'), make=opts.get('make'), year=int(opts['year']) if 'year' in opts else None,
          engine_like=opts.get('engine_like'), engine=opts.get('engine'), power=float(opts['power']) if 'power' in opts else None,
          torque=float(opts['torque']) if 'torque' in opts else None, mass=float(opts['mass']) if 'mass' in opts else None,
-         stats_like=opts.get('stats_like'), price=int(opts['price']) if 'price' in opts else None, upgrades=opts.get('upgrades'),
+         stats_like=opts.get('stats_like'), price=int(opts['price']) if 'price' in opts else None, upgrades=opts.get('upgrades'), liveries=opts.get('liveries'),
          restore=opts.get('restore', False))
