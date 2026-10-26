@@ -743,6 +743,18 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     near[q] = pi[d2.argmin(1)]
             def tex(i, j):
                 if Qm[i] == WINDOWS: return tuple(old[j][6:10]) + dark
+                if Qm[i] == BODY and mw:
+                    # Shading as the Civic's paint has it (fitted: brighter facing up and
+                    # higher on the car); at full shading everywhere the Cobalt glowed
+                    # against the other cars at dusk
+                    # The race's vertex program: diffuse is the light times the first
+                    # byte, how much of the environment shows (diffuse alpha) the second.
+                    # Fitted alone they gave the Cobalt 0.78 of the Civic's diffuse and
+                    # 0.67 of its reflection (flat, the user saw); scaled to match (run
+                    # through the program on both cars' paint vertices).
+                    ny, h = verts[i][4] / 32767, verts[i][1] / 4096 / max(ty)
+                    return (int(min(255, max(0, 1.28 * (102.4 + 74.9 * ny + 74.4 * h)))),
+                            int(min(255, max(0, 1.48 * (89.4 + 76.5 * ny + 79.6 * h)))), 0, 0) + paint
                 if Qm[i] == BODY: return (255, 255, 0, 0) + paint  # one known paint texel, full shading: copied, panels near the template's windows came out black or clear
                 if mw and len(verts[i]) <= 12 and Qm[i] in (CHROME, PLASTIC):  # untextured trim: the template's nearest texel was often its red lamps (a grille in red stripes)
                     return tuple(old[j][6:10]) + (paint if Qm[i] == CHROME else dark)
