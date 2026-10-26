@@ -114,9 +114,23 @@ path the disc does not have is found too, so a new `car_<name>.cab` loads.
   names (`IDS_Model_44_Name`). model.dat holds a car's name and short
   name ids at 12 and 14 (Civic SI: 160, 161); the ids are the same in
   every language, 1-1125 on the disc.
-- The archives grow (a car is ~40 KB of physics, its wheel, ~300 bytes of
-  tables) and must keep their stream counts: cars.cab 6.3 of 8 MB,
-  mega.cab 11.6 of 12 MB, megaxpr.cab 44 of 48 MB with the S13 added.
+- The archives grow (a car is ~20-40 KB of physics, ~300 bytes of tables;
+  a wheel only when the mods changed it, stock ones are shared) and must
+  keep their stream counts: cars.cab 6.3 of 8 MB, mega.cab 11.6 of 12 MB,
+  megaxpr.cab 44 of 48 MB with three cars added. cars.cab has room for
+  about 80 more.
+- **The game's limits: 300 cars, ordinals 0-299.** carlist.xml is read
+  (0x44340) into a fixed global table at 0x57D188: a count, 300 records of
+  140 bytes from +4 (name in 60 bytes at 0, shortName at 0x3C, ordinal at
+  0x7C), then at +0xA414 (record, ordinal) pairs. The loop has no bound:
+  a 301st car would overwrite what follows. The profile's per-car tables
+  are 300 long and indexed by ordinal (0x55610 finds the next set bit of a
+  300-bit set; 0x56060 returns one of 300 12-byte records at +0x7D0 if its
+  bit is set; an ordinal of 300 or more is skipped), and 0x15AE25 keeps a
+  stored ordinal in -1..299. The icon packs reach 319. So 244-299 are
+  free as well as the gaps: 61 more cars, 69 with the AI-named numbers.
+  Seen in guest memory on 25 Oct: 234 cars, test copies at 244 and 299
+  read with their ordinals.
 
 The S13 as its own car (25 Oct, not yet seen in the game):
 `addcar.py <disc> run/mods_addcar CivicSI Nissan240SXS13 --restore` on a

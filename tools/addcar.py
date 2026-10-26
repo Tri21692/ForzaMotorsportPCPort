@@ -28,7 +28,8 @@ there is one, else the disc's:
 
 The ordinal is a number no car has and nothing names as a car
 (carlist, AI opponents, career prizes): the lists skip 13 numbers, and
-some that no car has are named by events' AI players (aicarmodelid).
+some that no car has are named by events' AI players (aicarmodelid);
+after those, 244-299. The game holds 300 cars, ordinals 0-299 (below).
 The game sizes its car tables from the files (model.dat's reader divides
 the size by 104) and finds rows by ordinal; the rows stay in ordinal order.
 
@@ -54,6 +55,13 @@ import forzacab
 B = '\\'
 CHUNK = 4 << 20
 TILE = 16 * (128 // 4) * 16  # a 128x64 DXT5 icon: 16 rows of 32 blocks of 16 bytes
+# The game's limits (25 Oct, from the executable): carlist.xml is read into
+# a fixed table of 300 cars with no bound check (0x44340: 140-byte records,
+# then (ordinal, record) pairs at +0xA418), and per-car tables of the
+# profile are 300 long and indexed by ordinal (a 300-bit set and 12-byte
+# records, 0x55610 and 0x56060; an ordinal of 300 or more is skipped).
+# The icon packs hold 5 x 64 tiles.
+MAX_CARS, MAX_ORDINAL = 300, 299
 
 
 def unpack_ca2(path):
@@ -98,11 +106,15 @@ class Archive:
         self.files, self.root = cab_files(unpack_ca2(self.out) if os.path.exists(self.out) else disc_raw)
         self.name = name
 
-    def write(self):
-        blob = forzacab.pack(self.files, self.root)
+    def check(self):
+        """Packed, and as many streams as the disc's, before anything is written."""
+        self.blob = blob = forzacab.pack(self.files, self.root)
         if math.ceil(len(blob) / CHUNK) != self.streams:
-            raise SystemExit('%s: %d bytes unpacked, %d streams of 4 MB; the disc has %d, and the game would refuse it'
+            raise SystemExit('%s: %d bytes unpacked, %d streams of 4 MB; the disc has %d, and the game would refuse it; nothing written'
                              % (self.name, len(blob), math.ceil(len(blob) / CHUNK), self.streams))
+
+    def write(self):
+        blob = self.blob
         os.makedirs(os.path.dirname(self.out), exist_ok=True)
         open(self.out, 'wb').write(forzacab.ca2(blob))
         print('%s: %d files, %.2f of %d MB' % (self.name, len(self.files), len(blob) / 1048576, 4 * self.streams))
@@ -144,9 +156,9 @@ def free_ordinal(mega):
     for k, v in mega.items():
         if k.lower().endswith('.xml'):
             named |= {int(o) for o in re.findall(rb'(?i)(?:aicarmodelid|carmodelid|careercarunlock)="(\d+)"', v)}
-    for o in range(max(used)):
+    for o in range(MAX_ORDINAL + 1):
         if o not in used and o not in named: return o
-    raise SystemExit('no free ordinal below %d' % max(used))
+    raise SystemExit('no free ordinal up to %d' % MAX_ORDINAL)
 
 
 # ---- forzadb\cardb tables: rows by ordinal, in ordinal order
@@ -229,6 +241,9 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     so = ordinal_of(xml, src)
     if ordinal is None: ordinal = free_ordinal(m)
     if re.search(r'Ordinal="%d"' % ordinal, xml): raise SystemExit('ordinal %d is taken' % ordinal)
+    if not 0 <= ordinal <= MAX_ORDINAL: raise SystemExit('ordinal %d: the game keeps cars 0-%d only' % (ordinal, MAX_ORDINAL))
+    if len(re.findall(r'<car name=', xml)) >= MAX_CARS: raise SystemExit('carlist.xml has %d cars, as many as the game holds' % MAX_CARS)
+    if len(new) >= 60: raise SystemExit('%s: names are kept in 60 bytes' % new)
     wheel = re.search(r'<WheelStyle>\s*<P0 [^>]*File="([^"]*)"', cars.files[B.join(('cars', src.lower(), 'tooldata.xml'))].decode('latin-1')).group(1)
 
     # Mega.ca2: the car list, the tables, the wheel's model
@@ -261,7 +276,11 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     struct.pack_into('<II', grow, 0, ordinal, ordinal)
     # Mega.ca2's wheel model, MegaXPR.ca2's textures, under the new car's name
     wsrc, wdst = B.join(('tires', 'art', wheel.lower())) + B, B.join(('tires', 'art', new.lower())) + B
-    nw = rename_tree(m, wsrc, wdst) + rename_tree(xpr.files, wsrc, wdst)
+    # copied only when the mods folder changed it (the S13's NFSU rim): a stock
+    # wheel is shared, as cars share them on the disc, and Mega.ca2 has room
+    # for few copies (its 3 streams of 4 MB)
+    own_wheel = any(under(a.files, wsrc) != under(a.disc, wsrc) for a in (mega, xpr))
+    nw = rename_tree(m, wsrc, wdst) + rename_tree(xpr.files, wsrc, wdst) if own_wheel else 0
 
     if restore:
         xml = xml.replace(car_block(xml, src).group(0), car_block(mega.disc[key].decode('latin-1'), src).group(0))
@@ -278,11 +297,12 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     csrc, cdst = B.join(('cars', src.lower())) + B, B.join(('cars', new.lower())) + B
     nc = rename_tree(cars.files, csrc, cdst)
     tk = cdst + 'tooldata.xml'
-    cars.files[tk] = re.sub(rb'(<WheelStyle>\s*<P0 [^>]*File=")[^"]*"', lambda g: g.group(1) + new.encode() + b'"', cars.files[tk])
+    if own_wheel:
+        cars.files[tk] = re.sub(rb'(<WheelStyle>\s*<P0 [^>]*File=")[^"]*"', lambda g: g.group(1) + new.encode() + b'"', cars.files[tk])
     if restore: restore_tree(cars.files, cars.disc, csrc)
 
     # the strings, in every language: the same ids in each
-    new_ids = None
+    new_ids, strings = None, {}
     for lang, (p, mp, n, s) in shown.items():
         base = open(p if restore else (mp if os.path.exists(mp) else p), 'rb').read()
         ids = string_ids(base)
@@ -293,16 +313,20 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
         these = (got[want[0][0]], got[want[1][0]])
         if new_ids not in (None, these): raise SystemExit('%s: the new string ids differ between languages' % lang)
         new_ids = these
-        os.makedirs(os.path.dirname(mp), exist_ok=True)
-        open(mp, 'wb').write(out)
+        strings[mp] = out  # written with the archives, at the end
     struct.pack_into('<HH', mrow, 12, *new_ids)
     m[B.join(('forzadb', 'cardb', 'model.dat'))] = put_row(model, bytes(mrow))
     m[B.join(('forzadb', 'cardb', 'gamecars.dat'))] = put_row(games, bytes(grow))
     en = shown.get('en') or next(iter(shown.values()))
     print('carlist: %s, ordinal %d, a copy of %s (ordinal %d), shown as "%s" ("%s"), string ids %d, %d'
           % (new, ordinal, src, so, en[2], en[3], *new_ids))
-    print('wheel: tires\\art\\%s (%d files) from %s' % (new.lower(), nw, wheel))
+    print('wheel: tires\\art\\%s (%d files) from %s' % (new.lower(), nw, wheel) if own_wheel else "wheel: %s's, shared" % wheel)
     print('cars.cab: %d files under cars\\%s' % (nc, new.lower()))
+    for a in (mega, cars, xpr): a.check()
+    for a in (mega, cars, xpr): a.write()
+    for mp, out in strings.items():
+        os.makedirs(os.path.dirname(mp), exist_ok=True)
+        open(mp, 'wb').write(out)
 
     # the car's cab
     cab_out = os.path.join(mods, 'media', 'cabs', 'car_%s.cab' % new)
@@ -342,8 +366,6 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
         set_tile(sd, so, icon_tile(open(pack_path(so, False)[0], 'rb').read(), so))
         open(pack_path(so)[1], 'wb').write(bytes(sd))
     print('icon: caricons%d.xpr tile %d from caricons%d.xpr tile %d' % (ordinal // 64 + 1, ordinal % 64, so // 64 + 1, so % 64))
-
-    for a in (mega, cars, xpr): a.write()
     if restore:
         if os.path.exists(mine):
             os.replace(mine, mine + '.replaced')
