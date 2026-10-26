@@ -18,6 +18,8 @@
     X(PFNGLSCISSORPROC, glScissor)                                                                                          \
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer)                                                                          \
     X(PFNGLSTENCILMASKPROC, glStencilMask)                                                                                  \
+    X(PFNGLSTENCILFUNCPROC, glStencilFunc)                                                                                  \
+    X(PFNGLSTENCILOPPROC, glStencilOp)                                                                                      \
     X(PFNGLENABLEPROC, glEnable)                                                                                            \
     X(PFNGLDISABLEPROC, glDisable)                                                                                          \
     X(PFNGLCLEARCOLORPROC, glClearColor)                                                                                    \
@@ -125,6 +127,8 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glScissor p_glScissor
 #define glBlitFramebuffer p_glBlitFramebuffer
 #define glStencilMask p_glStencilMask
+#define glStencilFunc p_glStencilFunc
+#define glStencilOp p_glStencilOp
 #define glEnable p_glEnable
 #define glDisable p_glDisable
 #define glClearColor p_glClearColor

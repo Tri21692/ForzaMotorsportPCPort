@@ -98,11 +98,25 @@ void rt_object_release(uint32_t h) {
 
 /* ---- waiting ---- */
 
+/* Debugging: XBRT_WAIT_LOG=<ms> prints each guest wait that took at least
+ * that long (whether it timed out, and the guest's stack), for stalls
+ * where the game itself stops (the GPU idle, waiting for work). */
+static void wait_log(uint64_t start, int ok) {
+    static int ms = -1;
+    if (ms < 0) ms = getenv("XBRT_WAIT_LOG") ? atoi(getenv("XBRT_WAIT_LOG")) : 0;
+    uint64_t took = (rt_now_100ns() - start) / 10000;
+    if (!ms || took < (uint64_t)ms) return;
+    fprintf(stderr, "[%9.3f] wait %llu ms, %s, thread %08x\n", rt_now_100ns() / 1e7, (unsigned long long)took,
+            ok ? "signalled" : "timed out", rt_self ? rt_self->kthread : 0);
+    rt_backtrace(rt_self ? &rt_self->ctx : NULL);
+}
+
 int rt_wait(int (*ready)(void *), void *arg, uint64_t deadline) {
+    uint64_t start = rt_now_100ns();
     for (;;) {
-        if (ready(arg)) return 1;
+        if (ready(arg)) { wait_log(start, 1); return 1; }
         uint64_t now = rt_now_100ns();
-        if (deadline && now >= deadline) return 0;
+        if (deadline && now >= deadline) { wait_log(start, 0); return 0; }
         /* Wake at least every 10 ms, so timers and KeTickCount move. */
         uint64_t until = now + 100000;
         if (deadline && deadline < until) until = deadline;

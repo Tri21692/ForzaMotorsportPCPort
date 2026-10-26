@@ -1699,6 +1699,7 @@ static int gl_clear(uint32_t flags) {
         bits |= GL_DEPTH_BUFFER_BIT;
     }
     if ((flags & 2) && s->zbpp == 4) {
+        glStencilMask(0xFF); /* (a draw's write mask may be set: gl_frag_state) */
         glClearStencil((GLint)(zv & 0xFF));
         bits |= GL_STENCIL_BUFFER_BIT;
     }
@@ -2018,6 +2019,26 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         glFrontFace(ff);
     } else {
         glDisable(GL_CULL_FACE);
+    }
+    /* The stencil test (SET_STENCIL_*, GL's own values; the masks 0xFF
+     * until the game sets them). Without it, Forza's race frame wrote
+     * alpha 0 over the whole scene where it meant only the stencilled
+     * part: alpha is its glow mask, so the bloom (016f3000, added to
+     * every frame) came out black and the picture flat. */
+    if (K(0x32C) && s->ztex && s->zbpp == 4 && !getenv("XBRT_GL_NO_STENCIL")) {
+        GLuint wmask = nv2a.kelvin_set[0x360 / 4] ? K(0x360) & 0xFF : 0xFF, fmask = nv2a.kelvin_set[0x36C / 4] ? K(0x36C) & 0xFF : 0xFF;
+        GLenum op[3];
+        for (int i = 0; i < 3; i++) {
+            uint32_t o = K(0x370 + 4 * (uint32_t)i);
+            op[i] = !nv2a.kelvin_set[(0x370 + 4 * (uint32_t)i) / 4] || o == 0x1E00 ? GL_KEEP : o == 0 ? GL_ZERO : (GLenum)o;
+        }
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(nv2a.kelvin_set[0x364 / 4] ? (GLenum)K(0x364) : GL_ALWAYS, (GLint)(K(0x368) & 0xFF), fmask);
+        glStencilOp(op[0], op[1], op[2]);
+        glStencilMask(wmask);
+    } else {
+        glDisable(GL_STENCIL_TEST);
+        glStencilMask(0xFF);
     }
     glEnable(GL_SCISSOR_TEST);
     glScissor(d->cx0 * s->k, d->cy0 * s->k, d->cw * s->k, d->ch * s->k);

@@ -110,6 +110,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     if (method >= 0x2000) return;
     if (rt_log_level >= 3) rt_log("nv2a: kelvin %04x = %08x\n", method, arg);
     nv2a.kelvin[method / 4] = arg;
+    nv2a.kelvin_set[method / 4] = 1;
     nv2a_raster_method(method, arg);
     switch (method) {
     case FLIP_INCREMENT_WRITE: {

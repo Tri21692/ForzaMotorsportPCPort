@@ -46,11 +46,13 @@ first build takes a while.
 | `XBRT_GPU_DUMP` | `<file>:<first flip>:<flips>` logs every GPU method, after the vertex program and constants as they stand; a first flip of `@<seconds>` starts at that time, `=<hex offset>` when the GPU is told to draw at that colour offset (`=2a29300:3`: the vinyl editor's livery) | off |
 | `XBRT_GL_VSH_DUMP` | a folder to save each vertex program's GLSL to (`vsh<n>.glsl`), and which one every draw ran (`use.txt`: flip, draw, program, vertices) | off |
 | `XBRT_GL_NO_SHADOW` | any value lights every shadow-map lookup (debugging) | off |
+| `XBRT_GL_NO_STENCIL` | any value turns the stencil test off (before 26 Oct: Forza's race frame lost its glow mask, so no bloom) | off |
 | `XBRT_GL_IDLE_READBACK` | `0`: framebuffers the game stopped drawing stay on the GPU (before 25 Oct; the Garage menu went black after the decal editor) | on |
 | `XBRT_GL_SWIZZLED` | `0`: draws into swizzled render targets are dropped (before 25 Oct: no vinyls, no environment cube map) | on |
 | `XBRT_TEX_LOG` | `1`: each texture (address, format) the first time a draw samples it | off |
 | `XBRT_GL_SURF_LOG` | `1`: each GPU framebuffer as it is made (address, size, swizzled or not, depth) | off |
 | `XBRT_RT_LOG` | `<hex offset>`: each draw (program, textures) and clear into that colour offset, all session (`2a29300`: the paint shop's livery); the RAM under the first 8 draws' textures to `screenshots/rt_<draw>_<stage>.bin` | off |
+| `XBRT_WAIT_LOG` | `<ms>`: each guest wait that took at least that long, signalled or timed out, with the guest's stack (stalls where the game stops) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
 

@@ -12,6 +12,7 @@ typedef struct {
 
     /* Kelvin (class 0x97) method state, indexed by method / 4 */
     uint32_t kelvin[0x2000 / 4];
+    uint8_t kelvin_set[0x2000 / 4]; /* written at least once (else the hardware's default applies) */
 
     uint32_t vblanks, draws, clears, flips, traps, skipped;
     volatile int flip_stall; /* FLIP_STALL: the push buffer waits until the CPU moves FLIP_READ on */
