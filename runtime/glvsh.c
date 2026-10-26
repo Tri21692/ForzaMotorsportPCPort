@@ -302,7 +302,9 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     if (!vsh_extent(&len)) return 0;
     uint64_t p0 = rt_now_100ns();
     GlVsh *v = gl_vsh_get(len);
-    if (getenv("XBRT_GL_VSH_DUMP")) { /* debugging: which program each draw ran, to <folder>/use.txt */
+    static int dumping = -1;
+    if (dumping < 0) dumping = getenv("XBRT_GL_VSH_DUMP") != NULL;
+    if (dumping) { /* debugging: which program each draw ran, to <folder>/use.txt */
         static FILE *use;
         if (!use) {
             char path[600];

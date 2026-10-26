@@ -2077,7 +2077,9 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
      * alpha 0 over the whole scene where it meant only the stencilled
      * part: alpha is its glow mask, so the bloom (016f3000, added to
      * every frame) came out black and the picture flat. */
-    if (K(0x32C) && s->ztex && s->zbpp == 4 && !getenv("XBRT_GL_NO_STENCIL")) {
+    static int no_stencil = -1; /* getenv is a scan of the environment: not at every draw */
+    if (no_stencil < 0) no_stencil = getenv("XBRT_GL_NO_STENCIL") != NULL;
+    if (K(0x32C) && s->ztex && s->zbpp == 4 && !no_stencil) {
         GLuint wmask = nv2a.kelvin_set[0x360 / 4] ? K(0x360) & 0xFF : 0xFF, fmask = nv2a.kelvin_set[0x36C / 4] ? K(0x36C) & 0xFF : 0xFF;
         GLenum op[3];
         for (int i = 0; i < 3; i++) {

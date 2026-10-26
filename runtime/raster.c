@@ -1604,14 +1604,30 @@ typedef struct {
 
 static FetchAttr fattr[NATTR];
 static int nfattr;
+static uint32_t fetch_inline_mask; /* the attributes not in arrays: those come from the inline values */
+
+/* The next vertex of an array draw: fetch() writes each array attribute
+ * whole, so only the others come from the inline values. Copying all
+ * 256 bytes first was most of the time fetching a vertex. */
+static Vertex *vert_new_fetched(void) {
+    if (nverts == verts_cap) verts_cap = verts_cap ? verts_cap * 2 : 4096, verts = realloc(verts, (size_t)verts_cap * sizeof *verts);
+    Vertex *v = &verts[nverts++];
+    for (uint32_t m = fetch_inline_mask; m; m &= m - 1) {
+        int a = __builtin_ctz(m);
+        memcpy(v->a[a], cur.a[a], sizeof v->a[a]);
+    }
+    return v;
+}
 
 static void fetch_layout(void) {
     nfattr = 0;
+    fetch_inline_mask = (1u << NATTR) - 1;
     for (int a = 0; a < NATTR; a++) {
         uint32_t f = K(SET_VERTEX_DATA_ARRAY_FORMAT + 4 * a), size = (f >> 4) & 15;
         if (!size) continue;
         uint32_t off = K(SET_VERTEX_DATA_ARRAY_OFFSET + 4 * a);
         FetchAttr *fa = &fattr[nfattr++];
+        fetch_inline_mask &= ~(1u << a);
         fa->a = (uint8_t)a, fa->type = (uint8_t)(f & 15), fa->size = (uint8_t)size, fa->stride = f >> 8;
         fa->base = dma_base(off & 0x80000000u ? SET_CONTEXT_DMA_VERTEX_B : SET_CONTEXT_DMA_VERTEX_A) + (off & 0x7FFFFFFFu);
     }
@@ -1666,7 +1682,7 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
                 const uint32_t *p = inline_buf, *end = inline_buf + ninline;
                 while (p < end) {
                     const uint32_t *was = p;
-                    fetch(0, vert_new(), &p);
+                    fetch(0, vert_new_fetched(), &p);
                     if (p == was) break; /* no attributes enabled */
                 }
             }
@@ -1708,11 +1724,11 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
         if (k == 1 && a == ATTR_POS) emit();
     } else if (method == DRAW_ARRAYS && prim) {
         uint32_t start = arg & 0xFFFFFF, count = (arg >> 24) + 1;
-        for (uint32_t i = 0; i < count; i++) fetch(start + i, vert_new(), NULL);
+        for (uint32_t i = 0; i < count; i++) fetch(start + i, vert_new_fetched(), NULL);
     } else if (method == ARRAY_ELEMENT16 && prim) {
-        for (int h = 0; h < 2; h++) fetch(h ? arg >> 16 : arg & 0xFFFF, vert_new(), NULL);
+        for (int h = 0; h < 2; h++) fetch(h ? arg >> 16 : arg & 0xFFFF, vert_new_fetched(), NULL);
     } else if (method == ARRAY_ELEMENT32 && prim) {
-        fetch(arg, vert_new(), NULL);
+        fetch(arg, vert_new_fetched(), NULL);
     } else if (method == INLINE_ARRAY && prim) {
         if (ninline == inline_cap) inline_cap = inline_cap ? inline_cap * 2 : 4096, inline_buf = realloc(inline_buf, (size_t)inline_cap * 4);
         inline_buf[ninline++] = arg;
