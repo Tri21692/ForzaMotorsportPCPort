@@ -101,7 +101,7 @@ static char *vsh_glsl(const VshIns *prog, uint32_t n) {
             "out vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
             "out float v_fog;\n"
             "noperspective out float v_zs;\n"
-            "out float v_w;\n"
+            "noperspective out float v_w;\n"
             "vec4 con(int i) { return i >= 0 && i < 192 ? u_vc[i] : vec4(0.0); }\n"
             /* The NV2A's multiply: zero times anything (infinity too) is zero. */
             "vec4 mulz(vec4 a, vec4 b) { vec4 m = a * b;\n"
