@@ -243,6 +243,16 @@ uint32_t xb_mmio_read(uint32_t a, int bytes) {
  * was much darker than on an Xbox or xemu. */
 volatile uint8_t rt_gamma[256][3];
 volatile uint32_t rt_gamma_seq;
+
+/* XBRT_BRIGHTNESS=<0..1>: how much of the ramp the picture gets, 1 as
+ * the Xbox shows it. Its race exposure, about doubling the middle tones,
+ * washed out the yellow and white of the HUD's lettering on a PC screen. */
+volatile float rt_brightness = -1;
+
+float rt_brightness_mix(void) {
+    if (rt_brightness < 0) rt_brightness = getenv("XBRT_BRIGHTNESS") ? (float)atof(getenv("XBRT_BRIGHTNESS")) : 1.0f;
+    return rt_brightness < 0 ? 0 : rt_brightness > 1 ? 1 : rt_brightness;
+}
 __attribute__((constructor)) static void gamma_init(void) {
     for (int i = 0; i < 256; i++) rt_gamma[i][0] = rt_gamma[i][1] = rt_gamma[i][2] = (uint8_t)i;
 }

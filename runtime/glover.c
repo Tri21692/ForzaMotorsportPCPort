@@ -206,7 +206,19 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     ov_text(OVF_MENU, X0 + 590, 26, "PC Settings", white, 1);
     int n = rt_overlay_items(), sel = rt_overlay_selected();
     float y = 82, row = 30;
-    for (int i = 0; i < n; i++) {
+    /* Eight rows at a time, scrolled to keep the chosen one in view: all of
+     * them ran over the help text and the bottom bar. */
+    enum { VISIBLE = 8 };
+    int first = 0;
+    if (n > VISIBLE) {
+        first = sel - VISIBLE / 2;
+        if (first > n - VISIBLE) first = n - VISIBLE;
+        if (first < 0) first = 0;
+        float top = y - 2, len = VISIBLE * row - 2;
+        ov_rect(X0 + 598, top, X0 + 602, top + len, grey); /* the scroll bar: the whole list, and the part shown */
+        ov_rect(X0 + 597, top + len * (float)first / (float)n, X0 + 603, top + len * (float)(first + VISIBLE) / (float)n, green);
+    }
+    for (int i = first; i < n && i < first + VISIBLE; i++) {
         const char *label, *value;
         int live;
         rt_overlay_item(i, &label, &value, &live);

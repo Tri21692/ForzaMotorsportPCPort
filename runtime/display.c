@@ -121,11 +121,15 @@ static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
     put16(h + 26, 1), put16(h + 28, 24), put32(h + 34, row * (uint32_t)H);
     fwrite(h, 1, 54, f);
     uint8_t *line = malloc(row);
+    float mix = rt_brightness_mix();
     for (int y = H - 1; y >= 0; y--) {
         for (int x = 0; x < W; x++) {
             uint32_t p = px[y * W + x];
-            /* through the gamma ramp, as shown (rt_gamma) */
-            line[3 * x] = rt_gamma[p & 255][2], line[3 * x + 1] = rt_gamma[(p >> 8) & 255][1], line[3 * x + 2] = rt_gamma[(p >> 16) & 255][0];
+            /* through the gamma ramp, as shown (rt_gamma, rt_brightness) */
+            int b = p & 255, g = (p >> 8) & 255, r = (p >> 16) & 255;
+            line[3 * x] = (uint8_t)(b + (rt_gamma[b][2] - b) * mix + 0.5f);
+            line[3 * x + 1] = (uint8_t)(g + (rt_gamma[g][1] - g) * mix + 0.5f);
+            line[3 * x + 2] = (uint8_t)(r + (rt_gamma[r][0] - r) * mix + 0.5f);
         }
         fwrite(line, 1, row, f);
     }

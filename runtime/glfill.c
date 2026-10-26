@@ -590,10 +590,12 @@ static const char *present_fs =
     "uniform int u_fxaa;\n"
     "uniform sampler2D u_gamma;\n" /* the DAC's ramp, 256x1 (rt_gamma) */
     "uniform vec2 u_step;\n" /* source texels per window pixel */
+    "uniform float u_ramp_mix;\n" /* how much of the ramp: 1 as the Xbox shows it (rt_brightness) */
     "float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
     "vec3 ramp(vec3 c) {\n"
     "    vec3 u = (clamp(c, 0.0, 1.0) * 255.0 + 0.5) / 256.0;\n"
-    "    return vec3(texture(u_gamma, vec2(u.r, 0.5)).r, texture(u_gamma, vec2(u.g, 0.5)).g, texture(u_gamma, vec2(u.b, 0.5)).b);\n"
+    "    vec3 r = vec3(texture(u_gamma, vec2(u.r, 0.5)).r, texture(u_gamma, vec2(u.g, 0.5)).g, texture(u_gamma, vec2(u.b, 0.5)).b);\n"
+    "    return mix(clamp(c, 0.0, 1.0), r, u_ramp_mix);\n"
     "}\n"
     "void main() {\n"
     "    if (u_step.x > 1.01 || u_step.y > 1.01) {\n" /* shrinking the supersampled picture: */
@@ -621,7 +623,7 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh);
 
 static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     static GLuint prog, empty_vao;
-    static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step;
+    static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step, u_ramp_mix;
     static GLuint gamma_tex;
     static uint32_t gamma_seq = ~0u;
     static int fxaa = -1;
@@ -635,6 +637,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         if (vs && fs) glAttachShader(prog, vs), glAttachShader(prog, fs), glLinkProgram(prog);
         u_src = glGetUniformLocation(prog, "u_src"), u_rcp = glGetUniformLocation(prog, "u_rcp"), u_fxaa = glGetUniformLocation(prog, "u_fxaa");
         u_gamma = glGetUniformLocation(prog, "u_gamma"), u_step = glGetUniformLocation(prog, "u_step");
+        u_ramp_mix = glGetUniformLocation(prog, "u_ramp_mix");
         glGenTextures(1, &gamma_tex);
         glBindTexture(GL_TEXTURE_2D, gamma_tex);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -678,6 +681,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
          * smoothing edges that small smeared text and logos. */
         glUniform1i(u_src, 0), glUniform2fv(u_rcp, 1, (float[2]){1.0f / (float)w, 1.0f / (float)h}), glUniform1i(u_fxaa, rt_display_fxaa && w > 640), glUniform1i(u_gamma, 1);
         glUniform2fv(u_step, 1, (float[2]){(float)w / (float)cw, (float)h / (float)ch});
+        glUniform1f(u_ramp_mix, rt_brightness_mix());
         glBindVertexArray(empty_vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(gl_vao);

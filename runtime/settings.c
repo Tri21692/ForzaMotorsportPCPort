@@ -22,7 +22,7 @@ static RtSetting settings[] = {
     {"window", "XBRT_WINDOW_SIZE", "auto", "Window size in pixels, as 1280x960, or auto (twice the Xbox picture, fitted to the screen)"},
     {"antialiasing", "XBRT_AA", "fxaa", "Edge smoothing: fxaa or off. A higher scale than the window also smooths edges"},
     {"anisotropic", "XBRT_GL_ANISO", "16", "Texture sharpness at angles: 1 (off) to 16"},
-    {"draw_distance", "XBRT_DRAW_DISTANCE", "1", "Draw distance: 1 (as on the Xbox) to 4 times further for trees, the cars' reflections and trackside detail"},
+    {"brightness", "XBRT_BRIGHTNESS", "0.7", "How much of Forza's exposure (its gamma ramp) the picture gets: 0 none to 1 as on the Xbox"},
     {"vsync", "XBRT_VSYNC", "1", "Wait for the monitor's refresh when showing a frame (no tearing): 1 on, 0 off"},
     {"volume", "XBRT_VOLUME", "0.7", "Sound volume: 0 to 1"},
     {"music", "XBRT_MUSIC", "music", "Folder of your own songs for Forza's custom soundtracks: one subfolder per soundtrack (mp3, flac, wav, ogg, m4a, wma)"},
