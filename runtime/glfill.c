@@ -154,6 +154,8 @@ static const char *fs_src =
     "        return vec4(mix(mix(c[0], c[1], f.x), mix(c[2], c[3], f.x), f.y));\n"
     "    }\n"
     "    vec2 st = q.w != 0.0 && q.w != 1.0 ? q.xy / q.w : q.xy;\n"
+    "    if (i > 0 && u_mode[i] == 15) return texture(t, R[7 + i].ar);\n" /* dependent: at the stage before's alpha and red (0..1) */
+    "    if (i > 0 && u_mode[i] == 16) return texture(t, R[7 + i].gb);\n" /* ... or green and blue */
     "    return texture(t, st * u_scale[i]);\n"
     "}\n"
     "void main() {\n"

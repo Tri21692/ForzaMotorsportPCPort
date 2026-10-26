@@ -537,11 +537,22 @@ static void rt_log_method(uint32_t subch, uint32_t method, uint32_t arg) {
     if (!on || nv2a.class_[subch] != 0x97 || method >= 0x2000) return;
     st[method >> 2] = arg;
     if (st[0x0210 >> 2] != want) return;
-    if (method == 0x17FC && arg)
+    if (method == 0x17FC && arg) {
+        static int n;
         fprintf(stderr, "[%9.3f] rt %08x: draw %x, program %08x, textures %08x/%08x %08x/%08x %08x/%08x %08x/%08x\n",
                 rt_now_100ns() / 1e7, want, arg, st[0x1E70 >> 2], st[0x1B00 >> 2], st[0x1B04 >> 2], st[0x1B40 >> 2], st[0x1B44 >> 2],
                 st[0x1B80 >> 2], st[0x1B84 >> 2], st[0x1BC0 >> 2], st[0x1BC4 >> 2]);
-    else if (method == 0x1D94)
+        if (n < 8) { /* the RAM under its first textures, 4 MB from each (screenshots/rt_<draw>_<stage>.bin) */
+            for (int i = 0; i < 4; i++) {
+                uint32_t a = st[(0x1B00 >> 2) + 16 * i] & (RT_PHYS_SIZE - 1);
+                char path[64];
+                snprintf(path, sizeof path, "screenshots/rt_%d_%d.bin", n, i);
+                FILE *f = fopen(path, "wb");
+                if (f) fwrite(xb_mem + RT_PHYS_VIEW + a, 1, a + (4u << 20) <= RT_PHYS_SIZE ? 4u << 20 : RT_PHYS_SIZE - a, f), fclose(f);
+            }
+            n++;
+        }
+    } else if (method == 0x1D94)
         fprintf(stderr, "[%9.3f] rt %08x: clear %x to %08x\n", rt_now_100ns() / 1e7, want, arg, st[0x1D8C >> 2]);
 }
 

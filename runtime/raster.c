@@ -1085,7 +1085,11 @@ static int draw_state(DrawState *d) {
 
     /* Texture stages: SET_SHADER_STAGE_PROGRAM has five bits of mode per
      * stage: 0 off, 1-3 sample a texture (2D, 3D, cube), 4 pass the
-     * texture coordinate through as the colour. */
+     * texture coordinate through as the colour; 0x0F and 0x10 (GPU path
+     * only) look the texture up at the stage before's alpha and red, or
+     * green and blue: the paint shop's livery detail, 256 colours by index
+     * (without, every car's lamps and badges went once the paint menu
+     * opened, and stayed gone once painted). */
     uint32_t prog = K(SET_SHADER_STAGE_PROGRAM);
     draw_lo = d->base & (RT_PHYS_SIZE - 1), draw_hi = draw_lo + d->pitch * (uint32_t)(d->cy0 + d->ch);
     draw_zlo = draw_zhi = 0;
@@ -1098,7 +1102,8 @@ static int draw_state(DrawState *d) {
         d->mode[i] = (int)(prog >> (5 * i)) & 31;
         d->tex[i] = NULL;
         if (!prog && i == 0 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) d->mode[i] = 1;
-        if (d->mode[i] >= 1 && d->mode[i] <= 3 && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) d->tex[i] = texture(i);
+        int dependent = (d->mode[i] == 0x0F || d->mode[i] == 0x10) && i > 0 && rt_gl_on;
+        if (((d->mode[i] >= 1 && d->mode[i] <= 3) || dependent) && (KT(SET_TEXTURE_CONTROL0) >> 30 & 1)) d->tex[i] = texture(i);
     }
     if (rt_log_level >= 2) { /* each new combination of pixel state, once */
         static uint32_t seen[256][8];

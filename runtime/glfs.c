@@ -135,6 +135,8 @@ static char *fs_generate(const FsKey *k) {
                       "      }\n"
                       "      R%d = vec4(mix(mix(c[0], c[1], f.x), mix(c[2], c[3], f.x), f.y)); }\n",
                    i, bexpr, i, i, i, fl4, getenv("XBRT_GL_NO_SHADOW") ? "true" : fs_cmp(k->shadow_func), 8 + i);
+        } else if ((mode == 0x0F || mode == 0x10) && i > 0) { /* dependent: looked up at the stage before's alpha and red, or green and blue */
+            fsput(&s, "    R%d = texture(u_tex%d, R%d.%s);\n", 8 + i, i, 7 + i, mode == 0x0F ? "ar" : "gb"); /* (0..1 already) */
         } else {
             fsput(&s, "    { vec4 q = v_t%d; vec2 st = q.w != 0.0 && q.w != 1.0 ? q.xy / q.w : q.xy;\n"
                       "      R%d = texture(u_tex%d, st * u_scale[%d]); }\n", i, 8 + i, i, i);
