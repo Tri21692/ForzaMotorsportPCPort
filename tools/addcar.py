@@ -6,6 +6,7 @@ to a new car, and --restore gives the Civic SI back its own files.
 
   python tools/addcar.py <disc folder> <mods folder> <from> <new> [--ordinal N]
                          [--name <model name>] [--short <short name>] [--restore]
+                         [--cab <car cab>] [--make <car>] [--year <year>]
   e.g.  <disc>  run/mods  CivicSI  Nissan240SXS13  --name "240SX" --restore
 
 <from> and <new> are car names as in cars\\carlist.xml (<new> must not be
@@ -25,6 +26,10 @@ there is one, else the disc's:
   media/cars/<new>.liveries.bin    <from>'s, if it has one
   media/caricons<n>.xpr            <from>'s car-select tile, at the new ordinal
   media/Loc/*/CarDataStrings.str   IDS_Model_<ordinal>_Name and _ShortName
+
+--cab: the new car's cab from this file (a converted model, packed into a copy
+of <from>'s cab) instead of <from>'s. --make: the maker of that car (its
+dealer and logo). --year: the model year.
 
 The ordinal is a number no car has and nothing names as a car
 (carlist, AI opponents, career prizes): the lists skip 13 numbers, and
@@ -232,7 +237,7 @@ def write_strings(d, add):
 
 # ----
 
-def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False):
+def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False, cab=None, make=None, year=None):
     mega, cars, xpr = Archive(disc, mods, 'Mega.ca2'), Archive(disc, mods, 'Cars.ca2'), Archive(disc, mods, 'MegaXPR.ca2')
     m = mega.files
     key = 'cars' + B + 'carlist.xml'
@@ -273,6 +278,14 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
         nid, sid = struct.unpack_from('<HH', mrow, 12)
         shown[lang] = (p, mp, name or text_of(nid), short or name or text_of(sid))
     struct.pack_into('<I', mrow, 0, ordinal)
+    if year: struct.pack_into('<I', mrow, 16, year)
+    if make:  # the maker (and so the dealer and logo) of another car: carlist's Make and manufacturerid, model.dat's make id
+        theirs = car_block(xml, make).group(0)
+        for attr in ('Make', 'manufacturerid'):
+            val = re.search(r'\b%s="([^"]*)"' % attr, theirs).group(1)
+            xml = xml.replace(entry, re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry))
+            entry = re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry)
+        mrow[4:8] = row_of(model, ordinal_of(xml, make))[4:8]
     struct.pack_into('<II', grow, 0, ordinal, ordinal)
     # Mega.ca2's wheel model, MegaXPR.ca2's textures, under the new car's name
     wsrc, wdst = B.join(('tires', 'art', wheel.lower())) + B, B.join(('tires', 'art', new.lower())) + B
@@ -331,7 +344,7 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     # the car's cab
     cab_out = os.path.join(mods, 'media', 'cabs', 'car_%s.cab' % new)
     mine = os.path.join(mods, 'media', 'cabs', 'car_%s.cab' % src)
-    cab_in = mine if os.path.exists(mine) else disc_file(disc, 'media', 'cabs', 'car_%s.cab' % src)
+    cab_in = cab or (mine if os.path.exists(mine) else disc_file(disc, 'media', 'cabs', 'car_%s.cab' % src))
     files, root = cab_files(open(cab_in, 'rb').read())
     out = {}
     for k, v in files.items():
@@ -392,11 +405,12 @@ if __name__ == '__main__':
     args, opts = [], {}
     it = iter(sys.argv[1:])
     for a in it:
-        if a in ('--ordinal', '--name', '--short'): opts[a[2:]] = next(it)
+        if a in ('--ordinal', '--name', '--short', '--cab', '--make', '--year'): opts[a[2:]] = next(it)
         elif a == '--restore': opts['restore'] = True
         else: args.append(a)
     if len(args) != 4: raise SystemExit(__doc__)
     if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(args[1]).split(os.sep)):
         raise SystemExit('%s: a save folder' % args[1])
     main(*args, ordinal=int(opts['ordinal']) if 'ordinal' in opts else None, name=opts.get('name'), short=opts.get('short'),
+         cab=opts.get('cab'), make=opts.get('make'), year=int(opts['year']) if 'year' in opts else None,
          restore=opts.get('restore', False))

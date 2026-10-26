@@ -55,10 +55,11 @@ def read(path):
         for pid, po, psize in chunks(d, o, o + size):
             if pid != 0x80134010:
                 continue
-            part = {'name': '', 'textures': [], 'shaders': [], 'verts': [], 'tris': [], 'groups': []}
+            part = {'name': '', 'textures': [], 'shaders': [], 'verts': [], 'tris': [], 'groups': [], 'materials': []}
+            head, raw_groups = None, b''
             for sid, so, ssize in chunks(d, po, po + psize):
                 if sid == 0x00134011:
-                    part['name'] = d[so + 0x94:d.index(b'\0', so + 0x94)].decode('latin-1')
+                    head = so
                 elif sid == 0x00134012:
                     part['textures'] = list(struct.unpack_from('<%dI' % (ssize // 4), d, so)[::2])
                 elif sid == 0x00134013:
@@ -75,9 +76,42 @@ def read(path):
                             part['tris'] = [idx[k:k + 3] for k in range(0, len(idx) - 2, 3)]
                         elif mid == 0x00134b02:
                             a, end = unpadded(d, mo, msize)
-                            part['groups'] = [d[k:k + 0x3C] for k in range(a, end - 0x3B, 0x3C)]
+                            raw_groups = d[a:end]
+                        elif mid == 0x00134c02:  # Most Wanted: a group's material name, one per group in order
+                            part['materials'].append(d[mo:d.index(b'\0', mo)].decode('latin-1'))
+            mw = bool(part['materials'])
+            if head is not None:
+                at = head + (0xA0 if mw else 0x94)
+                part['name'] = d[at:d.index(b'\0', at)].decode('latin-1')
+            if not mw:
+                part['groups'] = [raw_groups[k:k + 0x3C] for k in range(0, len(raw_groups) - 0x3B, 0x3C)]
+            else:
+                # Most Wanted's groups are 104 bytes: float3 min, float3 max, the
+                # texture index in the bytes at 0x18, u32 vertices at 0x3C, u32
+                # triangles at 0x40, u32 first index at 0x44. They are given here
+                # as Underground's (index count at 12, texture and shader indexes
+                # at 0x1C and 0x20, first index at 0x34); the "shaders" are the
+                # groups' material names (bhash), one per group.
+                part['mw_shaders'] = part['shaders']
+                part['shaders'] = [bhash(m) for m in part['materials']]
+                for g in range(len(raw_groups) // 104):
+                    r = raw_groups[104 * g:104 * (g + 1)]
+                    tris, first = struct.unpack_from('<II', r, 0x40)
+                    out = bytearray(0x3C)
+                    out[0:12], out[16:28] = r[0:12], r[12:24]
+                    struct.pack_into('<I', out, 12, 3 * tris)
+                    struct.pack_into('<II', out, 0x1C, r[0x18], g)
+                    struct.pack_into('<I', out, 0x34, first)
+                    part['groups'].append(bytes(out))
             parts.append(part)
     return parts
+
+
+def bhash(s, h=0xFFFFFFFF):
+    """EA's name hash (as the shaders' and textures' ids)."""
+    for c in s.encode('latin-1'):
+        h = (h * 33 + c) & 0xFFFFFFFF
+    return h
 
 
 def jdlz(src):
@@ -148,6 +182,26 @@ def read_textures(path):
             data = jdlz(d[off:off + psize])
         out[thash] = {'name': name, 'width': w, 'height': hh, 'fourcc': fourcc.rstrip(b'\0').decode('latin-1'),
                       'size': end - start, 'top': top, 'data': data}
+    if not heads:
+        # Most Wanted: no header chunks. 33310003 entries are 24 bytes (u32
+        # hash, u32 file offset, u32 packed size, u32 unpacked size, u32
+        # flags, u32 0); each texture unpacks to its top level's pixels and
+        # then a 0x9C-byte header: the name at 0x0C, u32 hash at 0x24, u16
+        # width and height at 0x44, the FourCC at 0x90. JDLZ or HUFF (not
+        # decoded: those textures come back without data).
+        for k in range(len(packed) // 24):
+            th, off, psize, usize = struct.unpack_from('<4I', packed, 24 * k)
+            blob = d[off:off + psize]
+            if blob[:4] != b'JDLZ':
+                out[th] = {'name': '', 'width': 0, 'height': 0, 'fourcc': '', 'size': 0, 'top': 0, 'data': b'',
+                           'packing': blob[:4].decode('latin-1')}
+                continue
+            u = jdlz(blob)
+            h = u[-0x9C:]
+            w, hh = struct.unpack_from('<HH', h, 0x44)
+            out[th] = {'name': h[0x0C:0x24].split(b'\0')[0].decode('latin-1'), 'width': w, 'height': hh,
+                       'fourcc': h[0x90:0x94].rstrip(b'\0').decode('latin-1'), 'size': len(u) - 0x9C, 'top': len(u) - 0x9C,
+                       'data': u[:-0x9C]}
     return out
 
 

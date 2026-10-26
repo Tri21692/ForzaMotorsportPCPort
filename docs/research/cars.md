@@ -362,6 +362,40 @@ strips of three); textures packed into one Forza atlas with the uvs moved
 into their places; and handling, sounds, damage shapes and the driver
 borrowed from a similar Forza car (its own 240SX for this one).
 
+## Need for Speed Most Wanted cars (26 Oct)
+
+`CARS/<car>/GEOMETRY.BIN` has Underground's chunks and vertices (36 bytes,
+metres, x forward, y left, z up); `tools/nfsu.py` reads both and hands MW
+parts over in Underground's shape. The differences:
+
+- The part header's name is at 0xA0 (Underground 0x94).
+- Material groups (00134b02) are 104 bytes: float3 min and max, the
+  texture index in the bytes at 0x18, u32 vertices at 0x3C, triangles at
+  0x40, first index at 0x44. Each has a name, one 00134c02 chunk a group
+  in order (BODY, BODY_CHROME, WINDOW_FRONT, WINDOW_FRONT_MASK,
+  LEFT_HEADLIGHT_KIT00_BULB ...); the converter maps those (mw_material).
+- Parts: `<CAR>_KIT00_BODY` holds the bumpers and skirts; the roof (with
+  a copy of each window) is `<CAR>_BASE_A`-`D`; the windows (FRONT_WINDOW,
+  FRONT_LEFT_WINDOW ...), lamps and their glass, mirrors, hood and spoiler
+  are parts of their own; `_E` is a far body, DAMAGE0_* the crushed
+  panels. KIT01-04 are body kits. Brakes and tyres sit at the origin
+  (placed at run time), so the axles come from the body's wheel openings.
+- Textures are named by role (HEADLIGHT_LEFT, BRAKELIGHT_RIGHT,
+  WINDOW_FRONT, DOORLINE, LICENSEPLATE, `<CAR>_SKIN1` the paint) and
+  resolved to the car's own at run time (`<CAR>_KIT00_HEADLIGHT`, its
+  `_ON` twin for lit lamps).
+- TEXTURES.BIN: no header chunks; 33310003 entries of 24 bytes (u32 hash,
+  file offset, packed size, unpacked size, flags, 0), each texture JDLZ
+  (or HUFF, not decoded: the lit lamps) unpacking to the top level's
+  pixels and then a 0x9C header (name at 0x0C, width and height at 0x44,
+  FourCC at 0x90).
+
+The Chevrolet Cobalt SS (not in Forza) converted on the Civic SI (26 Oct),
+added as its own car with addcar.py (`--cab`, `--make CamaroZ28`, ordinal
+81, "Cobalt SS"), the Civic's physics and engine: body, roof, glass,
+lamps, mirrors, hood and spoiler, badges and lamps from its textures,
+the 240SX conversion byte for byte as before. Not yet seen in the game.
+
 ## The converter (tools/nfsu2forza.py), first version (25 Oct)
 
 `python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass]`

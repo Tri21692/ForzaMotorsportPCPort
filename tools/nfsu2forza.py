@@ -35,6 +35,7 @@ reads, used instead of the NFSU badge sheet's small ones. Your own files:
 trademarks, so they stay out of anything shared.
 """
 import os
+import re
 import struct
 import sys
 
@@ -70,6 +71,25 @@ SHADERS = {bhash('CARSKIN'): BODY, bhash('WINDSHIELD'): WINDOW, 0x12C9453C: WIND
            bhash('BRAKELIGHTGLASS'): REDGLASS, bhash('DECAL'): BADGE, bhash('HEADLIGHT'): HEADLIGHTS,
            bhash('BRAKELIGHT'): TAILLIGHTS, bhash('RUBBER'): BLACK, bhash('ENGINE'): BLACK,
            bhash('MIRROR'): CHROME}  # the mirrors' glass, as the Civic's (as paint it was a flat blue slab)
+
+
+def mw_material(name):
+    """A Most Wanted group's material name -> Forza's; None leaves it out."""
+    n = name.upper()
+    if n.startswith('WINDOW'): return WINDOWS if n.endswith('_MASK') else WINDOW  # the masks are the black frit round the glass
+    if 'HEADLIGHT' in n:
+        if n.endswith('GLASS'): return HEADLIGHTGLASS
+        if n.endswith('BULB'): return HEADLIGHTS
+        if 'CHROME' in n: return CHROME
+        if 'PLASTIC' in n: return PLASTIC
+        return WINDOWS
+    if 'BRAKELIGHT' in n: return TAILLIGHTS
+    if n.startswith(('DOORLINE', 'LICENSE', 'DECAL', 'DRIVER', 'TIRE', 'RIM', 'BRAKE_')): return None  # seams drawn as strips, plates, vinyl slots, the parts Forza has its own of
+    if 'BADGING' in n: return BADGE
+    if 'CHROME' in n or 'ALUMINUM' in n or 'SILVER' in n: return CHROME
+    if 'DULL_PLASTIC' in n: return PLASTIC
+    if n.startswith('BODY') and not any(k in n for k in ('MOLDING', 'PLAINNOTHING', 'BLACK')): return BODY
+    return WINDOWS  # mouldings, the underside, untextured bits: black
 
 
 def material_for(texname, shader=0):
@@ -273,14 +293,33 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
 
     def find(suffix):
         """The stock part's detail levels, finest first (_A to _D; some
-        names are cut short, so ordered by size)."""
-        found = [p for p in nparts if p['name'].startswith(prefix + '_KIT00_' + suffix)]
+        names are cut short, so ordered by size). Most Wanted's damage
+        shapes and far body (_E) are left out."""
+        found = [p for p in nparts if p['name'].startswith(prefix + '_KIT00_' + suffix) and 'DAMAGE' not in p['name']
+                 and not p['name'].endswith('_E')]
         return sorted(found, key=lambda p: -len(p['verts']))
+
+    # Most Wanted (nfsu.read gives its parts in Underground's shape): whole
+    # bodies with bumpers and skirts in, windows and lights as parts of their
+    # own, and materials named per group (see mw_material)
+    mw = any(p['materials'] for p in nparts)
+    if mw:
+        for p in nparts:
+            for name in p['materials']: SHADERS.setdefault(bhash(name), mw_material(name))
+        # Its parts name textures by role, resolved to the car's own at run time
+        for role, own in (('HEADLIGHT', '_KIT00_HEADLIGH'), ('BRAKELIGHT', '_KIT00_BRAKELIG')):
+            hit = next((h for h, t in textures.items() if t['name'].startswith(prefix + own) and t['data']), None)
+            for side in ('LEFT', 'RIGHT'):
+                if hit is not None: textures[bhash('%s_%s' % (role, side))] = textures[hit]
+        names.update({h: t['name'] for h, t in textures.items()})
+        print('Most Wanted car: %d parts, %d textures' % (len(nparts), len(textures)))
 
     # the fit: template body vs NFSU body (+ roof)
     tbody = next(p for p in car['parts'] if p['name'].startswith('body'))
     tz = [v[2] / 4096 for v in tbody['verts']]; ty = [v[1] / 4096 for v in tbody['verts']]
-    nb = find('BODY')[0]['verts'] + find('ROOF')[0]['verts']
+    # Most Wanted's roof (with a copy of each window) is <CAR>_BASE_A to _D
+    base = sorted([p for p in nparts if p['name'].startswith(prefix + '_BASE_')], key=lambda p: -len(p['verts'])) if mw else []
+    nb = find('BODY')[0]['verts'] + (find('ROOF')[0]['verts'] if find('ROOF') else []) + (base[0]['verts'] if base else [])
     nx = [v[0] for v in nb]; nz = [v[2] for v in nb]
     k = (max(tz) - min(tz)) / (max(nx) - min(nx))
     dz = (max(tz) + min(tz)) / 2 - k * (max(nx) + min(nx)) / 2
@@ -299,9 +338,20 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
     # The NFSU car's own textures (lights, badges) go into the livery atlas,
     # written beside the output (liveries/standard).
     own = {th for key in ('BODY', 'ROOF', 'HOOD', 'TRUNK', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT', 'HEADLIGHT', 'BRAKELIGHT', 'LEFT_SIDE_MIRRO', 'RIGHT_SIDE_MIRR')
-           for p in find(key) for th in p['textures'] if th in textures}
+                                + (('LEFT_HEADLIGHT', 'RIGHT_HEADLIGHT', 'LEFT_BRAKELIGHT', 'RIGHT_BRAKELIGHT', 'SPOILER') if mw else ())
+           for p in find(key) for th in p['textures'] if th in textures and textures[th]['data']}
+    if mw:  # only what is drawn from its texture (badges, lamps): the atlas has little room, and trim takes Forza's own
+        own = {p['textures'][g[0x1C]] for p in nparts if '_KIT00_' in p['name'] and p['materials']
+               for g, name in zip(p['groups'], p['materials'])
+               if mw_material(name) in (BADGE, HEADLIGHTS, TAILLIGHTS) and g[0x1C] < len(p['textures'])
+               and p['textures'][g[0x1C]] in textures and textures[p['textures'][g[0x1C]]]['data']}
     livery_dir = os.path.join(os.path.dirname(template_path), 'liveries', 'standard')
     images = {h: nfsu_rgba(textures[h]) for h in own}
+    if mw:  # halved to 128 at most: the atlas's free room is small
+        for h, img in images.items():
+            while max(img.shape[:2]) > 128:
+                img = img.reshape(img.shape[0] // 2, 2, img.shape[1] // 2, 2, 4).mean((1, 3)).astype(np.uint8)
+            images[h] = img
     extra = badge_images(badges)  # the --badges folder's, by name
     for h in images:
         if textures[h]['name'].endswith('_BADGING'):
@@ -333,6 +383,25 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
     nidx = [i for t in nbody['tris'] for i in t]
     liner = [nbody['verts'][i][0] for g in nbody['groups'] if nbody['shaders'][struct.unpack_from('<I', g, 0x20)[0]] == 0x010CB64A
              for i in nidx[struct.unpack_from('<I', g, 0x34)[0]:struct.unpack_from('<I', g, 0x34)[0] + struct.unpack_from('<I', g, 12)[0]]]
+    if mw:
+        # No arch liners, and the brakes and tyres sit at the origin (placed
+        # at run time): the wheel openings are where the lower edge of the
+        # body's sides rises well above the sill.
+        V = np.array([v[:3] for v in nbody['verts']], float)
+        side = V[np.abs(V[:, 1]) > 0.8 * np.abs(V[:, 1]).max()]
+        bins = {}
+        for x, _, z in side: bins.setdefault(int(np.floor(x / 0.05)), []).append(z)
+        low = {b: min(zs) for b, zs in bins.items()}
+        sill = float(np.percentile(list(low.values()), 10))
+        liner = []
+        for sign in (1, -1):  # the longest run of raised bins on each half (by the doors, handles and trim read high too)
+            run, best = [], []
+            for b in sorted(low, key=lambda b: sign * b):
+                if sign * b < 0: continue
+                if low[b] > sill + 0.25 and (not run or abs(b - run[-1]) == 1): run.append(b)
+                else: run = [b] if low[b] > sill + 0.25 else []
+                if len(run) > len(best): best = list(run)
+            liner += [(b + 0.5) * 0.05 for b in best]
     if hubs and any(z > 0 for z in hubs) and any(z < 0 for z in hubs) and any(x > 0 for x in liner) and any(x < 0 for x in liner):
         hf = sum(z for z in hubs if z > 0) / sum(1 for z in hubs if z > 0)
         hr = sum(z for z in hubs if z < 0) / sum(1 for z in hubs if z < 0)
@@ -368,7 +437,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
         return rgbas[th]
 
     _stock = [lv for key in ('BODY', 'ROOF', 'TRUNK', 'HOOD', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT') for lv in find(key)[:1]]
-    _panes = window_panes(_stock)
+    _panes = window_panes(_stock) if not mw else []  # Most Wanted's windows are parts of their own
     rims = np.concatenate([r for _, r in _panes]) if _panes else None  # the window holes' edges, NFSU metres
 
     mid_f = pos(shell_mid)  # the shell's middle, carbin units
@@ -419,6 +488,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                 if sh == 0x010CB64A and lod == 1:  # the inside of the wheel arches: what the cabin must stay above (fit_cabin)
                     arches.extend(tuple(pos(p['verts'][i - base]) for i in t) for t in tris)
                 m = material_for(names.get(th, ''), sh)
+                if m is None: continue  # (mw_material: left out)
                 if sh == 0x12C9453C and p['name'].startswith(prefix + '_KIT00_TRUNK'):
                     # On the hatch lid this group is the black border round the rear glass and
                     # the tail panel. The border's bottom edge widens into wedges by the
@@ -533,6 +603,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
             def tex(i, j):
                 if Qm[i] == WINDOWS: return tuple(old[j][6:10]) + dark
                 if Qm[i] == BODY: return (255, 255, 0, 0) + paint  # one known paint texel, full shading: copied, panels near the template's windows came out black or clear
+                if mw and len(verts[i]) <= 12 and Qm[i] in (CHROME, PLASTIC):  # untextured trim: the template's nearest texel was often its red lamps (a grille in red stripes)
+                    return tuple(old[j][6:10]) + (paint if Qm[i] == CHROME else dark)
                 if len(verts[i]) > 12: return tuple(old[j][6:10]) + verts[i][10:12]  # its own texture, packed into the atlas
                 return tuple(old[j][6:12])
             verts = [v[:6] + tex(i, j) for i, (v, j) in enumerate(zip(verts, near))]
@@ -749,11 +821,30 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
         # as they were, the Civic's floated behind the hatch where its trunk was
         'wing': ([find('SPOILER')], 0),
     }
+    if mw:
+        def find(suffix, _find=find):  # exactly that part's levels: LEFT_HEADLIGHT also began LEFT_HEADLIGHT_GLASS, mixed in as its levels
+            return [p for p in _find(suffix) if re.fullmatch(re.escape(prefix + '_KIT00_' + suffix) + '_[A-D]', p['name'])]
+        # The body holds its bumpers and skirts; the windows go into the
+        # template's glass parts by name (the more specific names first: a
+        # part takes the first key it starts with), each light into the
+        # template's light of that side.
+        plan = {
+            'body': ([find('BODY'), base, find('SPOILER')], 0, False, True), 'hood': ([find('HOOD')], 0),  # no glass: the windows' own parts have it
+            'glassLF': ([find('FRONT_LEFT_WINDOW')], 0, True), 'glassRF': ([find('FRONT_RIGHT_WINDOW')], 0, True),
+            'glassLR': ([find('REAR_LEFT_WINDOW')], 0, True), 'glassRR': ([find('REAR_RIGHT_WINDOW')], 0, True),
+            'glassF': ([find('FRONT_WINDOW')], 0, True), 'glassR': ([find('REAR_WINDOW')], 0, True),
+            'headlightL': ([find('LEFT_HEADLIGHT'), find('LEFT_HEADLIGHT_GLASS')], 0),
+            'headlightR': ([find('RIGHT_HEADLIGHT'), find('RIGHT_HEADLIGHT_GLASS')], 0),
+            'taillightL': ([find('LEFT_BRAKELIGHT')], 0), 'taillightR': ([find('RIGHT_BRAKELIGHT')], 0),
+            'mirrorL': ([find('LEFT_SIDE_MIRROR')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRROR')], 0),
+            'wing': ([find('SPOILER')], 0),
+        }
     plan = {k: v + (None, False)[len(v) - 2:] for k, v in plan.items()}
     built = {}
     done = []
     for part in car['parts']:
-        if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name'])  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
+        if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name']) and not mw  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
+                or mw and part['name'].startswith(('glassT', 'bumper', 'skirt', 'trunk'))  # Most Wanted: in the body, or none
                 or part['name'].startswith(('BADGE', 'bands', 'exhaust', 'cagerace'))):  # (the race cage too: not on a stock car, and its bars showed through the glass)  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
@@ -765,7 +856,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                 put(part, *built[key])
                 done.append(part['name'])
                 break
-    if not keep_glass:
+    if not keep_glass and not mw:
         fit_glass()
     # The side skirts' ends by the wheels, below the sill: stretched to the template's
     # wheelbase, the front ones hung down behind the front wheels as black flaps
@@ -782,7 +873,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                 near = any(abs(sum(V[i][2] for i in (a, b, c)) / 3 - h) < 0.75 for h in hubs)
                 if not (low and near): tris.append((a, b, c))
             sp['indices'] = strip(tris) if tris else [0, 0, 0]
-    add_badges(car, textures, atlas, {k: (v.shape[1], v.shape[0]) for k, v in extra.items()})
+    if not mw:  # (Most Wanted's badges are in its body, from its own texture)
+        add_badges(car, textures, atlas, {k: (v.shape[1], v.shape[0]) for k, v in extra.items()})
     new_shell = shell()
     new_fit = roof(new_shell), sides(new_shell), cover(), plan_heights(arches)
     for part in car['parts']:
@@ -795,7 +887,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
     # the inside of the body showed untextured.
     cargo = next((p for p in car['parts'] if p['name'].startswith('trunk') and p['name'].endswith('_LOD1')), None)
     rear = next((p for p in car['parts'] if p['name'].startswith('glassR_') and any(sp['indices'] != [0, 0, 0] for sp in p['subparts'])), None)
-    if cargo and rear:
+    if cargo and rear and not mw:  # (Most Wanted: its trunk is in the body)
         G = np.array([v[:3] for v in rear['verts']], float) / 4096
         B = np.array([v[:3] for v in tbody['verts'] + cargo['verts']], float) / 4096
         y = G[:, 1].min() - 0.06                                   # under the glass's lower edge
