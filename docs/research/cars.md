@@ -458,6 +458,12 @@ needs, learned the hard way:
   wears that from then on. Detail's alpha is opaque where paint must not go.
   A converted car needs its own (nfsu2forza.py --liveries, addcar.py
   --liveries): the Civic's drew the Civic's atlas over the Cobalt's lamps.
+- A car's indices go through the push buffer every frame (each one a method
+  the runtime handles). The converter's strips were one triangle a piece
+  (about six indices a triangle: the Cobalt's body was 60,000 a pass); for a
+  Most Wanted car it now welds identical vertices and chains triangles along
+  shared edges (strip_long), 509,151 indices down to 232,092, the same
+  triangles (checked).
 - One subpart per detail level and material (as Forza's own).
 - Parts that had a damage shape keep one (the undamaged shape for now).
 - NFSU shaders without a known name: 12c9453c is the rubber round the

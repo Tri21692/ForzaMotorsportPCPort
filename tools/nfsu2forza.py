@@ -154,6 +154,53 @@ def strip(tris):
     return s
 
 
+def strip_long(tris):
+    """Triangle list -> one strip as strip() makes, but each piece goes on
+    through the next triangle sharing its last edge the right way round
+    (greedy), so most triangles cost one index instead of about six. The
+    game sends a car's indices through the push buffer every frame: the
+    Cobalt's body, one triangle a piece, was 60,000 indices a pass."""
+    import collections
+    tris = [t for t in tris if len(set(t)) == 3]
+    by_edge = collections.defaultdict(list)  # directed edge -> triangles holding it that way round
+    for n, (a, b, c) in enumerate(tris):
+        for e, x in (((a, b), c), ((b, c), a), ((c, a), b)):
+            by_edge[e].append((n, x))
+    used = [False] * len(tris)
+    pieces = []
+    for n0, t0 in enumerate(tris):
+        if used[n0]: continue
+        used[n0] = True
+        p = list(t0)
+        while True:
+            # the next triangle at position len(p)-2: (p[-2], p[-1], x) on an even one, (p[-1], p[-2], x) on an odd
+            e = (p[-2], p[-1]) if (len(p) - 2) % 2 == 0 else (p[-1], p[-2])
+            nxt = next(((n, x) for n, x in by_edge.get(e, ()) if not used[n]), None)
+            if nxt is None: break
+            used[nxt[0]] = True
+            p.append(nxt[1])
+        pieces.append(p)
+    s = []
+    for p in pieces:
+        if s:
+            s += [s[-1], p[0]]
+            if len(s) % 2: s.append(p[0])
+        s += p
+    return s
+
+
+def strip_triangles(s):
+    """A strip's real triangles, each in its winding (for checking strip_long)."""
+    out = []
+    for i in range(len(s) - 2):
+        a, b, c = s[i:i + 3]
+        if len({a, b, c}) < 3: continue
+        t = (a, b, c) if i % 2 == 0 else (b, a, c)
+        k = t.index(min(t))
+        out.append(t[k:] + t[:k])
+    return sorted(out)
+
+
 def window_panes(parts):
     """Glass for an NFSU car, whose windows are holes: the stock parts are
     welded by position and each large closed hole high on the car (the
@@ -1060,6 +1107,22 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         if t[o + 8:t.index(b'\0', o + 8)] != b'Line': kept += t[o:o + size]
         o += size
     car['tail'] = kept + t[o:]
+    if mw:  # long strips (see strip_long): the same triangles, a third of the indices
+        before = after = 0
+        for p in car['parts']:
+            # identical vertices (and damage shape) as one, so neighbours share an edge
+            dmg = p['Damage'][1]
+            nd = struct.unpack_from('<I', dmg)[0] if len(dmg) >= 4 else 0
+            first = {}
+            same = [first.setdefault((tuple(v), dmg[4 + 12 * i:16 + 12 * i] if nd else b''), i) for i, v in enumerate(p['verts'])]
+            for sp in p['subparts']:
+                if sp['prim'] != 6 or len(sp['indices']) < 6: continue
+                tris = strip_triangles([same[i] for i in sp['indices']])
+                s = strip_long(tris)
+                before += len(sp['indices'])
+                if len(s) < len(sp['indices']) and strip_triangles(s) == tris: sp['indices'] = s
+                after += len(sp['indices'])
+        print('strips: %d indices, were %d' % (after, before))
     open(out_path, 'wb').write(carbin.write(car))
     print('replaced %d parts: %s' % (len(done), ' '.join(done)))
 
