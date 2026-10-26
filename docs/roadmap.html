@@ -59,16 +59,16 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Forza Motorsport · PC port · as of 25 Oct 2026</div>
+    <div class="eyebrow">Forza Motorsport · PC port · as of 26 Oct 2026</div>
     <h1>Forza PC Port Roadmap</h1>
     <p class="lede">What's left before the port is ready to hand to other people, with rough working-time estimates. Estimates are hours of work, not calendar time. Investigations like the dark cars can land early or run long.</p>
   </header>
 
   <div class="strip">
     <div><b>16</b><span>tasks left</span></div>
-    <div><b>47–94 h</b><span>estimated work in total</span></div>
+    <div><b>46–93 h</b><span>estimated work in total</span></div>
     <div><b>8–16</b><span>nights at the nightly task's pace (11 pm–8 am)</span></div>
-    <div><b>8</b><span>waiting on you</span></div>
+    <div><b>7</b><span>waiting on you</span></div>
   </div>
 
   <section>
@@ -78,10 +78,11 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
         <thead><tr><th>Task</th><th>Status</th><th>Estimate</th></tr></thead>
         <tbody>
           <tr class="group"><td colspan="3">Speed and smoothness</td></tr>
-          <tr><td class="task"><b>Race frame rate</b><span>Race start up from ~40–50 to 56–60 fps at 2× (headless test). The GPU now draws the window directly, frames stay on the GPU, and pixels hidden behind others are no longer shaded.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Race frame rate</b><span>A steady 60 fps through the whole recorded race at 4× scale, the busy start included, with no frame over 25 ms. The emulated screen refresh had been late every other frame (frames of 9 and 24 ms); the GPU thread also does far less work per draw.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Even frame pacing (judder)</b><span>Frames are shown in the order they finish, one per screen refresh: 1,761 of 1,762 race frames exactly one refresh apart. You confirmed the judder in the menus is gone.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Freeze one second into a race</b><span>Fixed: the GPU waited for a signal the game never sent. Frame pacing no longer depends on it.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
-          <tr><td class="task"><b>Pause menu taking ~10 s to appear</b><span>Fixed again, a second cause: now and then the sound chip's "voice finished" signal was lost, and after that DirectSound waited half a second for every sound it stopped. The race sounds cut out the moment START was pressed, which is the "engine cutting out" you heard.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Pause menu slow to open</b><span>Third cause fixed: each sound the pause stops waited up to 21 ms for the sound chip to hand it back, while DirectSound held its lock (about 2 s in total). Now they go back as fast as the game takes them. Needs a check in play.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Softlock when quitting a race</b><span>After a short stutter the game stops drawing (seen 26 Oct). It may share the pause cause; if it still happens with the pause fix, it needs a capture while it hangs.</span></td><td><span class="pill next">Next</span></td><td class="est">2–6 h</td></tr>
           <tr><td class="task"><b>30 fps mode running at double speed</b><span>Fixed: frames now go at the game's own frame interval.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Short hiccups entering menus</b><span>You report the menus are smooth now.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
 
@@ -93,9 +94,9 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
           <tr><td class="task"><b>White band on the track logos</b><span>A read-back of memory the game had already reused painted over the Event menu's track pictures. Fixed; you confirmed it.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Dark rear and lower body on the cars</b><span>Fixed: the colour-mixing stages read a value in the wrong order.</span></td><td><span class="pill done">Done 20 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Yellow loading screen</b><span>Fixed in a way that doesn't depend on timing; not seen since.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
-          <tr><td class="task"><b>Lighting flicker on scenery at 60 fps</b><span>The frame flickers are gone; tell me if any lighting flicker on buildings or grass remains.</span></td><td><span class="pill wait">Your check</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Texture flicker on scenery</b><span>Fixed: Forza draws with the Xbox's w-buffer and we stored ordinary screen depth, which loses precision far away, so road lines, kerbs and signs fought their surfaces as the camera moved. You confirmed it's gone.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>NSX rear light panel drawn flat grey</b><span>Its taillight panel shows as flat grey with white blocks, in the race and in My Cars. It was the same before the vinyl fix, so it is older than that.</span></td><td><span class="pill next">Next</span></td><td class="est">2–4 h</td></tr>
-          <tr><td class="task"><b>Odd shadows at the New York race start</b><span>Dark vertical stripes over the car during the start, gone as soon as you drive off. They come from the swizzled targets drawn since the vinyl fix: the car samples a 256x256 one and the environment cube map, and with XBRT_GL_SWIZZLED=0 they never show. Something about the start camera's frames; the race camera's are fine.</span></td><td><span class="pill next">Next</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>Stripes and over-bright cars in shade</b><span>Fixed: the shade map is cleared in one memory layout and drawn in another, and the second copy kept last frame's depth. You confirmed the car shades like xemu.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Car shadows in the pre-race preview</b><span>Shadow fixes since then may have solved it. Needs a look from you.</span></td><td><span class="pill wait">Your check</span></td><td class="est">1–2 h</td></tr>
           <tr><td class="task"><b>Dotted leaf edges at 2× scale</b><span>Smooth the trees' cut-out edges (alpha to coverage).</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Black My Cars thumbnails</b><span>Fixed: the game read the picture of a bought or repainted car before the GPU had put it in memory. You confirmed a new car and a repainted one. Tiles saved black before the fix stay black until that car is repainted.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
@@ -103,7 +104,11 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
           <tr><td class="task"><b>Odd texture on the career loading bar</b><span>Seen once on the loading screen before a career race. Not looked into yet.</span></td><td><span class="pill next">Next</span></td><td class="est">1–3 h</td></tr>
           <tr><td class="task"><b>Loading icon with a see-through background</b><span>Now and then the spinning icon wipes out the pixels behind it instead of drawing over them. The loading screens lock the shown buffer before drawing the icon on the CPU, and since the My Cars fix each lock first brings the GPU's picture into RAM, so the icon should no longer draw over an older frame. Tell me if you see it again.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
 
-          <tr class="group"><td colspan="3">Controls</td></tr>
+          <tr><td class="task"><b>Brightness like the Xbox and xemu</b><span>The game's own exposure (its gamma ramp) was ignored, so races looked dark. Applied now, with a Brightness setting (70% by default) since full strength washed out the HUD.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Sharper car reflections</b><span>The reflection cube map is drawn at the render scale instead of the Xbox's 128 pixels a face.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Smoother picture at high scales</b><span>Shrinking the 4× picture to the screen now averages each pixel's area instead of skipping rows.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Scenery popping in on long tracks</b><span>The track now streams three zones ahead instead of one. You saw it work on the Nürburgring; looking behind still shows some.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr class="group"><td colspan="3">Controls</td></tr>
           <tr><td class="task"><b>Keyboard controls</b><span>A stopgap layout, listed below. It works alongside a controller.</span></td><td><span class="pill done">Done today</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Key and button remapping</b><span>Choose your own keys, saved in a settings file. Your feedback on the stopgap layout feeds into this.</span></td><td><span class="pill wait">Your feedback</span></td><td class="est">3–5 h</td></tr>
 
@@ -111,7 +116,9 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
           <tr><td class="task"><b>Fullscreen and resolution options</b><span>Borderless fullscreen and a choice of render scale.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Settings menu</b><span>30/60 fps, scale and volume from the game window instead of two separate launchers.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
 
-          <tr class="group"><td colspan="3">Audio</td></tr>
+          <tr><td class="task"><b>V-Sync on by default</b><span>No tearing, at no cost in frame rate.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Settings menu tidied</b><span>Brightness added; the list scrolls instead of running over the help text.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr class="group"><td colspan="3">Audio</td></tr>
           <tr><td class="task"><b>Leftover clicks at the race start</b><span>Down from up to 90 a second to 3–7. Polish the rest.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Reverb and 3D sound positioning</b><span>The Xbox's sound effects processor isn't emulated yet, so tunnels and stands sound flat.</span></td><td><span class="pill later">Later</span></td><td class="est">8–15 h</td></tr>
 
@@ -136,7 +143,7 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
         </tbody>
       </table>
     </div>
-    <p class="note">The totals cover the 14 open tasks with an estimate; rows marked done, and checks with no work estimated, aren't counted. The nightly estimate assumes roughly 6 hours of progress a night.</p>
+    <p class="note">The totals cover the 13 open tasks with an estimate; rows marked done, and checks with no work estimated, aren't counted. The nightly estimate assumes roughly 6 hours of progress a night.</p>
   </section>
 
   <section>
