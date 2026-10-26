@@ -6,7 +6,9 @@ to a new car, and --restore gives the Civic SI back its own files.
 
   python tools/addcar.py <disc folder> <mods folder> <from> <new> [--ordinal N]
                          [--name <model name>] [--short <short name>] [--restore]
-                         [--cab <car cab>] [--make <car>] [--year <year>]
+                         [--cab <car cab>] [--make <car>] [--year <year>] [--price <credits>]
+                         [--engine-like <car> [--engine <name>] [--power <hp>] [--torque <lb-ft>]]
+                         [--mass <kg>] [--stats-like <car>] [--upgrades <upgrades.xml>]
   e.g.  <disc>  run/mods  CivicSI  Nissan240SXS13  --name "240SX" --restore
 
 <from> and <new> are car names as in cars\\carlist.xml (<new> must not be
@@ -29,7 +31,11 @@ there is one, else the disc's:
 
 --cab: the new car's cab from this file (a converted model, packed into a copy
 of <from>'s cab) instead of <from>'s. --make: the maker of that car (its
-dealer and logo). --year: the model year.
+dealer and logo). --year: the model year. --engine-like: its own copy of
+that car's engine and sound (named --engine), scaled to --power and
+--torque. --mass: the weight. --stats-like: the menus' figures and ratings
+of a similar car. --upgrades: the shop's body kits, hoods and wings that
+nfsu2forza.py writes for a Most Wanted car.
 
 The ordinal is a number no car has and nothing names as a car
 (carlist, AI opponents, career prizes): the lists skip 13 numbers, and
@@ -237,7 +243,8 @@ def write_strings(d, add):
 
 # ----
 
-def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False, cab=None, make=None, year=None):
+def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False, cab=None, make=None, year=None,
+         engine_like=None, engine=None, power=None, torque=None, mass=None, stats_like=None, price=None, upgrades=None):
     mega, cars, xpr = Archive(disc, mods, 'Mega.ca2'), Archive(disc, mods, 'Cars.ca2'), Archive(disc, mods, 'MegaXPR.ca2')
     m = mega.files
     key = 'cars' + B + 'carlist.xml'
@@ -286,6 +293,21 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
             xml = xml.replace(entry, re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry))
             entry = re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry)
         mrow[4:8] = row_of(model, ordinal_of(xml, make))[4:8]
+    if stats_like:  # the menus' figures and ratings of a similar car: gamecars.dat's summary, carlist's ratings and class
+        so2 = ordinal_of(xml, stats_like)
+        theirs = row_of(games, so2)
+        grow[8:164] = theirs[8:164]
+        g = car_block(xml, stats_like).group(0)
+        for attr in ('BasePerformanceClass', 'Speed', 'Accel', 'Brake', 'Handl', 'Rare', 'carDriveType'):
+            val = re.search(r'\b%s="([^"]*)"' % attr, g).group(1)
+            new_entry = re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry)
+            xml, entry = xml.replace(entry, new_entry), new_entry
+        mrow[32:72] = row_of(model, so2)[32:72]  # specs (the prices at 24 and 28 stay, see --price)
+    if power:  # gamecars.dat's power figure: tenths of a kilowatt
+        struct.pack_into('<f', grow, 12, power * 0.745699872 * 10)
+    if price:  # model.dat's two prices (24, 28) and gamecars.dat's (88, 92)
+        struct.pack_into('<II', mrow, 24, price, price)
+        struct.pack_into('<II', grow, 88, price, price)
     struct.pack_into('<II', grow, 0, ordinal, ordinal)
     # Mega.ca2's wheel model, MegaXPR.ca2's textures, under the new car's name
     wsrc, wdst = B.join(('tires', 'art', wheel.lower())) + B, B.join(('tires', 'art', new.lower())) + B
@@ -313,6 +335,55 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     if own_wheel:
         cars.files[tk] = re.sub(rb'(<WheelStyle>\s*<P0 [^>]*File=")[^"]*"', lambda g: g.group(1) + new.encode() + b'"', cars.files[tk])
     if restore: restore_tree(cars.files, cars.disc, csrc)
+    tool = cars.files[tk].decode('latin-1')
+    audio = {}  # the engine's sound, for the car's cab (below)
+    if engine_like:
+        # Its own copy of another car's engine, physics and sound, as the only
+        # engine in the shop; the power and torque scaled to the given figures
+        # (the whole curve to the power, then up to the torque peak the rest,
+        # the power peak as it was: a supercharger's flat torque).
+        theirs = cars.files[B.join(('cars', engine_like.lower(), 'tooldata.xml'))].decode('latin-1')
+        eng = re.search(r'<E0 [^>]*File="([^"]*)"', theirs).group(1)
+        ename = engine or new
+        ep_f, ep_s = B.join(('engines', eng.lower())) + B, B.join(('engines', ename.lower())) + B
+        for k in [k for k in cars.files if k.lower().startswith(ep_f)]:
+            cars.files[ep_s + k[len(ep_f):]] = cars.files[k]
+        e0 = '<E0 Name="%s" File="%s" Price="0" />' % (name or new, ename)
+        tool = re.sub(r'<Engines>.*?</Engines>', '<Engines>\n\t\t\t' + e0 + '\n\t\t</Engines>', tool, flags=re.S)
+        import caridentity
+        tun = [ep_s + B.join(('physics', 'enginetuning', 'l%d.xml' % lv)) for lv in range(4)]
+        l0 = cars.files[tun[0]].decode('latin-1')
+        hp0 = struct.unpack_from('<f', row_of(games, ordinal_of(xml, engine_like)), 12)[0] / 10 / 0.745699872
+        k1 = power / hp0 if power else 1.0
+        k2 = torque * 1.3558179 / (caridentity.peak_torque(l0) * k1) if torque else 1.0
+        for t in tun:
+            if t in cars.files:
+                x = caridentity.raise_torque(cars.files[t].decode('latin-1'), k1, upto_power=False)
+                cars.files[t] = caridentity.raise_torque(x, k2).encode('latin-1')
+        print('engine %s: %s\'s (%s), %.0f hp x%.3f%s, torque to %.0f lb-ft (x%.3f below the power peak)'
+              % (ename, engine_like, eng, hp0, k1, ' = %.0f hp' % power if power else '', caridentity.peak_torque(l0) * k1 * k2 / 1.3558179, k2))
+        donor = disc_file(disc, 'media', 'cabs', 'car_%s.cab' % engine_like)
+        dfiles, _ = cab_files(open(donor, 'rb').read())
+        ea = B.join(('engines', eng.lower(), 'audio')) + B
+        for k, v in dfiles.items():
+            if not k.lower().startswith(ea): continue
+            rest = re.sub(re.escape(eng.lower()), ename.lower(), k[len(ea):])
+            if k.lower().endswith('.ini'): v = re.sub(re.escape(eng).encode(), ename.encode(), v, flags=re.I)
+            audio[B.join(('engines', ename.lower(), 'audio')) + B + rest] = v
+        print('engine sound: %d files from car_%s.cab' % (len(audio), engine_like))
+    if mass:  # the stock (l0) weight, kg
+        wk = cdst + B.join(('physics', 'weight', 'l0.xml'))
+        w = cars.files[wk].decode('latin-1')
+        old = re.search(r' Mass="([0-9.]+)"', w)
+        cars.files[wk] = (w[:old.start(1)] + '%.3f' % mass + w[old.end(1):]).encode('latin-1')
+        print('weight: %s kg -> %.1f kg' % (old.group(1), mass))
+    if upgrades:  # the shop's body parts (nfsu2forza.py's upgrades.xml for a Most Wanted car)
+        u = open(upgrades).read()
+        for tag in ('FrontBumper', 'RearBumper', 'SideSkirt', 'Hood', 'Wing'):
+            mine_blk = re.search(r'\t*<%s>.*?</%s>\n?' % (tag, tag), u, re.S)
+            if mine_blk: tool = re.sub(r'\t*<%s>.*?</%s>\n?' % (tag, tag), lambda _: mine_blk.group(0), tool, count=1, flags=re.S)
+        print('shop: front bumpers, rear bumpers, skirts, hoods and wings from %s' % upgrades)
+    cars.files[tk] = tool.encode('latin-1')
 
     # the strings, in every language: the same ids in each
     new_ids, strings = None, {}
@@ -349,6 +420,7 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     out = {}
     for k, v in files.items():
         out[cdst + k[len(csrc):] if k.lower().startswith(csrc) else k] = v
+    out.update(audio)
     os.makedirs(os.path.dirname(cab_out), exist_ok=True)
     open(cab_out, 'wb').write(forzacab.pack(out, root))
     print('car_%s.cab: %d files from %s' % (new, len(out), cab_in))
@@ -405,7 +477,8 @@ if __name__ == '__main__':
     args, opts = [], {}
     it = iter(sys.argv[1:])
     for a in it:
-        if a in ('--ordinal', '--name', '--short', '--cab', '--make', '--year'): opts[a[2:]] = next(it)
+        if a in ('--ordinal', '--name', '--short', '--cab', '--make', '--year', '--engine-like', '--engine', '--power', '--torque',
+                 '--mass', '--stats-like', '--price', '--upgrades'): opts[a[2:].replace('-', '_')] = next(it)
         elif a == '--restore': opts['restore'] = True
         else: args.append(a)
     if len(args) != 4: raise SystemExit(__doc__)
@@ -413,4 +486,7 @@ if __name__ == '__main__':
         raise SystemExit('%s: a save folder' % args[1])
     main(*args, ordinal=int(opts['ordinal']) if 'ordinal' in opts else None, name=opts.get('name'), short=opts.get('short'),
          cab=opts.get('cab'), make=opts.get('make'), year=int(opts['year']) if 'year' in opts else None,
+         engine_like=opts.get('engine_like'), engine=opts.get('engine'), power=float(opts['power']) if 'power' in opts else None,
+         torque=float(opts['torque']) if 'torque' in opts else None, mass=float(opts['mass']) if 'mass' in opts else None,
+         stats_like=opts.get('stats_like'), price=int(opts['price']) if 'price' in opts else None, upgrades=opts.get('upgrades'),
          restore=opts.get('restore', False))

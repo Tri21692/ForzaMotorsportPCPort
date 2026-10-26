@@ -394,7 +394,32 @@ The Chevrolet Cobalt SS (not in Forza) converted on the Civic SI (26 Oct),
 added as its own car with addcar.py (`--cab`, `--make CamaroZ28`, ordinal
 81, "Cobalt SS"), the Civic's physics and engine: body, roof, glass,
 lamps, mirrors, hood and spoiler, badges and lamps from its textures,
-the 240SX conversion byte for byte as before. Not yet seen in the game.
+the 240SX conversion byte for byte as before. Seen in the shop (26 Oct): right but for the lamps.
+
+- **The livery atlas's alpha is not opacity:** the template's lamp texels
+  have alpha 0 (taillights 25 on average), and so does nearly all its
+  paint. Most Wanted's opaque lamp textures drew as white lamps; the
+  converter now gives them alpha 0. Badges keep theirs (the decal material
+  uses it).
+- **The shop's parts are tooldata.xml's lists** (FrontBumper, RearBumper,
+  SideSkirt, Hood, Wing ...): each choice names the parts it draws, and a
+  choice may name several or none. MW body kits are whole bodies (they
+  differ from the stock one up the fenders and out to 1.0 m a side), so
+  for a Most Wanted car the body part is only the roof (BASE), each front
+  bumper a whole kit's body (stock in bumperFa, KIT01-05 in b-f; the
+  extras with two near levels and the stock far ones), and the rear
+  bumper and skirt lists keep only their stock choice, with no parts.
+  Hoods f and g take two of the car's STYLE hoods, wings c, d, g and raceA
+  four of CARS/SPOILER's shared spoilers (stood where the car's own spoiler
+  is, as wide), wingb the car's own spoiler as the stock choice, and a last
+  choice has no wing. nfsu2forza.py writes those lists (upgrades.xml),
+  addcar.py --upgrades puts them in. Part ids (u32 before the name) are
+  not a hash we know, so no parts are added: only the template's slots.
+- **Its engine:** addcar.py --engine-like MiniCooper (the supercharged R53),
+  as CobaltSSLSJ with its sound, x1.258 to 205 hp and the torque up to 200
+  lb-ft below the power peak; 1,284 kg; the Dodge SRT-4's menu figures and
+  ratings; 21,000 credits. gamecars.dat's u32 at 12 is the power, tenths
+  of a kilowatt (Civic SI 1193, Mini 1215, SRT-4 1715).
 
 ## The converter (tools/nfsu2forza.py), first version (25 Oct)
 
