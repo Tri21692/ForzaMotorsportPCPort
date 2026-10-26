@@ -56,6 +56,7 @@ first build takes a while.
 | `XBRT_PROFILE` | `<file>`: where the device thread spends its time, sampled every millisecond (the instruction and two callers), rewritten every 5 s; a `base` line first, for addr2line | off |
 | `XBRT_GL_SWZ_SCALE` | `0`: swizzled framebuffers (the cars' reflection cube faces, the shade map, the vinyl editor's livery) at the Xbox's size instead of the render scale | 1 |
 | `XBRT_DRAW_DISTANCE` | `1`-`8`: Forza's tree, reflection and trackside-detail distances times this, changed in memory after each track sets them (its .ini files are hash-checked). Objects still appear where the track's visibility sets say | 1 |
+| `XBRT_ZONE_LEAD` | `1`-`8`: how many track zones ahead of the car Forza keeps loaded (tracklist.xml's ZoneWindowLeadCount, 1 on every track), set in memory (the file is hash-checked); against scenery streaming in in view | off |
 | `XBRT_WAIT_LOG` | `<ms>`: each guest wait that took at least that long, signalled or timed out, with the guest's stack (stalls where the game stops) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |

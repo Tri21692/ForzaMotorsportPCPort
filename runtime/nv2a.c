@@ -741,6 +741,41 @@ static void draw_distance(void) {
     }
 }
 
+/* XBRT_ZONE_LEAD=<1..8>: how many of a track's zones ahead of the car
+ * Forza keeps loaded (tracklist.xml's ZoneWindowLeadCount, 1 for every
+ * track). With one, scenery streams in as the car reaches each zone, and
+ * pieces are dropped and read again lap after lap (520 in the recorded
+ * race). tracklist.xml is hash-checked like the .ini files, so the parsed
+ * table is changed in memory: each track's entry has its load screen's
+ * path (D:\MEDIA\FrontEnd\Loading...) at +0x870 and the count at +0xBC0.
+ * Found once by a scan of the game's memory, every 5 s until it is. */
+static void zone_lead(void) {
+    static uint32_t found[128];
+    static int nfound, want = -1;
+    if (want < 0) want = getenv("XBRT_ZONE_LEAD") ? atoi(getenv("XBRT_ZONE_LEAD")) : 0;
+    if (want < 1 || want > 8 || !rt_frame_interval_at) return;
+    if (nfound < 40) { /* the table: some 50 tracks */
+        nfound = 0;
+        uint32_t a = RT_USER_BASE, b, sz, pr, st;
+        while (a < RT_USER_LIMIT && nfound < 128) {
+            if (!rt_user_query(a, &b, &sz, &pr, &st) || !sz) {
+                a = b + (sz ? sz : 0x1000);
+                continue;
+            }
+            if (st == 0x1000) /* MEM_COMMIT */
+                for (uint32_t p = b; p + 0xBC4 <= b + sz && nfound < 128; p += 4)
+                    if (xb_rd32(p + 0x870) == 0x4D5C3A44u /* "D:\M" */ && xb_rd32(p + 0x880) == 0x6F4C5C64u /* "d\Lo", FrontEnd\Loading */ &&
+                        xb_rd32(p + 0xBC0) >= 1 && xb_rd32(p + 0xBC0) <= 8)
+                        found[nfound++] = p;
+            a = b + sz;
+        }
+        if (nfound < 40) return;
+        fprintf(stderr, "xbrt: XBRT_ZONE_LEAD=%d: %d tracks\n", want, nfound);
+    }
+    for (int i = 0; i < nfound; i++)
+        if (xb_rd32(found[i] + 0xBC0) != (uint32_t)want) xb_wr32(found[i] + 0xBC0, (uint32_t)want);
+}
+
 /* Wakes the device loop when a vertical blank is due. Its own timed wait
  * goes by winpthreads' millisecond clock and woke up to 15 ms late, which
  * the game saw as a dropped frame. */
@@ -787,6 +822,7 @@ static void *device_main(void *arg) {
             if (nv2a.flip_stall && nv2a.queued < 2) nv2a.flip_stall = 0, nv2a_trace('R', 1);
             if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
             if (nv2a.vblanks % 30 == 0) draw_distance();
+            if (nv2a.vblanks % 300 == 0) zone_lead();
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
                 static const char *spec;
                 static int checked;
