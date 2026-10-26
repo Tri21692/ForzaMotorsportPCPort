@@ -22,7 +22,7 @@ static RtSetting settings[] = {
     {"window", "XBRT_WINDOW_SIZE", "auto", "Window size in pixels, as 1280x960, or auto (twice the Xbox picture, fitted to the screen)"},
     {"antialiasing", "XBRT_AA", "fxaa", "Edge smoothing: fxaa or off. A higher scale than the window also smooths edges"},
     {"anisotropic", "XBRT_GL_ANISO", "16", "Texture sharpness at angles: 1 (off) to 16"},
-    {"vsync", "XBRT_VSYNC", "0", "Wait for the monitor's refresh when showing a frame: 1 on, 0 off"},
+    {"vsync", "XBRT_VSYNC", "1", "Wait for the monitor's refresh when showing a frame (no tearing): 1 on, 0 off"},
     {"volume", "XBRT_VOLUME", "0.7", "Sound volume: 0 to 1"},
     {"music", "XBRT_MUSIC", "music", "Folder of your own songs for Forza's custom soundtracks: one subfolder per soundtrack (mp3, flac, wav, ogg, m4a, wma)"},
     {"mods", "XBRT_MODS", "mods", "Folder of mods: a file there at the same path as on the disc (media\\cabs\\car_nissan240sx.cab) is read instead of the disc's; a .ca2 archive there passes the installer's check and is installed to the cache"},
