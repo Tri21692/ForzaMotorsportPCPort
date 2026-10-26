@@ -50,6 +50,7 @@ first build takes a while.
 | `XBRT_GL_SWIZZLED` | `0`: draws into swizzled render targets are dropped (before 25 Oct: no vinyls, no environment cube map) | on |
 | `XBRT_TEX_LOG` | `1`: each texture (address, format) the first time a draw samples it | off |
 | `XBRT_GL_SURF_LOG` | `1`: each GPU framebuffer as it is made (address, size, swizzled or not, depth) | off |
+| `XBRT_RT_LOG` | `<hex offset>`: each draw (program, textures) and clear into that colour offset, all session (`2a29300`: the paint shop's livery) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
 

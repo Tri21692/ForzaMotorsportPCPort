@@ -527,8 +527,27 @@ static void dump_method(uint32_t subch, uint32_t method, uint32_t arg) {
     fprintf(f, "%u %02x %04x %08x\n", nv2a.flips, nv2a.class_[subch], method, arg);
 }
 
+/* Debugging: XBRT_RT_LOG=<hex offset> prints each draw and clear into that
+ * colour offset, with its program and textures, for as long as the game
+ * runs (the paint shop's livery is 2a29300). */
+static void rt_log_method(uint32_t subch, uint32_t method, uint32_t arg) {
+    static int on = -1;
+    static uint32_t want, st[0x800];
+    if (on < 0) on = getenv("XBRT_RT_LOG") && sscanf(getenv("XBRT_RT_LOG"), "%x", &want) == 1;
+    if (!on || nv2a.class_[subch] != 0x97 || method >= 0x2000) return;
+    st[method >> 2] = arg;
+    if (st[0x0210 >> 2] != want) return;
+    if (method == 0x17FC && arg)
+        fprintf(stderr, "[%9.3f] rt %08x: draw %x, program %08x, textures %08x/%08x %08x/%08x %08x/%08x %08x/%08x\n",
+                rt_now_100ns() / 1e7, want, arg, st[0x1E70 >> 2], st[0x1B00 >> 2], st[0x1B04 >> 2], st[0x1B40 >> 2], st[0x1B44 >> 2],
+                st[0x1B80 >> 2], st[0x1B84 >> 2], st[0x1BC0 >> 2], st[0x1BC4 >> 2]);
+    else if (method == 0x1D94)
+        fprintf(stderr, "[%9.3f] rt %08x: clear %x to %08x\n", rt_now_100ns() / 1e7, want, arg, st[0x1D8C >> 2]);
+}
+
 void nv2a_method(uint32_t subch, uint32_t method, uint32_t arg) {
     dump_method(subch, method, arg);
+    rt_log_method(subch, method, arg);
     if (method == 0) {
         nv2a.object[subch] = arg;
         uint32_t inst = nv2a_lookup(arg);
