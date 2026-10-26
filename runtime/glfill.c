@@ -1388,11 +1388,19 @@ static void gl_free_surf(GlSurf *s) {
  * into s, oldest first: copied on the GPU where the bytes line up
  * (Forza's bloom quarters of a front buffer, the same buffer with and
  * without depth), else through RAM. */
-static void gl_take_newer(GlSurf *s) {
+/* colour: s is to be sampled, so only what was drawn over its colour's
+ * bytes matters. A cube map's six faces share one depth buffer: through it
+ * each face looked drawn over by the others, and every car draw that
+ * sampled the cube took them all in through RAM (the race at 10-25 fps). */
+static void gl_take_newer(GlSurf *s, int colour) {
     GlSurf *newer[GL_SURFS];
     int n = 0, copy = 1;
+    uint32_t sc = s->cpitch * (uint32_t)s->h;
     for (int i = 0; i < GL_SURFS; i++) {
         GlSurf *e = &gl_surf[i];
+        if (colour && e != s && e->fbo && e->seq > s->seq && !gl_span_hit(e->cbase, e->cpitch * (uint32_t)e->h, s->cbase, sc) &&
+            !(e->ztex && e->zdirty && gl_span_hit(e->zbase, e->zpitch * (uint32_t)e->h, s->cbase, sc)))
+            continue;
         /* Read back or not: a framebuffer that drew later holds newer pixels
          * than s, which (dirty itself) will not take them from RAM. Taking
          * only the dirty ones left a front buffer's texture with texels
@@ -1491,7 +1499,7 @@ static GlSurf *gl_bind(const DrawState *d) {
         s->used = ++gl_tick;
         if (s->check && !s->dirty) gl_upload_if_changed(s);
         s->check = 0;
-        if (!gl_whole_clear) gl_take_newer(s);
+        if (!gl_whole_clear) gl_take_newer(s, 0);
     }
     s->used = ++gl_tick;
     if (s->check && !s->dirty) gl_upload_if_changed(s);
@@ -1527,7 +1535,7 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
         if (!s || !(s->zdirty || s->zgpu)) return NULL; /* not drawn on the GPU: decode from RAM */
         if (s->check && !s->dirty) gl_upload_if_changed(s); /* the CPU may have written it since */
         s->check = 0;
-        gl_take_newer(s);
+        gl_take_newer(s, 0);
         if (s->zdirty) gl_depth_stays(s);
         Texture *t = &rt[i];
         memset(t, 0, sizeof *t);
@@ -1551,7 +1559,7 @@ static Texture *gl_rt_texture(int i, uint32_t base, uint32_t pitch, uint32_t col
     }
     if (s->check && !s->dirty) gl_upload_if_changed(s);
     s->check = 0;
-    gl_take_newer(s);
+    gl_take_newer(s, 1);
     Texture *t = &rt[i];
     memset(t, 0, sizeof *t);
     t->w = s->w, t->h = s->h, t->linear = 1, t->levels = 1;
@@ -1594,7 +1602,7 @@ static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int 
     for (int k = 0; k < (cube ? 6 : 1); k++) {
         if (f[k]->check && !f[k]->dirty) gl_upload_if_changed(f[k]);
         f[k]->check = 0;
-        gl_take_newer(f[k]);
+        gl_take_newer(f[k], 1);
     }
     Texture *t = &rt[i];
     memset(t, 0, sizeof *t);
