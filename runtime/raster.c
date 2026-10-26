@@ -1483,6 +1483,31 @@ void nv2a_raster_poll(void) {
 #define SET_ZSTENCIL_CLEAR_VALUE 0x1D8C
 #define SET_CLEAR_RECT_HORIZONTAL 0x1D98
 #define SET_CLEAR_RECT_VERTICAL 0x1D9C
+/* Vertex arrays: offset bit 31 picks the second vertex DMA. */
+/* The arrays' layout, worked out once per Begin: the formats and offsets
+ * are set before it. Looking the DMA objects up for every attribute of
+ * every vertex was a quarter of the device thread once vertex programs
+ * ran on the GPU. */
+typedef struct {
+    uint8_t a, type, size;
+    uint32_t stride, base; /* base: the physical address of element 0 */
+} FetchAttr;
+
+static FetchAttr fattr[NATTR];
+static int nfattr;
+static uint32_t fetch_inline_mask; /* the attributes not in arrays: those come from the inline values */
+
+static int fattr_of[NATTR];         /* the attribute's entry in fattr, or -1 */
+/* An array draw's vertices as their indices (ARRAY_ELEMENT, DRAW_ARRAYS):
+ * the GPU path packs the attributes its program reads straight from the
+ * arrays (gl_draw_vsh); whole Vertex records, 256 bytes each, are made
+ * only for the CPU path (materialize). Building them for every vertex was
+ * a quarter of the device thread at the race start. */
+static uint32_t *vidx;
+static int vidx_cap, deferred;
+static uint32_t fetch_attr(const FetchAttr *fa, const uint8_t *p, float *v);
+static void materialize(void);
+
 #include "glfill.c"
 #include "glover.c"
 #include "glfs.c"
@@ -1552,6 +1577,7 @@ static void draw(void) {
         vsh_decode();
         if (rt_gl_on && gl_vsh_on() && !(rt_debug_keys & RT_DBG_CPU_VSH) && gl_draw_vsh(&d, verts, n, prim)) return; /* the GPU runs the program */
     }
+    materialize();
     if (n * 5 > pts_cap) { /* lines add four corners a segment */
         pts_cap = n * 5 > 4096 ? n * 5 : 4096;
         pts = realloc(pts, (size_t)pts_cap * sizeof *pts);
@@ -1589,22 +1615,9 @@ static void draw(void) {
 }
 
 static void emit(void) {
-    if (prim) vert_new();
+    if (prim) materialize(), vert_new();
 }
 
-/* Vertex arrays: offset bit 31 picks the second vertex DMA. */
-/* The arrays' layout, worked out once per Begin: the formats and offsets
- * are set before it. Looking the DMA objects up for every attribute of
- * every vertex was a quarter of the device thread once vertex programs
- * ran on the GPU. */
-typedef struct {
-    uint8_t a, type, size;
-    uint32_t stride, base; /* base: the physical address of element 0 */
-} FetchAttr;
-
-static FetchAttr fattr[NATTR];
-static int nfattr;
-static uint32_t fetch_inline_mask; /* the attributes not in arrays: those come from the inline values */
 
 /* The next vertex of an array draw: fetch() writes each array attribute
  * whole, so only the others come from the inline values. Copying all
@@ -1623,14 +1636,45 @@ static void fetch_layout(void) {
     nfattr = 0;
     fetch_inline_mask = (1u << NATTR) - 1;
     for (int a = 0; a < NATTR; a++) {
+        fattr_of[a] = -1;
         uint32_t f = K(SET_VERTEX_DATA_ARRAY_FORMAT + 4 * a), size = (f >> 4) & 15;
         if (!size) continue;
         uint32_t off = K(SET_VERTEX_DATA_ARRAY_OFFSET + 4 * a);
         FetchAttr *fa = &fattr[nfattr++];
         fetch_inline_mask &= ~(1u << a);
+        fattr_of[a] = nfattr - 1;
         fa->a = (uint8_t)a, fa->type = (uint8_t)(f & 15), fa->size = (uint8_t)size, fa->stride = f >> 8;
         fa->base = dma_base(off & 0x80000000u ? SET_CONTEXT_DMA_VERTEX_B : SET_CONTEXT_DMA_VERTEX_A) + (off & 0x7FFFFFFFu);
     }
+}
+
+/* One attribute of one vertex, from its bytes; returns how many it took. */
+static uint32_t fetch_attr(const FetchAttr *fa, const uint8_t *p, float *v) {
+    uint32_t type = fa->type, size = fa->size < 4 ? fa->size : 4, bytes;
+    v[0] = v[1] = v[2] = 0, v[3] = 1;
+    switch (type) {
+    case 2: memcpy(v, p, 4 * size); bytes = 4 * fa->size; break;
+    case 0: /* D3DCOLOR: B,G,R,A in memory */
+        v[0] = p[2] / 255.0f, v[1] = p[1] / 255.0f, v[2] = p[0] / 255.0f, v[3] = p[3] / 255.0f;
+        if (size < 4) v[3] = 1;
+        if (size < 3) v[2] = 0;
+        bytes = 4;
+        break;
+    case 4: for (uint32_t k = 0; k < size; k++) v[k] = p[k] / 255.0f; bytes = fa->size; break;
+    case 1: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = t / 32767.0f; } bytes = 2 * fa->size; break;
+    case 5: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = (float)t; } bytes = 2 * fa->size; break;
+    case 6: { /* CMP: a normal packed in 32 bits, signed x:11 y:11 z:10 (Forza's normals, attribute 2; read as zeros before) */
+        uint32_t w;
+        memcpy(&w, p, 4);
+        v[0] = (float)((int32_t)(w << 21) >> 21) / 1023.0f;
+        v[1] = (float)((int32_t)(w << 10) >> 21) / 1023.0f;
+        v[2] = (float)((int32_t)w >> 22) / 511.0f;
+        bytes = 4 * fa->size;
+        break;
+    }
+    default: bytes = 4 * fa->size; break;
+    }
+    return bytes;
 }
 
 static void fetch(uint32_t index, Vertex *out, const uint32_t **inl) {
@@ -1638,35 +1682,32 @@ static void fetch(uint32_t index, Vertex *out, const uint32_t **inl) {
      * device thread in a race): floats are a straight copy. */
     for (int i = 0; i < nfattr; i++) {
         const FetchAttr *fa = &fattr[i];
-        uint32_t type = fa->type, size = fa->size < 4 ? fa->size : 4;
         const uint8_t *p = inl ? (const uint8_t *)*inl : phys(fa->base + index * fa->stride);
-        float *v = out->a[fa->a];
-        uint32_t bytes;
-        v[0] = v[1] = v[2] = 0, v[3] = 1;
-        switch (type) {
-        case 2: memcpy(v, p, 4 * size); bytes = 4 * fa->size; break;
-        case 0: /* D3DCOLOR: B,G,R,A in memory */
-            v[0] = p[2] / 255.0f, v[1] = p[1] / 255.0f, v[2] = p[0] / 255.0f, v[3] = p[3] / 255.0f;
-            if (size < 4) v[3] = 1;
-            if (size < 3) v[2] = 0;
-            bytes = 4;
-            break;
-        case 4: for (uint32_t k = 0; k < size; k++) v[k] = p[k] / 255.0f; bytes = fa->size; break;
-        case 1: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = t / 32767.0f; } bytes = 2 * fa->size; break;
-        case 5: for (uint32_t k = 0; k < size; k++) { int16_t t; memcpy(&t, p + 2 * k, 2); v[k] = (float)t; } bytes = 2 * fa->size; break;
-        case 6: { /* CMP: a normal packed in 32 bits, signed x:11 y:11 z:10 (Forza's normals, attribute 2; read as zeros before) */
-            uint32_t w;
-            memcpy(&w, p, 4);
-            v[0] = (float)((int32_t)(w << 21) >> 21) / 1023.0f;
-            v[1] = (float)((int32_t)(w << 10) >> 21) / 1023.0f;
-            v[2] = (float)((int32_t)w >> 22) / 511.0f;
-            bytes = 4 * fa->size;
-            break;
-        }
-        default: bytes = 4 * fa->size; break;
-        }
+        uint32_t bytes = fetch_attr(fa, p, out->a[fa->a]);
         if (inl) *inl += (bytes + 3) / 4;
     }
+}
+
+/* An array vertex by its index: recorded, or fetched at once when the
+ * draw already has whole vertices. */
+static void vert_index(uint32_t index) {
+    if (nverts && !deferred) {
+        fetch(index, vert_new_fetched(), NULL);
+        return;
+    }
+    deferred = 1;
+    if (nverts == vidx_cap) vidx_cap = vidx_cap ? vidx_cap * 2 : 4096, vidx = realloc(vidx, (size_t)vidx_cap * sizeof *vidx);
+    vidx[nverts++] = index;
+}
+
+/* The recorded vertices as whole Vertex records, for the CPU. */
+static void materialize(void) {
+    if (!deferred) return;
+    deferred = 0;
+    int n = nverts;
+    if (n > verts_cap) verts_cap = n, verts = realloc(verts, (size_t)verts_cap * sizeof *verts);
+    nverts = 0;
+    for (int i = 0; i < n; i++) fetch(vidx[i], vert_new_fetched(), NULL);
 }
 
 /* Called for every Kelvin method after its value is stored in nv2a.kelvin. */
@@ -1675,10 +1716,11 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
     if (method == SET_BEGIN_END) {
         if (arg) {
             prim_t0 = rt_now_100ns();
-            prim = (int)arg, nverts = 0, ninline = 0;
+            prim = (int)arg, nverts = 0, ninline = 0, deferred = 0;
             fetch_layout();
         } else if (prim) {
             if (ninline) { /* INLINE_ARRAY: whole vertices, attribute by attribute */
+                materialize();
                 const uint32_t *p = inline_buf, *end = inline_buf + ninline;
                 while (p < end) {
                     const uint32_t *was = p;
@@ -1724,11 +1766,11 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
         if (k == 1 && a == ATTR_POS) emit();
     } else if (method == DRAW_ARRAYS && prim) {
         uint32_t start = arg & 0xFFFFFF, count = (arg >> 24) + 1;
-        for (uint32_t i = 0; i < count; i++) fetch(start + i, vert_new_fetched(), NULL);
+        for (uint32_t i = 0; i < count; i++) vert_index(start + i);
     } else if (method == ARRAY_ELEMENT16 && prim) {
-        for (int h = 0; h < 2; h++) fetch(h ? arg >> 16 : arg & 0xFFFF, vert_new_fetched(), NULL);
+        for (int h = 0; h < 2; h++) vert_index(h ? arg >> 16 : arg & 0xFFFF);
     } else if (method == ARRAY_ELEMENT32 && prim) {
-        fetch(arg, vert_new_fetched(), NULL);
+        vert_index(arg);
     } else if (method == INLINE_ARRAY && prim) {
         if (ninline == inline_cap) inline_cap = inline_cap ? inline_cap * 2 : 4096, inline_buf = realloc(inline_buf, (size_t)inline_cap * 4);
         inline_buf[ninline++] = arg;

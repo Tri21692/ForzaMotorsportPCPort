@@ -811,6 +811,7 @@ void rt_nv2a_init(void) {
     if (getenv("XBRT_FRAME_TRACE") && (tr_file = fopen(getenv("XBRT_FRAME_TRACE"), "w"))) tr_on = 1;
     pthread_t h;
     pthread_create(&h, NULL, device_main, NULL);
+    rt_profile_thread(h);
 }
 
 /* The stats line, every 5 seconds at log level 1 or with XBRT_STATS=1 (which

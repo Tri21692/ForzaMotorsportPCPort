@@ -219,6 +219,70 @@ void rt_sleep_precise(uint64_t ns) {
 #endif
 }
 
+/* XBRT_PROFILE=<file>: where a thread spends its time (the device
+ * thread's, nv2a.c), sampled every millisecond from inside the process:
+ * the instruction and two callers, rewritten every 5 s as "<count> <pc>
+ * <caller> <caller's caller>" after a "base" line for addr2line. A
+ * debugger attaching to sample stopped the game long enough to skew it. */
+#ifdef _WIN32
+#define PROF_SLOTS 65536
+static struct { uint64_t pc[3]; uint32_t n; } prof_tab[PROF_SLOTS];
+
+static void prof_write(const char *path) {
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "base %llx\n", (unsigned long long)(uintptr_t)GetModuleHandleW(NULL));
+    for (int i = 0; i < PROF_SLOTS; i++)
+        if (prof_tab[i].n)
+            fprintf(f, "%u %llx %llx %llx\n", prof_tab[i].n, (unsigned long long)prof_tab[i].pc[0], (unsigned long long)prof_tab[i].pc[1],
+                    (unsigned long long)prof_tab[i].pc[2]);
+    fclose(f);
+}
+
+static void *prof_main(void *arg) {
+    HANDLE th = arg;
+    const char *path = getenv("XBRT_PROFILE");
+    uint64_t last = rt_now_100ns();
+    for (;;) {
+        rt_sleep_precise(1000000);
+        if (SuspendThread(th) == (DWORD)-1) break;
+        CONTEXT c = {.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER};
+        uint64_t pc[3] = {0};
+        if (GetThreadContext(th, &c)) {
+            pc[0] = c.Rip;
+            for (int k = 1; k < 3; k++) { /* by the unwind tables: no frame pointers at -O2 */
+                DWORD64 image;
+                PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c.Rip, &image, NULL);
+                if (!fn) break;
+                void *handler;
+                DWORD64 frame;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, c.Rip, fn, &c, &handler, &frame, NULL);
+                pc[k] = c.Rip;
+            }
+        }
+        ResumeThread(th);
+        uint64_t h = (pc[0] * 0x9E3779B97F4A7C15ull ^ pc[1] * 0xC2B2AE3D27D4EB4Full ^ pc[2]) >> 48;
+        for (int probe = 0; probe < 64; probe++, h = (h + 1) % PROF_SLOTS)
+            if (!prof_tab[h].n || !memcmp(prof_tab[h].pc, pc, sizeof pc)) {
+                memcpy(prof_tab[h].pc, pc, sizeof pc), prof_tab[h].n++;
+                break;
+            }
+        if (rt_now_100ns() - last > 50000000) last = rt_now_100ns(), prof_write(path);
+    }
+    return NULL;
+}
+#endif
+
+void rt_profile_thread(pthread_t t) {
+#ifdef _WIN32
+    if (!getenv("XBRT_PROFILE")) return;
+    pthread_t p;
+    pthread_create(&p, NULL, prof_main, pthread_gethandle(t));
+#else
+    (void)t;
+#endif
+}
+
 int main(int argc, char **argv) {
     rt_settings_load(); /* forza.ini: before anything reads an XBRT_* switch */
     rt_soundtracks_init();

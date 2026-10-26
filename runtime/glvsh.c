@@ -382,8 +382,18 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
         if (v->inputs & (1u << a)) used[m++] = a;
     if (!m) used[m++] = 0;
     if (n * m * 4 > packed_cap) packed_cap = n * m * 4, packed = realloc(packed, (size_t)packed_cap * sizeof *packed);
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
+    if (deferred) { /* straight from the arrays (raster.c, vert_index) */
+        for (int j = 0; j < m; j++) {
+            int f = fattr_of[used[j]];
+            float *out = packed + j * 4;
+            if (f < 0)
+                for (int i = 0; i < n; i++) memcpy(out + i * m * 4, cur.a[used[j]], 16);
+            else
+                for (int i = 0; i < n; i++) fetch_attr(&fattr[f], phys(fattr[f].base + vidx[i] * fattr[f].stride), out + i * m * 4);
+        }
+    } else
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * m * 16, packed, GL_STREAM_DRAW);
     if (v->inputs != last_inputs) {
         for (int a = 0; a < NATTR; a++) glDisableVertexAttribArray((GLuint)a);
