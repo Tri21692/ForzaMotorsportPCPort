@@ -367,6 +367,34 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
     xs = max(v[0] for v in tb); ym = (max(v[1] for v in tb) + min(v[1] for v in tb)) / 2
     door = min(tb, key=lambda v: (v[0] - xs) ** 2 + (v[1] - ym * 0.8) ** 2 + v[2] ** 2)
     paint = (door[10], door[11])
+    if mw:
+        # A light one: the game multiplies the paint colour by the texel, and
+        # on a dark one every colour came out black. Of the template body's
+        # paint texels, the brightest whose surroundings (16 texels round, for
+        # the smaller mip levels) are as light. Light both where 65536 spans
+        # the atlas once and where 32768 does (the Civic's paint coordinates
+        # are all under 32768 and land on white read so; the lamps' read as
+        # 65536 a span): the earlier pick was white one way, black the other,
+        # and the car came out black.
+        import forzaxpr as fx
+        d = open(os.path.join(os.path.dirname(template_path), 'liveries', 'standard', 'livery0hi.xpr'), 'rb').read()
+        t = fx.textures(bytearray(d))[0]
+        hi = fx.dxt(d[t['start']:], t['w'], t['h'], 5)[:t['h']].astype(float)
+        def light(u, v, span):
+            x, y = int(u / span * t['w']) % t['w'], int(v / span * t['h']) % t['h']
+            if not (16 <= x < t['w'] - 16 and 16 <= y < t['h'] - 16): return None
+            around = hi[y - 16:y + 17, x - 16:x + 17]
+            if (around[..., 3] > 0).any(): return None
+            return around[..., :3].mean() - around[..., :3].std(), hi[y, x, :3]
+        best = None
+        for v in tb:
+            both = [light(v[10], v[11], span) for span in (65536, 32768)]
+            if None in both: continue
+            score = min(s for s, _ in both)
+            if best is None or score > best[0]: best = (score, (v[10], v[11]), [c.astype(int).tolist() for _, c in both])
+        if best:
+            paint = best[1]
+            print('paint: the lightest clear texel of the template body, %s read either way' % best[2])
     print('paint: texel at u, v = %.3f, %.3f' % (paint[0] / 65536, paint[1] / 65536))
     print('windows: black texel at u, v = %.3f, %.3f' % (dark[0] / 65536, dark[1] / 65536))
     # The NFSU car's own textures (lights, badges) go into the livery atlas,
@@ -421,7 +449,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                     if max(us) - min(us) < 0.5 and max(vs) - min(vs) < 0.5:  # (wrapped ones left out)
                         protect.append((min(us), min(vs), max(us), max(vs)))
     atlas = pack_atlas(images, livery_dir,
-                       os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), keep=[paint, dark], protect=protect)
+                       os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'),
+                       keep=[paint, dark] + ([(paint[0] * 2 % 65536, paint[1] * 2 % 65536)] if mw else []),  # (both readings: see the paint texel)
+                       protect=protect)
     print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (h if isinstance(h, str) else textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
     # Wheels: the template's hubs (its brake rotors) stay where its physics

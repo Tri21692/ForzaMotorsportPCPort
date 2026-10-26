@@ -502,6 +502,12 @@ static void dump_method(uint32_t subch, uint32_t method, uint32_t arg) {
         else if (sscanf(c1 + 1, "%u:%u", &first, &count) != 2) return;
         if ((f = fopen(path, "w"))) state = 1;
     }
+    if (rt_gpu_dump_wanted && state == 2) { /* F3 (display.c): the next frame, to screenshots/gpu_<seconds>.txt */
+        char path[256];
+        rt_gpu_dump_wanted = 0;
+        snprintf(path, sizeof path, "screenshots/gpu_%06.1fs.txt", rt_now_100ns() / 1e7);
+        if ((f = fopen(path, "w"))) state = 1, first = nv2a.flips + 1, count = 1, fprintf(stderr, "xbrt: GPU frame to %s\n", path);
+    }
     if (state != 1 && state != 3) return;
     if (first == ~1u) {
         if (!(nv2a.class_[subch] == 0x97 && method == 0x0210 && arg == on)) return; /* SET_SURFACE_COLOR_OFFSET */
@@ -678,6 +684,20 @@ static void *device_main(void *arg) {
                     FILE *f = fopen(path, "wb");
                     if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
                     rt_log("nv2a: RAM dumped to %s\n", path);
+                }
+                if (rt_ram_dump_wanted) { /* F4 (display.c): the GPU's drawing read back first */
+                    rt_ram_dump_wanted = 0;
+                    nv2a_raster_sync();
+                    char path[256];
+#ifdef _WIN32
+                    mkdir("screenshots");
+#else
+                    mkdir("screenshots", 0755);
+#endif
+                    snprintf(path, sizeof path, "screenshots/ram_%06.1fs.bin", rt_now_100ns() / 1e7);
+                    FILE *f = fopen(path, "wb");
+                    if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
+                    fprintf(stderr, "xbrt: RAM saved to %s\n", path);
                 }
             }
             if (0)

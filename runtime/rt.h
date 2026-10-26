@@ -54,6 +54,8 @@ extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
 #define RT_DBG_NO_CLIP 8u
 #define RT_DBG_CPU_VSH 16u
 extern volatile uint32_t rt_debug_keys;
+extern volatile int rt_ram_dump_wanted; /* F4 (display.c): nv2a.c saves the RAM */
+extern volatile int rt_gpu_dump_wanted; /* F3 (display.c): nv2a.c writes a frame's GPU methods */
 
 /* The player's settings (settings.c, forza.ini). */
 typedef struct {

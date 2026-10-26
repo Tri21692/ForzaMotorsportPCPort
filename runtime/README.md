@@ -57,6 +57,13 @@ Controller: on Windows the first XInput pad is the Xbox pad on port 1
 (shoulder buttons are WHITE and BLACK); without one, the keyboard
 (arrows, Enter START, Escape BACK, Space A, X B, C X, V Y, W/S triggers).
 
+Debugging keys: F12 saves the picture to `screenshots/`; F4 saves the
+64 MB of RAM there (`ram_<seconds>.bin`, with the GPU's drawing read back
+into it); F3 writes every GPU method of the next frame there
+(`gpu_<seconds>.txt`, as `XBRT_GPU_DUMP`); F5-F9 turn off culling, the
+depth test, the alpha test, depth clipping, and GPU vertex programs (the
+window title says which are on).
+
 The hard disk folder fills like a console's: `Partition1` holds saves
 (`TDATA`, `UDATA`), the game installs its archives to the cache
 partitions it claims (`Z:` and `N:`, folders `Partition5` and `Partition4`),

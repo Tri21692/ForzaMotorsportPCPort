@@ -437,6 +437,13 @@ needs, learned the hard way:
 - Texture coordinates matter even for paint: one fixed "white" spot drew
   the body black. Each new vertex copies the uv and shading bytes of the
   nearest template vertex of the same material.
+- The paint is the stage-3 combiner constant times the texel (where its
+  alpha is 0) times the lighting, so a dark paint texel turns every colour
+  black. The body material reads texture coordinates as if 32768 spans the
+  atlas (the Civic's paint coordinates are all under 32768 and land on
+  white read so); the Cobalt's paint texel was white read as 65536 a span
+  but black (packed headlight glass) read as 32768. The converter now picks
+  one that is white either way and keeps both spots clear of the atlas.
 - One subpart per detail level and material (as Forza's own).
 - Parts that had a damage shape keep one (the undamaged shape for now).
 - NFSU shaders without a known name: 12c9453c is the rubber round the

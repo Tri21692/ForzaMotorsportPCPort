@@ -193,10 +193,22 @@ void rt_display_new_frame(void) {
 static uint32_t frame[RT_DISPLAY_MAX];
 static int frame_w = DISP_W, frame_h = DISP_H;
 
-/* F5-F9 flip rt_debug_keys (the title says which are on); F12 saves the
+/* F4 saves the RAM (screenshots/ram_<seconds>.bin, the GPU's drawing in
+ * it); F5-F9 flip rt_debug_keys (the title says which are on); F12 saves the
  * picture to screenshots/ beside the game, whether XBRT_SCREENSHOT is set
  * or not. */
+volatile int rt_ram_dump_wanted; /* F4: nv2a.c saves the RAM at the next vertical blank */
+volatile int rt_gpu_dump_wanted; /* F3: nv2a.c writes the next frame's GPU methods */
+
 static void debug_key(WPARAM vk) {
+    if (vk == VK_F4) { /* the 64 MB of RAM, with the GPU's drawing in it, to screenshots/ (debugging) */
+        rt_ram_dump_wanted = 1;
+        return;
+    }
+    if (vk == VK_F3) { /* every GPU method of the next frame, to screenshots/ (debugging) */
+        rt_gpu_dump_wanted = 1;
+        return;
+    }
     static const char *names[] = {"no culling", "no depth test", "no alpha test", "no depth clip", "CPU vertex programs"};
     if (vk == VK_F12) {
         if (rt_gl_shown) { /* the window is drawn by the GPU: frame[] is not kept up to date */
