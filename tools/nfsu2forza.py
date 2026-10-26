@@ -108,7 +108,7 @@ def mw_material(name):
     n = name.upper()
     if n.startswith('WINDOW'): return WINDOWS if n.endswith('_MASK') else WINDOW  # the masks are the black frit round the glass
     if 'HEADLIGHT' in n:
-        if n.endswith('GLASS'): return HEADLIGHTGLASS
+        if n.endswith('GLASS'): return None  # the cover: Forza's headlight glass (30) is not on the template, so it took a stray texel and drew a white shell over the lamp
         if n.endswith('BULB'): return HEADLIGHTS
         if 'CHROME' in n: return CHROME
         if 'PLASTIC' in n: return PLASTIC
@@ -188,7 +188,7 @@ def window_panes(parts):
     return panes
 
 
-def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4):
+def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4, protect=()):
     """Put NFSU textures ({hash: RGBA}) into free (fully clear) room of the
     template's livery atlas: livery0nc.xpr and livery0.xpr (512x512, both
     slices, clean and damaged) and livery0hi.xpr (1024x1024, every mip
@@ -197,7 +197,9 @@ def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4):
     (filtering and mip levels would blend in the clear room). Returns
     {hash: (u0, v0, u1, v1)}, the texel centres of its corners in 0..1.
     keep: (u, v) spots (u16) that must stay as they are, such as the paint
-    texel, which is clear too."""
+    texel, which is clear too. protect: (u0, v0, u1, v1) boxes (0..1) that
+    must stay too: the template parts still drawn (a Most Wanted car keeps
+    the Civic's interior, whose texels are clear as well)."""
     import numpy as np
     import forzaxpr as fx
     names = ('livery0nc.xpr', 'livery0.xpr', 'livery0hi.xpr')
@@ -222,6 +224,8 @@ def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4):
     for u, v in keep:
         x, y = u * W // 65536, v * H // 65536
         used[max(0, y - 8):y + 8, max(0, x - 8):x + 8] = True
+    for u0, v0, u1, v1 in protect:
+        used[max(0, int(v0 * H) - 2):int(v1 * H) + 3, max(0, int(u0 * W) - 2):int(u1 * W) + 3] = True
     rects, where = {}, {}
     for h in sorted(images, key=lambda h: -images[h].shape[0] * images[h].shape[1]):
         img = images[h]
@@ -403,8 +407,21 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None):
                 img[y0:y1 + 1, x0:x1 + 1] = logo
             images[h] = img.astype(np.uint8)
     images.update(extra)
+    protect = []
+    if mw:  # the template parts that stay (interior, steering wheel, brakes, driver): each triangle's texel box
+        replaced = ('body', 'glass', 'headlight', 'taillight', 'bumper', 'skirt', 'hood', 'wing', 'trunk', 'mirror', 'exhaust', 'BADGE', 'bands')
+        for p in car['parts']:
+            if p['name'].startswith(replaced): continue
+            for sp in p['subparts']:
+                ix = sp['indices']
+                for k in range(len(ix) - 2):
+                    t = [p['verts'][i] for i in ix[k:k + 3]]
+                    if len(set(ix[k:k + 3])) < 3 or len(t[0]) < 12: continue
+                    us, vs = [v[10] / 65536 for v in t], [v[11] / 65536 for v in t]
+                    if max(us) - min(us) < 0.5 and max(vs) - min(vs) < 0.5:  # (wrapped ones left out)
+                        protect.append((min(us), min(vs), max(us), max(vs)))
     atlas = pack_atlas(images, livery_dir,
-                       os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), keep=[paint, dark])
+                       os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), keep=[paint, dark], protect=protect)
     print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (h if isinstance(h, str) else textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
     # Wheels: the template's hubs (its brake rotors) stay where its physics
