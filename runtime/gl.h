@@ -13,6 +13,7 @@
 #define GL_FUNCTIONS(X)                                                                                                     \
     X(PFNGLGETSTRINGPROC, glGetString)                                                                                      \
     X(PFNGLGETINTEGERVPROC, glGetIntegerv)                                                                                  \
+    X(PFNGLGETSTRINGIPROC, glGetStringi)                                                                                    \
     X(PFNGLGETERRORPROC, glGetError)                                                                                        \
     X(PFNGLVIEWPORTPROC, glViewport)                                                                                        \
     X(PFNGLSCISSORPROC, glScissor)                                                                                          \
@@ -122,6 +123,7 @@ GL_FUNCTIONS(GL_DECLARE)
 /* Each <name> to its pointer (C has no way to generate these from the list). */
 #define glGetString p_glGetString
 #define glGetIntegerv p_glGetIntegerv
+#define glGetStringi p_glGetStringi
 #define glGetError p_glGetError
 #define glViewport p_glViewport
 #define glScissor p_glScissor

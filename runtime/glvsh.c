@@ -101,7 +101,7 @@ static char *vsh_glsl(const VshIns *prog, uint32_t n) {
             "out vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
             "out float v_fog;\n"
             "noperspective out float v_zs;\n"
-            "out float v_w;\n"
+            "out float v_w;\nout float v_wv;\n"
             "vec4 con(int i) { return i >= 0 && i < 192 ? u_vc[i] : vec4(0.0); }\n"
             /* The NV2A's multiply: zero times anything (infinity too) is zero. */
             "vec4 mulz(vec4 a, vec4 b) { vec4 m = a * b;\n"
@@ -187,7 +187,7 @@ static char *vsh_glsl(const VshIns *prog, uint32_t n) {
             "    vec3 ndc = vec3(P.x * u_sxy.x / u_size.x * 2.0 - 1.0, P.y * u_sxy.y / u_size.y * 2.0 - 1.0,\n"
             "                    clamp(P.z / u_zmax, 0.0, 1.0) * 2.0 - 1.0);\n"
             "    gl_Position = vec4(ndc * w, w);\n"
-            "    v_zs = P.z; v_w = w;\n"
+            "    v_zs = P.z; v_w = w; v_wv = w;\n"
             "    v_c0 = vec4(clampc(o[3].x, 1.0), clampc(o[3].y, 1.0), clampc(o[3].z, 1.0), clampc(o[3].w, 1.0));\n"
             "    v_c1 = vec4(clampc(o[4].x, 0.0), clampc(o[4].y, 0.0), clampc(o[4].z, 0.0), clampc(o[4].w, 0.0));\n"
             "    v_t0 = o[9]; v_t1 = o[10]; v_t2 = o[11]; v_t3 = o[12];\n"

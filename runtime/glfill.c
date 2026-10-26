@@ -37,10 +37,11 @@ static const char *vs_src =
     "out vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
     "out float v_fog;\n"
     "noperspective out float v_zs;\n" /* screen z, Xbox units */
-    "out float v_w;\n"                /* w, interpolated with perspective: the w-buffer's depth */
+    "out float v_w;\n"                /* w, interpolated with perspective: the w-buffer's depth without gl_bary */
+    "out float v_wv;\n"               /* w again, for the fragment shader to interpolate as the NV2A does (gl_bary) */
     "void main() {\n"
     "    float w = a_pos.w != 0.0 ? 1.0 / a_pos.w : 1.0;\n"
-    "    v_zs = a_pos.z; v_w = w;\n"
+    "    v_zs = a_pos.z; v_w = w; v_wv = w;\n"
     "    vec3 ndc = vec3(a_pos.x / u_size.x * 2.0 - 1.0, a_pos.y / u_size.y * 2.0 - 1.0,\n"
     "                    clamp(a_pos.z / u_zmax, 0.0, 1.0) * 2.0 - 1.0);\n"
     "    gl_Position = vec4(ndc * w, w);\n"
@@ -54,6 +55,9 @@ static const char *fs_src =
     "in float v_fog;\n"
     "noperspective in float v_zs;\n"
     "in float v_w;\n"
+    "#ifdef WBARY\n"
+    "pervertexNV in float v_wv[3];\n"
+    "#endif\n"
     "out vec4 o_color;\n"
     "uniform vec4 u_zr;\n"   /* depth: units in the buffer (65535 or 16777215), clip min, clip max, w-buffer on */
     "uniform vec3 u_zoff;\n" /* polygon offset: bias, factor, the render scale (slopes are per Xbox pixel) */
@@ -201,11 +205,17 @@ static const char *fs_src =
      * (bias, and factor times the depth slope), clamped to the clip range.
      * Forza draws road markings, kerbs and skid marks with offsets; without
      * them they fought the road and flickered. */
-    "    float z = u_zr.w > 0.5 ? v_w : gl_FragCoord.z * u_zr.x;\n" /* the GPU's own depth unless w-buffering: passes must match exactly */
+    "#ifdef WBARY\n" /* w linear in screen space over the triangle as drawn, before clipping (the NV2A's w-buffer, as xemu) */
+    "    float zw = dot(gl_BaryCoordNoPerspNV, vec3(v_wv[0], v_wv[1], v_wv[2]));\n"
+    "#else\n"
+    "    float zw = v_w;\n"
+    "#endif\n"
+    "    float z = u_zr.w > 0.5 ? zw : gl_FragCoord.z * u_zr.x;\n" /* the GPU's own depth unless w-buffering: passes must match exactly */
     "    if (u_zoff.x != 0.0 || u_zoff.y != 0.0) {\n"
     "        float slope = max(abs(dFdx(z)), abs(dFdy(z))) * u_zoff.z;\n"
     "        z += u_zoff.x + (isinf(slope) || isnan(slope) ? 0.0 : u_zoff.y * slope);\n"
     "    }\n"
+    "    if (u_zr.w > 1.5 && (z < u_zr.y || z > u_zr.z || isnan(z))) discard;\n" /* w-buffered, culled outside the clip range */
     "    if (u_zr.w > 0.5 || u_zoff.x != 0.0 || u_zoff.y != 0.0) z = clamp(z, u_zr.y, u_zr.z);\n"
     "    gl_FragDepth = isnan(z) ? gl_FragCoord.z : clamp(z / u_zr.x, 0.0, 1.0);\n"
     "#endif\n"
@@ -273,11 +283,26 @@ static GLuint compile(GLenum type, const char *src) {
  * race at 2x was held back by the GPU (60 fps at 1x, ~45 at 2x). */
 static GLuint gl_fs_var[4];
 
+/* GL_NV_fragment_shader_barycentric: a fragment shader sees its position's
+ * weights over the triangle's vertices as they left the vertex shader,
+ * before clipping, and each vertex's outputs. The w-buffer's w then
+ * interpolates as the NV2A's does (and xemu's, from the three vertices a
+ * geometry shader hands on): linear in screen space over the whole
+ * triangle. Interpolated with perspective (the true w), the far side of
+ * Pacific Shipyards' buildings showed through them; linear between the
+ * corners GL's clipping makes, scenery by the camera vanished.
+ * XBRT_GL_WBARY=0: without it. */
+static int gl_bary;
+
+static const char *gl_fs_head(void) {
+    return gl_bary ? "#version 450\n#extension GL_NV_fragment_shader_barycentric : require\n#define WBARY\n" : "#version 430\n";
+}
+
 static GLuint gl_fs_variant(int var) {
     if (!var) return gl_fs;
     if (!gl_fs_var[var]) {
-        char head[128];
-        snprintf(head, sizeof head, "#version 430\n%s%s", var & 1 ? "#define NO_FRAG_DEPTH\n" : "",
+        char head[256];
+        snprintf(head, sizeof head, "%s%s%s", gl_fs_head(), var & 1 ? "#define NO_FRAG_DEPTH\n" : "",
                  var & 2 ? "#define NO_ALPHA_TEST\n" : "");
         size_t n = strlen(head) + strlen(fs_src);
         char *src = malloc(n + 1);
@@ -363,7 +388,23 @@ static void gl_use(GlProg *p) {
 
 static int gl_setup(void) {
     GLuint vs = compile(GL_VERTEX_SHADER, vs_src);
-    gl_fs = compile(GL_FRAGMENT_SHADER, fs_src);
+    {
+        GLint n = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+        for (GLint i = 0; i < n && !gl_bary; i++) {
+            const char *e = (const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+            if (e && !strcmp(e, "GL_NV_fragment_shader_barycentric")) gl_bary = 1;
+        }
+        if (getenv("XBRT_GL_WBARY") && !atoi(getenv("XBRT_GL_WBARY"))) gl_bary = 0;
+        fprintf(stderr, "xbrt: w-buffer interpolated %s\n", gl_bary ? "as the NV2A does (GL_NV_fragment_shader_barycentric)" : "with perspective");
+    }
+    {
+        size_t n = strlen(gl_fs_head()) + strlen(fs_src);
+        char *src = malloc(n + 1);
+        strcpy(src, gl_fs_head()), strcat(src, fs_src + strlen("#version 430\n"));
+        gl_fs = compile(GL_FRAGMENT_SHADER, src);
+        free(src);
+    }
     if (!vs || !gl_fs || !gl_link(&gl_main, vs)) return 0;
     gl_use(&gl_main);
     glGenVertexArrays(1, &gl_vao);
@@ -2074,6 +2115,11 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         memcpy(&lo, &cmin, 4), memcpy(&hi, &cmax, 4);
         if (!(hi > lo) || (rt_debug_keys & RT_DBG_NO_CLIP)) lo = 0, hi = d->zmax;
         float zr[4] = {d->zmax, lo, hi, (K(0x290) & (1u << 16)) ? 1.0f : 0.0f}; /* CONTROL0 Z_PERSPECTIVE */
+        /* w-buffered with SET_ZMIN_MAX_CONTROL's ZCLAMP_EN at CULL (bits 4-7 zero, Forza's 1): fragments
+         * outside the clip range are dropped, as the NV2A (and xemu) do, not clamped. Interpolated as the
+         * NV2A does (gl_bary), a triangle reaching behind the camera gives nonsense depth there, and
+         * clamped it was drawn over what lay beyond (a wedge of grass over a barrier by the car). */
+        if (zr[3] > 0 && gl_bary && !(K(0x1D78) & 0xF0) && !(rt_debug_keys & RT_DBG_NO_CLIP)) zr[3] = 2;
         uint32_t fb = K(0x388), ff = K(0x384); /* POLYGON_OFFSET_BIAS / SCALE_FACTOR, if POLY_OFFSET_FILL_ENABLE */
         float zoff[3] = {0, 0, (float)s->k}; /* slopes per Xbox pixel: k GL pixels each */
         if (K(0x338) & 1) memcpy(&zoff[0], &fb, 4), memcpy(&zoff[1], &ff, 4);

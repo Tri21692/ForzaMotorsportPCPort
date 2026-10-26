@@ -99,9 +99,10 @@ static const char *fs_cmp(int f) {
 
 static char *fs_generate(const FsKey *k) {
     FsStr s = {malloc(32768), 0, 32768};
-    fsput(&s, "#version 430\n"
-              "in vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
+    fsput(&s, "%s", gl_fs_head());
+    fsput(&s, "in vec4 v_c0, v_c1, v_t0, v_t1, v_t2, v_t3;\n"
               "in float v_fog;\nnoperspective in float v_zs;\nin float v_w;\n"
+              "#ifdef WBARY\npervertexNV in float v_wv[3];\n#endif\n"
               "out vec4 o_color;\n"
               "uniform vec4 u_zr;\nuniform vec3 u_zoff;\nuniform vec3 u_fogc;\n"
               "uniform vec4 u_c0[8], u_c1[8], u_fc0, u_fc1;\n"
@@ -220,11 +221,13 @@ static char *fs_generate(const FsKey *k) {
     if (k->alpha_func) fsput(&s, "    { float a = o.a, b = u_alpha_ref; if (!%s) discard; }\n", fs_cmp(k->alpha_func - 0x200));
     fsput(&s, "    o_color = o;\n");
     if (k->depth)
-        fsput(&s, "    float z = u_zr.w > 0.5 ? v_w : gl_FragCoord.z * u_zr.x;\n"
+        fsput(&s, "#ifdef WBARY\n    float zw = dot(gl_BaryCoordNoPerspNV, vec3(v_wv[0], v_wv[1], v_wv[2]));\n#else\n    float zw = v_w;\n#endif\n"
+                  "    float z = u_zr.w > 0.5 ? zw : gl_FragCoord.z * u_zr.x;\n"
                   "    if (u_zoff.x != 0.0 || u_zoff.y != 0.0) {\n"
                   "        float slope = max(abs(dFdx(z)), abs(dFdy(z))) * u_zoff.z;\n"
                   "        z += u_zoff.x + (isinf(slope) || isnan(slope) ? 0.0 : u_zoff.y * slope);\n"
                   "    }\n"
+                  "    if (u_zr.w > 1.5 && (z < u_zr.y || z > u_zr.z || isnan(z))) discard;\n"
                   "    if (u_zr.w > 0.5 || u_zoff.x != 0.0 || u_zoff.y != 0.0) z = clamp(z, u_zr.y, u_zr.z);\n"
                   "    gl_FragDepth = isnan(z) ? gl_FragCoord.z : clamp(z / u_zr.x, 0.0, 1.0);\n");
     fsput(&s, "}\n");
