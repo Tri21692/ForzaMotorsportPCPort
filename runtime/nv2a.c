@@ -677,12 +677,31 @@ void nv2a_cpu_reads(uint32_t base, uint32_t size) {
     rt_gil_lock();
 }
 
+/* Wakes the device loop when a vertical blank is due. Its own timed wait
+ * goes by winpthreads' millisecond clock and woke up to 15 ms late, which
+ * the game saw as a dropped frame. */
+static void *vblank_ticker(void *arg) {
+    (void)arg;
+    for (;;) {
+        uint64_t due = __atomic_load_n(&vblank_due, __ATOMIC_RELAXED), t = now_ns();
+        if (due > t) rt_sleep_precise(due - t);
+        else if (due) rt_sleep_precise(1000000); /* the loop is busy: nudge it again shortly */
+        else rt_sleep_precise(16683333);
+        pthread_mutex_lock(&lock);
+        pthread_cond_signal(&kick);
+        pthread_mutex_unlock(&lock);
+    }
+    return NULL;
+}
+
 static void *device_main(void *arg) {
     (void)arg;
     const char *gpu = getenv("XBRT_GPU");
     if (gpu && !strcmp(gpu, "gl")) rt_gl_init(); /* the context lives on this thread */
     uint64_t next_vblank = now_ns() + 16683333;
     vblank_due = next_vblank;
+    pthread_t ticker;
+    pthread_create(&ticker, NULL, vblank_ticker, NULL);
     pthread_mutex_lock(&lock);
     for (;;) {
         uint64_t t = now_ns();
@@ -762,6 +781,11 @@ static void *device_main(void *arg) {
             pthread_mutex_lock(&lock);
             if (moved) continue;
         }
+        /* From now, not from the top of the loop: a pass that ran 9 ms and
+         * parked on a flip stall otherwise slept the full interval again,
+         * every other blank ~7 ms late (frames of 9 and 24 ms, not 16.7) */
+        t = now_ns();
+        if (t >= next_vblank) continue;
         struct timespec ts;
         rt_abstime(&ts, next_vblank - t);
         nv2a_trace('W', 0);

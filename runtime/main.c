@@ -206,6 +206,19 @@ void rt_log_tick(void) {
     }
 }
 
+void rt_sleep_precise(uint64_t ns) {
+#ifdef _WIN32
+    static __thread HANDLE timer;
+    if (!timer) timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    LARGE_INTEGER due = {.QuadPart = -(LONGLONG)(ns / 100)};
+    if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, INFINITE);
+    else Sleep((DWORD)(ns / 1000000));
+#else
+    struct timespec ts = {(time_t)(ns / 1000000000u), (long)(ns % 1000000000u)};
+    nanosleep(&ts, NULL);
+#endif
+}
+
 int main(int argc, char **argv) {
     rt_settings_load(); /* forza.ini: before anything reads an XBRT_* switch */
     rt_soundtracks_init();
@@ -215,6 +228,13 @@ int main(int argc, char **argv) {
     if (from && atof(from) > 0 && rt_log_level) log_from = atof(from), log_deferred = rt_log_level, rt_log_level = 0;
 #ifdef _WIN32
     timeBeginPeriod(1); /* 1 ms sleeps, as the DPC thread and waits expect */
+    { /* which Windows 11 drops for a process with no window in view (headless,
+       * minimised, covered): sleeps to the next vertical blank woke 4-15 ms
+       * late. Nor slow its threads to save power. */
+        PROCESS_POWER_THROTTLING_STATE p = {PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+            PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, 0};
+        SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &p, sizeof p);
+    }
 #endif
     const char *path = argc > 1 ? argv[1] : "default.xbe";
 
