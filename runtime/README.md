@@ -60,6 +60,7 @@ first build takes a while.
 | `XBRT_GL_WBUFFER` | `0`: screen z in the depth buffer instead of the w-buffer Forza asks for (distant road lines, kerbs and signs flicker) | 1 |
 | `XBRT_FLICKER` | `<from s>:<for s>:<out.ppm>`: counts pixels that jump for one shown frame and come back, logs them a frame, and maps them over the last frame (needs `XBRT_SCREENSHOT`, with `XBRT_SCREENSHOT_FROM` past the end) | off |
 | `XBRT_SCREENSHOT_FROM` | `<seconds>`: the first screenshot then (with a small `XBRT_SCREENSHOT_EVERY`, every frame of a stretch) | 0 |
+| `XBRT_XRM_HEAP` | `0`: Forza's resource heap at its own 30.5 MB instead of its development size, 42.9 MB (room for streaming further ahead) | 1 |
 | `XBRT_WAIT_LOG` | `<ms>`: each guest wait that took at least that long, signalled or timed out, with the guest's stack (stalls where the game stops) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |

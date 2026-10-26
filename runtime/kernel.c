@@ -623,7 +623,40 @@ K(NtQueryVirtualMemory) {
 
 K(MmAllocateContiguousMemory) { return rt_contig_alloc(ARG(0), 0, RT_PHYS_SIZE - 1, 0x1000); }
 /* (size, LowestAcceptableAddress, HighestAcceptableAddress, Alignment, Protect) */
-K(MmAllocateContiguousMemoryEx) { return rt_contig_alloc(ARG(0), ARG(1), ARG(2), ARG(3)); }
+/* Forza's resource heap (XRM: track streaming, cars, textures) is one
+ * contiguous block it sizes as a sum of fixed budgets, 30.5 MB, kept at
+ * 0x519320 and allocated through XPhysicalAlloc from its heap's setup
+ * (0x46B30, called from 0x64504). Streaming three zones ahead (zone_lead)
+ * outgrew it on Pacific Shipyards, which the game reports as a disc
+ * error. Its own development mode (config +0x2AE) uses 45,000,000 bytes,
+ * 42.9 MB; that fits here, since the executable and the game's virtual
+ * allocations live outside the 64 MB of RAM (about 41 MB of it in use).
+ * Recognised by the size and the return addresses on the stack, and the
+ * size changed in each place the heap's setup reads it. XBRT_XRM_HEAP=0:
+ * the game's own size. */
+#define XRM_SIZE_AT 0x519320u
+#define XRM_BIG 0x2AEA540u
+static void xrm_heap(XbCtx *c) {
+    static int on = -1;
+    if (on < 0) on = !getenv("XBRT_XRM_HEAP") || atoi(getenv("XBRT_XRM_HEAP"));
+    uint32_t size = ARG(0);
+    if (!on || !rt_frame_interval_at || size >= XRM_BIG || xb_rd32(XRM_SIZE_AT) != size) return;
+    uint32_t sp = c->esp;
+    if (xb_rd32(sp) != 0x00266694u || xb_rd32(sp + 0x20) != 0x00046B5Du || xb_rd32(sp + 0x24) != size || xb_rd32(sp + 0x3C) != 0x00064509u ||
+        xb_rd32(sp + 0x40) != size || c->edi != size)
+        return;
+    c->edi = XRM_BIG;            /* the heap's setup keeps it here across the call, then stores it */
+    xb_wr32(sp + 4, XRM_BIG);    /* this call's size */
+    xb_wr32(sp + 0x24, XRM_BIG); /* XPhysicalAlloc's */
+    xb_wr32(sp + 0x40, XRM_BIG); /* the heap setup's */
+    xb_wr32(XRM_SIZE_AT, XRM_BIG);
+    fprintf(stderr, "xbrt: Forza's resource heap %.1f MB, not %.1f\n", XRM_BIG / 1048576.0, size / 1048576.0);
+}
+
+K(MmAllocateContiguousMemoryEx) {
+    xrm_heap(c);
+    return rt_contig_alloc(ARG(0), ARG(1), ARG(2), ARG(3));
+}
 K(MmFreeContiguousMemory) {
     rt_contig_free(ARG(0));
     return 0;
