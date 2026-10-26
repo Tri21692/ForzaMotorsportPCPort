@@ -1068,7 +1068,9 @@ static int draw_state(DrawState *d) {
      * Morton order in RAM). The vinyl editor draws each layer into the
      * car's livery, a swizzled 1024x1024 texture: dropped, the car showed
      * its paint without the vinyls. */
-    if ((type != 1 && !(type == 2 && rt_gl_on)) || !d->bpp) {
+    static int swizzled = -1; /* XBRT_GL_SWIZZLED=0: not drawn (before 25 Oct) */
+    if (swizzled < 0) swizzled = !getenv("XBRT_GL_SWIZZLED") || atoi(getenv("XBRT_GL_SWIZZLED"));
+    if ((type != 1 && !(type == 2 && rt_gl_on && swizzled)) || !d->bpp) {
         static uint32_t last;
         if (rt_log_level && last != fmt) rt_log("raster: surface format %x not drawn (offset %08x)\n", fmt, K(SET_SURFACE_COLOR_OFFSET));
         last = fmt;
