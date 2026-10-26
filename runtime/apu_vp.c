@@ -173,12 +173,57 @@ static void notify(unsigned v, int which) {
     irq_pending = 1;
 }
 
-/* The ISR's write of FECTL (releasing a trap), under the lock the frame
- * takes to trap the next idle voice: neither overwrites the other. */
-void rt_vp_write_fectl(uint32_t v) {
+/* Hands the first voice that went idle back to DSOUND, which unlinks it
+ * in its ISR: one at a time, while the front end is not trapped already.
+ * Under vp_lock. Returns whether it trapped (and raised the interrupt). */
+static int trap_idle_voice(void) {
+    if ((REG(NV_PAPU_FECTL) & FECTL_FEMETHMODE) || !(REG(NV_PAPU_FETFORCE1) & FETFORCE1_SE2FE_IDLE_VOICE)) return 0;
+    if (!(REG(NV_PAPU_SECTL) & SECTL_XCNTMODE) || !REG(NV_PAPU_VPVADDR)) return 0;
+    for (int list = 0; list < 3; list++) {
+        uint32_t v = REG(list_top[list]) & 0xFFFF;
+        for (int guard = 0; v != 0xFFFF && guard < MAX_VOICES && v < MAX_VOICES; guard++) {
+            if (!(vget(v, V_PAR_STATE) & STATE_ACTIVE)) {
+                REG(NV_PAPU_FEDECMETH) = SE2FE_IDLE_VOICE, REG(NV_PAPU_FEDECPARAM) = v;
+                REG(NV_PAPU_FECTL) = (REG(NV_PAPU_FECTL) & ~(FECTL_FEMETHMODE | FECTL_FETRAPREASON)) | FECTL_TRAPPED | FECTL_REQUESTED;
+                /* Atomic: a plain |= racing the ISR's clearing of other
+                 * bits lost this one now and then. DSOUND never saw the
+                 * trap, no voice was handed back again, and every stop
+                 * waited out DSOUND's 0.5 s timeout: the pause menu took
+                 * ~10 s to come up. */
+                __atomic_or_fetch(&REG(NV_PAPU_ISTS), ISTS_FETINTSTS, __ATOMIC_SEQ_CST);
+                irq_pending = 1;
+                return 1;
+            }
+            v = vget(v, V_TAR_PITCH_LINK) & 0xFFFF;
+        }
+    }
+    return 0;
+}
+
+/* The ISR's write of FECTL, under the lock the frame takes to trap the
+ * next idle voice: neither overwrites the other. When it releases a trap,
+ * the next idle voice goes back at once. Only from the frame, they went
+ * back one per buffer of frames (21 ms, the ISR cannot run inside one),
+ * and DSOUND holds its lock while it waits for each voice it stops: the
+ * pause menu, which stops dozens, took ~2 s to open. Only once the ISR
+ * has also cleared the trap's interrupt bit (rt_vp_isr_cleared): a new
+ * bit raised before its clear would be wiped, the trap never seen. Returns
+ * whether to raise the interrupt. */
+int rt_vp_write_fectl(uint32_t v) {
     pthread_mutex_lock(&vp_lock);
     REG(NV_PAPU_FECTL) = v;
+    int irq = !(REG(NV_PAPU_ISTS) & ISTS_FETINTSTS) && trap_idle_voice();
     pthread_mutex_unlock(&vp_lock);
+    return irq;
+}
+
+/* The ISR cleared interrupt bits (apu.c): the other half of handing the
+ * next idle voice back at once (rt_vp_write_fectl). */
+int rt_vp_isr_cleared(void) {
+    pthread_mutex_lock(&vp_lock);
+    int irq = !(REG(NV_PAPU_ISTS) & ISTS_FETINTSTS) && trap_idle_voice();
+    pthread_mutex_unlock(&vp_lock);
+    return irq;
 }
 
 static void voice_off(unsigned v) {
@@ -662,7 +707,7 @@ int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
      * waits. Stopping the mix instead left silent 32-sample gaps whenever
      * the ISR was slow, and handing back stopped the rest of that frame:
      * the clicks and the harsh, gritty race start. */
-    int trapped = (REG(NV_PAPU_FECTL) & FECTL_FEMETHMODE) != 0;
+    trap_idle_voice();
     memset(mix, 0, sizeof mix);
     for (int list = 0; list < 3; list++) {
         uint32_t v = REG(list_top[list]) & 0xFFFF;
@@ -670,18 +715,7 @@ int rt_vp_frame(float out[FRAME][2], int *raise_irq) {
             if (v >= MAX_VOICES) break;
             uint32_t next = vget(v, V_TAR_PITCH_LINK) & 0xFFFF;
             if (!(vget(v, V_PAR_STATE) & STATE_ACTIVE)) {
-                if (!trapped && (REG(NV_PAPU_FETFORCE1) & FETFORCE1_SE2FE_IDLE_VOICE)) { /* hand it back: DSOUND unlinks it in its ISR */
-                    REG(NV_PAPU_FEDECMETH) = SE2FE_IDLE_VOICE, REG(NV_PAPU_FEDECPARAM) = v;
-                    REG(NV_PAPU_FECTL) = (REG(NV_PAPU_FECTL) & ~(FECTL_FEMETHMODE | FECTL_FETRAPREASON)) | FECTL_TRAPPED | FECTL_REQUESTED;
-                    /* Atomic: a plain |= racing the ISR's clearing of other
-                     * bits lost this one now and then. DSOUND never saw the
-                     * trap, no voice was handed back again, and every stop
-                     * waited out DSOUND's 0.5 s timeout: the pause menu took
-                     * ~10 s to come up. */
-                    __atomic_or_fetch(&REG(NV_PAPU_ISTS), ISTS_FETINTSTS, __ATOMIC_SEQ_CST);
-                    irq_pending = 1;
-                    trapped = 1; /* one at a time */
-                }
+                /* idle: handed back by trap_idle_voice */
             } else if (!(locked[v / 64] & (1ull << (v % 64)))) {
                 voice_process(v, mix);
             }

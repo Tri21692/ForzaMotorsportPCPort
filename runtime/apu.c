@@ -26,7 +26,8 @@
 
 void rt_vp_method(uint32_t method, uint32_t arg);
 int rt_vp_frame(float out[32][2], int *raise_irq);
-void rt_vp_write_fectl(uint32_t v);
+int rt_vp_write_fectl(uint32_t v);
+int rt_vp_isr_cleared(void);
 
 #define REG(off) (*(volatile uint32_t *)(xb_mem + RT_APU_BASE + (off)))
 
@@ -101,10 +102,11 @@ void rt_apu_write(uint32_t off, int bytes, uint32_t v) {
             break;
         case NV_PAPU_ISTS:
             __atomic_and_fetch(&REG(off), ~v, __ATOMIC_SEQ_CST);
+            rt_vp_isr_cleared();
             apu_irq();
             return;
         case NV_PAPU_FECTL:
-            rt_vp_write_fectl(v);
+            if (rt_vp_write_fectl(v)) apu_irq();
             return;
         case NV_PAPU_FEMEMDATA:
             xb_wr32(RT_PHYS_VIEW + (REG(NV_PAPU_FEMEMADDR) & (RT_PHYS_SIZE - 1)), v);
