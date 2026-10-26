@@ -1,0 +1,380 @@
+"""Add a car to Forza as a car of its own, copied from one already there,
+instead of putting it in another car's place. Made for the converted NFSU
+240SX, which was built in the Civic SI's slot: this copies that slot (as
+the mods folder has it, with the S13's body, identity, engine and wheel)
+to a new car, and --restore gives the Civic SI back its own files.
+
+  python tools/addcar.py <disc folder> <mods folder> <from> <new> [--ordinal N]
+                         [--name <model name>] [--short <short name>] [--restore]
+  e.g.  <disc>  run/mods  CivicSI  Nissan240SXS13  --name "240SX" --restore
+
+<from> and <new> are car names as in cars\\carlist.xml (<new> must not be
+there yet). The new car gets, from the mods folder's copy of each file if
+there is one, else the disc's:
+
+  Mega.ca2       cars\\carlist.xml: <from>'s entry under the new name and
+                 ordinal; forzadb\\cardb\\model.dat and gamecars.dat: its
+                 rows (ordinal set, model.dat's name string ids the new
+                 car's own); tires\\art\\<wheel>\\: its stock wheel, under the
+                 new name
+  MegaXPR.ca2    the wheel's textures, likewise
+  Cars.ca2       cars\\<from>\\ (tooldata, physics, config) as cars\\<new>\\,
+                 the wheel there named after the new car
+  car_<new>.cab  <from>'s car cab, cars\\<from>\\ renamed (the model, liveries
+                 and engine sounds; engines keep their names)
+  media/cars/<new>.liveries.bin    <from>'s, if it has one
+  media/caricons<n>.xpr            <from>'s car-select tile, at the new ordinal
+  media/Loc/*/CarDataStrings.str   IDS_Model_<ordinal>_Name and _ShortName
+
+The ordinal is a number no car has and nothing names as a car
+(carlist, AI opponents, career prizes): the lists skip 13 numbers, and
+some that no car has are named by events' AI players (aicarmodelid).
+The game sizes its car tables from the files (model.dat's reader divides
+the size by 104) and finds rows by ordinal; the rows stay in ordinal order.
+
+The .ca2 archives must keep as many 4 MB streams as the disc's: the
+runtime can only re-sign records the executable already has (file.c).
+
+--restore: <from> goes back to the disc's files (its carlist entry, rows,
+cars\\<from>\\, wheel, icon tile, name strings), and the mods folder's
+car_<from>.cab is renamed car_<from>.cab.replaced.
+
+Writes only into the mods folder, never the saves.
+"""
+import math
+import os
+import re
+import struct
+import sys
+import zlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import forzacab
+
+B = '\\'
+CHUNK = 4 << 20
+TILE = 16 * (128 // 4) * 16  # a 128x64 DXT5 icon: 16 rows of 32 blocks of 16 bytes
+
+
+def unpack_ca2(path):
+    data, raw = open(path, 'rb').read(), b''
+    while data:  # zlib streams of 4 MB each, zero-padded between
+        z = zlib.decompressobj()
+        raw += z.decompress(data)
+        data = z.unused_data.lstrip(b'\0')
+        if not z.eof: break
+    return raw
+
+
+def cab_files(blob):
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.cab', delete=False) as f: f.write(blob)
+    try:
+        d, _, es = forzacab.read(f.name)
+        return {e['name']: forzacab.data(d, e) for e in es}, (es[0]['root'] if es else '')
+    finally:
+        os.remove(f.name)
+
+
+def disc_file(disc, *parts):
+    """A path on the disc, matched without regard to case."""
+    p = disc
+    for part in parts:
+        hit = next((f for f in os.listdir(p) if f.lower() == part.lower()), None) if os.path.isdir(p) else None
+        if hit is None: return None
+        p = os.path.join(p, hit)
+    return p
+
+
+class Archive:
+    """One of the disc's .ca2, as the mods folder has it (or the disc)."""
+
+    def __init__(self, disc, mods, name):
+        self.disc_path = disc_file(disc, 'media', 'cabs', name)
+        self.out = os.path.join(mods, 'media', 'cabs', name)
+        disc_raw = unpack_ca2(self.disc_path)
+        self.streams = math.ceil(len(disc_raw) / CHUNK)
+        self.disc, _ = cab_files(disc_raw)
+        self.files, self.root = cab_files(unpack_ca2(self.out) if os.path.exists(self.out) else disc_raw)
+        self.name = name
+
+    def write(self):
+        blob = forzacab.pack(self.files, self.root)
+        if math.ceil(len(blob) / CHUNK) != self.streams:
+            raise SystemExit('%s: %d bytes unpacked, %d streams of 4 MB; the disc has %d, and the game would refuse it'
+                             % (self.name, len(blob), math.ceil(len(blob) / CHUNK), self.streams))
+        os.makedirs(os.path.dirname(self.out), exist_ok=True)
+        open(self.out, 'wb').write(forzacab.ca2(blob))
+        print('%s: %d files, %.2f of %d MB' % (self.name, len(self.files), len(blob) / 1048576, 4 * self.streams))
+
+
+def under(files, prefix):
+    return {k: v for k, v in files.items() if k.lower().startswith(prefix.lower())}
+
+
+def rename_tree(files, src, dst):
+    """Every file under src (a path ending in a backslash) copied under dst."""
+    got = under(files, src)
+    for k, v in got.items(): files[dst + k[len(src):]] = v
+    return len(got)
+
+
+def restore_tree(files, disc, prefix):
+    for k in list(under(files, prefix)): del files[k]
+    for k, v in under(disc, prefix).items(): files[k] = v
+
+
+# ---- carlist.xml
+
+def car_block(xml, name):
+    m = re.search(r'[ \t]*<car name="%s"[^>]*>.*?</car>\r?\n' % re.escape(name), xml, re.S | re.I)
+    if not m: raise SystemExit('carlist.xml: no car named %s' % name)
+    return m
+
+
+def ordinal_of(xml, name):
+    return int(re.search(r'Ordinal="(\d+)"', car_block(xml, name).group(0)).group(1))
+
+
+def free_ordinal(mega):
+    """The lowest number no car has and no file names as a car."""
+    xml = mega['cars' + B + 'carlist.xml'].decode('latin-1')
+    used = {int(o) for o in re.findall(r'Ordinal="(\d+)"', xml)}
+    named = set()
+    for k, v in mega.items():
+        if k.lower().endswith('.xml'):
+            named |= {int(o) for o in re.findall(rb'(?i)(?:aicarmodelid|carmodelid|careercarunlock)="(\d+)"', v)}
+    for o in range(max(used)):
+        if o not in used and o not in named: return o
+    raise SystemExit('no free ordinal below %d' % max(used))
+
+
+# ---- forzadb\cardb tables: rows by ordinal, in ordinal order
+
+def table_rows(blob, size):
+    return [blob[i:i + size] for i in range(0, len(blob), size)]
+
+
+def row_of(rows, ordinal):
+    return next(r for r in rows if struct.unpack_from('<I', r)[0] == ordinal)
+
+
+def put_row(rows, row):
+    o = struct.unpack_from('<I', row)[0]
+    rows = [r for r in rows if struct.unpack_from('<I', r)[0] != o] + [row]
+    return b''.join(sorted(rows, key=lambda r: struct.unpack_from('<I', r)[0]))
+
+
+# ---- media/Loc/*/CarDataStrings.str
+# "LSBL", u32 28 (header), u32 4, u32 block 1, u32 block 2, u32 0, u32 0.
+# Block 1: u32 size, u32 n, n + 1 entries of u16 id, u32 offset in UTF-16
+# characters (the last id 65535, its offset the end of the text), then the
+# NUL-terminated UTF-16 strings. Block 2: u32 size, u32 n, n entries of u16
+# id, u16 id, u32 byte offset, then the ASCII names (IDS_Model_44_Name).
+
+def read_strings(d):
+    assert d[:4] == b'LSBL', d[:4]
+    b1, b2 = struct.unpack_from('<II', d, 12)
+    s1, n1 = struct.unpack_from('<II', d, b1)
+    e1 = [struct.unpack_from('<HI', d, b1 + 8 + 6 * i) for i in range(n1 + 1)]
+    p1 = b1 + 8 + 6 * (n1 + 1)
+    text = d[p1:b1 + s1]
+    s2, n2 = struct.unpack_from('<II', d, b2)
+    e2 = [struct.unpack_from('<HHI', d, b2 + 8 + 8 * i) for i in range(n2)]
+    p2 = b2 + 8 + 8 * n2
+    names = d[p2:b2 + s2]
+    return e1, text, e2, names
+
+
+def string_ids(d):
+    e1, text, e2, names = read_strings(d)
+    out = {}
+    for i, _, off in e2:
+        out[names[off:names.index(b'\0', off)].decode()] = i
+    return out
+
+
+def write_strings(d, add):
+    """d with strings added: add is [(name, text)]; ids after the highest."""
+    e1, text, e2, names = read_strings(d)
+    end = e1[-1][1]  # the sentinel's offset: where the text ends
+    body, tail = bytearray(text[:end * 2]), text[end * 2:]
+    nid = max(i for i, _ in e1[:-1]) + 1
+    names = bytearray(names)
+    e1, e2 = e1[:-1], list(e2)
+    for name, s in add:
+        e1.append((nid, len(body) // 2))
+        body += s.encode('utf-16-le') + b'\0\0'
+        e2.append((nid, nid, len(names)))
+        names += name.encode() + b'\0'
+        nid += 1
+    e1.append((0xFFFF, len(body) // 2))
+    blk1 = b''.join(struct.pack('<HI', i, o) for i, o in e1) + bytes(body) + tail
+    blk1 = struct.pack('<II', 8 + len(blk1), len(e1) - 1) + blk1
+    blk2 = b''.join(struct.pack('<HHI', i, j, o) for i, j, o in e2) + bytes(names)
+    blk2 = struct.pack('<II', 8 + len(blk2), len(e2)) + blk2
+    head = bytearray(d[:28])
+    struct.pack_into('<II', head, 12, 28, 28 + len(blk1))
+    return bytes(head) + blk1 + blk2
+
+
+# ----
+
+def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False):
+    mega, cars, xpr = Archive(disc, mods, 'Mega.ca2'), Archive(disc, mods, 'Cars.ca2'), Archive(disc, mods, 'MegaXPR.ca2')
+    m = mega.files
+    key = 'cars' + B + 'carlist.xml'
+    xml = m[key].decode('latin-1')
+    if re.search(r'<car name="%s"' % re.escape(new), xml, re.I): raise SystemExit('carlist.xml: %s is there already' % new)
+    so = ordinal_of(xml, src)
+    if ordinal is None: ordinal = free_ordinal(m)
+    if re.search(r'Ordinal="%d"' % ordinal, xml): raise SystemExit('ordinal %d is taken' % ordinal)
+    wheel = re.search(r'<WheelStyle>\s*<P0 [^>]*File="([^"]*)"', cars.files[B.join(('cars', src.lower(), 'tooldata.xml'))].decode('latin-1')).group(1)
+
+    # Mega.ca2: the car list, the tables, the wheel's model
+    blk = car_block(xml, src)
+    entry = re.sub(r'Ordinal="\d+"', 'Ordinal="%d"' % ordinal, re.sub(r'name="[^"]*"', 'name="%s"' % new, blk.group(0), count=1))
+    for attr, val in (('displayName', name), ('shortName', short or name)):
+        if val: entry = re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry)
+    xml = xml[:blk.end()] + entry + xml[blk.end():]
+    model = table_rows(m[B.join(('forzadb', 'cardb', 'model.dat'))], 104)
+    games = table_rows(m[B.join(('forzadb', 'cardb', 'gamecars.dat'))], 176)
+    mrow, grow = bytearray(row_of(model, so)), bytearray(row_of(games, so))
+    # the names: the car's own strings, taken from what <from> shows now
+    loc = disc_file(disc, 'media', 'Loc')
+    shown = {}
+    for lang in sorted(os.listdir(loc)):
+        p = disc_file(disc, 'media', 'Loc', lang, 'CarDataStrings.str')
+        if not p: continue
+        mp = os.path.join(mods, 'media', 'Loc', lang, 'CarDataStrings.str')
+        cur = open(mp if os.path.exists(mp) else p, 'rb').read()
+        e1, text, _, _ = read_strings(cur)
+        ids = dict(e1[:-1])
+        def text_of(i):
+            o = ids[i] * 2
+            e = o
+            while text[e:e + 2] != b'\0\0': e += 2
+            return text[o:e].decode('utf-16-le')
+        nid, sid = struct.unpack_from('<HH', mrow, 12)
+        shown[lang] = (p, mp, name or text_of(nid), short or name or text_of(sid))
+    struct.pack_into('<I', mrow, 0, ordinal)
+    struct.pack_into('<II', grow, 0, ordinal, ordinal)
+    # Mega.ca2's wheel model, MegaXPR.ca2's textures, under the new car's name
+    wsrc, wdst = B.join(('tires', 'art', wheel.lower())) + B, B.join(('tires', 'art', new.lower())) + B
+    nw = rename_tree(m, wsrc, wdst) + rename_tree(xpr.files, wsrc, wdst)
+
+    if restore:
+        xml = xml.replace(car_block(xml, src).group(0), car_block(mega.disc[key].decode('latin-1'), src).group(0))
+        dmodel = table_rows(mega.disc[B.join(('forzadb', 'cardb', 'model.dat'))], 104)
+        dgames = table_rows(mega.disc[B.join(('forzadb', 'cardb', 'gamecars.dat'))], 176)
+        model = table_rows(put_row(model, row_of(dmodel, so)), 104)
+        games = table_rows(put_row(games, row_of(dgames, so)), 176)
+        dw = re.search(r'<WheelStyle>\s*<P0 [^>]*File="([^"]*)"', cars.disc[B.join(('cars', src.lower(), 'tooldata.xml'))].decode('latin-1')).group(1)
+        for arch in (mega, xpr):
+            restore_tree(arch.files, arch.disc, B.join(('tires', 'art', dw.lower())) + B)
+    m[key] = xml.encode('latin-1')
+    # model.dat's string ids: set below, once the strings are written
+    # Cars.ca2: the car's folder, its wheel named after it
+    csrc, cdst = B.join(('cars', src.lower())) + B, B.join(('cars', new.lower())) + B
+    nc = rename_tree(cars.files, csrc, cdst)
+    tk = cdst + 'tooldata.xml'
+    cars.files[tk] = re.sub(rb'(<WheelStyle>\s*<P0 [^>]*File=")[^"]*"', lambda g: g.group(1) + new.encode() + b'"', cars.files[tk])
+    if restore: restore_tree(cars.files, cars.disc, csrc)
+
+    # the strings, in every language: the same ids in each
+    new_ids = None
+    for lang, (p, mp, n, s) in shown.items():
+        base = open(p if restore else (mp if os.path.exists(mp) else p), 'rb').read()
+        ids = string_ids(base)
+        want = [('IDS_Model_%d_Name' % ordinal, n), ('IDS_Model_%d_ShortName' % ordinal, s)]
+        if any(k in ids for k, _ in want): raise SystemExit('%s: strings for ordinal %d are there already' % (lang, ordinal))
+        out = write_strings(base, want)
+        got = string_ids(out)
+        these = (got[want[0][0]], got[want[1][0]])
+        if new_ids not in (None, these): raise SystemExit('%s: the new string ids differ between languages' % lang)
+        new_ids = these
+        os.makedirs(os.path.dirname(mp), exist_ok=True)
+        open(mp, 'wb').write(out)
+    struct.pack_into('<HH', mrow, 12, *new_ids)
+    m[B.join(('forzadb', 'cardb', 'model.dat'))] = put_row(model, bytes(mrow))
+    m[B.join(('forzadb', 'cardb', 'gamecars.dat'))] = put_row(games, bytes(grow))
+    en = shown.get('en') or next(iter(shown.values()))
+    print('carlist: %s, ordinal %d, a copy of %s (ordinal %d), shown as "%s" ("%s"), string ids %d, %d'
+          % (new, ordinal, src, so, en[2], en[3], *new_ids))
+    print('wheel: tires\\art\\%s (%d files) from %s' % (new.lower(), nw, wheel))
+    print('cars.cab: %d files under cars\\%s' % (nc, new.lower()))
+
+    # the car's cab
+    cab_out = os.path.join(mods, 'media', 'cabs', 'car_%s.cab' % new)
+    mine = os.path.join(mods, 'media', 'cabs', 'car_%s.cab' % src)
+    cab_in = mine if os.path.exists(mine) else disc_file(disc, 'media', 'cabs', 'car_%s.cab' % src)
+    files, root = cab_files(open(cab_in, 'rb').read())
+    out = {}
+    for k, v in files.items():
+        out[cdst + k[len(csrc):] if k.lower().startswith(csrc) else k] = v
+    os.makedirs(os.path.dirname(cab_out), exist_ok=True)
+    open(cab_out, 'wb').write(forzacab.pack(out, root))
+    print('car_%s.cab: %d files from %s' % (new, len(out), cab_in))
+    # the paint shop's liveries, if it has some
+    lv = disc_file(disc, 'media', 'cars', '%s.liveries.bin' % src)
+    mlv = os.path.join(mods, 'media', 'cars', '%s.liveries.bin' % src)
+    if os.path.exists(mlv): lv = mlv
+    if lv:
+        os.makedirs(os.path.join(mods, 'media', 'cars'), exist_ok=True)
+        open(os.path.join(mods, 'media', 'cars', '%s.liveries.bin' % new), 'wb').write(open(lv, 'rb').read())
+        print('media/cars/%s.liveries.bin from %s' % (new, lv))
+    # the car-select icon: <from>'s tile at the new ordinal
+    def pack_path(o, mods_first=True):
+        n = 'caricons%d.xpr' % (o // 64 + 1)
+        mp = os.path.join(mods, 'media', n)
+        return mp if mods_first and os.path.exists(mp) else disc_file(disc, 'media', n), mp
+    import forzaxpr
+    sp, _ = pack_path(so)
+    tile = bytes(icon_tile(open(sp, 'rb').read(), so))
+    dp, dmp = pack_path(ordinal)
+    d = bytearray(open(dp, 'rb').read())
+    set_tile(d, ordinal, tile)
+    if restore and (so // 64 == ordinal // 64):
+        set_tile(d, so, icon_tile(open(pack_path(so, False)[0], 'rb').read(), so))
+    open(dmp, 'wb').write(bytes(d))
+    if restore and so // 64 != ordinal // 64:
+        sd = bytearray(open(pack_path(so)[0], 'rb').read())
+        set_tile(sd, so, icon_tile(open(pack_path(so, False)[0], 'rb').read(), so))
+        open(pack_path(so)[1], 'wb').write(bytes(sd))
+    print('icon: caricons%d.xpr tile %d from caricons%d.xpr tile %d' % (ordinal // 64 + 1, ordinal % 64, so // 64 + 1, so % 64))
+
+    for a in (mega, cars, xpr): a.write()
+    if restore:
+        if os.path.exists(mine):
+            os.replace(mine, mine + '.replaced')
+            print('%s -> car_%s.cab.replaced (the disc\'s is read again)' % (mine, src))
+        print('%s: back to the disc\'s files' % src)
+
+
+def icon_tile(pack, ordinal):
+    import forzaxpr
+    t = forzaxpr.textures(bytearray(pack))[0]
+    assert (t['w'], t['h'], t['format']) == (128, 4096, 0x0F), t
+    o = t['start'] + (ordinal % 64) * TILE
+    return pack[o:o + TILE]
+
+
+def set_tile(pack, ordinal, tile):
+    import forzaxpr
+    t = forzaxpr.textures(pack)[0]
+    o = t['start'] + (ordinal % 64) * TILE
+    pack[o:o + TILE] = tile
+
+
+if __name__ == '__main__':
+    args, opts = [], {}
+    it = iter(sys.argv[1:])
+    for a in it:
+        if a in ('--ordinal', '--name', '--short'): opts[a[2:]] = next(it)
+        elif a == '--restore': opts['restore'] = True
+        else: args.append(a)
+    if len(args) != 4: raise SystemExit(__doc__)
+    if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(args[1]).split(os.sep)):
+        raise SystemExit('%s: a save folder' % args[1])
+    main(*args, ordinal=int(opts['ordinal']) if 'ordinal' in opts else None, name=opts.get('name'), short=opts.get('short'),
+         restore=opts.get('restore', False))

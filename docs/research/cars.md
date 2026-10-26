@@ -80,11 +80,51 @@ the same way.
 
 My Cars thumbnails are not the icon packs' tiles: the game renders each
 owned car and writes it into the profile's `CarIcons1.xpr` (tiles 0, 1,
-... by garage slot), and those renders come out black in the port.
+... by garage slot). They came out black in the port until LockRect
+brought the GPU's drawing to RAM (25 Oct).
 
 Removing a mod is safe: the overlay only reads. A car *added* (not in a
 slot) that a save refers to will need a fallback once its mod is gone: a
 stock Mazda MX-5.
+
+## Adding a car (tools/addcar.py)
+
+A car is, by name: its `carlist.xml` entry, its rows in `model.dat` and
+`gamecars.dat`, `cars\<name>\` in cars.cab (tooldata, physics, config),
+`car_<name>.cab`, `media/cars/<name>.liveries.bin` (179 of the 231 cars
+have one), its wheel `tires\art\<File>\` (mega.cab and megaxpr.cab; the
+only other name a car's files hold, in tooldata's `WheelStyle`), an icon
+tile by ordinal, and its name strings. A file in the mods folder at a
+path the disc does not have is found too, so a new `car_<name>.cab` loads.
+
+- Ordinals run 0-243 for 231 cars; 13 are unused (56, 81, 82, 95, 96, 111,
+  150, 159, 165, 172, 175, 223, 231). Events' `<AIPlayer aicarmodelid=>`
+  names some of those (111, 150, 159, 165, 172, 175, 223, 231: a car
+  there would race as those AI cars), so a new car takes one nothing
+  names (56, 81, 82, 95, 96).
+- The tables are sized from the files: model.dat's reader (0x16FE30,
+  called from 0x173A90 for each forzadb table at 0x179740) divides the
+  size by 104 into a vector; rows are kept in ordinal order and found by
+  ordinal. gamecars.dat's loader is 0x63540, carlist.xml's 0x44340.
+- `media/Loc/<lang>/CarDataStrings.str`: "LSBL", u32 28, u32 4, u32 block
+  1, u32 block 2, u32 0, u32 0. Block 1: u32 size, u32 count, count + 1
+  entries of u16 id, u32 offset in UTF-16 characters (the last id 0xFFFF,
+  at the end of the text), then the NUL-terminated strings. Block 2: u32
+  size, u32 count, entries of u16 id, u16 id, u32 byte offset, then ASCII
+  names (`IDS_Model_44_Name`). model.dat holds a car's name and short
+  name ids at 12 and 14 (Civic SI: 160, 161); the ids are the same in
+  every language, 1-1125 on the disc.
+- The archives grow (a car is ~40 KB of physics, its wheel, ~300 bytes of
+  tables) and must keep their stream counts: cars.cab 6.3 of 8 MB,
+  mega.cab 11.6 of 12 MB, megaxpr.cab 44 of 48 MB with the S13 added.
+
+The S13 as its own car (25 Oct, not yet seen in the game):
+`addcar.py <disc> run/mods_addcar CivicSI Nissan240SXS13 --restore` on a
+copy of the mods folder: ordinal 56, strings 1126/1127 ("240SX"), its own
+wheel and engine, the Civic SI back as the disc has it. The game accepts
+the three archives and boots to the attract movie. Profiles made before
+keep their own signed copies of the icon packs, so the new car's tile may
+be blank in them.
 
 ## Wheels
 
