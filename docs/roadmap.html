@@ -65,10 +65,10 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
   </header>
 
   <div class="strip">
-    <div><b>15</b><span>tasks left</span></div>
+    <div><b>14</b><span>tasks left</span></div>
     <div><b>55–109 h</b><span>estimated work in total</span></div>
     <div><b>10–19</b><span>nights at the nightly task's pace (11 pm–8 am)</span></div>
-    <div><b>7</b><span>waiting on you</span></div>
+    <div><b>6</b><span>waiting on you</span></div>
   </div>
 
   <section>
@@ -124,7 +124,7 @@ kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line)
           <tr><td class="task"><b>Converter</b><span>First version 25 Oct: the NFSU 240SX body on Forza's 240SX (and Civic), painted with the livery, its own lights, Forza's handling. The roof draws now (the template's interior stood out of it; it is fitted under the new roof), the window holes are filled with real glass, its own lights, badges, spoiler, mirrors and stock wheels are on it, and the Civic's cabin fits inside it. Since then: no black wedges on the hatch, the side markers sit flush on the bumper corners, and its Garage icon is posed like the other cars'. Left: the raised pop-up headlight housings show, dents, body kits.</span></td><td><span class="pill wait">Your check</span></td><td class="est">6–12 h</td></tr>
           <tr><td class="task"><b>240SX windshield and a bought tint</b><span>Not a bug: the windshield does take the tint; from the angle first seen it only looked unchanged. Its part matches the stock Civic's (name, material, vertex data).</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>240SX roof turns grey at random</b><span>The top panel sometimes loses its paint colour. Not looked into yet.</span></td><td><span class="pill next">Next</span></td><td class="est">2–4 h</td></tr>
-          <tr><td class="task"><b>Vinyl editor on the 240SX</b><span>The editor opens on other cars (tested on the Lexus); it didn't pop up on the 240SX before the fixes above. Needs a look from you.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Vinyls on the car</b><span>Fixed: the editor draws each layer into the car's paint texture, which is laid out swizzled, and those draws were dropped, so the car showed plain paint. They draw on the GPU now, the paint is cleared there each frame (it had kept every frame's vinyl, a smeared trail), and a phantom depth buffer at address 0 no longer makes the editor rebuild the texture on the CPU every frame (about 1 fps). The vinyl shapes' own texture format draws too. You confirmed it on the Civic. The software renderer still shows no vinyls.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
           <tr><td class="task"><b>Add cars as new entries</b><span>Decode the car list (Cars.ca2, Mega.ca2) so a mod adds a car with its own slot, icon, liveries and sound instead of replacing one. Converted cars stay in your own copy; they can't ship with the port. The modded Cars.ca2 loading is a first step; tools/caridentity.py already gives a slot another car's name, icon, price and engine.</span></td><td><span class="pill later">Later</span></td><td class="est">15–30 h</td></tr>
 
           <tr class="group"><td colspan="3">Hardware and release</td></tr>

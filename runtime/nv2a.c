@@ -484,11 +484,12 @@ static void trap_method(uint32_t subch, uint32_t method, uint32_t arg) {
  * object bound to the subchannel. */
 /* Debugging: XBRT_GPU_DUMP=<file>:<first flip>:<flips> writes every method
  * from that flip on, for that many flips, as "flip class method value".
- * A first flip of @<seconds> starts at the first flip after that time. */
+ * A first flip of @<seconds> starts at the first flip after that time,
+ * =<hex offset> when the GPU is told to draw at that colour offset. */
 static void dump_method(uint32_t subch, uint32_t method, uint32_t arg) {
     static FILE *f;
     static int state; /* 0 unparsed, 1 armed, 2 off, 3 writing */
-    static uint32_t first, count, at;
+    static uint32_t first, count, at, on;
     if (state == 0) {
         const char *e = getenv("XBRT_GPU_DUMP"), *c2 = e ? strrchr(e, ':') : NULL, *c1 = c2;
         char path[512];
@@ -497,10 +498,15 @@ static void dump_method(uint32_t subch, uint32_t method, uint32_t arg) {
         if (!c2 || !c1 || *c1 != ':' || c1 - e >= (ptrdiff_t)sizeof path) return;
         snprintf(path, sizeof path, "%.*s", (int)(c1 - e), e);
         if (sscanf(c1 + 1, "@%u:%u", &at, &count) == 2) first = ~0u, at *= 60;
+        else if (sscanf(c1 + 1, "=%x:%u", &on, &count) == 2) first = ~1u;
         else if (sscanf(c1 + 1, "%u:%u", &first, &count) != 2) return;
         if ((f = fopen(path, "w"))) state = 1;
     }
     if (state != 1 && state != 3) return;
+    if (first == ~1u) {
+        if (!(nv2a.class_[subch] == 0x97 && method == 0x0210 && arg == on)) return; /* SET_SURFACE_COLOR_OFFSET */
+        first = nv2a.flips;
+    }
     if (first == ~0u) {
         if (nv2a.vblanks < at) return;
         first = nv2a.flips + 1;

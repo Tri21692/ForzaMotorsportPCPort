@@ -12,6 +12,8 @@
  * their arguments on to Lock2DSurface (0x3BF720). Only this executable's
  * addresses; any other gets the generated code.
  */
+#include <stdlib.h>
+
 #include "funcs.h"
 #include "names.h"
 #include "nv2a.h"
@@ -29,6 +31,9 @@ static void resource_reads(uint32_t res) {
     uint32_t n = size ? (((size >> 24) & 0xFF) + 1) * 64 * (((size >> 12) & 0xFFF) + 1)
                       : (1u << ((fmt >> 20) & 15)) * (1u << ((fmt >> 24) & 15)) * 4 * 2;
     nv2a_cpu_reads(data, n);
+    static int log = -1; /* XBRT_LOCK_LOG=1: each lock, with the bytes it covers */
+    if (log < 0) log = getenv("XBRT_LOCK_LOG") && atoi(getenv("XBRT_LOCK_LOG"));
+    if (log) fprintf(stderr, "[%9.3f] lock %08x: data %08x, %u bytes, format %08x, size %08x\n", rt_now_100ns() / 1e7, res, data, n, fmt, size);
 }
 
 /* HRESULT D3DSurface_LockRect(D3DSurface *, D3DLOCKED_RECT *, const RECT *, DWORD Flags) */

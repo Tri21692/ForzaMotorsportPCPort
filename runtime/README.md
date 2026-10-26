@@ -43,10 +43,13 @@ first build takes a while.
 | `XBRT_SCREENSHOT_EVERY` | seconds between screenshots | 5 |
 | `XBRT_TEX_DUMP` | a folder to save every decoded texture to, as BMP | off |
 | `XBRT_RAM_DUMP` | `<file>:<seconds>` saves the 64 MB of RAM once | off |
-| `XBRT_GPU_DUMP` | `<file>:<first flip>:<flips>` logs every GPU method, after the vertex program and constants as they stand; a first flip of `@<seconds>` starts at that time | off |
+| `XBRT_GPU_DUMP` | `<file>:<first flip>:<flips>` logs every GPU method, after the vertex program and constants as they stand; a first flip of `@<seconds>` starts at that time, `=<hex offset>` when the GPU is told to draw at that colour offset (`=2a29300:3`: the vinyl editor's livery) | off |
 | `XBRT_GL_VSH_DUMP` | a folder to save each vertex program's GLSL to (`vsh<n>.glsl`), and which one every draw ran (`use.txt`: flip, draw, program, vertices) | off |
 | `XBRT_GL_NO_SHADOW` | any value lights every shadow-map lookup (debugging) | off |
 | `XBRT_GL_IDLE_READBACK` | `0`: framebuffers the game stopped drawing stay on the GPU (before 25 Oct; the Garage menu went black after the decal editor) | on |
+| `XBRT_TEX_LOG` | `1`: each texture (address, format) the first time a draw samples it | off |
+| `XBRT_GL_SURF_LOG` | `1`: each GPU framebuffer as it is made (address, size, swizzled or not, depth) | off |
+| `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1

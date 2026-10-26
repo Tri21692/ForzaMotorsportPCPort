@@ -422,6 +422,7 @@ typedef struct {
 static GlSurf gl_surf[GL_SURFS];
 static GlSurf *gl_cur;
 static unsigned gl_tick, gl_seq, gl_flips;
+static int gl_whole_clear; /* gl_bind for a clear of all of the colour: nothing to take in (gl_clear) */
 
 static int gl_fits(uint32_t base, uint32_t pitch, int h) {
     return (uint64_t)(base & (RT_PHYS_SIZE - 1)) + (uint64_t)pitch * (uint64_t)h <= RT_PHYS_SIZE;
@@ -1211,7 +1212,7 @@ static void gl_flip(void) {
  * target cost a third of the device thread. */
 static void gl_sync_range(uint32_t base, uint32_t size) {
     gl_complete_range(base, size);
-    static int log = -1; /* XBRT_GL_SYNC_LOG=1: which texture made which framebuffer wait, every 30 s */
+    static int log = -1; /* XBRT_GL_SYNC_LOG=1: which texture made which framebuffer wait, every 5 s */
     if (log < 0) log = getenv("XBRT_GL_SYNC_LOG") && atoi(getenv("XBRT_GL_SYNC_LOG"));
     /* A compressed (DXT) texture over a depth buffer's bytes is the CPU's:
      * no game samples its depth as DXT. Forza loads its loading screen's
@@ -1247,7 +1248,7 @@ static void gl_sync_range(uint32_t base, uint32_t size) {
             uint64_t t0 = rt_now_100ns();
             gl_readback(e);
             if (k < 64) tab[k].n++, tab[k].t += rt_now_100ns() - t0, tab[k].cd += cd, tab[k].zd += zd;
-            if (t0 - last > 300000000ull) {
+            if (t0 - last > 50000000ull) {
                 last = t0;
                 fprintf(stderr, "[%9.3f] gl sync log:\n", t0 / 1e7);
                 for (int j = 0; j < nt; j++)
@@ -1410,9 +1411,21 @@ static void gl_take_newer(GlSurf *s) {
     if (copy) {
         for (int i = 0; i < n; i++) gl_copy(newer[i], s);
     } else if (n) {
-        for (int i = 0; i < n; i++)
-            if (newer[i]->dirty) gl_readback(newer[i]); /* s too, first, if it drew earlier */
+        /* s first, if it drew earlier, then the newer ones over it: after
+         * them it put its old pixels back over theirs, and the vinyl
+         * editor's livery (cleared linear, drawn swizzled) kept every
+         * frame's layers, smeared wherever one was moved. */
+        int swz = 0;
         if (s->dirty) gl_readback(s);
+        for (int i = 0; i < n; i++) {
+            if (newer[i]->dirty) gl_readback(newer[i]);
+            swz |= newer[i]->swz != s->swz;
+        }
+        /* Over swizzled bytes drawn both ways (the livery: cleared linear,
+         * drawn swizzled) RAM holds their pixels now, and s takes them: not
+         * adopted as its own (gl_ram_written), which kept its older picture.
+         * Not otherwise: uploading at every such bind stuttered. */
+        if (swz) s->chash = 1, s->csig = ~0ull;
         gl_upload_if_changed(s);
         s->check = 0;
     }
@@ -1426,6 +1439,11 @@ static GlSurf *gl_bind(const DrawState *d) {
     if (swz) w = 1 << ((fmt >> 16) & 15), h = 1 << ((fmt >> 24) & 15); /* the Morton order runs over the whole of it */
     uint32_t zbase = zfmt ? dma_base(SET_CONTEXT_DMA_ZETA) + K(SET_SURFACE_ZETA_OFFSET) : 0, zpitch = zfmt ? K(SET_SURFACE_PITCH) >> 16 : 0;
     if (zfmt && (zfmt > 2 || !zpitch || (uint32_t)w * (zfmt == 1 ? 2u : 4u) > zpitch)) zfmt = 0, zbase = 0, zpitch = 0;
+    /* Forza's 2D passes leave the depth mask on with the zeta offset at 0:
+     * no depth buffer, not one at physical 0. As one, every menu frame and
+     * the vinyl editor's livery shared it, so each looked drawn over the
+     * other's bytes, and the livery went through RAM every frame. */
+    if (zfmt && !(zbase & (RT_PHYS_SIZE - 1)) && !d->ztest) zfmt = 0, zbase = 0, zpitch = 0;
     GlSurf *s = gl_cur;
     if (!s || s->cbase != d->base || s->cpitch != d->pitch || s->cfmt != cfmt || s->zbase != zbase || s->zfmt != zfmt ||
         s->zpitch != zpitch || s->w != w || s->h < h || s->swz != swz) {
@@ -1462,13 +1480,18 @@ static GlSurf *gl_bind(const DrawState *d) {
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                 fprintf(stderr, "xbrt: GL framebuffer for surface %08x (%dx%d, format %x/%x) is incomplete\n", d->base, w, h, cfmt, zfmt);
             s->chash = s->zhash = 1; /* never matches: upload */
+            static int surf_log = -1; /* XBRT_GL_SURF_LOG=1: each framebuffer as it is made */
+            if (surf_log < 0) surf_log = getenv("XBRT_GL_SURF_LOG") && atoi(getenv("XBRT_GL_SURF_LOG"));
+            if (surf_log)
+                fprintf(stderr, "[%9.3f] gl surface %08x pitch %u %dx%d format %x%s depth %08x/%x\n", rt_now_100ns() / 1e7, d->base, d->pitch, w, h, cfmt,
+                        swz ? " swizzled" : "", zbase, zfmt);
             s->check = 1;
         }
         gl_cur = s;
         s->used = ++gl_tick;
         if (s->check && !s->dirty) gl_upload_if_changed(s);
         s->check = 0;
-        gl_take_newer(s);
+        if (!gl_whole_clear) gl_take_newer(s);
     }
     s->used = ++gl_tick;
     if (s->check && !s->dirty) gl_upload_if_changed(s);
@@ -1555,7 +1578,9 @@ static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int 
     if (cube && !cubes_on) return NULL;
     uint32_t face = ((uint32_t)w * (uint32_t)h * 4 + 127) & ~127u;
     uint32_t lo = base & (RT_PHYS_SIZE - 1), hi = lo + face * (cube ? 6u : 1u);
-    if ((lo < draw_hi && draw_lo < hi) || (lo < draw_zhi && draw_zlo < hi)) return NULL; /* GL cannot sample what it draws into */
+    if (lo < draw_zhi && draw_zlo < hi) return NULL; /* GL cannot sample what it draws into */
+    int self = lo < draw_hi && draw_lo < hi; /* ... but a copy of it (below) */
+    if (self && (cube || lo != draw_lo)) return NULL;
     GlSurf *f[6] = {0};
     for (int k = 0; k < (cube ? 6 : 1); k++) {
         for (int j = 0; j < GL_SURFS; j++) {
@@ -1574,6 +1599,22 @@ static Texture *gl_rt_swizzled(int i, uint32_t base, uint32_t color, int w, int 
     Texture *t = &rt[i];
     memset(t, 0, sizeof *t);
     t->w = w, t->h = h, t->levels = 1, t->surface = 1, t->alpha_one = color == 0x07;
+    if (self) { /* the vinyl editor's layers: each blends itself over the livery it is drawn into, sampling it */
+        static GLuint copy;
+        static int cw, ch;
+        int k = f[0]->k;
+        if (!f[0]->swz) return NULL;
+        if (cw != w * k || ch != h * k) {
+            if (copy) glDeleteTextures(1, &copy);
+            glGenTextures(1, &copy);
+            glBindTexture(GL_TEXTURE_2D, copy);
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w * k, h * k);
+            cw = w * k, ch = h * k;
+        }
+        glCopyImageSubData(f[0]->ctex, GL_TEXTURE_2D, 0, 0, 0, 0, copy, GL_TEXTURE_2D, 0, 0, 0, 0, w * k, h * k, 1);
+        t->gl = copy;
+        return t;
+    }
     if (!cube) {
         t->gl = f[0]->ctex;
         return t;
@@ -1619,10 +1660,17 @@ static int gl_clear(uint32_t flags) {
     d.base = dma_base(SET_CONTEXT_DMA_COLOR) + K(SET_SURFACE_COLOR_OFFSET);
     if (!d.pitch || (uint32_t)(d.cx0 + d.cw) * (uint32_t)d.bpp > d.pitch) return 0;
     d.ztest = (flags & 3) != 0; /* attach the depth buffer */
-    GlSurf *s = gl_bind(&d);
-    if ((flags & 3) && !s->ztex) return 0;
     uint32_t x1 = K(SET_CLEAR_RECT_HORIZONTAL) & 0xFFFF, x2 = K(SET_CLEAR_RECT_HORIZONTAL) >> 16;
     uint32_t y1 = K(SET_CLEAR_RECT_VERTICAL) & 0xFFFF, y2 = K(SET_CLEAR_RECT_VERTICAL) >> 16;
+    /* All of the colour and nothing else: what the framebuffer held before
+     * does not matter, so it need not take in what others drew over its
+     * bytes (gl_take_newer), and those others are cleared with it below. */
+    int w = type == 2 ? 1 << ((fmt >> 16) & 15) : (int)(d.pitch / (uint32_t)d.bpp), h = type == 2 ? 1 << ((fmt >> 24) & 15) : d.cy0 + d.ch;
+    int whole = (flags & 0xF3) == 0xF0 && x1 == 0 && y1 == 0 && (int)(x2 + 1) >= w * d.sx && (int)(y2 + 1) >= h * d.sy;
+    gl_whole_clear = whole;
+    GlSurf *s = gl_bind(&d);
+    gl_whole_clear = 0;
+    if ((flags & 3) && !s->ztex) return 0;
     if (x2 < x1 || y2 < y1) return 1;
     glEnable(GL_SCISSOR_TEST);
     glScissor((GLint)x1 * d.sx * s->k, (GLint)y1 * d.sy * s->k, (GLsizei)(x2 - x1 + 1) * d.sx * s->k, (GLsizei)(y2 - y1 + 1) * d.sy * s->k);
@@ -1648,6 +1696,21 @@ static int gl_clear(uint32_t flags) {
     s->dirty = s->cdirty = 1, s->seq = ++gl_seq, s->flip = gl_flips;
     if (flags & 3) s->zdirty = 1, s->zgpu = 0;
     gl_drawn(s, (int)x1 * d.sx, (int)y1 * d.sy, (int)(x2 + 1) * d.sx, (int)(y2 + 1) * d.sy);
+    /* The other framebuffers over exactly these bytes take the clear on the
+     * GPU too. The vinyl editor clears the livery as a linear surface and
+     * draws its layers into it swizzled: each frame the swizzled one took
+     * the clear through RAM (read back, swizzled and uploaded on the CPU),
+     * about one frame a second. */
+    for (int i = 0; whole && i < GL_SURFS; i++) {
+        GlSurf *e = &gl_surf[i];
+        if (e == s || !e->fbo || e->cbase != s->cbase || e->bpp != s->bpp || e->cpitch * (uint32_t)e->h != s->cpitch * (uint32_t)s->h) continue;
+        glBindFramebuffer(GL_FRAMEBUFFER, e->fbo);
+        glScissor(0, 0, e->w * e->k, e->h * e->k);
+        glClear(GL_COLOR_BUFFER_BIT);
+        e->dirty = e->cdirty = 1, e->seq = ++gl_seq, e->flip = gl_flips;
+        gl_drawn(e, 0, 0, e->w, e->h);
+    }
+    if (whole) glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     return 1;
 }
 

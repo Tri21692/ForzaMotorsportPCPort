@@ -330,6 +330,18 @@ static void dump_texture(const Texture *t, uint32_t offset, uint32_t fmt) {
 /* Stage i's texture, decoded to A8R8G8B8 (cached until the next flip). */
 static Texture *texture(int i) {
     uint32_t fmt = KT(SET_TEXTURE_FORMAT), color = (fmt >> 8) & 0xFF;
+    static int tex_log = -1; /* XBRT_TEX_LOG=1: each texture (address and format) the first time a draw samples it */
+    if (tex_log < 0) tex_log = getenv("XBRT_TEX_LOG") && atoi(getenv("XBRT_TEX_LOG"));
+    if (tex_log) {
+        static uint64_t seen[8192];
+        static int nseen;
+        uint64_t k = (uint64_t)(dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + KT(SET_TEXTURE_OFFSET)) << 32 | fmt;
+        int j = 0;
+        while (j < nseen && seen[j] != k) j++;
+        if (j == nseen && nseen < 8192)
+            seen[nseen++] = k, fprintf(stderr, "[%9.3f] texture %08x format %08x rect %08x pitch %u (stage %d)\n", rt_now_100ns() / 1e7, (uint32_t)(k >> 32), fmt,
+                                       KT(SET_TEXTURE_IMAGE_RECT), KT(SET_TEXTURE_CONTROL1) >> 16, i);
+    }
     if (rt_gl_on && (color == 0x12 || color == 0x1E || color == 0x11 || (color == 0x2E && gl_rt_depth))) { /* linear: perhaps a render target */
         Texture *rt = gl_rt_texture(i, dma_base((fmt & 3) == 2 ? SET_CONTEXT_DMA_B : SET_CONTEXT_DMA_A) + KT(SET_TEXTURE_OFFSET),
                                     KT(SET_TEXTURE_CONTROL1) >> 16, color, (int)(KT(SET_TEXTURE_IMAGE_RECT) >> 16),
@@ -369,7 +381,7 @@ static Texture *texture(int i) {
      * out in stripes and grids over the cars. */
     int depth = ((fmt >> 4) & 15) == 3 ? 1 << ((fmt >> 28) & 15) : 1;
     int bpp = (color == 0x06 || color == 0x07 || color == 0x12 || color == 0x1E) ? 4
-              : (color == 0x0B || color == 0x00 || color == 0x13 || color == 0x19 || color == 0x1F) ? 1 : 2;
+              : (color == 0x0B || color == 0x00 || color == 0x13 || color == 0x19 || color == 0x1F || color == 0x01 || color == 0x1B) ? 1 : 2;
     uint32_t face_size = 0;
     for (int l = 0; l < (levels ? levels : 1); l++) {
         int lw = w >> l > 1 ? w >> l : 1, lh = h >> l > 1 ? h >> l : 1;
@@ -525,6 +537,7 @@ static Texture *texture(int i) {
             case 0x0B: v = pal[src[i]]; break;
             case 0x00: case 0x13: { uint8_t y8 = linear ? src[(size_t)y * pitch + x] : src[i]; v = 0xFF000000u | y8 * 0x010101u; break; }
             case 0x19: case 0x1F: { uint8_t a8 = linear ? src[(size_t)y * pitch + x] : src[i]; v = (uint32_t)a8 << 24 | 0xFFFFFF; break; }
+            case 0x01: case 0x1B: { uint8_t l8 = linear ? src[(size_t)y * pitch + x] : src[i]; v = (uint32_t)l8 << 24 | l8 * 0x010101u; break; } /* AL8: one byte for both */
             case 0x1A: case 0x20: { const uint8_t *p = linear ? src + (size_t)y * pitch + (size_t)x * 2 : src + (size_t)i * 2; v = (uint32_t)p[1] << 24 | p[0] * 0x010101u; break; }
             default: { /* not decoded: magenta, and say so once per format */
                 static uint8_t told[256];
@@ -1051,7 +1064,11 @@ typedef struct {
 static int draw_state(DrawState *d) {
     uint32_t fmt = K(SET_SURFACE_FORMAT), color = fmt & 15, type = (fmt >> 8) & 15, aa = (fmt >> 12) & 15;
     d->bpp = (color >= 4 && color <= 8) ? 4 : (color >= 1 && color <= 3) ? 2 : 0;
-    if (type != 1 || !d->bpp) {
+    /* 2: swizzled, which only the GPU draws (glfill.c keeps its colour in
+     * Morton order in RAM). The vinyl editor draws each layer into the
+     * car's livery, a swizzled 1024x1024 texture: dropped, the car showed
+     * its paint without the vinyls. */
+    if ((type != 1 && !(type == 2 && rt_gl_on)) || !d->bpp) {
         static uint32_t last;
         if (rt_log_level && last != fmt) rt_log("raster: surface format %x not drawn (offset %08x)\n", fmt, K(SET_SURFACE_COLOR_OFFSET));
         last = fmt;
