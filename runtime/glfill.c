@@ -1137,6 +1137,46 @@ static void gl_sync_color_async(uint32_t base, uint32_t size) {
     if (slow) gl_complete_range(base, size);
 }
 
+/* F4 (debugging): the depth of every framebuffer up to 1024x1024, shadow
+ * maps among them (they never reach RAM), as screenshots/zmap_<address>.pgm,
+ * stretched from their nearest to farthest value. */
+static void gl_dump_depths(void) {
+    for (int i = 0; i < GL_SURFS; i++) { /* the colour of the small ones too (cube faces, reflections), as PPM */
+        GlSurf *s = &gl_surf[i];
+        if (!s->fbo || s->w > 512 || s->h > 512) continue;
+        unsigned char *px = malloc((size_t)s->w * s->h * 3), *row = malloc((size_t)s->w * s->h * 3);
+        gl_read_bind(s, GL_COLOR_BUFFER_BIT);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, s->w, s->h, GL_RGB, GL_UNSIGNED_BYTE, px);
+        for (int y = 0; y < s->h; y++) memcpy(row + (size_t)(s->h - 1 - y) * s->w * 3, px + (size_t)y * s->w * 3, (size_t)s->w * 3);
+        char path[96];
+        snprintf(path, sizeof path, "screenshots/cmap_%08x_%dx%d%s.ppm", s->cbase, s->w, s->h, s->swz ? "_swz" : "");
+        FILE *f = fopen(path, "wb");
+        if (f) fprintf(f, "P6\n%d %d\n255\n", s->w, s->h), fwrite(row, 1, (size_t)s->w * s->h * 3, f), fclose(f);
+        free(px), free(row);
+    }
+    for (int i = 0; i < GL_SURFS; i++) {
+        GlSurf *s = &gl_surf[i];
+        if (!s->fbo || !s->ztex || s->w > 1024 || s->h > 1024) continue;
+        float *z = malloc((size_t)s->w * s->h * sizeof *z);
+        unsigned char *px = malloc((size_t)s->w * s->h);
+        gl_read_bind(s, GL_DEPTH_BUFFER_BIT);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, s->w, s->h, GL_DEPTH_COMPONENT, GL_FLOAT, z);
+        float lo = 1, hi = 0;
+        for (int k = 0; k < s->w * s->h; k++)
+            if (z[k] < 1) { if (z[k] < lo) lo = z[k]; if (z[k] > hi) hi = z[k]; }
+        for (int k = 0; k < s->w * s->h; k++) /* rows bottom up in GL: written top down */
+            px[(s->h - 1 - k / s->w) * s->w + k % s->w] = z[k] >= 1 ? 255 : hi > lo ? (unsigned char)((z[k] - lo) / (hi - lo) * 254) : 0;
+        char path[96];
+        snprintf(path, sizeof path, "screenshots/zmap_%08x_%dx%d.pgm", s->zbase, s->w, s->h);
+        FILE *f = fopen(path, "wb");
+        if (f) fprintf(f, "P5\n%d %d\n255\n", s->w, s->h), fwrite(px, 1, (size_t)s->w * s->h, f), fclose(f);
+        fprintf(stderr, "xbrt: depth of %08x to %s (%.6f..%.6f)\n", s->zbase, path, lo, hi);
+        free(z), free(px);
+    }
+}
+
 /* A flip. The framebuffers stay on the GPU: the display gets its buffers
  * through the read-backs above, textures theirs when they are read, and
  * nothing else turned out to look (reading everything back here was a
@@ -1676,7 +1716,8 @@ static int gl_clear(uint32_t flags) {
      * does not matter, so it need not take in what others drew over its
      * bytes (gl_take_newer), and those others are cleared with it below. */
     int w = type == 2 ? 1 << ((fmt >> 16) & 15) : (int)(d.pitch / (uint32_t)d.bpp), h = type == 2 ? 1 << ((fmt >> 24) & 15) : d.cy0 + d.ch;
-    int whole = (flags & 0xF3) == 0xF0 && x1 == 0 && y1 == 0 && (int)(x2 + 1) >= w * d.sx && (int)(y2 + 1) >= h * d.sy;
+    int whole_rect = x1 == 0 && y1 == 0 && (int)(x2 + 1) >= w * d.sx && (int)(y2 + 1) >= h * d.sy;
+    int whole = (flags & 0xF3) == 0xF0 && whole_rect;
     gl_whole_clear = whole;
     GlSurf *s = gl_bind(&d);
     gl_whole_clear = 0;
@@ -1711,17 +1752,28 @@ static int gl_clear(uint32_t flags) {
      * GPU too. The vinyl editor clears the livery as a linear surface and
      * draws its layers into it swizzled: each frame the swizzled one took
      * the clear through RAM (read back, swizzled and uploaded on the CPU),
-     * about one frame a second. */
-    for (int i = 0; whole && i < GL_SURFS; i++) {
+     * about one frame a second. Their depth and stencil take it too when
+     * they share the depth buffer: Forza clears its shade map (the dark
+     * shapes of the buildings over the player's car, 256x256) as a linear
+     * surface with its depth, then draws into it swizzled. The swizzled one
+     * kept its old colour and depth, the shade quad failed the depth test
+     * in bands, and the car showed stripes instead of the shade. */
+    int prop = whole_rect && ((flags & 0xF0) == 0xF0 || (flags & 3));
+    for (int i = 0; prop && i < GL_SURFS; i++) {
         GlSurf *e = &gl_surf[i];
         if (e == s || !e->fbo || e->cbase != s->cbase || e->bpp != s->bpp || e->cpitch * (uint32_t)e->h != s->cpitch * (uint32_t)s->h) continue;
+        if (!whole && e->swz == s->swz) continue; /* with depth: only the other layout's twin (marking every twin's depth dirty halved the race's frame rate) */
+        GLbitfield eb = (flags & 0xF0) == 0xF0 ? GL_COLOR_BUFFER_BIT : 0;
+        if ((flags & 3) && e->ztex && e->zbase == s->zbase && e->zbpp == s->zbpp) eb |= bits & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        if (!eb) continue;
         glBindFramebuffer(GL_FRAMEBUFFER, e->fbo);
         glScissor(0, 0, e->w * e->k, e->h * e->k);
-        glClear(GL_COLOR_BUFFER_BIT);
-        e->dirty = e->cdirty = 1, e->seq = ++gl_seq, e->flip = gl_flips;
+        glClear(eb);
+        if (eb & GL_COLOR_BUFFER_BIT) e->dirty = e->cdirty = 1, e->seq = ++gl_seq, e->flip = gl_flips;
+        if (eb & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) e->dirty = e->zdirty = 1, e->zgpu = 0;
         gl_drawn(e, 0, 0, e->w, e->h);
     }
-    if (whole) glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
+    if (prop) glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     return 1;
 }
 

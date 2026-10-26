@@ -1446,6 +1446,12 @@ void nv2a_raster_sync(void) {
     if (rt_gl_on) gl_sync_cpu();
 }
 
+static void gl_dump_depths(void); /* glfill.c */
+
+void nv2a_raster_dump_depths(void) {
+    if (rt_gl_on) gl_dump_depths();
+}
+
 void nv2a_raster_cpu_reads(uint32_t base, uint32_t size) {
     nv2a_raster_flush();
     if (rt_gl_on) gl_sync_range(base, size);

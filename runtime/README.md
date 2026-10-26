@@ -52,6 +52,7 @@ first build takes a while.
 | `XBRT_TEX_LOG` | `1`: each texture (address, format) the first time a draw samples it | off |
 | `XBRT_GL_SURF_LOG` | `1`: each GPU framebuffer as it is made (address, size, swizzled or not, depth) | off |
 | `XBRT_RT_LOG` | `<hex offset>`: each draw (program, textures) and clear into that colour offset, all session (`2a29300`: the paint shop's livery); the RAM under the first 8 draws' textures to `screenshots/rt_<draw>_<stage>.bin` | off |
+| `XBRT_F4_AT` | `<seconds>`: presses F4 once at that time (unattended runs) | off |
 | `XBRT_WAIT_LOG` | `<ms>`: each guest wait that took at least that long, signalled or timed out, with the guest's stack (stalls where the game stops) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
@@ -62,7 +63,8 @@ Controller: on Windows the first XInput pad is the Xbox pad on port 1
 
 Debugging keys: F12 saves the picture to `screenshots/`; F4 saves the
 64 MB of RAM there (`ram_<seconds>.bin`, with the GPU's drawing read back
-into it); F3 writes every GPU method of the next frame there
+into it), with every framebuffer's depth (`zmap_<address>.pgm`, shadow maps
+among them) and the colour of the small ones (`cmap_<address>.ppm`); F3 writes every GPU method of the next frame there
 (`gpu_<seconds>.txt`, as `XBRT_GPU_DUMP`); F5-F9 turn off culling, the
 depth test, the alpha test, depth clipping, and GPU vertex programs (the
 window title says which are on).

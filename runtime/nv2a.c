@@ -715,9 +715,14 @@ static void *device_main(void *arg) {
                     if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
                     rt_log("nv2a: RAM dumped to %s\n", path);
                 }
+                { /* XBRT_F4_AT=<seconds>: press F4 then (unattended runs) */
+                    static int done;
+                    if (!done && getenv("XBRT_F4_AT") && rt_now_100ns() / 1e7 > atof(getenv("XBRT_F4_AT"))) done = 1, rt_ram_dump_wanted = 1;
+                }
                 if (rt_ram_dump_wanted) { /* F4 (display.c): the GPU's drawing read back first */
                     rt_ram_dump_wanted = 0;
                     nv2a_raster_sync();
+                    nv2a_raster_dump_depths();
                     char path[256];
 #ifdef _WIN32
                     mkdir("screenshots");
