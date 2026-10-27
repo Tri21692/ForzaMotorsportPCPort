@@ -195,21 +195,45 @@ def far_side(link, sp):
 def make_collision(col, link, link_width, walls, sp):
     """The link as road, the walls across it removed (a strip a metre wider each side, so no stub
     of a wall it crosses is left inside its edges; but not the course's far walls where it leaves
-    and joins it), and invisible walls (pairs of points (x, z), 3 m high above y) across the old
-    course."""
+    and joins it) and put back where they run outside that strip (a wall taken out whole left a
+    gap beside the link with no ground behind it, out of the world), and invisible walls (pairs of
+    points (x, z), 3 m high above y) across the old course."""
     cut = [[(q[0], q[2]) for q in quad] for quad in strip(link, link_width + 2)]
     far = far_side(link, sp)
+    removed = []
+    def crosses(xz):
+        for quad in cut:
+            if any(in_quad(p, quad) for p in xz): return True
+            for e0, e1 in ((xz[0], xz[1]), (xz[1], xz[2]), (xz[2], xz[0])):
+                if any(segments_cross(e0, e1, q0, q1) for q0, q1 in zip(quad, quad[1:] + quad[:1])): return True
+        return False
     def keep(surface, pts):
         xz = [(p[0], p[2]) for p in pts]
         n = np.cross(np.subtract(pts[1], pts[0]), np.subtract(pts[2], pts[0]))
         if abs(n[1]) > 0.7 * np.linalg.norm(n): return True  # ground: kept (the link lies on top of it, if any)
         if far(*np.mean(xz, 0)): return True
-        for quad in cut:
-            if any(in_quad(p, quad) for p in xz): return False
-            for e0, e1 in ((xz[0], xz[1]), (xz[1], xz[2]), (xz[2], xz[0])):
-                if any(segments_cross(e0, e1, q0, q1) for q0, q1 in zip(quad, quad[1:] + quad[:1])): return False
+        if crosses(xz):
+            removed.append(np.array(pts, float))
+            return False
         return True
     gone = col.remove(keep)
+    # the removed walls' footprints, each from its two furthest corners, outside the strip
+    pieces = set()
+    for p in removed:
+        i, j = max(((0, 1), (1, 2), (0, 2)), key=lambda e: np.hypot(*(p[e[0]][[0, 2]] - p[e[1]][[0, 2]])))
+        a, b = p[i][[0, 2]], p[j][[0, 2]]
+        if np.hypot(*(b - a)) < 0.2: continue
+        y0, y1 = p[:, 1].min(), p[:, 1].max()
+        ts = np.linspace(0, 1, max(2, int(np.hypot(*(b - a)) / 0.5) + 1))
+        out = [not any(in_quad(tuple(a + (b - a) * t), q) for q in cut) for t in ts]
+        for k in range(len(ts) - 1):
+            if out[k] and out[k + 1]:
+                pa, pb = a + (b - a) * ts[k], a + (b - a) * ts[k + 1]
+                pieces.add((round(pa[0], 2), round(pa[1], 2), round(pb[0], 2), round(pb[1], 2), round(y0, 2), round(y1, 2)))
+    for x0, z0, x1, z1, y0, y1 in pieces:
+        q = [(x0, y0, z0), (x1, y0, z1), (x1, y1, z1), (x0, y1, z0)]
+        col.add(0x900, [q[0], q[1], q[2]], 0)
+        col.add(0x900, [q[2], q[3], q[0]], 0)
     word = ground_word(col)
     quads = strip(link, link_width + 4)  # 2 m over each edge onto the lot
     for q in quads:
