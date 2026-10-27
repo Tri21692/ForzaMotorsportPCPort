@@ -277,11 +277,20 @@ void rt_mods_installer_records(void) {
 /* The track being loaded: the folder of the last track collision file
  * opened (media\tracks\<track>\QuickPreview1.col, tracklist.xml's
  * collisionFile), which a track load reads before its scenery. While it
- * is set, a cache file is looked for first in the mods folder's
- * hdd\Partition<n>\<track>\: a track that shares another's scenery (the
- * Pacific Shipyards Circuit, Pacific Shipyards' vancouver.res) can bring
- * its own copy of it. */
+ * is set, a file is looked for first in the mods folder's track\<track>\
+ * (disc paths as they are, cache files under hdd\Partition<n>\): a track
+ * that shares another's scenery (the Pacific Shipyards Circuit, Pacific
+ * Shipyards' vancouver.res and Pacific Shipyards II's visibility files,
+ * which only load from their own folder) can bring its own copies. */
 static char loading_track[64];
+
+static int track_file(const char *rest, char *out, size_t n) {
+    char p[800];
+    snprintf(p, sizeof p, "\\track\\%s%s", loading_track, rest);
+    if (!loading_track[0] || !mod_file(p, out, n)) return 0;
+    fprintf(stderr, "xbrt: mods: %s (for %s)\n", out, loading_track);
+    return 1;
+}
 
 static void note_track(const char *rest) {
     static const char pre[] = "\\media\\tracks\\";
@@ -305,6 +314,7 @@ static int host_path(const char *xbox, char *out, size_t n) {
         snprintf(root, sizeof root, "%s", disc_dir);
         rest = dev + 14;
         note_track(rest);
+        if (track_file(rest, out, n)) return 1;
         if (mod_file(rest, out, n)) {
             static int said;
             if (said < 100) said++, fprintf(stderr, "xbrt: mods: %s\n", out);
@@ -321,12 +331,8 @@ static int host_path(const char *xbox, char *out, size_t n) {
          * the game installed there from the disc (wheels are in mega.cab and
          * megaxpr.cab). Not saves: partitions 1 and 2 are left alone. */
         char modrest[700];
-        snprintf(modrest, sizeof modrest, "\\hdd\\Partition%d\\%s%s", part, loading_track, rest);
-        if (part >= 3 && loading_track[0] && mod_file(modrest, out, n)) {
-            fprintf(stderr, "xbrt: mods: %s (for %s)\n", out, loading_track);
-            return 1;
-        }
         snprintf(modrest, sizeof modrest, "\\hdd\\Partition%d%s", part, rest);
+        if (part >= 3 && track_file(modrest, out, n)) return 1;
         if (part >= 3 && mod_file(modrest, out, n)) {
             static int said;
             if (said < 100) said++, fprintf(stderr, "xbrt: mods: %s\n", out);

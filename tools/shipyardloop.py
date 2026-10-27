@@ -31,7 +31,7 @@ POINTS = 624
 KINK = (-495.0, -77.5)   # the upper road's kink
 TIP = (-455.0, -222.5)   # the lower road's corner
 LINK_WIDTH = 14.0        # metres, edge to edge
-START = (-365.0, -296.0) # the lap line: on the lower road, 70 m on from where the link joins it
+START = tuple(float(v) for v in os.environ['LOOP_START'].split(',')) if os.environ.get('LOOP_START') else (-365.0, -296.0)  # the lap line: on the lower road, 70 m on from where the link joins it
 
 
 def unpack_xb2(path):
@@ -196,15 +196,30 @@ def make_collision(col, link, link_width, walls):
     return gone, 2 * len(quads)
 
 
-def link_walls(link, width, course, half=9.0):
-    """Walls along both edges of the link, `width` / 2 + 2 m out, where it is clear of the course's
-    road (over `half` metres from its centre line)."""
-    dense = np.vstack([course[i] + (course[i + 1] - course[i]) * t for i in range(len(course) - 1) for t in np.linspace(0, 1, 20)])
+def off_course(points, sp, margin=1.0):
+    """For each point, whether it is off the course's road: further from the centre line than the
+    road's half width there (its edge splines) and `margin`."""
+    c = (sp[4] + sp[5]) / 2
+    half = np.linalg.norm(sp[4] - sp[5], axis=1) / 2
+    dense, dh = [], []
+    for i in range(len(c) - 1):
+        for t in np.linspace(0, 1, 20):
+            dense.append(c[i] + (c[i + 1] - c[i]) * t); dh.append(half[i] + (half[i + 1] - half[i]) * t)
+    dense, dh = np.array(dense), np.array(dh)
+    out = []
+    for p in points:
+        d = np.hypot(dense[:, 0] - p[0], dense[:, 2] - p[2])
+        out.append(bool(np.all(d > dh + margin)))
+    return np.array(out)
+
+
+def link_walls(link, width, sp):
+    """Walls along both edges of the link, `width` / 2 + 2 m out, where it is off the course's road."""
     out = []
     for side in (1, -1):
         quads = strip(link, width + 4)
         edge = [q[0] if side > 0 else q[1] for q in quads] + [quads[-1][3] if side > 0 else quads[-1][2]]
-        clear = [np.min(np.hypot(dense[:, 0] - p[0], dense[:, 2] - p[2])) > half for p in edge]
+        clear = off_course(edge, sp)
         for p, q, cp, cq in zip(edge[:-1], edge[1:], clear[:-1], clear[1:]):
             if cp and cq: out.append(((p[0], p[2], p[1]), (q[0], q[2], q[1])))
     return out
@@ -237,10 +252,10 @@ def parse_pvs(d):
     return d[:0x1c], cells, d[o:]
 
 
-def loop_pvs(d, use):
+def loop_pvs(d, use, extra=(), hide=()):
     """A visibility file for the loop: every cell the same, everything the cells `use` (Pacific
     Shipyards II's that cover the lot) show, seen from every step; so whichever cell the game takes
-    the loop's progress for, the lot's scenery is there."""
+    the loop's progress for, the lot's scenery is there. Meshes in `hide` are left out."""
     head, cells, tail = parse_pvs(d)
     merged = []
     for li in range(3):
@@ -248,12 +263,148 @@ def loop_pvs(d, use):
         for c in use:
             for e in cells[c][li]:
                 obj = struct.unpack_from('<H', e)[0]
+                if obj in hide: continue
                 rest = e[4:]
                 old = objs.get(obj)
                 objs[obj] = rest if old is None else bytes(a | b for a, b in zip(old, rest))
+        if li == 0:
+            for obj in extra: objs.setdefault(obj, b'')
         merged.append([struct.pack('<HH', obj, 0xFFFF) + rest for obj, rest in sorted(objs.items())])
     body = b''.join(b''.join(struct.pack('<I', len(l)) + b''.join(l) for l in merged) for _ in cells)
     return head + struct.pack('<I', len(cells)) + body + tail, [len(l) for l in merged]
+
+
+MODEL = 0x4e0600  # model_quickpreview in the unpacked bundle
+DONOR = 714       # its mesh sidewalk01 (asphalt, 407 vertices), by Pacific Shipyards' far end: the link's road
+
+
+def mesh(res, i):
+    """Mesh i of model_quickpreview (a 28-byte record): (record offset, index count, vertex bytes,
+    vertex buffer resource)."""
+    n = struct.unpack_from('<I', res, MODEL)[0]
+    a = struct.unpack_from('<I', res, MODEL + 4 + 4 * i)[0]
+    fl, ab, nidx, vbytes, vb, stride, prim, t0, t1, sh = struct.unpack_from('<IIIIHHHHHH', res, MODEL + a)
+    assert stride == 6 and prim == 6, (stride, prim)
+    return MODEL + a, nidx, vbytes, vb
+
+
+def vb_offset(res, vb):
+    """The data offset of resource vb (numbered from 9) in the unpacked bundle."""
+    return struct.unpack_from('<I', res, 0x202 + 24 * (vb - 9) + 8)[0]
+
+
+def road_strip(link, width, sp, step=1.5):
+    """The link's visible road: cross-sections every `step` metres where its centre is off the
+    course's road (reaching a metre onto it at each end), `width` wide, as (left, right) points."""
+    clear = off_course(link, sp, margin=-1.0)
+    i0, i1 = np.argmax(clear), len(link) - 1 - np.argmax(clear[::-1])
+    seg = link[i0:i1 + 1]
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(seg, axis=0), axis=1))])
+    want = np.arange(0, s[-1] + 1e-6, step)
+    c = np.stack([np.interp(want, s, seg[:, j]) for j in range(3)], 1)
+    t = np.gradient(c, axis=0)
+    nrm = np.stack([t[:, 2], np.zeros(len(t)), -t[:, 0]], 1)
+    nrm /= np.linalg.norm(nrm, axis=1)[:, None]
+    return c + nrm * width / 2, c - nrm * width / 2
+
+
+def write_road(res, left, right):
+    """The donor mesh's vertices and strip rewritten as the road: its vertex format (f32 x, y, z,
+    u32 normal, s16 texture s, t, lightmap s, t), the asphalt mapped as the donor maps it (53 a
+    metre along x, -52 along z), the lightmap at the donor's middling value; spare vertices and
+    indices repeat the last. Returns the road's bounding sphere."""
+    rec, nidx, vbytes, vb = mesh(res, DONOR)
+    o = vb_offset(res, vb)
+    nv = vbytes // 24
+    old = np.frombuffer(bytes(res[o:o + vbytes]), dtype=np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)]))
+    oldidx = np.frombuffer(bytes(res[o + vbytes:o + vbytes + 2 * nidx]), '<u2')
+    k = 2 * len(left)
+    assert k <= nv and k <= nidx, (k, nv, nidx)
+    pts = np.empty((k, 3)); pts[0::2] = left; pts[1::2] = right
+    # the donor's facing: its first triangle's normal points up or down; the strip's first likewise
+    a, b, c = (old['p'][j].astype(float) for j in oldidx[:3])
+    up = np.sign(np.cross(b - a, c - a)[1])
+    if np.sign(np.cross(pts[1] - pts[0], pts[2] - pts[0])[1]) != up:
+        pts[0::2], pts[1::2] = right, left.copy()
+    new = old.copy()
+    vals, counts = np.unique(old['n'], return_counts=True)
+    normal = vals[np.argmax(counts)]
+    cx, cz = pts[:, 0].mean(), pts[:, 2].mean()
+    med = np.median(old['st'].astype(float), axis=0)
+    for j in range(nv):
+        p = pts[min(j, k - 1)]
+        new['p'][j] = p + (0, 0.02, 0)
+        new['n'][j] = normal
+        new['st'][j] = (int(round(med[0] + 53.0 * (p[0] - cx))), int(round(med[1] - 51.7 * (p[2] - cz))), int(med[2]), int(med[3]))
+    res[o:o + vbytes] = new.tobytes()
+    idx = np.minimum(np.arange(nidx), k - 1).astype('<u2')
+    res[o + vbytes:o + vbytes + 2 * nidx] = idx.tobytes()
+    centre = (pts.min(0) + pts.max(0)) / 2
+    return centre, float(np.max(np.linalg.norm(pts - centre, axis=1)))
+
+
+def move_sphere(ppw, old_centre, old_radius, centre, radius):
+    """QuickPreview1.pvs.ppw: per mesh a 21-byte record (f32 radius, centre; 5 bytes), some with
+    more after them; the donor's found by its sphere and moved to the road."""
+    best = None
+    for o in range(0x14, len(ppw) - 16):
+        r, x, y, z = struct.unpack_from('<4f', ppw, o)
+        if not (0 < r < 5000): continue
+        e = abs(r - old_radius) + np.linalg.norm(np.subtract((x, y, z), old_centre))
+        if best is None or e < best[0]: best = (e, o)
+    assert best[0] < 2.0, best
+    ppw = bytearray(ppw)
+    struct.pack_into('<4f', ppw, best[1], radius, *centre)
+    return bytes(ppw)
+
+
+# what the link has to clear: warehouse 13 (it stands where the link crosses the lot), and at its two
+# ends the construction barricades, road-closed and detour signs and the steamroller closing the lot off
+HIDE = ('building_warehouse13', 'constructionbarricade', 'barrier_construction_08', 'sign_roadclosed05',
+        'signturnplywood02', 'steamroller_02')
+
+
+def mesh_vertices(res, names, i):
+    """Mesh i's vertex positions (any record with a vertex buffer of whole vertices), or None."""
+    n = struct.unpack_from('<I', res, MODEL)[0]
+    a = struct.unpack_from('<I', res, MODEL + 4 + 4 * i)[0]
+    b = struct.unpack_from('<I', res, MODEL + 4 + 4 * (i + 1))[0] if i + 1 < n else None
+    vbytes = struct.unpack_from('<I', res, MODEL + a + 12)[0]
+    vb, stride = struct.unpack_from('<HH', res, MODEL + a + 16)
+    if not (1 <= stride <= 16) or vbytes % (4 * stride) or vb < 9 or vb - 9 >= len(names): return None
+    o = names[vb - 9][3]
+    v = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, stride)[:, :3]
+    return v if np.all(np.isfinite(v)) and np.abs(v).max() < 5000 else None
+
+
+def hidden_meshes(res, link):
+    """The meshes named in HIDE that have a vertex within 30 m of the link."""
+    import xb2
+    names, _ = xb2.resources(bytes(res))
+    out = []
+    for i in range(struct.unpack_from('<I', res, MODEL)[0]):
+        a = struct.unpack_from('<I', res, MODEL + 4 + 4 * i)[0]
+        vb = struct.unpack_from('<H', res, MODEL + a + 16)[0]
+        if not (9 <= vb < len(names) + 9) or not any(h in names[vb - 9][0] for h in HIDE): continue
+        v = mesh_vertices(res, names, i)
+        if v is None: continue
+        d = np.min(np.hypot(v[:, None, 0] - link[None, :, 0], v[:, None, 2] - link[None, :, 2]))
+        if d < 30: out.append(i)
+    return out
+
+
+def clear_boxes(cbx, link, width):
+    """quickpreview1.xbp.cbx (zlib-packed on the disc), unpacked: u32 1, a 16-byte id, u32 boxes, per box f32 min x, y, z, max x, y, z: the
+    solid props (barricades, kerbs); the boxes the link's road crosses dropped."""
+    n = struct.unpack_from('<I', cbx, 0x14)[0]
+    boxes = np.frombuffer(cbx, '<f4', count=6 * n, offset=0x18).reshape(n, 6)
+    quads = [[(q[0], q[2]) for q in quad] for quad in strip(link, width)]
+    keep = []
+    for bx in boxes:
+        hit = any(coledit.overlaps(q[:3], (bx[0], bx[2], bx[3], bx[5])) or coledit.overlaps([q[0], q[2], q[3]], (bx[0], bx[2], bx[3], bx[5])) for q in quads)
+        if not hit: keep.append(bx)
+    out = cbx[:0x14] + struct.pack('<I', len(keep)) + np.array(keep, '<f4').tobytes()
+    return out + bytes(len(cbx) - len(out)), n - len(keep)
 
 
 PVS_CELLS = range(2, 6)  # Pacific Shipyards II's cells round the lot (0 and 1: its start road; more did not fit in memory)
@@ -294,8 +445,8 @@ def quickpreview(src, loop):
 
 def track_entry(tracklist, name_id, length):
     """tracklist.xml with the circuit's entry added after Pacific Shipyards II's (a copy of it): its
-    own data folder, collision and visibility, Pacific Shipyards' scenery, a circuit for Hot Lap (no
-    start, end or p2pordinal), no AI."""
+    own data folder and collision, Pacific Shipyards' scenery and Pacific Shipyards II's visibility
+    (both of them replaced while it loads), a circuit for Hot Lap (no start, end or p2pordinal), no AI."""
     m = re.search(r'<track\s[^>]*name="VancouverReverse".*?/>', tracklist, re.S)
     e = m.group(0)
     recs = re.findall(r'<track\s.*?/>', tracklist, re.S)
@@ -308,7 +459,6 @@ def track_entry(tracklist, name_id, length):
     for k, v in (('RosettaName', NAME), ('name', TAG), ('trackIdentifier', TAG), ('tracknameid', name_id),
                  ('trackSegCamsFile', folder + 'TrackSegCams.xml'), ('pitCamsFile', folder + 'PitCams.xml'),
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
-                 ('pvsFile', folder + 'QuickPreview1.pvs'),
                  ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'false'),
                  ('Ordinal', ordinal), ('length', int(round(length)))):
         e = attr(e, k, v)
@@ -317,11 +467,13 @@ def track_entry(tracklist, name_id, length):
     return tracklist[:m.end()] + '\r\n\r\n\t' + e + tracklist[m.end():], ordinal, hotlap
 
 
-def install(disc, mods, loop, col_bytes, res_bytes, length):
+def install(disc, mods, loop, col_bytes, res_bytes, pvs_bytes, ppw_bytes, cbx_bytes, length):
     """Into the mods folder: the track list entry, its data folder (Mega.ca2), its name in every
-    language, its collision (media\\tracks\\VancouverLoop) and its copy of the scenery with the
-    loop's splines (hdd\\Partition4\\VancouverLoop\\vancouver.res, which the runtime opens in place
-    of the cache's while this track loads)."""
+    language, its folder on the disc (media\tracks\VancouverLoop: the collision, Pacific Shipyards
+    II's audio spline, lightmap and glass reflection), and under track\VancouverLoop\ (what the
+    runtime opens in place of the real files while this track loads) its copy of the scenery,
+    hdd\Partition4\vancouver.res, and of Pacific Shipyards II's visibility files, which only load
+    from that folder."""
     import addcar
     mega = addcar.Archive(disc, mods, 'Mega.ca2')
     files = {k.lower(): k for k in mega.files}
@@ -355,20 +507,17 @@ def install(disc, mods, loop, col_bytes, res_bytes, length):
     d = os.path.join(mods, 'media', 'tracks', TAG)
     os.makedirs(d, exist_ok=True)
     open(os.path.join(d, 'QuickPreview1.col'), 'wb').write(col_bytes)
-    # what the game reads from D:\MEDIA	racks\<the track>\ (the audio spline, the lightmap, the glass's
-    # reflection): Pacific Shipyards II's
     rev = addcar.disc_file(disc, 'media', 'tracks', 'VancouverReverse')
     for f in os.listdir(rev):
-        data = open(os.path.join(rev, f), 'rb').read()
-        if f.lower() == 'quickpreview1.pvs':
-            data, sizes = loop_pvs(data, PVS_CELLS)
-            print('visibility: %s objects in every cell' % sizes)
-        open(os.path.join(d, f), 'wb').write(data)
-    # the cache partition (N:) where the game keeps Pacific Shipyards' unpacked scenery (the collision it copies
-    # there itself, as N:\VancouverLoop.col, from the track's collisionFile)
-    r = os.path.join(mods, 'hdd', 'Partition4', TAG)
-    os.makedirs(r, exist_ok=True)
-    open(os.path.join(r, 'vancouver.res'), 'wb').write(res_bytes)
+        if not f.lower().startswith('quickpreview1.pvs'):
+            open(os.path.join(d, f), 'wb').write(open(os.path.join(rev, f), 'rb').read())
+    t = os.path.join(mods, 'track', TAG)
+    for rel, data in ((('hdd', 'Partition4', 'vancouver.res'), res_bytes),
+                      (('media', 'tracks', 'VancouverReverse', 'QuickPreview1.pvs'), pvs_bytes),
+                      (('media', 'tracks', 'VancouverReverse', 'QuickPreview1.pvs.ppw'), ppw_bytes),
+                      (('media', 'tracks', 'Vancouver', 'quickpreview1.xbp.cbx'), cbx_bytes)):
+        os.makedirs(os.path.join(t, *rel[:-1]), exist_ok=True)
+        open(os.path.join(t, *rel), 'wb').write(data)
     print('"%s": track %d, Hot Lap %d, name string %d' % (NAME, ordinal, hotlap, nid))
 
 
@@ -387,9 +536,24 @@ if __name__ == '__main__':
     c = (sp[4] + sp[5]) / 2
     # the old course where it leaves the loop: towards Pacific Shipyards II's start, and west of the kink
     walls = [across(c, nearest(c, (-484.1, -300.7))), across(c, nearest(c, (-533.4, -95.9)))]
-    walls += link_walls(link, LINK_WIDTH, c)
+    walls += link_walls(link, LINK_WIDTH, sp)
     gone, added = make_collision(col, link, LINK_WIDTH, walls)
     col_bytes, res_bytes = col.to_bytes(), write_splines(res, loop)
     print('collision: %d wall triangles removed, %d road triangles added, %d wall pieces added' % (gone, added, len(walls)))
+    # the link's road, drawn: the donor mesh rewritten, its bounding sphere moved, in every visibility cell
+    rec, nidx, vbytes, vb = mesh(res_bytes, DONOR)
+    o = vb_offset(res_bytes, vb)
+    donor = np.frombuffer(bytes(res_bytes[o:o + vbytes]), '<f4').reshape(-1, 6)[:, :3].astype(float)
+    dc = (donor.min(0) + donor.max(0)) / 2
+    left, right = road_strip(link, LINK_WIDTH + 4, sp)
+    centre_r, radius = write_road(res_bytes, left, right)
+    rev = os.path.join(disc, 'media', 'tracks', 'VancouverReverse')
+    ppw = open(os.path.join(rev, 'QuickPreview1.pvs.ppw'), 'rb').read()  # the donor's sphere: not found yet (see move_sphere)
+    hide = hidden_meshes(res_bytes, link)
+    pvs, sizes = loop_pvs(open(os.path.join(rev, 'QuickPreview1.pvs'), 'rb').read(), PVS_CELLS, extra=[DONOR], hide=set(hide))
+    print('road: %d cross-sections in mesh %d; visibility: %s meshes in every cell, %d hidden' % (len(left), DONOR, sizes, len(hide)))
+    cbx, dropped = clear_boxes(zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read()), link, LINK_WIDTH + 4)
+    cbx = zlib.compress(cbx, 9)  # the game reads it packed, as the disc has it
+    print('solid props: %d boxes on the link dropped' % dropped)
     if preview_png: preview(preview_png, sp, loop, np.mean([loop[4], loop[5]], 0), col)
-    install(disc, mods, loop, col_bytes, res_bytes, length)
+    install(disc, mods, loop, col_bytes, res_bytes, pvs, ppw, cbx, length)
