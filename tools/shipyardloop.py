@@ -217,6 +217,47 @@ def across(c, i, extra=4.0):
     return tuple((p[0], p[2], p[1]) for p in (c[i] + n * 20, c[i] - n * 20))
 
 
+def parse_pvs(d):
+    """QuickPreview1.pvs (version 0x131f0cf): '3SVP', u32 version, u32, a 16-byte id, u32 cells; per
+    cell three lists, each a u32 count and its entries: 4 bytes (u16 object, u16 mask), 8 bytes (u16
+    object, u16 mask, u32), 4 bytes (u16 object, u16 mask); then 6 bytes. A cell is a stretch of the
+    course in the order it is driven (Pacific Shipyards II's are Pacific Shipyards' backwards), the
+    mask which of its 16 steps the object is seen from; the game picks the cell by the car's
+    progress round the course."""
+    assert d[:4] == b'3SVP'
+    n = struct.unpack_from('<I', d, 0x1c)[0]
+    o, cells = 0x20, []
+    for _ in range(n):
+        lists = []
+        for size in (4, 8, 4):
+            k = struct.unpack_from('<I', d, o)[0]
+            lists.append([d[o + 4 + size * j:o + 4 + size * (j + 1)] for j in range(k)])
+            o += 4 + size * k
+        cells.append(lists)
+    return d[:0x1c], cells, d[o:]
+
+
+def loop_pvs(d, use):
+    """A visibility file for the loop: every cell the same, everything the cells `use` (Pacific
+    Shipyards II's that cover the lot) show, seen from every step; so whichever cell the game takes
+    the loop's progress for, the lot's scenery is there."""
+    head, cells, tail = parse_pvs(d)
+    merged = []
+    for li in range(3):
+        objs = {}
+        for c in use:
+            for e in cells[c][li]:
+                obj = struct.unpack_from('<H', e)[0]
+                rest = e[4:]
+                old = objs.get(obj)
+                objs[obj] = rest if old is None else bytes(a | b for a, b in zip(old, rest))
+        merged.append([struct.pack('<HH', obj, 0xFFFF) + rest for obj, rest in sorted(objs.items())])
+    body = b''.join(b''.join(struct.pack('<I', len(l)) + b''.join(l) for l in merged) for _ in cells)
+    return head + struct.pack('<I', len(cells)) + body + tail, [len(l) for l in merged]
+
+
+PVS_CELLS = range(2, 6)  # Pacific Shipyards II's cells round the lot (0 and 1: its start road; more did not fit in memory)
+
 NAME, TAG = 'Pacific Shipyards Circuit', 'VancouverLoop'
 B = '\\'
 
@@ -253,8 +294,8 @@ def quickpreview(src, loop):
 
 def track_entry(tracklist, name_id, length):
     """tracklist.xml with the circuit's entry added after Pacific Shipyards II's (a copy of it): its
-    own data folder and collision, the scenery and visibility of Pacific Shipyards II, a circuit for
-    Hot Lap (no start, end or p2pordinal), no AI."""
+    own data folder, collision and visibility, Pacific Shipyards' scenery, a circuit for Hot Lap (no
+    start, end or p2pordinal), no AI."""
     m = re.search(r'<track\s[^>]*name="VancouverReverse".*?/>', tracklist, re.S)
     e = m.group(0)
     recs = re.findall(r'<track\s.*?/>', tracklist, re.S)
@@ -267,6 +308,7 @@ def track_entry(tracklist, name_id, length):
     for k, v in (('RosettaName', NAME), ('name', TAG), ('trackIdentifier', TAG), ('tracknameid', name_id),
                  ('trackSegCamsFile', folder + 'TrackSegCams.xml'), ('pitCamsFile', folder + 'PitCams.xml'),
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
+                 ('pvsFile', folder + 'QuickPreview1.pvs'),
                  ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'false'),
                  ('Ordinal', ordinal), ('length', int(round(length)))):
         e = attr(e, k, v)
@@ -278,8 +320,8 @@ def track_entry(tracklist, name_id, length):
 def install(disc, mods, loop, col_bytes, res_bytes, length):
     """Into the mods folder: the track list entry, its data folder (Mega.ca2), its name in every
     language, its collision (media\\tracks\\VancouverLoop) and its copy of the scenery with the
-    loop's splines and collision (hdd\\Partition4\\VancouverLoop\\, which the runtime opens in place
-    of the cache's vancouver.res and Vancouver.col while this track loads)."""
+    loop's splines (hdd\\Partition4\\VancouverLoop\\vancouver.res, which the runtime opens in place
+    of the cache's while this track loads)."""
     import addcar
     mega = addcar.Archive(disc, mods, 'Mega.ca2')
     files = {k.lower(): k for k in mega.files}
@@ -317,13 +359,16 @@ def install(disc, mods, loop, col_bytes, res_bytes, length):
     # reflection): Pacific Shipyards II's
     rev = addcar.disc_file(disc, 'media', 'tracks', 'VancouverReverse')
     for f in os.listdir(rev):
-        if not f.lower().startswith('quickpreview1.pvs'):
-            open(os.path.join(d, f), 'wb').write(open(os.path.join(rev, f), 'rb').read())
-    # the cache partition (N:) where the game keeps Pacific Shipyards' unpacked scenery and a copy of its collision
+        data = open(os.path.join(rev, f), 'rb').read()
+        if f.lower() == 'quickpreview1.pvs':
+            data, sizes = loop_pvs(data, PVS_CELLS)
+            print('visibility: %s objects in every cell' % sizes)
+        open(os.path.join(d, f), 'wb').write(data)
+    # the cache partition (N:) where the game keeps Pacific Shipyards' unpacked scenery (the collision it copies
+    # there itself, as N:\VancouverLoop.col, from the track's collisionFile)
     r = os.path.join(mods, 'hdd', 'Partition4', TAG)
     os.makedirs(r, exist_ok=True)
     open(os.path.join(r, 'vancouver.res'), 'wb').write(res_bytes)
-    open(os.path.join(r, 'Vancouver.col'), 'wb').write(col_bytes)
     print('"%s": track %d, Hot Lap %d, name string %d' % (NAME, ordinal, hotlap, nid))
 
 

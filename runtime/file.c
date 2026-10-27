@@ -274,9 +274,10 @@ void rt_mods_installer_records(void) {
     if (d) closedir(d);
 }
 
-/* The track being loaded: the folder of the last track data file opened
- * (media\tracks\<track>\QuickPreview.xml, tracklist.xml's dataFile).
- * While it is set, a cache file is looked for first in the mods folder's
+/* The track being loaded: the folder of the last track collision file
+ * opened (media\tracks\<track>\QuickPreview1.col, tracklist.xml's
+ * collisionFile), which a track load reads before its scenery. While it
+ * is set, a cache file is looked for first in the mods folder's
  * hdd\Partition<n>\<track>\: a track that shares another's scenery (the
  * Pacific Shipyards Circuit, Pacific Shipyards' vancouver.res) can bring
  * its own copy of it. */
@@ -286,7 +287,7 @@ static void note_track(const char *rest) {
     static const char pre[] = "\\media\\tracks\\";
     if (strncasecmp(rest, pre, sizeof pre - 1)) return;
     const char *t = rest + sizeof pre - 1, *e = strchr(t, '\\');
-    if (!e || strcasecmp(e, "\\QuickPreview.xml") || (size_t)(e - t) >= sizeof loading_track) return;
+    if (!e || strcasecmp(e, "\\QuickPreview1.col") || (size_t)(e - t) >= sizeof loading_track) return;
     memcpy(loading_track, t, (size_t)(e - t));
     loading_track[e - t] = 0;
 }
@@ -419,8 +420,14 @@ uint32_t rt_open(uint32_t *handle, uint32_t oa, uint32_t desired, uint32_t share
         return STATUS_OBJECT_PATH_NOT_FOUND;
     }
     /* Mods are read: an open that writes or truncates (the game reinstalling
-     * its cache, say) gets the real file, not the mod. */
-    if (from_mods && ((access_bits(desired) & (SHARE_WRITE | SHARE_DELETE)) || disposition == 0 || disposition == 4 || disposition == 5)) {
+     * its cache, say) gets the real file, not the mod. Not on the disc,
+     * which nothing writes: there a file the mods folder adds (the Pacific
+     * Shipyards Circuit's QuickPreview1.pvs.stx, opened asking for write
+     * access) has no real file to fall back to. */
+    char dev[600];
+    resolve_links(xbox, dev, sizeof dev);
+    if (from_mods && strncasecmp(dev, "\\Device\\CdRom0", 14) &&
+        ((access_bits(desired) & (SHARE_WRITE | SHARE_DELETE)) || disposition == 0 || disposition == 4 || disposition == 5)) {
         mods_off = 1;
         host_path(xbox, host, sizeof host);
         mods_off = 0;
