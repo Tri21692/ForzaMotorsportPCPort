@@ -108,9 +108,29 @@ SLOT_LIKE = {'hoodb': 'hoodf', 'hoodc': 'hoodf', 'hoodd': 'hoodf', 'hoode': 'hoo
 # triangle, by the side it faces, the coordinates the template's own
 # painted surface has at the same place seen from that side (the bodies
 # are fitted to the same length and height).
-PAINTED = ('body', 'hooda', 'bumperFa', 'bumperRa', 'trunk', 'skirtLa', 'skirtRa', 'mirrorL', 'mirrorR')
+PAINTED = {n + '_LOD1' for n in ('body', 'hooda', 'hood', 'bumperFa', 'bumperF', 'bumperRa', 'bumperR', 'trunk', 'skirtLa', 'skirtL',
+                                 'skirtRa', 'skirtR', 'mirrorL', 'mirrorR', 'mirrorLa', 'mirrorRa')}  # each stock choice, by the Civic's names or a race car's
+LIVERY_DECAL = 15  # a race car's sponsors, cut out of its body: the body's surface too (its texels are livery)
 PROJ = {'left': (2, 1), 'right': (2, 1), 'top': (2, 0), 'front': (0, 1), 'back': (0, 1)}  # the plane each view sees: Forza x right, y up, z forward
 CELL = 0.02  # the layout's lookup grid, carbin units / 4096
+
+
+def uv_raster(mask, q, grow=0.02):
+    """Mark in mask (N x N) the texels a triangle covers: q its corners in
+    texels (3 x 2), a little beyond its edges (barycentric grow)."""
+    import numpy as np
+    n = mask.shape[0]
+    x0, y0 = np.floor(q.min(0)).astype(int); x1, y1 = np.ceil(q.max(0)).astype(int)
+    ys, xs = np.mgrid[y0:y1 + 1, x0:x1 + 1] + 0.5
+    (ax, ay), (bx, by), (cx, cy) = q
+    den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if abs(den) < 1e-9:
+        mask[int(ay) % n, int(ax) % n] = True
+        return
+    l0 = ((by - cy) * (xs - cx) + (cx - bx) * (ys - cy)) / den
+    l1 = ((cy - ay) * (xs - cx) + (ax - cx) * (ys - cy)) / den
+    m = (l0 >= -grow) & (l1 >= -grow) & (1 - l0 - l1 >= -grow)
+    mask[(ys[m] - 0.5).astype(int) % n, (xs[m] - 0.5).astype(int) % n] = True
 
 
 def strip_tris(ix):
@@ -151,10 +171,10 @@ def template_layout(car):
             up[x] = up[up[x]]; x = up[x]
         return x
     for p in car['parts']:
-        if not (p['name'].startswith(PAINTED) and p['name'].endswith('_LOD1')): continue
+        if p['name'] not in PAINTED: continue
         V = p['verts']
         for sp in p['subparts']:
-            if sp['id'] != 1 or sp['material'] != BODY: continue
+            if sp['id'] != 1 or sp['material'] not in (BODY, LIVERY_DECAL): continue
             for t in strip_tris(sp['indices']):
                 A = np.array([V[i][:3] for i in t], float) / 4096
                 UV = np.array([V[i][10:12] for i in t], float)
@@ -195,7 +215,7 @@ def template_layout(car):
             take = out > best[gx, gy]
             grid[gx[take], gy[take]] = k; best[gx[take], gy[take]] = out
         isl = np.array([hash(root(t[3])) for t in ts])
-        layout[view] = (lo, grid, [t[1] for t in ts], np.array([t[0].mean(0) for t in ts]), isl)
+        layout[view] = (lo, grid, [t[1] for t in ts], np.array([t[0].mean(0) for t in ts]), isl, P)
     return layout, cover
 
 
@@ -222,7 +242,7 @@ def apply_layout(car, layout, paint):
                 A = np.array([V[i][:3] for i in t], float) / 4096
                 view = facing(A)
                 if view not in layout: out.append(t); continue
-                lo, grid, maps, mids, isl = layout[view]
+                lo, grid, maps, mids, isl, Ps = layout[view]
                 a, b = PROJ[view]
                 def under(c, island=None):
                     g = np.floor((c - lo) / CELL).astype(int)
@@ -237,7 +257,12 @@ def apply_layout(car, layout, paint):
                     key = (i, view, island)
                     if key not in copies:
                         q = A[t.index(i)][[a, b]]
-                        uv = np.r_[q, 1] @ maps[under(q, island)]
+                        k = under(q, island)
+                        # within that triangle: off its edge the map ran on far outside the
+                        # template's paint (a wing above the tail landed on the packed lamps)
+                        bary = np.linalg.solve(np.r_[Ps[k].T, np.ones((1, 3))], np.r_[q, 1])
+                        bary = np.clip(bary, 0, None); bary /= bary.sum()
+                        uv = bary @ (np.c_[Ps[k], np.ones(3)] @ maps[k])
                         copies[key] = len(V) + len(extra)
                         extra.append(tuple(V[i][:10]) + tuple(int(min(65535, max(0, round(x)))) for x in uv))
                         src.append(i)
@@ -287,7 +312,9 @@ def add_slots(car, names):
     for name in names:
         if name + '_LOD1' in have or name not in SLOT_LIKE: continue
         like = SLOT_LIKE[name]
-        i, p = next((i, p) for i, p in enumerate(car['parts']) if p['name'] == like + '_LOD1')
+        hit = [(i, p) for i, p in enumerate(car['parts']) if p['name'] == like + '_LOD1']
+        if not hit: continue  # (a template without the Civic's slots)
+        i, p = hit[0]
         q = copy.deepcopy(p)
         q['name'], q['id'] = name + '_LOD1', slot_id(p['id'], like, name)
         car['parts'].insert(i + 1, q)
@@ -461,7 +488,7 @@ def window_panes(parts):
     return panes
 
 
-def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4, protect=(), cover=None):
+def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4, protect=(), cover=None, clear_rest=False, protect_mask=None):
     """Put NFSU textures ({hash: RGBA}) into free (fully clear) room of the
     template's livery atlas: livery0nc.xpr and livery0.xpr (512x512, both
     slices, clean and damaged) and livery0hi.xpr (1024x1024, every mip
@@ -504,15 +531,42 @@ def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4, protect=(), cover=No
     for u0, v0, u1, v1 in protect:
         used[max(0, int(v0 * H) - 2):int(v1 * H) + 3, max(0, int(u0 * W) - 2):int(u1 * W) + 3] = True
     rects, where = {}, {}
+    def unprotect(m, outside_first=False):
+        """m (1024) without the kept parts' texels: their own (protect_mask,
+        two texels round) or else their boxes. outside_first: where the body's
+        paint shares texels with them (a race car's interior took some of its
+        door's, and the old livery's red showed there), the paint keeps them."""
+        if protect_mask is not None:
+            pm = protect_mask.copy()
+            for d_ in ((1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2)): pm |= np.roll(protect_mask, d_, (0, 1))
+            if outside_first: pm &= ~cover
+            m &= ~pm
+        else:
+            for u0, v0, u1, v1 in protect:
+                m[int(v0 * 2 * H):int(v1 * 2 * H) + 1, int(u0 * 2 * W):int(u1 * 2 * W) + 1] = False
+    if clear_rest:  # the template's own livery art (a race car's sponsors and number) gone but for the kept parts' boxes
+        rest = np.ones((2 * H, 2 * W), bool)
+        unprotect(rest)
+        for u, v in keep:  # (the black texel stays, a few texels round it; the paint texel is made white anyway)
+            x, y = u * 2 * W // 65536, v * 2 * H // 65536
+            if hiimg[min(2 * H - 1, y), min(2 * W - 1, x), :3].max() < 128:
+                rest[max(0, y - 3):y + 4, max(0, x - 3):x + 4] = False
+        lo_ = rest.reshape(H, 2, W, 2).all((1, 3))
+        white = np.array([255, 255, 255, 0], np.uint8)
+        hiimg[rest] = white
+        for z in range(D):
+            ncimg[z][lo_] = white; volimg[z][lo_] = white
+        used &= ~lo_
+        rects['__paint__'] = (0, 0, W, H)
+        print('atlas: the template\'s livery cleared (%d texels kept for its other parts)' % (~rest).sum())
     if cover is not None:
         grow = cover.copy()
         for d_ in ((1, 0), (-1, 0), (0, 1), (0, -1)): grow |= np.roll(cover, d_, (0, 1))
-        for u0, v0, u1, v1 in protect:
-            grow[int(v0 * 2 * H):int(v1 * 2 * H) + 1, int(u0 * 2 * W):int(u1 * 2 * W) + 1] = False
+        unprotect(grow, outside_first=True)
         for u, v in keep:
             x, y = u * 2 * W // 65536, v * 2 * H // 65536
             if hiimg[min(2 * H - 1, y), min(2 * W - 1, x), :3].max() < 128:  # (the black texel stays)
-                grow[max(0, y - 16):y + 16, max(0, x - 16):x + 16] = False
+                grow[max(0, y - 3):y + 4, max(0, x - 3):x + 4] = False
         lo_ = grow.reshape(H, 2, W, 2).any((1, 3))
         used |= cover.reshape(H, 2, W, 2).any((1, 3))
         white = np.array([255, 255, 255, 0], np.uint8)
@@ -626,7 +680,7 @@ def dark_uv(xpr_path):
     return (int((best[0] + 0.5) / w * 65536), int((best[1] + 0.5) / h * 65536))
 
 
-def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None, stock_wing=True):
+def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None, stock_wing=True, clear_livery=False):
     import numpy as np
     car = carbin.read(open(template_path, 'rb').read())
     tlayout, tcover = template_layout(car)  # (before its parts are replaced)
@@ -747,8 +801,10 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             images[h] = img.astype(np.uint8)
     images.update(extra)
     protect = []
+    keep_mask = np.zeros((1024, 1024), bool)  # the same, texel by texel (a race car's interior boxes covered most of its atlas)
     if mw:  # the template parts that stay (interior, steering wheel, brakes, driver): each triangle's texel box
-        replaced = ('body', 'glass', 'headlight', 'taillight', 'bumper', 'skirt', 'hood', 'wing', 'trunk', 'mirror', 'exhaust', 'BADGE', 'bands')
+        replaced = ('body', 'glass', 'headlight', 'taillight', 'bumper', 'skirt', 'hood', 'wing', 'trunk', 'mirror', 'exhaust', 'BADGE', 'bands', 'lampglass',
+                    'driver')  # (a race car's driver01 is drawn from all of its livery, as paint)
         for p in car['parts']:
             if p['name'].startswith(replaced): continue
             for sp in p['subparts']:
@@ -759,10 +815,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     us, vs = [v[10] / BADGE_UV % 1 for v in tri], [v[11] / BADGE_UV % 1 for v in tri]  # (see ATLAS_UV)
                     if max(us) - min(us) < 0.5 and max(vs) - min(vs) < 0.5:  # (wrapped ones left out)
                         protect.append((min(us), min(vs), max(us), max(vs)))
+                        uv_raster(keep_mask, np.array([us, vs]).T * 1024)
     atlas = pack_atlas(images, livery_dir,
                        os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'),
                        keep=[paint, dark] + ([(paint[0] * 2 % 65536, paint[1] * 2 % 65536)] if mw else []),  # (both readings: see the paint texel)
-                       protect=protect, cover=tcover)
+                       protect=protect, cover=tcover, clear_rest=clear_livery, protect_mask=keep_mask if mw else None)
     if liveries:
         paint_shop(liveries, os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries.bin'),
                    os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), list(atlas.values()),
@@ -1279,7 +1336,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         def hood(n):
             return [p for p in nparts if p['name'].startswith('%s_STYLE%02d_HOOD_' % (prefix, n))]
         hoods = list(zip(HOOD_SLOTS, [n for n in MW_HOODS if hood(n)]))
-        wings = list(zip(WING_SLOTS, [n for n in MW_SPOILERS if spoilers.get('SPOILER_STYLE%02d' % n)]))
+        wings = list(zip(WING_SLOTS, [n for n in MW_SPOILERS if spoilers.get('SPOILER_STYLE%02d' % n)])) if find('SPOILER') else []  # (stood where the car's own is)
         add_slots(car, ['hood' + s for s, _ in hoods] + [s for s, _ in wings])
         for _, n in wings:
             for lv in spoilers.get('SPOILER_STYLE%02d' % n, []):
@@ -1315,13 +1372,26 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         }
         write_upgrades(os.path.join(os.path.dirname(os.path.abspath(out_path)), 'upgrades.xml'),
                        [n for n in range(1, 6) if kit(n, 'BODY')], hoods, wings, stock_wing)
+        # Another template than the Civic (a race car: bumperF, hood, wing, no
+        # tail lights of its own): its slots by its names, the tail lights in its
+        # rear bumper
+        names_ = {p['name'] for p in car['parts']}
+        for mine, theirs in (('bumperFa', 'bumperF'), ('hooda', 'hood'), ('wingb', 'wing')):
+            if mine + '_LOD1' not in names_ and theirs + '_LOD1' in names_: plan[theirs + '_LOD1'] = plan.pop(mine)
+        if not any(n.startswith('taillight') for n in names_) and 'bumperR_LOD1' in names_:
+            plan['bumperR_LOD1'] = ([find('LEFT_BRAKELIGHT'), find('RIGHT_BRAKELIGHT')], 0)
     plan = {k: v + (None, False)[len(v) - 2:] for k, v in plan.items()}
     built = {}
     done = []
+    # A slot the Most Wanted car has nothing for (the M3 GTR's hood, wing and
+    # mirrors are in its body): the template's part hidden, not left as it was
+    empty = tuple(k for k, v in plan.items() if not all(v[0])) if mw else ()
+    filled = tuple(k for k, v in plan.items() if all(v[0]))
     for part in car['parts']:
         if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name']) and not mw  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
-                or mw and part['name'].startswith(('glassT', 'bumperR', 'bumperFg', 'bumperFrace', 'skirt', 'trunk', 'wingraceB', 'wingraceC'))  # Most Wanted: in the kits, or none
-                and not part['name'].startswith(tuple(k for k in plan if k.startswith('wingrace')))  # (unless a shop slot)
+                or mw and part['name'].startswith(('glassT', 'bumperR', 'bumperFg', 'bumperFrace', 'skirt', 'trunk', 'wingraceB', 'wingraceC', 'lampglass'))  # Most Wanted: in the kits, or none (a race car's lamp covers too)
+                and not part['name'].startswith(filled)  # (unless a shop slot, or the tail lights' place)
+                or part['name'].startswith(empty) and part['name'].endswith('_LOD1')
                 or part['name'].startswith(('BADGE', 'bands', 'exhaust', 'cagerace'))):  # (the race cage too: not on a stock car, and its bars showed through the glass)  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
@@ -1606,6 +1676,11 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     textures = nfsu.read_textures(os.path.join(nfsu_dir, 'TEXTURES.BIN'))
     prefix = os.path.basename(os.path.normpath(nfsu_dir)).upper()
     levels = sorted([p for p in nparts if p['name'].startswith(prefix + '_KIT00_WHEEL')], key=lambda p: -len(p['verts']))
+    if not levels:  # Most Wanted: the rim is in the tyre part, its groups RIM_KIT00_SILVER, _BLACK, ...
+        levels = sorted([p for p in nparts if re.fullmatch(re.escape(prefix) + '_KIT00_FRONT_TIRE_[A-D]', p['name'])], key=lambda p: -len(p['verts']))
+    def is_rim(p, si):
+        if p.get('materials'): return si < len(p['materials']) and p['materials'][si].upper().startswith('RIM')
+        return p['shaders'][si] == RIM_GROUP
     V = np.array([v[:3] for v in part['verts']], float) / 4096
     rim_ix = sorted({i for sp in part['subparts'] if sp['material'] == RIM for i in sp['indices']})
     R = V[rim_ix]
@@ -1618,7 +1693,7 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
             cnt, = struct.unpack_from('<I', g, 12)
             first, = struct.unpack_from('<I', g, 0x34)
             ti, si = struct.unpack_from('<II', g, 0x1C)
-            if p['shaders'][si] != RIM_GROUP: continue
+            if not is_rim(p, si): continue
             tex = p['textures'][ti]
             used = sorted({i for i in idx[first:first + cnt] if i < len(p['verts'])})
             P = np.array([p['verts'][i][:3] for i in used])
@@ -1653,16 +1728,18 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     if struct.unpack_from('<I', part['Damage'][1])[0]:
         part['Damage'] = (part['Damage'][0], struct.pack('<I', len(out_verts)) + b''.join(struct.pack('<6h', *v[:6]) for v in out_verts))
     open(out_tire, 'wb').write(carbin.write(tire))
-    # wheel.xpr: the template's at 128x128, the NFSU wheel texture in the top-left quarter
+    # wheel.xpr: the template's at twice the quarter's size, the NFSU wheel texture in the top-left quarter:
+    # 64 for an NFSU wheel, 128 for a Most Wanted one (its spokes are painted on a flat face: at 64 they blurred away)
+    src = nfsu_rgba(textures[tex]).astype(np.float32)
+    sh, sw = src.shape[:2]
+    q = 128 if sh >= 256 and nparts and nparts[0].get('materials') else 64
     xd = open(xpr_path, 'rb').read()
     t = fx.textures(xd)[0]
     old = fx.dxt(xd[t['start']:], t['w'], t['h'], 5)
-    img = np.ascontiguousarray(old.repeat(128 // t['w'], 0).repeat(128 // t['h'], 1))
-    src = nfsu_rgba(textures[tex]).astype(np.float32)
-    sh, sw = src.shape[:2]
-    small = src.reshape(64, sh // 64, 64, sw // 64, 4).mean((1, 3)) if sh >= 64 else src.repeat(64 // sh, 0).repeat(64 // sw, 1)
-    img[:64, :64] = np.clip(small + 0.5, 0, 255).astype(np.uint8)
-    img[:64, :64, 3] = 255
+    img = np.ascontiguousarray(old.repeat(2 * q // t['w'], 0).repeat(2 * q // t['h'], 1))
+    small = src.reshape(q, sh // q, q, sw // q, 4).mean((1, 3)) if sh >= q else src.repeat(q // sh, 0).repeat(q // sw, 1)
+    img[:q, :q] = np.clip(small + 0.5, 0, 255).astype(np.uint8)
+    img[:q, :q, 3] = 255
     open(out_xpr, 'wb').write(fx.write_dxt5(xd, img))
     print('wheel: %d rim triangles in %d levels, scale %.3f' % (sum(len(s) for _, s in subs), len(subs), rim_r / 0.223))
 
@@ -1730,7 +1807,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 7 and sys.argv[1] == '--wheel':
         convert_wheel(*sys.argv[2:])
         raise SystemExit
-    args = [a for a in sys.argv[1:] if a not in ('--keep-glass', '--no-stock-wing')]
+    args = [a for a in sys.argv[1:] if a not in ('--keep-glass', '--no-stock-wing', '--clear-livery')]
     badges = None
     if '--badges' in args:
         i = args.index('--badges')
@@ -1743,4 +1820,5 @@ if __name__ == '__main__':
         del args[i:i + 2]
     if len(args) != 3:
         raise SystemExit(__doc__)
-    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges, liveries=liveries, stock_wing='--no-stock-wing' not in sys.argv)
+    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges, liveries=liveries, stock_wing='--no-stock-wing' not in sys.argv,
+            clear_livery='--clear-livery' in sys.argv)

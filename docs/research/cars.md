@@ -657,3 +657,31 @@ level): CareerCarUnlock puts a car on sale, CareerCarGift gives it, in
 batches every five levels. tunecar.py --unlock does all three; the 240SX
 is on sale from level 5, the Cobalt SS from 5 (10 in Europe and Asia), the
 Gallardo from 25 in Europe and 30 elsewhere.
+
+## The Hero's M3 GTR (27 Oct)
+
+Most Wanted's BMWM3GTRE46 (the wide-arched one with the tall GT wing; the
+other folder, BMWM3GTR, is a milder variant), converted 1:1 on Forza's own
+#42 M3 GTR race car as the template (its size, wheel positions, interior
+and driver; the Civic is 35 cm shorter), added as BMWM3GTRMW from
+BMWM3GTR42: its race engine, sound and physics, the R class's GTS subclass,
+every upgrade list stocked at level 3 with the rest Price -1 (nothing to
+buy), a liveries.xml with the Civic's colour choices and no vinyl layers
+(tunecar.py --paint-like; a race car has none and no paint shop), silver,
+Estoril blue and black as its paints, on sale from level 45.
+
+What another template took in nfsu2forza.py: its slots by its own names
+(bumperF, hood, wing), the tail lights in the rear bumper when it has no
+tail light parts, the template's part hidden where the MW car has nothing
+for a slot (the M3's hood, wing and mirrors are in its body), --clear-livery
+(a race car's sponsors cleared from the atlas but for the kept parts'
+own texels, found triangle by triangle: its driver01 is drawn from the whole
+livery and is left out), its decal triangles (material 15) counted as body.
+The layout is clamped to the template triangle under each vertex (off its
+edge the map ran far outside the paint, onto the packed lamps).
+
+Wheels: a Most Wanted rim is in the tyre part (RIM_KIT00_* groups), its
+spokes painted on a flat face (DXT1, no alpha); nfsu2forza.py --wheel puts
+it on a Forza wheel with a 128 x 128 quarter for it, updatecar.py --wheel
+gives the car tires\art\<car>. The Gallardo and Cobalt have theirs too.
+Mega.ca2 is at 11.74 of its 12 MB in run/mods_lambo.
