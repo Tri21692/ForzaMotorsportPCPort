@@ -131,3 +131,40 @@ are used only by point-to-point events; the ends are ~2.5 km apart.
 - Not found yet: where the game keeps the centre line it measures progress
   and laps by (not in the text files; AudioSpline.bin, the xbp files and
   the xb2 are candidates), and the AI's lines (AI\DrivatarV2).
+
+## Pacific Shipyards Circuit: what is built, what the scenery holds (27 Oct)
+
+Built (tools/shipyardloop.py, tools/coledit.py; runtime/file.c): a track
+list entry VancouverLoop (Hot Lap 22, no AI) with its own collision, the
+loop's edge splines in its own copy of vancouver.res (the runtime opens
+mods\hdd\Partition4\<track>\ in place of the cache's files once the track's
+collision file has been opened), and a visibility file whose cells all show
+Pacific Shipyards II's cells 2-5. It loads and the existing roads draw; the
+link has collision but nothing drawn: the scenery has no ground there.
+
+- A track entry names its scenery (resourceFile), collision, visibility
+  (pvsFile) and data folder; D:\MEDIA\tracks\<name>\ must hold the audio
+  spline, lightmap and glassenv (Flythrough.bik unless Video names one).
+  The game copies the collision to N:\<name>.col. Laps: a track without
+  start/end (and with hotlapordinal) is a circuit; the edge splines, open
+  polylines (Tsukuba's ends 7.5 m apart), carry the lap.
+- QuickPreview1.pvs (version 0x131f0cf): '3SVP', version, u32, guid, u32
+  cells (24); per cell three lists (u32 count; entries of 4, 8, 4 bytes:
+  u16 mesh, u16 mask of the cell's 16 steps, the middle list a u32 more);
+  6 bytes. Cells run in driving order; the game picks one by progress and
+  streams what the cells around it list. The visibility files only load
+  from Pacific Shipyards II's folder (from another, the load fails after
+  the .stx). .pvs.stx: low-resolution copies of textures, the same for both
+  directions; .pvs.ppw: per mesh a bounding sphere (radius, centre).
+- The bundle (tools/xb2.py): a 0x200 header, from 0x202 per resource 24
+  bytes (header offset, name hash, data offset in the unpacked bundle, size
+  twice, name offset from the names at 'resnametable'), then the names.
+  Resources are numbered from 9 (0-8 are the bundle's own tables; `types`
+  holds a byte per resource). model_quickpreview: u32 meshes (4528, the
+  numbers the visibility lists use), their offsets, records of 24-44 bytes;
+  the 28-byte one: flags, u32, index count, vertex bytes, u16 vertex buffer,
+  u16 stride in dwords (6), u16 primitive (6, a strip), u16 texture, u16
+  lightmap, u16 shader. A vertex buffer: the vertices (24 bytes: f32 x, y, z
+  in world space, u32, four s16 texture coordinates) then u16 strip
+  indices. quickpreview1.xbp.svb: the small vertex buffers again (u32
+  resource, u32 size, data; 1993), loaded with the bundle; .cbx: 140 boxes.
