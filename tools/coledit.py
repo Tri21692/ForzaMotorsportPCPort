@@ -22,8 +22,10 @@ and 8 m around it:
   0x18  f32 min x, min z, max x, max z (the cell's bounds, margin included)
   0x28  f32 10, 10, 0.1, 0.1
   0x38  u32 the sub-grid's offset; u32 0
-  vertices: 16 bytes, f32 x, y, z, u32 (0x7f8xxxxx on driveable ground,
-            0 on walls)
+  vertices: 16 bytes, f32 x, y, z, u32 the triangle's unit normal packed:
+            x in bits 0-10, z in 11-21 (signed, 1023 = 1), y in 22-31
+            (signed, 511 = 1); ground 0x7f8xxxxx. A wall whose words are 0
+            (no normal) does not stop a car.
   triangles: 28 bytes, u32 surface (0 road, 0x500 and 0xa00 other ground;
             0x300, 0x400, 0x900, 0xe00, 0xf00, 0x1000 walls), three u32
             vertex offsets from the block, f32 normal
@@ -39,6 +41,12 @@ import sys
 import numpy as np
 
 SUB = 12
+
+
+def pack_normal(n):
+    """A unit normal as a vertex's word: x and z in 11 bits (1023 = 1), y in the top 10 (511 = 1)."""
+    x, y, z = (int(float(v) * m) for v, m in zip(n, (1023, 511, 1023)))  # truncated, as the file has them
+    return (x & 0x7ff) | (z & 0x7ff) << 11 | (y & 0x3ff) << 22
 
 
 def overlaps(tri, box):
@@ -168,11 +176,13 @@ class Col:
                 out.append((s, [b.verts[i][:3] for i in ijk], n, [b.verts[i][3] for i in ijk]))
         return out
 
-    def add(self, surface, pts, word):
-        """A triangle (three (x, y, z)) into every block whose bounds its bounding box overlaps."""
+    def add(self, surface, pts, word=None):
+        """A triangle (three (x, y, z)) into every block whose bounds its bounding box overlaps; its
+        vertices' word its packed normal unless given."""
         p = np.array(pts, float)
         n = np.cross(p[1] - p[0], p[2] - p[0])
         n = n / (np.linalg.norm(n) or 1)
+        if word is None: word = pack_normal(n)
         lo, hi = p.min(0), p.max(0)
         for cell in range(self.cols * self.rows):
             bx0, bz0, bx1, bz1 = self.cell_bounds(cell)

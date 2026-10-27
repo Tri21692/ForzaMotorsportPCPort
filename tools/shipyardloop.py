@@ -168,11 +168,6 @@ def in_quad(pt, quad):
     return all(s >= 0 for s in sgn) or all(s <= 0 for s in sgn)
 
 
-def ground_word(col):
-    """The marker a driveable vertex carries, as the course has it."""
-    return next(w for b in col.blocks for v in b.verts for w in [v[3]] if w >> 24 == 0x7f)
-
-
 def far_side(link, sp):
     """A test for points beside the course where the link leaves and joins it, on the side away
     from the link: the course's far walls there, which stay."""
@@ -230,16 +225,15 @@ def make_collision(col, link, link_width, walls, sp):
             if out[k] and out[k + 1]:
                 pa, pb = a + (b - a) * ts[k], a + (b - a) * ts[k + 1]
                 pieces.add((round(pa[0], 2), round(pa[1], 2), round(pb[0], 2), round(pb[1], 2), round(y0, 2), round(y1, 2)))
-    def wall(q):  # both faces, as the course's own walls are: one face alone stops a car from one side only
+    def wall(q):  # both faces, as the course's own walls are; coledit packs each one's normal into its words
         for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
-            col.add(0x900, tri, 0)
+            col.add(0x900, tri)
     for x0, z0, x1, z1, y0, y1 in pieces:
         wall([(x0, y0, z0), (x1, y0, z1), (x1, y1, z1), (x0, y1, z0)])
-    word = ground_word(col)
     quads = strip(link, link_width + 4)  # 2 m over each edge onto the lot
     for q in quads:
-        col.add(0, [q[0], q[1], q[2]], word)
-        col.add(0, [q[2], q[3], q[0]], word)
+        col.add(0, [q[0], q[1], q[2]])
+        col.add(0, [q[2], q[3], q[0]])
     for (x0, z0, y0), (x1, z1, y1) in walls:
         wall([(x0, y0 - 1, z0), (x1, y1 - 1, z1), (x1, y1 + 3, z1), (x0, y0 + 3, z0)])
     return gone, 2 * len(quads)
@@ -623,7 +617,10 @@ def install(disc, mods, loop, col_bytes, res_bytes, pvs_bytes, ppw_bytes, cbx_by
         if not f.lower().startswith('quickpreview1.pvs'):
             open(os.path.join(d, f), 'wb').write(open(os.path.join(rev, f), 'rb').read())
     t = os.path.join(mods, 'track', TAG)
+    # the collision too: the game copies it to the hard disk's cache (Partition4\VancouverLoop.col) the
+    # first time and reads that copy after, so a new one in media\tracks\ alone is never seen
     for rel, data in ((('hdd', 'Partition4', 'vancouver.res'), res_bytes),
+                      (('hdd', 'Partition4', TAG + '.col'), col_bytes),
                       (('media', 'tracks', 'VancouverReverse', 'QuickPreview1.pvs'), pvs_bytes),
                       (('media', 'tracks', 'VancouverReverse', 'QuickPreview1.pvs.ppw'), ppw_bytes),
                       (('media', 'tracks', 'Vancouver', 'quickpreview1.xbp.cbx'), cbx_bytes)):

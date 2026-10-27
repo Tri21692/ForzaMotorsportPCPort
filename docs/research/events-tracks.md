@@ -145,7 +145,14 @@ link has collision but nothing drawn: the scenery has no ground there.
 - A track entry names its scenery (resourceFile), collision, visibility
   (pvsFile) and data folder; D:\MEDIA\tracks\<name>\ must hold the audio
   spline, lightmap and glassenv (Flythrough.bik unless Video names one).
-  The game copies the collision to N:\<name>.col. Laps: a track without
+  The game copies the collision to N:\<name>.col the first time and reads
+  that copy ever after: a changed collision in media\tracks\ is never seen
+  (every collision change made for the circuit after its first build went
+  unused until it was also installed as track\<track>\hdd\Partition4\
+  <name>.col). A collision vertex's u32 is its triangle's normal packed
+  (x bits 0-10, z 11-21, signed with 1023 = 1; y 22-31, 511 = 1).
+  Screenshots save the vertex constants beside them (.cst) and
+  tools/shotpos.py gives the camera's position from them. Laps: a track without
   start/end (and with hotlapordinal) is a circuit; the edge splines, open
   polylines (Tsukuba's ends 7.5 m apart), carry the lap.
 - QuickPreview1.pvs (version 0x131f0cf): '3SVP', version, u32, guid, u32
