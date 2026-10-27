@@ -625,3 +625,23 @@ the Civic's 195/55 R15 tyres and 13" brakes were what braked so badly
 tyres made the 360 gearbox top out at 253 km/h (--final-drive 3.75 with
 19" tyres: about 330 km/h at the limiter). DriverPosition moves with the
 roof (-0.19 m). Stock paints are the car cab's liveries/standard/liveryN.livery.
+
+## Vinyls on converted cars (27 Oct)
+
+The paint shop's vinyls go into one region of the livery atlas per view
+(the masks in `<car>.liveries.bin`, left.tga 915 x 260 and so on, are the
+car seen from that side), and a car shows them through its painted
+triangles' texture coordinates: the Civic's left side lies along the
+atlas's bottom, its right across the middle, the roof in the centre, the
+hood to its left, the trunk to its right, the bumpers along the top (u16 /
+32768; Forza winds triangles against the usual cross product). A converted
+body on one paint texel showed no vinyl. nfsu2forza.py now gives each
+painted triangle, by the side it faces, the coordinates the template's
+painted surface has at the same place seen from that side (template_layout,
+apply_layout: one map per template island, vertices copied only where
+islands meet), whitens those texels (the Civic's badges and its dark trim
+lines were in them) and opens them to repaints in liveries.bin. The packed
+textures go into the 1024 atlas at their own size (half into the 512 ones),
+so they fit in what is left. tools/updatecar.py puts a reconverted body into
+an installed car. Checked by drawing the cars with a test pattern in the
+atlas; not yet seen in the game's paint shop.
