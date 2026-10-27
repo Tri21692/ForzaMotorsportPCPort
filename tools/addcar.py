@@ -255,6 +255,34 @@ def write_strings(d, add):
     return bytes(head) + blk1 + blk2
 
 
+PHYSICS_OF = {'Brakes': 'brakes', 'Tire': 'tiremod', 'Suspension': 'suspension', 'Clutch': 'clutch',
+              'Transmission': 'transmission', 'DrivetrainDiff': 'drivetraindiff', 'Weight': 'weight'}
+
+
+def rebase(section):
+    """An upgrade list (tooldata.xml) whose stock level S is above 0 made
+    stock at level 0, the levels below S that level again and not for sale
+    (Price -1, as the game marks them), the rest as they were. A car saved
+    with level-0 upgrades (as built before) and loaded with a list stocked
+    at 2 (the Ferrari 360's brakes) was below stock, which no car of the
+    disc ever is: the free run's own-car select crashed on it. Returns the
+    list and S."""
+    m = re.search(r'StockLevel="(\d+)"', section)
+    s = int(m.group(1)) if m else 0
+    if not s: return section, 0
+    lv = {int(g.group(1)): g.group(0) for g in re.finditer(r'<L(\d)\b[^>]*?(?:/>|>.*?</L\1>)', section, re.S)}
+    def as_level(k, body, price):
+        body = re.sub(r'^<L\d', '<L%d' % k, body)
+        body = re.sub(r'</L\d>$', '</L%d>' % k, body)
+        return re.sub(r'\bPrice="[^"]*"', 'Price="%s"' % price, body, count=1)
+    out = section.replace(m.group(0), 'StockLevel="0"')
+    for k in range(s + 1):
+        out = out.replace(lv[k], '\0L%d\0' % k, 1)
+    for k in range(s + 1):
+        out = out.replace('\0L%d\0' % k, as_level(k, lv[s], 0 if k == 0 else -1))
+    return out, s
+
+
 # ----
 
 def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False, cab=None, make=None, year=None,
@@ -428,8 +456,13 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
             pat = r'\t*<%s\b[^>]*>.*?</%s>' % (sec, sec)
             blk = re.search(pat, theirs, re.S)
             if not blk or not re.search(pat, tool, re.S): raise SystemExit('--tooldata-like %s: no <%s> in both' % (spec, sec))
-            tool = re.sub(pat, lambda _: blk.group(0), tool, count=1, flags=re.S)
-            print('tooldata <%s>: %s\'s' % (sec, car))
+            new_blk, stock = rebase(blk.group(0))
+            tool = re.sub(pat, lambda _: new_blk, tool, count=1, flags=re.S)
+            folder = PHYSICS_OF.get(sec)
+            if stock and folder:  # the physics levels below the stock one as the stock one, as the lists now say
+                pl = [cdst + B.join(('physics', folder, 'l%d.xml' % lv)) for lv in range(4)]
+                for lv in range(stock): cars.files[pl[lv]] = cars.files[pl[stock]]
+            print('tooldata <%s>: %s\'s%s' % (sec, car, ', its stock level %d made level 0' % stock if stock else ''))
     if tires:  # every tyre level's sizes: "235/35R19,295/30R19", the front's and the rear's (the top level 10 mm wider)
         sizes = [re.fullmatch(r'(\d+)/(\d+)R(\d+)', s).groups() for s in tires.split(',')]
         def level(m_):
