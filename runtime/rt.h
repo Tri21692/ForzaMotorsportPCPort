@@ -57,6 +57,7 @@ extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
 extern volatile uint32_t rt_debug_keys;
 extern volatile int rt_ram_dump_wanted; /* F4 (display.c): nv2a.c saves the RAM */
 extern volatile int rt_gpu_dump_wanted; /* F3 (display.c): nv2a.c writes a frame's GPU methods */
+void rt_save_constants(const char *path); /* with a screenshot: the vertex constants mid-frame (raster.c) */
 
 /* The player's settings (settings.c, forza.ini). */
 typedef struct {

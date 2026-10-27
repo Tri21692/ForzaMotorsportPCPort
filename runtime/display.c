@@ -181,6 +181,8 @@ static void maybe_screenshot(const uint32_t *px, int w, int h) {
     char path[1024];
     snprintf(path, sizeof path, "%s/shot_%04d_%06.1fs.bmp", shot_dir, shot_count++, now / 1e7);
     save_bmp(path, px, w, h);
+    strcpy(path + strlen(path) - 3, "cst");
+    rt_save_constants(path);
 }
 
 /* ---- the window ---- */
@@ -224,6 +226,8 @@ static void debug_key(WPARAM vk) {
         char path[256];
         snprintf(path, sizeof path, "screenshots/shot_%06.1fs.bmp", rt_now_100ns() / 1e7);
         save_bmp(path, frame, frame_w, frame_h);
+        strcpy(path + strlen(path) - 3, "cst");
+        rt_save_constants(path);
         return;
     }
     if (vk == VK_F2) rt_debug_keys ^= RT_DBG_NO_WBUF;

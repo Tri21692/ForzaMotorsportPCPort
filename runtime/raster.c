@@ -598,6 +598,27 @@ static uint32_t program[136][4];
 static uint32_t constants[192][4];
 static uint32_t program_load, constant_load;
 
+/* Screenshots (display.c) also save the vertex constants, 192 x 4 floats, as
+ * they stand at the 100th draw of the next frame: the world is being drawn
+ * then, not the HUD, so its view and projection are among them and the
+ * camera's position can be worked out (debugging where a picture was taken). */
+static char cst_path[1024];
+static volatile int cst_wanted;
+static uint32_t frame_draws;
+
+void rt_save_constants(const char *path) {
+    if (cst_wanted) return;
+    snprintf(cst_path, sizeof cst_path, "%s", path);
+    __atomic_store_n(&cst_wanted, 1, __ATOMIC_RELEASE);
+}
+
+static void constants_drawn(void) {
+    if (++frame_draws != 100 || !__atomic_load_n(&cst_wanted, __ATOMIC_ACQUIRE)) return;
+    FILE *f = fopen(cst_path, "wb");
+    if (f) fwrite(constants, sizeof constants, 1, f), fclose(f);
+    __atomic_store_n(&cst_wanted, 0, __ATOMIC_RELEASE);
+}
+
 /* XBRT_GPU_DUMP: the program and constants as they stand when the dump
  * starts, written as the methods that would load them. */
 void nv2a_raster_dump_state(FILE *f, uint32_t flip) {
@@ -1463,6 +1484,7 @@ void nv2a_raster_sync_range(uint32_t base, uint32_t size) {
 }
 
 void nv2a_raster_flip(void) {
+    frame_draws = 0;
     nv2a_raster_flush();
     if (rt_gl_on) gl_flip();
 }
@@ -1724,6 +1746,7 @@ void nv2a_raster_method(uint32_t method, uint32_t arg) {
     if (program_method(method, arg)) return;
     if (method == SET_BEGIN_END) {
         if (arg) {
+            constants_drawn();
             prim_t0 = rt_now_100ns();
             prim = (int)arg, nverts = 0, ninline = 0, deferred = 0;
             fetch_layout();
