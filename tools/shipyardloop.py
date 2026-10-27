@@ -58,10 +58,14 @@ def hermite(p0, t0, p1, t1, n):
     return h00 * p0 + h10 * t0 + h01 * p1 + h11 * t1
 
 
-def loop_edges(sp, back=1, ahead=0):
+def loop_edges(sp, back=1, ahead=-2, pull=(1.2, 0.6)):
     """The loop's six edges in Pacific Shipyards II's direction (the reverse of the buffers'), as
     lists of points with a shared parameter: the course from the lower road's corner round the
-    lot to the upper road's kink, then the link back."""
+    lot to the upper road's kink and 2 points (~16 m) on along the old road west of it, then the
+    link back. `pull`: how far the link's ends follow the course's direction (times the link's
+    span) at the lower road and at the upper. From the kink itself the link swung out past the
+    upper road's north wall in a hairpin; leaving further west, or pulled harder, it runs into
+    warehouse 10 (x -546..-531, z -147..-127). This turns in 13 m at the tightest."""
     c = (sp[4] + sp[5]) / 2
     ik, it = nearest(c, KINK), nearest(c, TIP)
     assert ik < it, (ik, it)
@@ -70,7 +74,7 @@ def loop_edges(sp, back=1, ahead=0):
     tan = lambda i: (c[min(i + 1, len(c) - 1)] - c[max(i - 1, 0)]) / np.linalg.norm(c[min(i + 1, len(c) - 1)] - c[max(i - 1, 0)])
     p0, p1 = c[b], c[a]
     d = np.linalg.norm(p1 - p0)
-    link_c = hermite(p0, tan(b) * d * 1.2, p1, tan(a) * d * 1.2, 60)[1:-1]
+    link_c = hermite(p0, tan(b) * d * pull[0], p1, tan(a) * d * pull[1], 60)[1:-1]
     edges = []
     for k in range(6):
         e = sp[k]
@@ -169,15 +173,37 @@ def ground_word(col):
     return next(w for b in col.blocks for v in b.verts for w in [v[3]] if w >> 24 == 0x7f)
 
 
-def make_collision(col, link, link_width, walls):
-    """The link as road, the walls across it removed (a strip a metre narrower each side, so the
-    course's far walls at the two ends stay), and invisible walls (pairs of points (x, z), 3 m high
-    above y) across the old course."""
-    cut = [[(q[0], q[2]) for q in quad] for quad in strip(link, link_width - 2)]
+def far_side(link, sp):
+    """A test for points beside the course where the link leaves and joins it, on the side away
+    from the link: the course's far walls there, which stay."""
+    c = (sp[4] + sp[5]) / 2
+    ends = []
+    for e, inner in ((0, 12), (len(link) - 1, len(link) - 13)):
+        i = nearest(c, (link[e][0], link[e][2]))
+        t = c[min(i + 1, len(c) - 1)] - c[max(i - 1, 0)]
+        n = np.array([t[2], -t[0]]) / np.hypot(t[0], t[2])
+        ends.append((i, n, np.sign(np.dot(link[inner][[0, 2]] - c[i][[0, 2]], n))))
+    def far(x, z):
+        i = nearest(c, (x, z))
+        for j, n, link_side in ends:
+            off = np.dot(np.array([x, z]) - c[i][[0, 2]], n)
+            if abs(i - j) <= 4 and np.sign(off) == -link_side and abs(off) > 2: return True
+        return False
+    return far
+
+
+def make_collision(col, link, link_width, walls, sp):
+    """The link as road, the walls across it removed (a strip a metre wider each side, so no stub
+    of a wall it crosses is left inside its edges; but not the course's far walls where it leaves
+    and joins it), and invisible walls (pairs of points (x, z), 3 m high above y) across the old
+    course."""
+    cut = [[(q[0], q[2]) for q in quad] for quad in strip(link, link_width + 2)]
+    far = far_side(link, sp)
     def keep(surface, pts):
         xz = [(p[0], p[2]) for p in pts]
         n = np.cross(np.subtract(pts[1], pts[0]), np.subtract(pts[2], pts[0]))
         if abs(n[1]) > 0.7 * np.linalg.norm(n): return True  # ground: kept (the link lies on top of it, if any)
+        if far(*np.mean(xz, 0)): return True
         for quad in cut:
             if any(in_quad(p, quad) for p in xz): return False
             for e0, e1 in ((xz[0], xz[1]), (xz[1], xz[2]), (xz[2], xz[0])):
@@ -362,6 +388,8 @@ def move_sphere(ppw, old_centre, old_radius, centre, radius):
 # ends the construction barricades, road-closed and detour signs and the steamroller closing the lot off
 HIDE = ('building_warehouse13', 'constructionbarricade', 'barrier_construction_08', 'sign_roadclosed05',
         'signturnplywood02', 'steamroller_02')
+# and where the link crosses the lot off the course's road, the guardrails and parked trucks on it
+CROSSING = ('guardrail', 'vehicledeliverytruck')
 
 
 def mesh_vertices(res, names, i):
@@ -377,19 +405,23 @@ def mesh_vertices(res, names, i):
     return v if np.all(np.isfinite(v)) and np.abs(v).max() < 5000 else None
 
 
-def hidden_meshes(res, link):
-    """The meshes named in HIDE that have a vertex within 30 m of the link."""
+def hidden_meshes(res, link, sp):
+    """The meshes named in HIDE that have a vertex within 30 m of the link, and those named in
+    CROSSING with one on the link's road (2 m over its edges) where it is off the course's."""
     import xb2
     names, _ = xb2.resources(bytes(res))
+    off = link[off_course(link, sp, margin=2.0)]
     out = []
     for i in range(struct.unpack_from('<I', res, MODEL)[0]):
         a = struct.unpack_from('<I', res, MODEL + 4 + 4 * i)[0]
         vb = struct.unpack_from('<H', res, MODEL + a + 16)[0]
-        if not (9 <= vb < len(names) + 9) or not any(h in names[vb - 9][0] for h in HIDE): continue
+        if not (9 <= vb < len(names) + 9): continue
+        hide, cross = (any(h in names[vb - 9][0] for h in t) for t in (HIDE, CROSSING))
+        if not (hide or cross): continue
         v = mesh_vertices(res, names, i)
         if v is None: continue
-        d = np.min(np.hypot(v[:, None, 0] - link[None, :, 0], v[:, None, 2] - link[None, :, 2]))
-        if d < 30: out.append(i)
+        if hide and np.min(np.hypot(v[:, None, 0] - link[None, :, 0], v[:, None, 2] - link[None, :, 2])) < 30: out.append(i)
+        elif cross and len(off) and np.min(np.hypot(v[:, None, 0] - off[None, :, 0], v[:, None, 2] - off[None, :, 2])) < LINK_WIDTH / 2 + 2: out.append(i)
     return out
 
 
@@ -588,9 +620,9 @@ if __name__ == '__main__':
     col = coledit.Col(open(os.path.join(folder, 'QuickPreview1.col'), 'rb').read())
     c = (sp[4] + sp[5]) / 2
     # the old course where it leaves the loop: towards Pacific Shipyards II's start, and west of the kink
-    walls = [across(c, nearest(c, (-484.1, -300.7))), across(c, nearest(c, (-533.4, -95.9)))]
+    walls = [across(c, nearest(c, (-484.1, -300.7))), across(c, nearest(c, (-558.3, -100.3)))]
     walls += link_walls(link, LINK_WIDTH, sp)
-    gone, added = make_collision(col, link, LINK_WIDTH, walls)
+    gone, added = make_collision(col, link, LINK_WIDTH, walls, sp)
     col_bytes, res_bytes = col.to_bytes(), write_splines(res, loop)
     print('collision: %d wall triangles removed, %d road triangles added, %d wall pieces added' % (gone, added, len(walls)))
     # the link's road, drawn: the donor mesh rewritten, its bounding sphere moved, in every visibility cell
@@ -602,7 +634,7 @@ if __name__ == '__main__':
     centre_r, radius = write_road(res_bytes, left, right)
     rev = os.path.join(disc, 'media', 'tracks', 'VancouverReverse')
     ppw = open(os.path.join(rev, 'QuickPreview1.pvs.ppw'), 'rb').read()  # the donor's sphere: not found yet (see move_sphere)
-    hide = hidden_meshes(res_bytes, link)
+    hide = hidden_meshes(res_bytes, link, sp)
     pvs, sizes = loop_pvs(open(os.path.join(rev, 'QuickPreview1.pvs'), 'rb').read(), PVS_CELLS, extra=[DONOR], hide=set(hide))
     print('road: %d cross-sections in mesh %d; visibility: %s meshes in every cell, %d hidden' % (len(left), DONOR, sizes, len(hide)))
     cbx, dropped = clear_boxes(zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read()), link, LINK_WIDTH + 4)
