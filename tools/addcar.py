@@ -161,6 +161,75 @@ def restore_tree(files, disc, prefix):
     for k, v in under(disc, prefix).items(): files[k] = v
 
 
+def tune(ctx, physics_like=None, tooldata_like=None, tires=None, final_drive=None, mass=None):
+    """A car's physics and upgrade lists from other cars and figures
+    (addcar.py's --physics-like, --tooldata-like, --tires, --final-drive,
+    --mass; tunecar.py the same for a car already added). ctx: files
+    (Cars.ca2's), xml (carlist.xml), entry (its block), model (model.dat
+    rows), mrow (its row, changed in place), cdst (the car's folder), tool
+    (tooldata.xml); xml, entry and tool are given back in it."""
+    files, xml, entry, model, mrow, cdst, tool = (ctx[k] for k in ('files', 'xml', 'entry', 'model', 'mrow', 'cdst', 'tool'))
+    for spec in physics_like or ():  # <car>:<part>,<part>: those parts' physics (every level) from another car
+        car, parts = spec.split(':')
+        pp = B.join(('cars', car.lower(), 'physics')) + B
+        for part in parts.split(','):
+            src_p, dst_p = pp + part.lower() + B, cdst + B.join(('physics', part.lower())) + B
+            got = under(files, src_p)
+            if not got: raise SystemExit('--physics-like %s: %s has no physics\\%s' % (spec, car, part))
+            for k in list(under(files, dst_p)): del files[k]
+            for k, v in got.items(): files[dst_p + k[len(src_p):]] = v
+            if part.lower() == 'drivetraindiff':  # and which wheels it drives: nonupgradedata's Drivetrain Type, carlist's carDriveType
+                nk = cdst + B.join(('physics', 'nonupgradedata.xml'))
+                dtype = re.search(rb'<Drivetrain Type="([^"]*)"', files[pp + 'nonupgradedata.xml']).group(1)
+                files[nk] = re.sub(rb'(<Drivetrain Type=")[^"]*"', lambda g: g.group(1) + dtype + b'"', files[nk])
+                val = re.search(r'\bcarDriveType="([^"]*)"', car_block(xml, car).group(0)).group(1)
+                new_entry = re.sub(r'\bcarDriveType="[^"]*"', 'carDriveType="%s"' % val, entry)
+                xml, entry = xml.replace(entry, new_entry), new_entry
+                mrow[52:56] = row_of(model, ordinal_of(xml, car))[52:56]  # the spec screen's drivetrain (drivetraintype.dat)
+                print('drivetrain: %s (%s)' % (dtype.decode(), car))
+            print('physics\\%s: %d files from %s' % (part.lower(), len(got), car))
+    for spec in tooldata_like or ():  # <car>:<Section>,<Section>: tooldata's upgrade lists (stock level, prices, brake parts, tyre sizes) of another car
+        car, secs = spec.split(':')
+        theirs = files[B.join(('cars', car.lower(), 'tooldata.xml'))].decode('latin-1')
+        for sec in secs.split(','):
+            pat = r'\t*<%s\b[^>]*>.*?</%s>' % (sec, sec)
+            blk = re.search(pat, theirs, re.S)
+            if not blk or not re.search(pat, tool, re.S): raise SystemExit('--tooldata-like %s: no <%s> in both' % (spec, sec))
+            new_blk, stock = rebase(blk.group(0))
+            tool = re.sub(pat, lambda _: new_blk, tool, count=1, flags=re.S)
+            folder = PHYSICS_OF.get(sec)
+            if stock and folder:  # the physics levels below the stock one as the stock one, as the lists now say
+                pl = [cdst + B.join(('physics', folder, 'l%d.xml' % lv)) for lv in range(4)]
+                for lv in range(stock): files[pl[lv]] = files[pl[stock]]
+            print('tooldata <%s>: %s\'s%s' % (sec, car, ', its stock level %d made level 0' % stock if stock else ''))
+    if tires:  # every tyre level's sizes: "235/35R19,295/30R19", the front's and the rear's (the top level 10 mm wider)
+        sizes = [re.fullmatch(r'(\d+)/(\d+)R(\d+)', s).groups() for s in tires.split(',')]
+        def level(m_):
+            body = m_.group(0)
+            wider = 10 if m_.group(1) == '3' else 0
+            for end, (w_, r_, d_) in zip(('Fronts', 'Rears'), sizes):
+                body = re.sub(r'<%s [^>]*/>' % end, '<%s TireWidth="%d" TireRatio="%s" WheelDiameter="%s" />' % (end, int(w_) + wider, r_, d_), body)
+            return body
+        tire = re.search(r'<Tire\b.*?</Tire>', tool, re.S).group(0)
+        tool = tool.replace(tire, re.sub(r'<L(\d)\b.*?</L\1>', level, tire, flags=re.S))
+        print('tyres: %s' % tires)
+    if final_drive:  # every gearbox level's final drive ratio scaled so the stock one is this (longer: a higher top speed)
+        tl = [cdst + B.join(('physics', 'transmission', 'l%d.xml' % lv)) for lv in range(4)]
+        k_ = final_drive / float(re.search(rb'FinalDriveRatio="([0-9.]+)"', files[tl[0]]).group(1))
+        for t in tl:
+            if t in files:
+                files[t] = re.sub(rb'FinalDriveRatio="([0-9.]+)"', lambda g: b'FinalDriveRatio="%.3f"' % (float(g.group(1)) * k_), files[t])
+        print('final drive: %.2f (x%.3f at every level)' % (final_drive, k_))
+    if mass:  # the stock weight, kg, and the lighter upgrade levels by as much
+        wl = [cdst + B.join(('physics', 'weight', 'l%d.xml' % lv)) for lv in range(4)]
+        old = float(re.search(rb' Mass="([0-9.]+)"', files[wl[0]]).group(1))
+        for wk in wl:
+            if wk in files:
+                files[wk] = re.sub(rb' Mass="([0-9.]+)"', lambda g: b' Mass="%.3f"' % (float(g.group(1)) * mass / old), files[wk])
+        print('weight: %.1f kg -> %.1f kg (every level x%.3f)' % (old, mass, mass / old))
+    ctx.update(xml=xml, entry=entry, tool=tool)
+
+
 # ---- carlist.xml
 
 def car_block(xml, name):
@@ -429,65 +498,10 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
             if k.lower().endswith('.ini'): v = re.sub(re.escape(eng).encode(), ename.encode(), v, flags=re.I)
             audio[B.join(('engines', ename.lower(), 'audio')) + B + rest] = v
         print('engine sound: %d files from car_%s.cab' % (len(audio), engine_like))
-    for spec in physics_like or ():  # <car>:<part>,<part>: those parts' physics (every level) from another car
-        car, parts = spec.split(':')
-        pp = B.join(('cars', car.lower(), 'physics')) + B
-        for part in parts.split(','):
-            src_p, dst_p = pp + part.lower() + B, cdst + B.join(('physics', part.lower())) + B
-            got = under(cars.files, src_p)
-            if not got: raise SystemExit('--physics-like %s: %s has no physics\\%s' % (spec, car, part))
-            for k in list(under(cars.files, dst_p)): del cars.files[k]
-            for k, v in got.items(): cars.files[dst_p + k[len(src_p):]] = v
-            if part.lower() == 'drivetraindiff':  # and which wheels it drives: nonupgradedata's Drivetrain Type, carlist's carDriveType
-                nk = cdst + B.join(('physics', 'nonupgradedata.xml'))
-                dtype = re.search(rb'<Drivetrain Type="([^"]*)"', cars.files[pp + 'nonupgradedata.xml']).group(1)
-                cars.files[nk] = re.sub(rb'(<Drivetrain Type=")[^"]*"', lambda g: g.group(1) + dtype + b'"', cars.files[nk])
-                val = re.search(r'\bcarDriveType="([^"]*)"', car_block(xml, car).group(0)).group(1)
-                new_entry = re.sub(r'\bcarDriveType="[^"]*"', 'carDriveType="%s"' % val, entry)
-                xml, entry = xml.replace(entry, new_entry), new_entry
-                m[key] = xml.encode('latin-1')
-                mrow[52:56] = row_of(model, ordinal_of(xml, car))[52:56]  # the spec screen's drivetrain (drivetraintype.dat)
-                print('drivetrain: %s (%s)' % (dtype.decode(), car))
-            print('physics\\%s: %d files from %s' % (part.lower(), len(got), car))
-    for spec in tooldata_like or ():  # <car>:<Section>,<Section>: tooldata's upgrade lists (stock level, prices, brake parts, tyre sizes) of another car
-        car, secs = spec.split(':')
-        theirs = cars.files[B.join(('cars', car.lower(), 'tooldata.xml'))].decode('latin-1')
-        for sec in secs.split(','):
-            pat = r'\t*<%s\b[^>]*>.*?</%s>' % (sec, sec)
-            blk = re.search(pat, theirs, re.S)
-            if not blk or not re.search(pat, tool, re.S): raise SystemExit('--tooldata-like %s: no <%s> in both' % (spec, sec))
-            new_blk, stock = rebase(blk.group(0))
-            tool = re.sub(pat, lambda _: new_blk, tool, count=1, flags=re.S)
-            folder = PHYSICS_OF.get(sec)
-            if stock and folder:  # the physics levels below the stock one as the stock one, as the lists now say
-                pl = [cdst + B.join(('physics', folder, 'l%d.xml' % lv)) for lv in range(4)]
-                for lv in range(stock): cars.files[pl[lv]] = cars.files[pl[stock]]
-            print('tooldata <%s>: %s\'s%s' % (sec, car, ', its stock level %d made level 0' % stock if stock else ''))
-    if tires:  # every tyre level's sizes: "235/35R19,295/30R19", the front's and the rear's (the top level 10 mm wider)
-        sizes = [re.fullmatch(r'(\d+)/(\d+)R(\d+)', s).groups() for s in tires.split(',')]
-        def level(m_):
-            body = m_.group(0)
-            wider = 10 if m_.group(1) == '3' else 0
-            for end, (w_, r_, d_) in zip(('Fronts', 'Rears'), sizes):
-                body = re.sub(r'<%s [^>]*/>' % end, '<%s TireWidth="%d" TireRatio="%s" WheelDiameter="%s" />' % (end, int(w_) + wider, r_, d_), body)
-            return body
-        tire = re.search(r'<Tire\b.*?</Tire>', tool, re.S).group(0)
-        tool = tool.replace(tire, re.sub(r'<L(\d)\b.*?</L\1>', level, tire, flags=re.S))
-        print('tyres: %s' % tires)
-    if final_drive:  # every gearbox level's final drive ratio scaled so the stock one is this (longer: a higher top speed)
-        tl = [cdst + B.join(('physics', 'transmission', 'l%d.xml' % lv)) for lv in range(4)]
-        k_ = final_drive / float(re.search(rb'FinalDriveRatio="([0-9.]+)"', cars.files[tl[0]]).group(1))
-        for t in tl:
-            if t in cars.files:
-                cars.files[t] = re.sub(rb'FinalDriveRatio="([0-9.]+)"', lambda g: b'FinalDriveRatio="%.3f"' % (float(g.group(1)) * k_), cars.files[t])
-        print('final drive: %.2f (x%.3f at every level)' % (final_drive, k_))
-    if mass:  # the stock weight, kg, and the lighter upgrade levels by as much
-        wl = [cdst + B.join(('physics', 'weight', 'l%d.xml' % lv)) for lv in range(4)]
-        old = float(re.search(rb' Mass="([0-9.]+)"', cars.files[wl[0]]).group(1))
-        for wk in wl:
-            if wk in cars.files:
-                cars.files[wk] = re.sub(rb' Mass="([0-9.]+)"', lambda g: b' Mass="%.3f"' % (float(g.group(1)) * mass / old), cars.files[wk])
-        print('weight: %.1f kg -> %.1f kg (every level x%.3f)' % (old, mass, mass / old))
+    ctx = {'files': cars.files, 'xml': xml, 'entry': entry, 'model': model, 'mrow': mrow, 'cdst': cdst, 'tool': tool}
+    tune(ctx, physics_like, tooldata_like, tires, final_drive, mass)
+    xml, entry, tool = ctx['xml'], ctx['entry'], ctx['tool']
+    m[key] = xml.encode('latin-1')
     if cab:  # the driver and mirror view as much lower (or higher) as the new roof is than <from>'s: the driver's head stuck out of the Gallardo's roof
         import carbin
         def roof_and_length(blob):
