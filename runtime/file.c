@@ -274,6 +274,23 @@ void rt_mods_installer_records(void) {
     if (d) closedir(d);
 }
 
+/* The track being loaded: the folder of the last track data file opened
+ * (media\tracks\<track>\QuickPreview.xml, tracklist.xml's dataFile).
+ * While it is set, a cache file is looked for first in the mods folder's
+ * hdd\Partition<n>\<track>\: a track that shares another's scenery (the
+ * Pacific Shipyards Circuit, Pacific Shipyards' vancouver.res) can bring
+ * its own copy of it. */
+static char loading_track[64];
+
+static void note_track(const char *rest) {
+    static const char pre[] = "\\media\\tracks\\";
+    if (strncasecmp(rest, pre, sizeof pre - 1)) return;
+    const char *t = rest + sizeof pre - 1, *e = strchr(t, '\\');
+    if (!e || strcasecmp(e, "\\QuickPreview.xml") || (size_t)(e - t) >= sizeof loading_track) return;
+    memcpy(loading_track, t, (size_t)(e - t));
+    loading_track[e - t] = 0;
+}
+
 /* Find a host path for a device-relative name, matching each component
  * case-insensitively. Missing trailing components are kept as written,
  * so creating a new file works. */
@@ -286,6 +303,7 @@ static int host_path(const char *xbox, char *out, size_t n) {
     if (!strncasecmp(dev, "\\Device\\CdRom0", 14)) {
         snprintf(root, sizeof root, "%s", disc_dir);
         rest = dev + 14;
+        note_track(rest);
         if (mod_file(rest, out, n)) {
             static int said;
             if (said < 100) said++, fprintf(stderr, "xbrt: mods: %s\n", out);
@@ -302,6 +320,11 @@ static int host_path(const char *xbox, char *out, size_t n) {
          * the game installed there from the disc (wheels are in mega.cab and
          * megaxpr.cab). Not saves: partitions 1 and 2 are left alone. */
         char modrest[700];
+        snprintf(modrest, sizeof modrest, "\\hdd\\Partition%d\\%s%s", part, loading_track, rest);
+        if (part >= 3 && loading_track[0] && mod_file(modrest, out, n)) {
+            fprintf(stderr, "xbrt: mods: %s (for %s)\n", out, loading_track);
+            return 1;
+        }
         snprintf(modrest, sizeof modrest, "\\hdd\\Partition%d%s", part, rest);
         if (part >= 3 && mod_file(modrest, out, n)) {
             static int said;
