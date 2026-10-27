@@ -645,3 +645,15 @@ textures go into the 1024 atlas at their own size (half into the 512 ones),
 so they fit in what is left. tools/updatecar.py puts a reconverted body into
 an installed car. Checked by drawing the cars with a test pattern in the
 atlas; not yet seen in the game's paint shop.
+
+## Career unlocks (27 Oct)
+
+model.dat's u16 at 72, 74, 76 and 78 are the dealer's unlock text for
+North America, Europe, Asia and Arcade (string ids in CarDataStrings.str,
+IDS_Model_<n>_<Region>UnlockString; 1 none), and the bytes at 93-95 a
+region each, 1 when the car is on sale from the start (92 is 0xff). The
+levels are rarity\<region>\rarityregiondef.xml's `<L>` list (index = the
+level): CareerCarUnlock puts a car on sale, CareerCarGift gives it, in
+batches every five levels. tunecar.py --unlock does all three; the 240SX
+is on sale from level 5, the Cobalt SS from 5 (10 in Europe and Asia), the
+Gallardo from 25 in Europe and 30 elsewhere.
