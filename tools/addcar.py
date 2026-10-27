@@ -9,7 +9,7 @@ to a new car, and --restore gives the Civic SI back its own files.
                          [--cab <car cab>] [--make <car>] [--year <year>] [--price <credits>]
                          [--engine-like <car> [--engine <name>] [--power <hp>] [--torque <lb-ft>]]
                          [--mass <kg>] [--stats-like <car>] [--upgrades <upgrades.xml>]
-                         [--liveries <liveries.bin>]
+                         [--liveries <liveries.bin>] [--physics-like <car>:<part>[,<part>...]]...
   e.g.  <disc>  run/mods  CivicSI  Nissan240SXS13  --name "240SX" --restore
 
 <from> and <new> are car names as in cars\\carlist.xml (<new> must not be
@@ -32,12 +32,16 @@ there is one, else the disc's:
 
 --cab: the new car's cab from this file (a converted model, packed into a copy
 of <from>'s cab) instead of <from>'s. --make: the maker of that car (its
-dealer and logo). --year: the model year. --engine-like: its own copy of
+dealer and logo), or a maker's name as make.dat has it (addmake.py adds
+one). --year: the model year. --engine-like: its own copy of
 that car's engine and sound (named --engine), scaled to --power and
 --torque. --mass: the weight. --stats-like: the menus' figures and ratings
 of a similar car. --upgrades: the shop's body kits, hoods and wings that
 nfsu2forza.py writes for a Most Wanted car. --liveries: the paint shop's copy of the
-livery (nfsu2forza.py --liveries) instead of <from>'s.
+livery (nfsu2forza.py --liveries) instead of <from>'s. --physics-like (any
+number): those folders of cars\\<car>\\physics (every upgrade level), e.g.
+AudiRS6:drivetraindiff (its differentials, and so all-wheel drive) or
+Ferrari360:transmission,brakes.
 
 The ordinal is a number no car has and nothing names as a car
 (carlist, AI opponents, career prizes): the lists skip 13 numbers, and
@@ -246,7 +250,8 @@ def write_strings(d, add):
 # ----
 
 def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False, cab=None, make=None, year=None,
-         engine_like=None, engine=None, power=None, torque=None, mass=None, stats_like=None, price=None, upgrades=None, liveries=None):
+         engine_like=None, engine=None, power=None, torque=None, mass=None, stats_like=None, price=None, upgrades=None, liveries=None,
+         physics_like=None):
     mega, cars, xpr = Archive(disc, mods, 'Mega.ca2'), Archive(disc, mods, 'Cars.ca2'), Archive(disc, mods, 'MegaXPR.ca2')
     m = mega.files
     key = 'cars' + B + 'carlist.xml'
@@ -288,13 +293,22 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
         shown[lang] = (p, mp, name or text_of(nid), short or name or text_of(sid))
     struct.pack_into('<I', mrow, 0, ordinal)
     if year: struct.pack_into('<I', mrow, 16, year)
-    if make:  # the maker (and so the dealer and logo) of another car: carlist's Make and manufacturerid, model.dat's make id
+    if make and re.search(r'<car name="%s"' % re.escape(make), xml, re.I):
+        # the maker (and so the dealer and logo) of another car: carlist's Make and manufacturerid, model.dat's make id
         theirs = car_block(xml, make).group(0)
         for attr in ('Make', 'manufacturerid'):
             val = re.search(r'\b%s="([^"]*)"' % attr, theirs).group(1)
             xml = xml.replace(entry, re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry))
             entry = re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry)
         mrow[4:8] = row_of(model, ordinal_of(xml, make))[4:8]
+    elif make:  # a maker by name, as make.dat has it (one addmake.py added): its id; no manufacturerid (0, as many cars)
+        import addmake
+        hit = [r for r in addmake.makes(m[B.join(('forzadb', 'cardb', 'make.dat'))]) if r[4].lower() == make.lower()]
+        if not hit: raise SystemExit('--make %s: no car or maker of that name' % make)
+        for attr, val in (('Make', hit[0][4]), ('manufacturerid', '0')):
+            new_entry = re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry)
+            xml, entry = xml.replace(entry, new_entry), new_entry
+        struct.pack_into('<I', mrow, 4, hit[0][0])
     if stats_like:  # the menus' figures and ratings of a similar car: gamecars.dat's summary, carlist's ratings and class
         so2 = ordinal_of(xml, stats_like)
         theirs = row_of(games, so2)
@@ -379,6 +393,25 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
         old = re.search(r' Mass="([0-9.]+)"', w)
         cars.files[wk] = (w[:old.start(1)] + '%.3f' % mass + w[old.end(1):]).encode('latin-1')
         print('weight: %s kg -> %.1f kg' % (old.group(1), mass))
+    for spec in physics_like or ():  # <car>:<part>,<part>: those parts' physics (every level) from another car
+        car, parts = spec.split(':')
+        pp = B.join(('cars', car.lower(), 'physics')) + B
+        for part in parts.split(','):
+            src_p, dst_p = pp + part.lower() + B, cdst + B.join(('physics', part.lower())) + B
+            got = under(cars.files, src_p)
+            if not got: raise SystemExit('--physics-like %s: %s has no physics\\%s' % (spec, car, part))
+            for k in list(under(cars.files, dst_p)): del cars.files[k]
+            for k, v in got.items(): cars.files[dst_p + k[len(src_p):]] = v
+            if part.lower() == 'drivetraindiff':  # and which wheels it drives: nonupgradedata's Drivetrain Type, carlist's carDriveType
+                nk = cdst + B.join(('physics', 'nonupgradedata.xml'))
+                dtype = re.search(rb'<Drivetrain Type="([^"]*)"', cars.files[pp + 'nonupgradedata.xml']).group(1)
+                cars.files[nk] = re.sub(rb'(<Drivetrain Type=")[^"]*"', lambda g: g.group(1) + dtype + b'"', cars.files[nk])
+                val = re.search(r'\bcarDriveType="([^"]*)"', car_block(xml, car).group(0)).group(1)
+                new_entry = re.sub(r'\bcarDriveType="[^"]*"', 'carDriveType="%s"' % val, entry)
+                xml, entry = xml.replace(entry, new_entry), new_entry
+                m[key] = xml.encode('latin-1')
+                print('drivetrain: %s (%s)' % (dtype.decode(), car))
+            print('physics\\%s: %d files from %s' % (part.lower(), len(got), car))
     if upgrades:  # the shop's body parts (nfsu2forza.py's upgrades.xml for a Most Wanted car)
         u = open(upgrades).read()
         for tag in ('FrontBumper', 'RearBumper', 'SideSkirt', 'Hood', 'Wing'):
@@ -482,6 +515,7 @@ if __name__ == '__main__':
     for a in it:
         if a in ('--ordinal', '--name', '--short', '--cab', '--make', '--year', '--engine-like', '--engine', '--power', '--torque',
                  '--mass', '--stats-like', '--price', '--upgrades', '--liveries'): opts[a[2:].replace('-', '_')] = next(it)
+        elif a == '--physics-like': opts.setdefault('physics_like', []).append(next(it))
         elif a == '--restore': opts['restore'] = True
         else: args.append(a)
     if len(args) != 4: raise SystemExit(__doc__)
@@ -492,4 +526,4 @@ if __name__ == '__main__':
          engine_like=opts.get('engine_like'), engine=opts.get('engine'), power=float(opts['power']) if 'power' in opts else None,
          torque=float(opts['torque']) if 'torque' in opts else None, mass=float(opts['mass']) if 'mass' in opts else None,
          stats_like=opts.get('stats_like'), price=int(opts['price']) if 'price' in opts else None, upgrades=opts.get('upgrades'), liveries=opts.get('liveries'),
-         restore=opts.get('restore', False))
+         physics_like=opts.get('physics_like'), restore=opts.get('restore', False))

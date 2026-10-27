@@ -596,3 +596,17 @@ Tests in scripted races, each one change from the working build:
 Next: trace the car's draw calls (XBRT_GPU_DUMP) for the body and compare
 the state for the roof's triangles with the hood's: texture stages,
 texkill or alpha test, and any texture coordinates computed from position.
+
+## Adding a maker (tools/addmake.py, 26 Oct)
+
+Lamborghini, with the Most Wanted Gallardo on it (ordinal 82, run/mods_lambo).
+make.dat is 28-byte rows (u32 id, u32 country, u16 name string, u16 logo
+slot, 16-byte name), ids below 64. The logos are two linear A8R8G8B8 strips
+of 108 x 60 slots (ico_carlogo, gfx_carlogodisplay): the widget counts
+slots from the strip's height (0x145490), so a strip grows a slot per maker,
+up to 68 (4096 high). The dealer's background is found by the maker's
+name (0x374076). The game booted and raced with it (headless). Room for
+more makers: 6 logo slots, 20 free ids; Mega.ca2 has about 0.4 MB of its
+12 left, which cars use up first. addcar.py --make takes the maker's name,
+--physics-like takes another car's drivetrain, gearbox, brakes and so on.
+The Gallardo's brake-light textures are HUFF-packed (not decoded yet).
