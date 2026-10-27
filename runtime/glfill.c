@@ -207,6 +207,11 @@ static const char *fs_src =
      * them they fought the road and flickered. */
     "#ifdef WBARY\n" /* w linear in screen space over the triangle as drawn, before clipping (the NV2A's w-buffer, as xemu) */
     "    float zw = dot(gl_BaryCoordNoPerspNV, vec3(v_wv[0], v_wv[1], v_wv[2]));\n"
+    /* A triangle reaching behind the camera has no screen-space plane to speak of (its far corner's screen
+     * position is mirrored), and the blend goes negative near the camera: culled there, the bridge deck
+     * by the car had holes. There the true w, which is right beside the camera. (Choosing it for any
+     * triangle with a corner at w <= 0 turned every car black.) */
+    "    if (!(zw > 0.0)) zw = 1.0 / gl_FragCoord.w;\n"
     "#else\n"
     "    float zw = v_w;\n"
     "#endif\n"
@@ -2119,7 +2124,9 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
          * outside the clip range are dropped, as the NV2A (and xemu) do, not clamped. Interpolated as the
          * NV2A does (gl_bary), a triangle reaching behind the camera gives nonsense depth there, and
          * clamped it was drawn over what lay beyond (a wedge of grass over a barrier by the car). */
-        if (zr[3] > 0 && gl_bary && !(K(0x1D78) & 0xF0) && !(rt_debug_keys & RT_DBG_NO_CLIP)) zr[3] = 2;
+        static int wcull = -1; /* XBRT_GL_WCULL=0: clamped instead */
+        if (wcull < 0) wcull = !getenv("XBRT_GL_WCULL") || atoi(getenv("XBRT_GL_WCULL"));
+        if (zr[3] > 0 && gl_bary && wcull && !(K(0x1D78) & 0xF0) && !(rt_debug_keys & RT_DBG_NO_CLIP)) zr[3] = 2;
         uint32_t fb = K(0x388), ff = K(0x384); /* POLYGON_OFFSET_BIAS / SCALE_FACTOR, if POLY_OFFSET_FILL_ENABLE */
         float zoff[3] = {0, 0, (float)s->k}; /* slopes per Xbox pixel: k GL pixels each */
         if (K(0x338) & 1) memcpy(&zoff[0], &fb, 4), memcpy(&zoff[1], &ff, 4);

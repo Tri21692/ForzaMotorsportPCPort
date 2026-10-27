@@ -724,6 +724,17 @@ static void draw_distance(void) {
     };
     static uint32_t orig[sizeof at / sizeof at[0]], wrote[sizeof at / sizeof at[0]];
     if (!rt_frame_interval_at) return;
+    { /* the track objects' screen-size cull (0x1D3B08: dropped when factor x distance > radius), when it changes: is it
+       * what makes signs and cones appear late? */
+        static uint32_t was = ~0u;
+        uint32_t on = xb_rd8(0x5DA3A1), k = xb_rd32(0x5DA3A4);
+        if ((on << 31 | (k >> 1)) != was) {
+            float kf;
+            memcpy(&kf, &k, 4);
+            fprintf(stderr, "xbrt: track objects' size cull %s, factor %g\n", on ? "on" : "off", kf);
+            was = on << 31 | (k >> 1);
+        }
+    }
     if (rt_draw_distance == 0) rt_draw_distance = getenv("XBRT_DRAW_DISTANCE") ? (float)atof(getenv("XBRT_DRAW_DISTANCE")) : 1.0f;
     float factor = rt_draw_distance;
     if (!(factor >= 1.0f && factor <= 8.0f)) factor = 1.0f;
