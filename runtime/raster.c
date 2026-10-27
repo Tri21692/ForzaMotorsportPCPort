@@ -1546,6 +1546,15 @@ static void draw(void) {
         nv2a.skipped++;
         return;
     }
+    { /* Debugging: XBRT_NO_PROJ_SHADOWS=1 drops Forza's projected shadows (no depth test, a polygon
+       * offset, the stencil test on), to tell whether dark slabs seen for a frame are theirs. */
+        static int skip = -1;
+        if (skip < 0) skip = getenv("XBRT_NO_PROJ_SHADOWS") && atoi(getenv("XBRT_NO_PROJ_SHADOWS"));
+        if (skip && !(K(0x30C) & 1) && (K(0x338) & 1) && (K(0x32C) & 1)) {
+            nv2a.skipped++;
+            return;
+        }
+    }
     DrawState d;
     uint64_t t0 = rt_now_100ns();
     int ok = draw_state(&d);

@@ -205,16 +205,11 @@ static const char *fs_src =
      * (bias, and factor times the depth slope), clamped to the clip range.
      * Forza draws road markings, kerbs and skid marks with offsets; without
      * them they fought the road and flickered. */
-    "#ifdef WBARY\n" /* w linear in screen space over the triangle as drawn, before clipping (the NV2A's w-buffer, as xemu) */
-    "    float zw = dot(gl_BaryCoordNoPerspNV, vec3(v_wv[0], v_wv[1], v_wv[2]));\n"
-    /* A triangle reaching behind the camera has no screen-space plane to speak of (its far corner's screen
-     * position is mirrored), and the blend goes negative near the camera: culled there, the bridge deck
-     * by the car had holes. There the true w, which is right beside the camera. (Choosing it for any
-     * triangle with a corner at w <= 0 turned every car black.) */
-    "    if (!(zw > 0.0) || min(v_wv[0], min(v_wv[1], v_wv[2])) <= 0.0) zw = 1.0 / gl_FragCoord.w;\n"
-    "#else\n"
-    "    float zw = v_w;\n"
-    "#endif\n"
+    /* The w-buffer's w as xemu works it out: interpolated with perspective (its screen-space weights are
+     * divided by each vertex's w, then normalised), which is GL's 1/gl_FragCoord.w; none past the camera
+     * (w <= 0: as far as a float goes, so culled or clamped to the far limit below). */
+    "    float zw = 1.0 / gl_FragCoord.w;\n"
+    "    if (!(zw > 0.0)) zw = 3.4028235e38;\n"
     "    float z = u_zr.w > 0.5 ? zw : gl_FragCoord.z * u_zr.x;\n" /* the GPU's own depth unless w-buffering: passes must match exactly */
     "    if (u_zoff.x != 0.0 || u_zoff.y != 0.0) {\n"
     "        float slope = max(abs(dFdx(z)), abs(dFdy(z))) * u_zoff.z;\n"
@@ -300,7 +295,7 @@ static GLuint gl_fs_var[4];
 static int gl_bary;
 
 static const char *gl_fs_head(void) {
-    return gl_bary ? "#version 450\n#extension GL_NV_fragment_shader_barycentric : require\n#define WBARY\n" : "#version 430\n";
+    return "#version 430\n";
 }
 
 static GLuint gl_fs_variant(int var) {
@@ -401,7 +396,7 @@ static int gl_setup(void) {
             if (e && !strcmp(e, "GL_NV_fragment_shader_barycentric")) gl_bary = 1;
         }
         if (getenv("XBRT_GL_WBARY") && !atoi(getenv("XBRT_GL_WBARY"))) gl_bary = 0;
-        fprintf(stderr, "xbrt: w-buffer interpolated %s\n", gl_bary ? "as the NV2A does (GL_NV_fragment_shader_barycentric)" : "with perspective");
+        gl_bary = 0; /* not needed: xemu's w is GL's own (gl_FragCoord.w) */
     }
     {
         size_t n = strlen(gl_fs_head()) + strlen(fs_src);
@@ -2126,7 +2121,7 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
          * clamped it was drawn over what lay beyond (a wedge of grass over a barrier by the car). */
         static int wcull = -1; /* XBRT_GL_WCULL=0: clamped instead */
         if (wcull < 0) wcull = !getenv("XBRT_GL_WCULL") || atoi(getenv("XBRT_GL_WCULL"));
-        if (zr[3] > 0 && gl_bary && wcull && !(K(0x1D78) & 0xF0) && !(rt_debug_keys & RT_DBG_NO_CLIP)) zr[3] = 2;
+        if (zr[3] > 0 && wcull && !(K(0x1D78) & 0xF0) && !(rt_debug_keys & RT_DBG_NO_CLIP)) zr[3] = 2;
         uint32_t fb = K(0x388), ff = K(0x384); /* POLYGON_OFFSET_BIAS / SCALE_FACTOR, if POLY_OFFSET_FILL_ENABLE */
         float zoff[3] = {0, 0, (float)s->k}; /* slopes per Xbox pixel: k GL pixels each */
         if (K(0x338) & 1) memcpy(&zoff[0], &fb, 4), memcpy(&zoff[1], &ff, 4);
