@@ -104,3 +104,30 @@ winner, a field of eight Class B turbo cars.
   GameSettings\EventCounts\CareerEvents (315, the career's events less the
   online ones) bounds the completion percentage's loop; left as it is, the
   new series may not count towards it.
+
+## Pacific Shipyards as a circuit (27 Oct)
+
+Both layouts (Vancouver, VancouverReverse: same scenery, `reverseSplines`)
+are used only by point-to-point events; the ends are ~2.5 km apart.
+
+- QuickPreview1.col, decoded: u32 grid columns and rows (20 x 27), f32
+  bounds (min x, min z, max x, max z), 100 m cells; 0x28 the file size;
+  0x4c the cells used, 0x58 a record each (u32 index, cell, block offset,
+  size, 0, end). A block: u32 vertex count, triangle count, vertex offset,
+  triangle offset (from the block), a 12 x 12 sub-grid and the cell's
+  bounds (the sub-grid's index at +0x278 not worked out); vertices 16 bytes
+  (f32 x, y, z, u32), triangles 28 (u32 flags, three vertex offsets, f32
+  normal). Flags: 0 road, 0x500 and 0xa00 other surfaces, 0x900, 0x300,
+  0x400 walls. scr/lambo/colmap.py draws it from above, colat.py heights.
+- The collision is the course alone, a ribbon with walls: no side streets,
+  no ground beyond. The teardrop where the course crosses itself is an
+  overpass (4.6 m). The scenery (QuickPreview1.xb2, 25 zlib streams, 98 MB
+  unpacked) has ~40 `sideroad_NN` meshes and "road closed" signs: side
+  streets that are only drawn.
+- The best loop: after Pacific Shipyards II's start the course wraps a
+  paved, fenced truck lot (flat, -1.8 to -0.1 m); a ~150 m connector across
+  it, from the upper road's kink (-495, -77) to the lower road's corner
+  (-455, -222), closes a loop of about 1 km.
+- Not found yet: where the game keeps the centre line it measures progress
+  and laps by (not in the text files; AudioSpline.bin, the xbp files and
+  the xb2 are candidates), and the AI's lines (AI\DrivatarV2).
