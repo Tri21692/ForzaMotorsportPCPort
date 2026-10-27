@@ -725,6 +725,13 @@ static void draw_distance(void) {
     };
     static uint32_t orig[sizeof at / sizeof at[0]], wrote[sizeof at / sizeof at[0]];
     if (!rt_frame_interval_at) return;
+    { /* Debugging: XBRT_NO_CULLING=1 keeps GeneralRender's EnableCulling (0x534C3A) off: the track objects'
+       * extra visibility test (0x1D3B36, through 0x87650) is skipped, to tell whether it hides signs and
+       * cones until they are close. */
+        static int off = -1;
+        if (off < 0) off = getenv("XBRT_NO_CULLING") && atoi(getenv("XBRT_NO_CULLING"));
+        if (off && xb_rd8(0x534C3A)) xb_wr8(0x534C3A, 0);
+    }
     { /* the track objects' screen-size cull (0x1D3B08: dropped when factor x distance > radius), when it changes: is it
        * what makes signs and cones appear late? */
         static uint32_t was = ~0u;
