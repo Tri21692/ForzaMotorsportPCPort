@@ -830,8 +830,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             images[h] = img.astype(np.uint8)
     images.update(extra)
     bands = canvas_bands(nparts) if vinyl else []
-    for k, (r0, r1, c0, c1) in enumerate(bands):
-        images[(CANVAS, k)] = np.tile(np.array([255, 255, 255, 0], np.uint8), (r1 - r0, c1 - c0, 1))
+    for j, (r0, r1, c0, c1) in enumerate(bands):  # (not k: the fit's scale)
+        images[(CANVAS, j)] = np.tile(np.array([255, 255, 255, 0], np.uint8), (r1 - r0, c1 - c0, 1))
     protect = []
     keep_mask = np.zeros((1024, 1024), bool)  # the same, texel by texel (a race car's interior boxes covered most of its atlas)
     if mw:  # the template parts that stay (interior, steering wheel, brakes, driver): each triangle's texel box
@@ -1029,8 +1029,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     for i in {i for t in tris for i in t}:
                         nv = p['verts'][i - base]
                         u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)
-                        k = next((k for k, b in enumerate(bands) if b[0] <= v * CANVAS_SIZE <= b[1]), 0)
-                        verts[i] = verts[i][:10] + canvas_uv(atlas[(CANVAS, k)], bands[k], u, v) + ('atlas',)
+                        kb = next((j for j, b in enumerate(bands) if b[0] <= v * CANVAS_SIZE <= b[1]), 0)  # (not k: the fit's scale, which pos() reads)
+                        verts[i] = verts[i][:10] + canvas_uv(atlas[(CANVAS, kb)], bands[kb], u, v) + ('atlas',)
                 if tris:
                     subs.append((lod, m, strip(tris)))
                 if tris and inner and m != WINDOW:
