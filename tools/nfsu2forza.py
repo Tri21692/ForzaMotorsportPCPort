@@ -96,6 +96,26 @@ SLOT_LIKE = {'hoodb': 'hoodf', 'hoodc': 'hoodf', 'hoodd': 'hoodf', 'hoode': 'hoo
              'winga': 'wingc', 'winge': 'wingc', 'wingf': 'wingc'}
 
 
+DRIVER_SCALE = 0.606  # carbin units (/4096) to the Driver chunk's metres: the Civic's steering wheel at 1.04 high, its grip point at 0.628
+
+
+def fit_driver(car, droof, dwheel):
+    """The Driver chunk (after Attribs): five float3s in metres, the hip,
+    the left and right hands, two angles, and the steering wheel's grip.
+    The driver stands on the hip, so a roof lower than the template's
+    (droof, carbin units) lowers it as much, or the helmet stuck out
+    through the Gallardo's roof; the hands and grip follow the steering
+    wheel as the cabin fit moved it (dwheel)."""
+    h = car['head'][1]
+    _, _, name, p = carbin._chunk_head(h, 0)
+    assert name == 'Driver' and len(h) - p == 60, (name, len(h) - p)
+    f = list(struct.unpack_from('<15f', h, p))
+    if droof < 0: f[1] += droof * DRIVER_SCALE
+    for i in (4, 7, 13): f[i] += dwheel * DRIVER_SCALE
+    car['head'][1] = h[:p] + struct.pack('<15f', *f)
+    print('driver: hip %+.3f m, hands %+.3f m' % (min(droof, 0) * DRIVER_SCALE, dwheel * DRIVER_SCALE))
+
+
 def slot_id(like_id, like, name):
     """The part id of `name` from that of `like`, a name differing only in its last letter."""
     assert len(like) == len(name) and like[:-1] == name[:-1], (like, name)
@@ -1137,10 +1157,16 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         add_badges(car, textures, atlas, {k: (v.shape[1], v.shape[0]) for k, v in extra.items()})
     new_shell = shell()
     new_fit = roof(new_shell), sides(new_shell), cover(), plan_heights(arches)
+    def wheel_y():
+        sw = [v[1] for p in car['parts'] if p['name'] == 'steering_wheel' for v in p['verts']]
+        return (min(sw) + max(sw)) / 2 / 4096 if sw else None
+    wheel0 = wheel_y()
     for part in car['parts']:
         if part['name'].startswith(CABIN):
             fit_cabin(part, old_fit, new_fit, floor)
             done.append(part['name'] + '(fitted)')
+    fit_driver(car, (max(v[1] for v in new_shell) - max(v[1] for v in old_shell)) / 4096,
+               wheel_y() - wheel0 if wheel0 is not None else 0.0)
     # A cargo floor: black, both faces, across the hatch just under its lip,
     # from inside the tail to behind the rear seats. The S13's hatch area is
     # empty (the Civic's cabin ends at its seats), and through the rear glass
