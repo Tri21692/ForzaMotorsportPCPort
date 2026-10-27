@@ -494,7 +494,14 @@ static int voice_samples(unsigned v, float (*out)[2], int n) {
             vset_mask(v, V_PAR_OFFSET, 0xFFFFFF, 0);
             ssl[v].seg = 0;
             if (!(fmt & FMT_PERSIST)) ssl[v].index = 0, voice_off(v);
-            else notify(v, idx);
+            else {
+                /* a stream still playing (the music) whose next segments
+                 * DSOUND had not given yet: a gap the listener hears */
+                static unsigned dry;
+                if (++dry % 100 == 1)
+                    fprintf(stderr, "[%9.3f] apu: stream voice %u ran dry (%u times)\n", rt_now_100ns() / 1e7, v, dry);
+                notify(v, idx);
+            }
             return -1;
         }
         uint32_t e = REG(NV_PAPU_VPSSLADDR) + (ssl[v].base[idx] + (uint32_t)ssl[v].seg) * 8;

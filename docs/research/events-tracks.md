@@ -57,13 +57,26 @@ added cars (a Lamborghini series, a series that gives the M3 GTR).
 
 ## A custom series, built (27 Oct)
 
-tools/addseries.py adds one; the Forced Induction Cup (Club Ser00021,
-Level 15) is the first: Class B cars with a turbo or supercharger, four
+tools/addseries.py adds one; the Forced Induction Cup (Club Ser00019,
+Level 15, after the disc's three Level 15 series) is the first: Class B cars with a turbo or supercharger, four
 races (Tsukuba, Road Atlanta, Tokyo, Silverstone), the Buick GNX to the
 winner, a field of eight Class B turbo cars.
 
 - The loader formats `%s\Ser%05u.xml` from 1 up and stops at the first
-  number missing (0x7E9B0), so a new series is the next number in its kind.
+  number missing (0x7E9B0), and the list shows them in that order. So a
+  series goes in by renumbering the files after its place (added at the end
+  it showed after the Level 25 one); seriesorder (+0x554 of the series,
+  read at 0x7E523) follows the place.
+- seriesorder also keys a sequential series' result in the profile (+0x6a4,
+  a byte each, 0x77AE0 and 0x799D0; +0x6c4, 12 bytes each, 0x77BB0), only
+  when `sequential="true"` (+0x549), which only the Pro Series have. Moving
+  a Pro Series would move its saved progress; addseries.py adds those at the
+  end only.
+- seriesordinal (+0x550) numbers the career's series across all the lists
+  (club 0-19, endurance 20-29, online 30-38, point to point 39-48, pro series
+  49-63, spec 64-83; the arcade's 0-11 on their own) and is only searched
+  for (0x7CA00, a linear search, no table by it). The cup had 20 at first,
+  the same as endurance's first series; it is 84 now, the next free one.
 - Restrictions are looked up by field name in the car database (0x170720):
   carid, power, torque, redline, gears, weight, weightdist, pwr, perfclass,
   perfsubclass, value, min/maxupgrade, aspiration, speed, acceleration,
@@ -87,8 +100,7 @@ winner, a field of eight Class B turbo cars.
   117-136, pro series 137-244, spec 245-350; the new events are 351-354. The
   profile keeps a medal byte per career event ordinal at +0x4a4 (512 of them,
   the next field at +0x6a4) and per arcade event at +0x464 (64), so the
-  save's layout does not change. Series ordinals are per kind (club 0-19,
-  the new one 20) and only looked up. checkin.ini's
+  save's layout does not change. checkin.ini's
   GameSettings\EventCounts\CareerEvents (315, the career's events less the
   online ones) bounds the completion percentage's loop; left as it is, the
   new series may not count towards it.

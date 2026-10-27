@@ -8,7 +8,13 @@ Pro Series, Endurance or Point-to-Point list) to the game.
         --desc "Open to turbocharged and supercharged cars in Class B."  --logo fi_lg.png,fi_sm.png
 
 A series is events\\<kind>\\Ser<NNNNN>.xml in Mega.ca2: the game reads
-Ser00001 up to the first number missing, so the new one is the next. The
+Ser00001 up to the first number missing and lists them in that order, so
+the new one goes after the last series of its Level or below and those
+after it move up a number (their seriesorder with them; the Pro Series,
+which keep their results by seriesorder, only ever gain one at the end).
+Its seriesordinal, which numbers the career's series across all the lists,
+is set to the next free one. Run again with the same --name, it replaces
+the series it added before, keeping its strings and logo tile. The
 given XML is that file with these left to fill in: {SERIES_NAME_ID},
 {SERIES_DESC_ID}, {EVENT_NAME_ID}, {EVENT_DESC_ID} (strings, added to
 media\\Loc\\<language>\\EventStrings.str, in English in every language) and
@@ -111,22 +117,53 @@ def add_strings(disc, mods, texts):
     return ids, out
 
 
+def series_attr(x, attr, default=None):
+    m = re.search(r'<series [^>]*\b%s="(\d+)"' % attr, x if isinstance(x, str) else x.decode('latin-1'))
+    return int(m.group(1)) if m else default
+
+
+def set_series_attr(x, attr, value):
+    return re.sub(r'(<series [^>]*\b%s=")\d+(")' % attr, r'\g<1>%d\g<2>' % value, x, count=1)
+
+
+def renumber(mega, kind, order):
+    """The kind's series files as Ser00001.. in the order given (their contents), each one's
+    seriesorder its place. The list shows the series in file order. A sequential series (the
+    Pro Series) keeps its result in the profile by seriesorder (0x77ae0), so those never move."""
+    old = series_files(mega, kind)
+    for k in old.values(): del mega.files[k]
+    for i, d in enumerate(order):
+        s = d.decode('latin-1')
+        if series_attr(s, 'seriesorder') != i and 'sequential="true"' in s: raise SystemExit('a sequential series would move')
+        mega.files[B.join(('events', kind, 'Ser%05u.xml' % (i + 1)))] = set_series_attr(s, 'seriesorder', i).encode('latin-1')
+
+
 def main(disc, mods, kind, xml_path, name, desc, event_name=None, logo=None):
     if kind not in KINDS: raise SystemExit('kind: one of %s' % ', '.join(KINDS))
     mega, xpr = addcar.Archive(disc, mods, 'Mega.ca2'), addcar.Archive(disc, mods, 'MegaXPR.ca2')
-    have = series_files(mega, kind)
-    n = 1
-    while n in have: n += 1
-    key = B.join(('events', kind, 'Ser%05u.xml' % n))
     tag = re.sub(r'\W', '', name)
-    ids, strings = add_strings(disc, mods, [('IDS_Mod_%s_Name' % tag, name), ('IDS_Mod_%s_Desc' % tag, desc),
-                                            ('IDS_Mod_%s_EventName' % tag, event_name or name), ('IDS_Mod_%s_EventDesc' % tag, event_name or name)])
+    texts = [('IDS_Mod_%s_Name' % tag, name), ('IDS_Mod_%s_Desc' % tag, desc),
+             ('IDS_Mod_%s_EventName' % tag, event_name or name), ('IDS_Mod_%s_EventDesc' % tag, event_name or name)]
+    have = series_files(mega, kind)
+    order = [mega.files[have[n]] for n in sorted(have)]
+    # added before (its strings are there): replaced, with its strings and logo tile reused
+    loc = addcar.disc_file(disc, 'media', 'Loc')
+    mp = os.path.join(mods, 'media', 'Loc', next(f for f in sorted(os.listdir(loc)) if addcar.disc_file(loc, f, 'EventStrings.str')), 'EventStrings.str')
+    known = addcar.string_ids(open(mp, 'rb').read()) if os.path.exists(mp) else {}
+    if texts[0][0] in known:
+        ids, strings = tuple(known[n] for n, _ in texts), {}
+        old = [d for d in order if series_attr(d, 'seriesnameid') == ids[0]]
+        order = [d for d in order if series_attr(d, 'seriesnameid') != ids[0]]
+        print('replacing the "%s" added before (strings %s)' % (name, ids))
+    else:
+        old = []
+        ids, strings = add_strings(disc, mods, texts)
     icon = None
     if logo:
         lg_img, sm_img = (image(p, *size) for p, size in zip(logo.split(','), ((LG[0], LG[1]), (SM[0], SM[1]))))
         strips = sorted(k for k in xpr.files if re.match(r'frontend\\[a-z]{2}\\ico_events_(lg|sm)\.xpr$', k, re.I))
         room = min(tiles_in(xpr.files[k], LG if k.lower().endswith('lg.xpr') else SM) for k in strips)
-        used = used_icons(mega)
+        used = used_icons(mega) - {int(i) for d in old for i in re.findall(rb'\bIcon="(\d+)"', d)}
         icon = max(i for i in range(room) if i not in used)
         for k in strips:
             lg = k.lower().endswith('lg.xpr')
@@ -137,13 +174,22 @@ def main(disc, mods, kind, xml_path, name, desc, event_name=None, logo=None):
                  ('{ICON}', icon if icon is not None else 0)):
         x = x.replace(k, str(v))
     if '{' in x: raise SystemExit('%s: %s left to fill in' % (xml_path, re.search(r'\{\w+\}', x).group(0)))
-    mega.files[key] = x.replace('\r\n', '\n').replace('\n', '\r\n').encode('latin-1')
+    # seriesordinal numbers the career's series across every list (club 0-19, endurance 20-29, ...):
+    # the next after the highest; the arcade's series count on their own
+    career = [v for k, v in mega.files.items() if re.match(r'events\\\w+\\ser\d{5}\.xml$', k, re.I) and v not in old]
+    x = set_series_attr(x, 'seriesordinal', max(series_attr(v, 'seriesordinal', -1) for v in career) + 1)
+    # its place: after the last series of its level or below (the list goes up by level)
+    level = series_attr(x, 'Level', 0)
+    at = len(order) if kind == 'proseries' else max([i + 1 for i, d in enumerate(order) if series_attr(d, 'Level', 0) <= level] or [0])
+    order.insert(at, x.replace('\r\n', '\n').replace('\n', '\r\n').encode('latin-1'))
+    renumber(mega, kind, order)
     for a in (mega, xpr): a.check()
     for a in (mega, xpr): a.write()
     for mp, d in strings.items():
         os.makedirs(os.path.dirname(mp), exist_ok=True)
         open(mp, 'wb').write(d)
-    print('%s: "%s", strings %s' % (key, name, ids))
+    print('%s: "%s", strings %s, seriesordinal %d, place %d of %d'
+          % (B.join(('events', kind, 'Ser%05u.xml' % (at + 1))), name, ids, series_attr(x, 'seriesordinal'), at + 1, len(order)))
 
 
 if __name__ == '__main__':

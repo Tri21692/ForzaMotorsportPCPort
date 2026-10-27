@@ -219,8 +219,8 @@ static void *audio_main(void *arg) {
         WaitForSingleObject(done, 100);
         int ndone = 0;
         for (int i = 0; i < OUT_BUFS; i++) ndone += (hdr[i].dwFlags & WHDR_DONE) != 0;
-        if (ndone == OUT_BUFS && ++underruns % 50 == 1) /* all played out: the sound card ran dry (a gap) */
-            rt_log("apu: output ran dry (%u times)\n", underruns);
+        if (ndone == OUT_BUFS && (++underruns <= 200 || underruns % 100 == 0)) /* all played out: the sound card ran dry (a gap) */
+            fprintf(stderr, "[%9.3f] apu: output ran dry (%u times)\n", rt_now_100ns() / 1e7, underruns);
         for (int i = 0; i < OUT_BUFS; i++)
             if (hdr[i].dwFlags & WHDR_DONE) {
                 make(pcm[i]);
