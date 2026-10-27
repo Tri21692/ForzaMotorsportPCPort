@@ -409,6 +409,53 @@ def clear_boxes(cbx, link, width):
 
 PVS_CELLS = range(2, 6)  # Pacific Shipyards II's cells round the lot (0 and 1: its start road; more did not fit in memory)
 
+MAP_TILE = 45   # frontend\gfx_trackmaps.xpr: 128 x 128 tiles, 4 a row; the disc uses 0-44
+LOGO = 19       # ico_tracklogo_*: Pacific Shipyards' own logo (Pacific Shipyards II's is 20)
+
+
+def trackmap(centre, size=128, ss=4):
+    """The track select screen's map of the circuit, as the game draws them: north up, a white line
+    with a dark edge on a clear ground, a red arrow and dot at the lap line pointing the way round.
+    Drawn at `ss` times the size and averaged down. RGBA rows."""
+    S = size * ss
+    p = centre[:, [0, 2]].astype(float)
+    p[:, 1] = -p[:, 1]  # north (+z) up
+    lo, hi = p.min(0), p.max(0)
+    scale = (S * 0.78) / max(hi - lo)
+    q = (p - (lo + hi) / 2) * scale + S / 2
+    yy, xx = np.mgrid[0:S, 0:S].astype(float) + 0.5
+    def dist(pts):
+        d = np.full((S, S), 1e9)
+        for a, b in zip(pts, np.roll(pts, -1, 0)):
+            v = b - a
+            t = np.clip(((xx - a[0]) * v[0] + (yy - a[1]) * v[1]) / max(v @ v, 1e-9), 0, 1)
+            d = np.minimum(d, np.hypot(xx - a[0] - t * v[0], yy - a[1] - t * v[1]))
+        return d
+    d = dist(q[::2])
+    white, edge = d < 1.2 * ss, d < 2.2 * ss
+    # the arrow: just before the line, pointing the way round
+    fwd = q[3] - q[0]; fwd /= np.linalg.norm(fwd)
+    side = np.array([-fwd[1], fwd[0]])
+    tip, base = q[0] + fwd * 3 * ss, q[0] - fwd * 9 * ss
+    tri = [tip, base + side * 5 * ss, base - side * 5 * ss]
+    def inside(t):
+        s = [np.sign((b[0] - a[0]) * (yy - a[1]) - (b[1] - a[1]) * (xx - a[0])) for a, b in zip(t, t[1:] + t[:1])]
+        return ((s[0] >= 0) & (s[1] >= 0) & (s[2] >= 0)) | ((s[0] <= 0) & (s[1] <= 0) & (s[2] <= 0))
+    dot_c = q[0] - fwd * 12 * ss
+    red = inside(tri) | (np.hypot(xx - dot_c[0], yy - dot_c[1]) < 2.4 * ss)
+    red_edge = np.zeros_like(red)
+    for dy in range(-ss, ss + 1, max(1, ss // 2)):
+        for dx in range(-ss, ss + 1, max(1, ss // 2)):
+            red_edge |= np.roll(np.roll(red, dy, 0), dx, 1)
+    img = np.zeros((S, S, 4), float)
+    img[edge | red_edge] = (0, 0, 0, 255)
+    img[white] = (240, 240, 240, 255)
+    img[red] = (200, 30, 30, 255)
+    img = img.reshape(size, ss, size, ss, 4).mean((1, 3))
+    rgb = img[..., :3] / np.maximum(img[..., 3:], 1e-6) * 255  # colour not darkened by the averaged alpha
+    return np.concatenate([np.clip(rgb, 0, 255), img[..., 3:]], -1).round().astype(np.uint8)
+
+
 NAME, TAG = 'Pacific Shipyards Circuit', 'VancouverLoop'
 B = '\\'
 
@@ -460,7 +507,8 @@ def track_entry(tracklist, name_id, length):
                  ('trackSegCamsFile', folder + 'TrackSegCams.xml'), ('pitCamsFile', folder + 'PitCams.xml'),
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
                  ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'false'),
-                 ('Ordinal', ordinal), ('length', int(round(length)))):
+                 ('Ordinal', ordinal), ('length', int(round(length))),
+                 ('minimap', MAP_TILE), ('icon', LOGO), ('Image', 'Load_Shipyards.xpr')):
         e = attr(e, k, v)
     e = re.sub(r'\s(p2pordinal|start|end)="[^"]*"', '', e)
     e = e.replace(' Ordinal="%d"' % ordinal, ' Ordinal="%d" hotlapordinal="%d"' % (ordinal, hotlap))
@@ -502,8 +550,13 @@ def install(disc, mods, loop, col_bytes, res_bytes, pvs_bytes, ppw_bytes, cbx_by
             v = mega.files[k]
             if k.lower().endswith('quickpreview.xml'): v = quickpreview(v.decode('latin-1'), loop).encode('latin-1')
             mega.files['tracks' + B + TAG.lower() + B + k[len(src):]] = v
-    mega.check()
-    mega.write()
+    # its map on the track select screen
+    import addseries
+    xpr = addcar.Archive(disc, mods, 'MegaXPR.ca2')
+    key = next(k for k in xpr.files if k.lower() == 'frontend' + B + 'gfx_trackmaps.xpr')
+    xpr.files[key] = addseries.put_tile(xpr.files[key], MAP_TILE, trackmap((loop[4] + loop[5]) / 2), (128, 128, 4))
+    for a in (mega, xpr): a.check()
+    for a in (mega, xpr): a.write()
     d = os.path.join(mods, 'media', 'tracks', TAG)
     os.makedirs(d, exist_ok=True)
     open(os.path.join(d, 'QuickPreview1.col'), 'wb').write(col_bytes)
