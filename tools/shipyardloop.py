@@ -279,25 +279,57 @@ def parse_pvs(d):
 
 
 def loop_pvs(d, use, extra=(), hide=()):
-    """A visibility file for the loop: every cell the same, everything the cells `use` (Pacific
-    Shipyards II's that cover the lot) show, seen from every step; so whichever cell the game takes
-    the loop's progress for, the lot's scenery is there. Meshes in `hide` are left out."""
+    """A visibility file for the loop: cell i shows everything Pacific Shipyards II's cells use[i]
+    show, seen from every step, and the meshes `extra`; meshes in `hide` are left out."""
     head, cells, tail = parse_pvs(d)
-    merged = []
-    for li in range(3):
-        objs = {}
-        for c in use:
-            for e in cells[c][li]:
-                obj = struct.unpack_from('<H', e)[0]
-                if obj in hide: continue
-                rest = e[4:]
-                old = objs.get(obj)
-                objs[obj] = rest if old is None else bytes(a | b for a, b in zip(old, rest))
-        if li == 0:
-            for obj in extra: objs.setdefault(obj, b'')
-        merged.append([struct.pack('<HH', obj, 0xFFFF) + rest for obj, rest in sorted(objs.items())])
-    body = b''.join(b''.join(struct.pack('<I', len(l)) + b''.join(l) for l in merged) for _ in cells)
-    return head + struct.pack('<I', len(cells)) + body + tail, [len(l) for l in merged]
+    out, sizes = [], []
+    for want in use:
+        merged = []
+        for li in range(3):
+            objs = {}
+            for c in want:
+                for e in cells[c][li]:
+                    obj = struct.unpack_from('<H', e)[0]
+                    if obj in hide: continue
+                    rest = e[4:]
+                    old = objs.get(obj)
+                    objs[obj] = rest if old is None else bytes(a | b for a, b in zip(old, rest))
+            if li == 0:
+                for obj in extra: objs.setdefault(obj, b'')
+            merged.append([struct.pack('<HH', obj, 0xFFFF) + rest for obj, rest in sorted(objs.items())])
+        out.append(b''.join(struct.pack('<I', len(l)) + b''.join(l) for l in merged))
+        sizes.append(len(merged[0]))
+    assert len(out) == len(cells)
+    return head + struct.pack('<I', len(cells)) + b''.join(out) + tail, sizes
+
+
+# Pacific Shipyards II's cells along the lot, by the course point (forward order) each starts from:
+# 2 the junction and lap line, 3 the lower road, 4 the corners and the upper road, 5 the kink
+II_CELLS = ((568, 2), (553, 3), (541, 4), (0, 5))
+
+
+def cell_sources(loop, sp, n_cells, lot, reach=70.0):
+    """For each of the loop's visibility cells (equal stretches of it, from the lap line), which of
+    Pacific Shipyards II's cells to show: those of the course points within `reach` metres along
+    the loop of its stretch, and on the link (off the course, which no cell of II's was made for)
+    all of `lot`."""
+    c = (loop[4] + loop[5]) / 2
+    course = (sp[4] + sp[5]) / 2
+    off = off_course(c, sp, margin=2.0)
+    step = np.mean(np.linalg.norm(np.diff(np.vstack([c, c[:1]]), axis=0), axis=1))
+    k = int(round(reach / step))
+    of = []
+    for i, p in enumerate(c):
+        if off[i]: of.append(set(lot)); continue
+        j = nearest(course, (p[0], p[2]))
+        of.append({next(cell for start, cell in II_CELLS if j >= start)})
+    out = []
+    for cell in range(n_cells):
+        lo, hi = cell * len(c) // n_cells, (cell + 1) * len(c) // n_cells
+        s = set()
+        for i in range(lo - k, hi + k): s |= of[i % len(c)]
+        out.append(sorted(s))
+    return out
 
 
 MODEL = 0x4e0600  # model_quickpreview in the unpacked bundle
@@ -439,7 +471,7 @@ def clear_boxes(cbx, link, width):
     return out + bytes(len(cbx) - len(out)), n - len(keep)
 
 
-PVS_CELLS = range(2, 6)  # Pacific Shipyards II's cells round the lot (0 and 1: its start road; more did not fit in memory)
+PVS_CELLS = range(2, 6)  # Pacific Shipyards II's cells round the lot (0 and 1: its start road; more did not fit in memory); all of them on the link
 
 MAP_TILE = 45   # frontend\gfx_trackmaps.xpr: 128 x 128 tiles, 4 a row; the disc uses 0-44
 LOGO = 19       # ico_tracklogo_*: Pacific Shipyards' own logo (Pacific Shipyards II's is 20)
@@ -635,8 +667,11 @@ if __name__ == '__main__':
     rev = os.path.join(disc, 'media', 'tracks', 'VancouverReverse')
     ppw = open(os.path.join(rev, 'QuickPreview1.pvs.ppw'), 'rb').read()  # the donor's sphere: not found yet (see move_sphere)
     hide = hidden_meshes(res_bytes, link, sp)
-    pvs, sizes = loop_pvs(open(os.path.join(rev, 'QuickPreview1.pvs'), 'rb').read(), PVS_CELLS, extra=[DONOR], hide=set(hide))
-    print('road: %d cross-sections in mesh %d; visibility: %s meshes in every cell, %d hidden' % (len(left), DONOR, sizes, len(hide)))
+    pvs_in = open(os.path.join(rev, 'QuickPreview1.pvs'), 'rb').read()
+    use = cell_sources(loop, sp, len(parse_pvs(pvs_in)[1]), PVS_CELLS)
+    pvs, sizes = loop_pvs(pvs_in, use, extra=[DONOR], hide=set(hide))
+    print('road: %d cross-sections in mesh %d; %d hidden' % (len(left), DONOR, len(hide)))
+    print('visibility: per cell, the cells of II shown and the meshes:', ' '.join('%s:%d' % (''.join(map(str, u)), n) for u, n in zip(use, sizes)))
     cbx, dropped = clear_boxes(zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read()), link, LINK_WIDTH + 4)
     cbx = zlib.compress(cbx, 9)  # the game reads it packed, as the disc has it
     print('solid props: %d boxes on the link dropped' % dropped)

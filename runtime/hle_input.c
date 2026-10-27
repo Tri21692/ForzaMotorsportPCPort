@@ -137,8 +137,10 @@ static void keyboard(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) { 
  *   <seconds> <button>[+<button>...] [hold seconds, default 0.3]
  *   <seconds> auto <seconds>      tap START and A every 2 s until then
  * Times count from start-up. Buttons: A B X Y BLACK WHITE LT RT START
- * BACK UP DOWN LEFT RIGHT. Steps happen in file order; a step whose time
- * has passed waits for the one before it to finish.
+ * BACK UP DOWN LEFT RIGHT, and the left stick steering: SL / SR (left or
+ * right, all the way) or SL<n> / SR<n> (n percent of the way). Steps
+ * happen in file order; a step whose time has passed waits for the one
+ * before it to finish.
  *
  * XBRT_INPUT_LIVE=<file>: the same steps without the time, read as lines
  * are added to the file while the game runs, each played as soon as the
@@ -148,6 +150,7 @@ typedef struct {
     double at, hold, until; /* until > 0: an auto window */
     uint16_t buttons;
     uint8_t analog;         /* bit i: analog button i fully pressed */
+    int16_t steer;          /* the left stick's x */
 } Step;
 
 static Step *steps;
@@ -166,12 +169,18 @@ static int parse_step(char *line, int live, Step *st) {
     char what[128];
     int got = live ? sscanf(line, "%127s %lf", what, &extra) + 1 : sscanf(line, "%lf %127s %lf", &at, what, &extra);
     if (got < 2) return 0;
-    *st = (Step){at, got == 3 ? extra : 0.3, 0, 0, 0};
+    *st = (Step){at, got == 3 ? extra : 0.3, 0, 0, 0, 0};
     if (!live && !strcmp(what, "auto")) {
         st->until = extra;
         return 1;
     }
     for (char *tok = strtok(what, "+"); tok; tok = strtok(NULL, "+")) {
+        if ((tok[0] == 'S') && (tok[1] == 'L' || tok[1] == 'R')) {
+            int pct = tok[2] ? atoi(tok + 2) : 100;
+            if (pct <= 0 || pct > 100) return -1;
+            st->steer = (int16_t)((tok[1] == 'L' ? -32767 : 32767) * pct / 100);
+            continue;
+        }
         size_t i;
         for (i = 0; i < sizeof names / sizeof names[0]; i++)
             if (!strcmp(tok, names[i].name)) break;
@@ -222,7 +231,7 @@ static void live_lines(const char *path) {
 }
 
 /* What the script holds down now. */
-static void scripted(uint16_t *buttons, uint8_t analog[8]) {
+static void scripted(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
     static int next;             /* the step being played */
     static double started = -1;  /* when it began */
     static const char *live;
@@ -246,6 +255,7 @@ static void scripted(uint16_t *buttons, uint8_t analog[8]) {
             *buttons |= st->buttons;
             for (int i = 0; i < 8; i++)
                 if (st->analog & (1 << i)) analog[i] = 255;
+            if (st->steer) thumbs[0] = st->steer;
             return;
         }
         next++, started = -1;
@@ -274,7 +284,7 @@ static void host_pad(uint32_t pad) {
         buttons |= 0x10;
         analog[A_A] = 255;
     }
-    scripted(&buttons, analog);
+    scripted(&buttons, analog, thumbs);
     set_pad(pad, buttons, analog, thumbs);
 }
 
