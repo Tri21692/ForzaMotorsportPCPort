@@ -230,19 +230,18 @@ def make_collision(col, link, link_width, walls, sp):
             if out[k] and out[k + 1]:
                 pa, pb = a + (b - a) * ts[k], a + (b - a) * ts[k + 1]
                 pieces.add((round(pa[0], 2), round(pa[1], 2), round(pb[0], 2), round(pb[1], 2), round(y0, 2), round(y1, 2)))
+    def wall(q):  # both faces, as the course's own walls are: one face alone stops a car from one side only
+        for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+            col.add(0x900, tri, 0)
     for x0, z0, x1, z1, y0, y1 in pieces:
-        q = [(x0, y0, z0), (x1, y0, z1), (x1, y1, z1), (x0, y1, z0)]
-        col.add(0x900, [q[0], q[1], q[2]], 0)
-        col.add(0x900, [q[2], q[3], q[0]], 0)
+        wall([(x0, y0, z0), (x1, y0, z1), (x1, y1, z1), (x0, y1, z0)])
     word = ground_word(col)
     quads = strip(link, link_width + 4)  # 2 m over each edge onto the lot
     for q in quads:
         col.add(0, [q[0], q[1], q[2]], word)
         col.add(0, [q[2], q[3], q[0]], word)
     for (x0, z0, y0), (x1, z1, y1) in walls:
-        p = [(x0, y0 - 1, z0), (x1, y1 - 1, z1), (x1, y1 + 3, z1), (x0, y0 + 3, z0)]
-        col.add(0x900, [p[0], p[1], p[2]], 0)
-        col.add(0x900, [p[2], p[3], p[0]], 0)
+        wall([(x0, y0 - 1, z0), (x1, y1 - 1, z1), (x1, y1 + 3, z1), (x0, y0 + 3, z0)])
     return gone, 2 * len(quads)
 
 
