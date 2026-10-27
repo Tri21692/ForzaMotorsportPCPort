@@ -222,7 +222,7 @@ static char *fs_generate(const FsKey *k) {
     fsput(&s, "    o_color = o;\n");
     if (k->depth)
         fsput(&s, "#ifdef WBARY\n    float zw = dot(gl_BaryCoordNoPerspNV, vec3(v_wv[0], v_wv[1], v_wv[2]));\n"
-                  "    if (!(zw > 0.0)) zw = 1.0 / gl_FragCoord.w;\n#else\n    float zw = v_w;\n#endif\n"
+                  "    if (!(zw > 0.0) || min(v_wv[0], min(v_wv[1], v_wv[2])) <= 0.0) zw = 1.0 / gl_FragCoord.w;\n#else\n    float zw = v_w;\n#endif\n"
                   "    float z = u_zr.w > 0.5 ? zw : gl_FragCoord.z * u_zr.x;\n"
                   "    if (u_zoff.x != 0.0 || u_zoff.y != 0.0) {\n"
                   "        float slope = max(abs(dFdx(z)), abs(dFdy(z))) * u_zoff.z;\n"

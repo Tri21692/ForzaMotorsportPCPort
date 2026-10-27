@@ -211,7 +211,7 @@ static const char *fs_src =
      * position is mirrored), and the blend goes negative near the camera: culled there, the bridge deck
      * by the car had holes. There the true w, which is right beside the camera. (Choosing it for any
      * triangle with a corner at w <= 0 turned every car black.) */
-    "    if (!(zw > 0.0)) zw = 1.0 / gl_FragCoord.w;\n"
+    "    if (!(zw > 0.0) || min(v_wv[0], min(v_wv[1], v_wv[2])) <= 0.0) zw = 1.0 / gl_FragCoord.w;\n"
     "#else\n"
     "    float zw = v_w;\n"
     "#endif\n"
