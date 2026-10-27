@@ -642,8 +642,9 @@ if __name__ == '__main__':
     print('loop %.0f m (%.2f mi); link from course point %d to %d' % (length, length / 1609.344, b, a))
     col = coledit.Col(open(os.path.join(folder, 'QuickPreview1.col'), 'rb').read())
     c = (sp[4] + sp[5]) / 2
-    # the old course where it leaves the loop: towards Pacific Shipyards II's start, and west of the kink
-    walls = [across(c, nearest(c, (-484.1, -300.7))), across(c, nearest(c, (-558.3, -100.3)))]
+    # the old course closed where it leaves the loop: towards II's start, and just west of where the link turns off (any
+    # further and a driver missing the turn ran on 40 m first; any nearer and the wall crosses the link)
+    walls = [across(c, nearest(c, (-484.1, -300.7))), across(c, nearest(c, (-533.4, -95.9)))]
     walls += link_walls(link, LINK_WIDTH, sp)
     gone, added = make_collision(col, link, LINK_WIDTH, walls, sp)
     col_bytes, res_bytes = col.to_bytes(), write_splines(res, loop)
