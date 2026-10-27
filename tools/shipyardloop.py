@@ -303,35 +303,6 @@ def loop_pvs(d, use, extra=(), hide=()):
     return head + struct.pack('<I', len(cells)) + b''.join(out) + tail, sizes
 
 
-# Pacific Shipyards II's cells along the lot, by the course point (forward order) each starts from:
-# 2 the junction and lap line, 3 the lower road, 4 the corners and the upper road, 5 the kink
-II_CELLS = ((568, 2), (553, 3), (541, 4), (0, 5))
-
-
-def cell_sources(loop, sp, n_cells, lot, reach=70.0):
-    """For each of the loop's visibility cells (equal stretches of it, from the lap line), which of
-    Pacific Shipyards II's cells to show: those of the course points within `reach` metres along
-    the loop of its stretch, and on the link (off the course, which no cell of II's was made for)
-    all of `lot`."""
-    c = (loop[4] + loop[5]) / 2
-    course = (sp[4] + sp[5]) / 2
-    off = off_course(c, sp, margin=2.0)
-    step = np.mean(np.linalg.norm(np.diff(np.vstack([c, c[:1]]), axis=0), axis=1))
-    k = int(round(reach / step))
-    of = []
-    for i, p in enumerate(c):
-        if off[i]: of.append(set(lot)); continue
-        j = nearest(course, (p[0], p[2]))
-        of.append({next(cell for start, cell in II_CELLS if j >= start)})
-    out = []
-    for cell in range(n_cells):
-        lo, hi = cell * len(c) // n_cells, (cell + 1) * len(c) // n_cells
-        s = set()
-        for i in range(lo - k, hi + k): s |= of[i % len(c)]
-        out.append(sorted(s))
-    return out
-
-
 MODEL = 0x4e0600  # model_quickpreview in the unpacked bundle
 DONOR = 714       # its mesh sidewalk01 (asphalt, 407 vertices), by Pacific Shipyards' far end: the link's road
 
@@ -668,7 +639,9 @@ if __name__ == '__main__':
     ppw = open(os.path.join(rev, 'QuickPreview1.pvs.ppw'), 'rb').read()  # the donor's sphere: not found yet (see move_sphere)
     hide = hidden_meshes(res_bytes, link, sp)
     pvs_in = open(os.path.join(rev, 'QuickPreview1.pvs'), 'rb').read()
-    use = cell_sources(loop, sp, len(parse_pvs(pvs_in)[1]), PVS_CELLS)
+    # every cell the same: cells chosen per stretch of the loop (by the course points near it) left
+    # the lot's ground undrawn at the kink, so the game's cell there is not the loop's stretch's
+    use = [list(PVS_CELLS)] * len(parse_pvs(pvs_in)[1])
     pvs, sizes = loop_pvs(pvs_in, use, extra=[DONOR], hide=set(hide))
     print('road: %d cross-sections in mesh %d; %d hidden' % (len(left), DONOR, len(hide)))
     print('visibility: per cell, the cells of II shown and the meshes:', ' '.join('%s:%d' % (''.join(map(str, u)), n) for u, n in zip(use, sizes)))
