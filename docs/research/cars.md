@@ -720,9 +720,16 @@ triangles at it with their own coordinates (the race template's vinyl
 layout shares texels between the sides, and one side took the other's
 stripes); livery1*.xpr is the same atlas with the vinyl over silver. The
 car's first stock livery uses it (texture="livery1", a white override), as
-the disc's AC Cobra, Ford GT and Carrera do for their stripes. The canvas
-fits at 256 in the 1024 atlas (the race car's kept banners, cage and arch
-trim leave no 528 square), so the white edging is thin. The DXT5 encoder
+the disc's AC Cobra, Ford GT and Carrera do for their stripes. Whole, the
+canvas only fit at half size (the race car's kept banners, cage and arch
+trim leave no 528 square), and the stripes showed steps in the dealer;
+canvas_bands packs just the rows the painted triangles use (the two sides,
+the top, the tail: four bands, cut where no triangle crosses) at full size. The DXT5 encoder
 now tries each pair of a block's own pixels as end points where the
 bounding box fits badly (navy, white and silver in one block came out pale
 blue). The car is on sale from the start for testing (tunecar.py --unlock 0).
+
+Wheels: convert_wheel scaled each of the rim's groups to the rim's size on
+its own, so Most Wanted's 3 cm centre cap became a flat grey disc over the
+spokes (the M3, the Gallardo and the Cobalt; the 240SX's NFSU rim is one
+group). The rim is now scaled and set in as one piece.

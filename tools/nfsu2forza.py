@@ -829,8 +829,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 img[y0:y1 + 1, x0:x1 + 1] = logo
             images[h] = img.astype(np.uint8)
     images.update(extra)
-    if vinyl:
-        images[CANVAS] = np.tile(np.array([255, 255, 255, 0], np.uint8), (512, 512, 1))
+    bands = canvas_bands(nparts) if vinyl else []
+    for k, (r0, r1, c0, c1) in enumerate(bands):
+        images[(CANVAS, k)] = np.tile(np.array([255, 255, 255, 0], np.uint8), (r1 - r0, c1 - c0, 1))
     protect = []
     keep_mask = np.zeros((1024, 1024), bool)  # the same, texel by texel (a race car's interior boxes covered most of its atlas)
     if mw:  # the template parts that stay (interior, steering wheel, brakes, driver): each triangle's texel box
@@ -853,12 +854,12 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                        protect=protect, cover=None if vinyl else tcover, clear_rest=clear_livery, protect_mask=keep_mask if mw else None)
     if liveries:
         paint_shop(liveries, os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries.bin'),
-                   os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), [r for h, r in atlas.items() if h != CANVAS],
+                   os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), [r for h, r in atlas.items() if not (isinstance(h, tuple) and h[0] == CANVAS)],
                    paint=tcover)
     if vinyl:
-        bake_vinyl(os.path.join(nfsu_dir, 'VINYLS.BIN'), prefix, *vinyl, atlas[CANVAS],
+        bake_vinyl(os.path.join(nfsu_dir, 'VINYLS.BIN'), prefix, *vinyl, [(atlas[(CANVAS, k)], b) for k, b in enumerate(bands)],
                    os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'))
-    print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (h if isinstance(h, str) else textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
+    print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (h if isinstance(h, (str, tuple)) else textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
     # Wheels: the template's hubs (its brake rotors) stay where its physics
     # puts them, so the NFSU body is stretched between its wheel arches
@@ -1023,13 +1024,13 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                         nv = p['verts'][i - base]
                         u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)
                         verts[i] = verts[i][:10] + (int((u0 + u * (u1 - u0)) * one), int((v0 + v * (v1 - v0)) * one), 'atlas')
-                if tris and m == BODY and CANVAS in atlas and gi < len(p['materials']) and p['materials'][gi] in VINYL_CANVAS:
-                    # Most Wanted's own vinyl layout, packed whole into the atlas (see bake_vinyl)
-                    u0, v0, u1, v1 = atlas[CANVAS]
+                if tris and m == BODY and bands and gi < len(p['materials']) and p['materials'][gi] in VINYL_CANVAS:
+                    # Most Wanted's own vinyl layout, its bands packed into the atlas (see bake_vinyl)
                     for i in {i for t in tris for i in t}:
                         nv = p['verts'][i - base]
                         u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)
-                        verts[i] = verts[i][:10] + (int((u0 + u * (u1 - u0)) * BADGE_UV), int((v0 + v * (v1 - v0)) * BADGE_UV), 'atlas')
+                        k = next((k for k, b in enumerate(bands) if b[0] <= v * CANVAS_SIZE <= b[1]), 0)
+                        verts[i] = verts[i][:10] + canvas_uv(atlas[(CANVAS, k)], bands[k], u, v) + ('atlas',)
                 if tris:
                     subs.append((lod, m, strip(tris)))
                 if tris and inner and m != WINDOW:
@@ -1733,6 +1734,14 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     out_verts, subs, tex = list(part['verts']), [], None
     for lod, p in enumerate(levels[:2], 1):
         idx = [i for t in p['tris'] for i in t]
+        # one scale and depth for the whole rim: per group, Most Wanted's centre cap (3 cm) grew
+        # to the rim's size and covered its spokes as a flat grey disc
+        rim = [p['verts'][i] for g in p['groups'] if is_rim(p, struct.unpack_from('<II', g, 0x1C)[1])
+               for i in idx[struct.unpack_from('<I', g, 0x34)[0]:struct.unpack_from('<I', g, 0x34)[0] + struct.unpack_from('<I', g, 12)[0]]
+               if i < len(p['verts'])]
+        if not rim: continue
+        k = rim_r / max(np.hypot(v[0], v[2]) for v in rim)
+        y0 = min(v[1] for v in rim)
         for g in p['groups']:
             cnt, = struct.unpack_from('<I', g, 12)
             first, = struct.unpack_from('<I', g, 0x34)
@@ -1740,9 +1749,6 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
             if not is_rim(p, si): continue
             tex = p['textures'][ti]
             used = sorted({i for i in idx[first:first + cnt] if i < len(p['verts'])})
-            P = np.array([p['verts'][i][:3] for i in used])
-            k = rim_r / np.sqrt(P[:, 0] ** 2 + P[:, 2] ** 2).max()
-            y0 = P[:, 1].min()
             remap = {}
             for i in used:
                 x, y, z, nx, ny, nz, _, u, v = p['verts'][i]
@@ -1789,15 +1795,63 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
 
 
 VINYL_CANVAS = ('BODY', 'BODY_LEFT', 'BODY_RIGHT', 'BODY_TOP', 'BODY_REAR')  # Most Wanted's painted groups, laid out on its vinyl canvas
-CANVAS = '__canvas__'  # the canvas's room in the atlas (pack_atlas's images, a white 512 x 512: plain paint)
+CANVAS = '__canvas__'  # the canvas's rooms in the atlas: pack_atlas images (CANVAS, k), white (plain paint)
+CANVAS_SIZE = 512  # Most Wanted's vinyl canvas, texels
 
 
-def bake_vinyl(vinyls_bin, prefix, name, colours, rect, livery_dir):
+def canvas_bands(nparts):
+    """The stretches of Most Wanted's vinyl canvas its painted triangles
+    use: rows no triangle crosses cut it into bands (the car's two sides,
+    the roof, hood and trunk, the tail), each cut to the columns used, as
+    (row0, row1, col0, col1) in canvas texels, two round. Packed whole, the
+    canvas took a 512 square the race car's atlas did not have, and halved
+    the stripes came out in steps."""
+    import numpy as np
+    spans = []
+    for p in nparts:
+        idx = [i for t in p['tris'] for i in t]
+        for g, name in zip(p['groups'], p['materials']):
+            if name not in VINYL_CANVAS: continue
+            cnt, = struct.unpack_from('<I', g, 12); first, = struct.unpack_from('<I', g, 0x34)
+            for j in range(first, first + cnt - 2, 3):
+                t = idx[j:j + 3]
+                if max(t) >= len(p['verts']): continue
+                us = [min(max(p['verts'][i][7], 0.0), 1.0) for i in t]; vs = [min(max(p['verts'][i][8], 0.0), 1.0) for i in t]
+                spans.append((min(vs), max(vs), min(us), max(us)))
+    bands = []
+    for v0, v1, u0, u1 in sorted(spans):
+        if bands and v0 <= bands[-1][1]:
+            b = bands[-1]; bands[-1] = [b[0], max(b[1], v1), min(b[2], u0), max(b[3], u1)]
+        else:
+            bands.append([v0, v1, u0, u1])
+    n = CANVAS_SIZE
+    out = []
+    for v0, v1, u0, u1 in bands:
+        r0, r1 = max(0, int(v0 * n) - 2), min(n, int(np.ceil(v1 * n)) + 2)
+        c0, c1 = max(0, int(u0 * n) - 2), min(n, int(np.ceil(u1 * n)) + 2)
+        r1, c1 = r0 + (r1 - r0 + 3) // 4 * 4, c0 + (c1 - c0 + 3) // 4 * 4  # (whole DXT blocks once halved)
+        out.append((r0, r1, c0, c1))
+    return out
+
+
+def canvas_uv(rect, band, u, v):
+    """A canvas coordinate's place in the atlas (u16, as the vertices have
+    it): band (row0, row1, col0, col1) packed at rect (pack_atlas's texel
+    centres of its corners, 512 texels)."""
+    r0, r1, c0, c1 = band
+    u0, v0, u1, v1 = rect
+    au = u0 - 0.5 / 512 + (u * CANVAS_SIZE - c0) / (c1 - c0) * (u1 - u0 + 1 / 512)
+    av = v0 - 0.5 / 512 + (v * CANVAS_SIZE - r0) / (r1 - r0) * (v1 - v0 + 1 / 512)
+    return int(au * BADGE_UV), int(av * BADGE_UV)
+
+
+def bake_vinyl(vinyls_bin, prefix, name, colours, rooms, livery_dir):
     """A Most Wanted vinyl (VINYLS.BIN: 512 x 512, 8-bit palette, and a
     _MASK of where it is) baked into a second livery, livery1*.xpr beside
     livery0*.xpr: the painted triangles take Most Wanted's own canvas
-    coordinates, its room in the atlas (rect, as pack_atlas gives it) plain
-    paint in livery0; here it is the vinyl over the base colour, and the
+    coordinates, its bands' rooms in the atlas (rooms: (rect as pack_atlas
+    gives it, band as canvas_bands does)) plain paint in livery0; here they
+    are the vinyl over the base colour, and the
     rest of the plain paint (clear white texels) the base colour, for a
     .livery with a white override. The vinyl's colours are its own (the
     Hero's preset vinyl, PSRTEST, is its navy and white); given a swatch,
@@ -1826,16 +1880,20 @@ def bake_vinyl(vinyls_bin, prefix, name, colours, rect, livery_dir):
     files = {n: bytearray(open(os.path.join(livery_dir, n), 'rb').read()) for n in names}
     nc, vol, hi = (fx.textures(files[n])[0] for n in names)
     W, H, D = nc['w'], nc['h'], nc['d']
-    def put(img, size):  # the vinyl into an atlas of that size, at rect (texel centres) and the edge round it
-        u0, v0, u1, v1 = rect
-        x0, y0 = int(round(u0 * size - 0.5)), int(round(v0 * size - 0.5))
-        x1, y1 = int(round(u1 * size + 0.5)), int(round(v1 * size + 0.5))
-        ys = ((np.arange(y0, y1) - y0 + 0.5) / (y1 - y0) * vinyl.shape[0]).astype(int)
-        xs = ((np.arange(x0, x1) - x0 + 0.5) / (x1 - x0) * vinyl.shape[1]).astype(int)
-        f = vinyl.shape[0] // (y1 - y0)
-        v = vinyl.reshape(vinyl.shape[0] // f, f, vinyl.shape[1] // f, f, 3).mean((1, 3)) if f > 1 else vinyl[ys][:, xs]
-        e = 4 * size // W  # (the packed edge)
-        img[y0 - e:y1 + e, x0 - e:x1 + e, :3] = np.pad(v, ((e, e), (e, e), (0, 0)), mode='edge')
+    def put(img, size):  # each band into an atlas of that size, at its rect (texel centres) and the edge round it
+        for (u0, v0, u1, v1), (r0, r1, c0, c1) in rooms:
+            part = vinyl[r0:r1, c0:c1]
+            x0, y0 = int(round(u0 * size - 0.5 * size / W)), int(round(v0 * size - 0.5 * size / W))
+            x1, y1 = int(round(u1 * size + 0.5 * size / W)), int(round(v1 * size + 0.5 * size / W))
+            f = part.shape[0] // (y1 - y0)
+            if f > 1:
+                v = part.reshape(part.shape[0] // f, f, part.shape[1] // f, f, 3).mean((1, 3))
+            else:
+                ys = ((np.arange(y0, y1) - y0 + 0.5) / (y1 - y0) * part.shape[0]).astype(int)
+                xs = ((np.arange(x0, x1) - x0 + 0.5) / (x1 - x0) * part.shape[1]).astype(int)
+                v = part[ys][:, xs]
+            e = 2 * size // W  # (the packed edge, at least two texels)
+            img[y0 - e:y1 + e, x0 - e:x1 + e, :3] = np.pad(v, ((e, e), (e, e), (0, 0)), mode='edge')
     def recolour(img):  # plain paint (clear white) as the base, then the vinyl
         plain = (img[..., 3] < 8) & (img[..., :3].min(-1) > 240)
         img[plain, :3] = base
@@ -1866,7 +1924,7 @@ def bake_vinyl(vinyls_bin, prefix, name, colours, rect, livery_dir):
     files['livery0.xpr'][vol['start']:vol['start'] + vblocks.size] = vblocks.tobytes()
     for n_ in names:
         open(os.path.join(livery_dir, n_.replace('livery0', 'livery1')), 'wb').write(files[n_])
-    print('vinyl: %s baked into livery1 (the canvas at %.3f, %.3f)' % (name, rect[0], rect[1]))
+    print('vinyl: %s baked into livery1 (%d bands of its canvas)' % (name, len(rooms)))
 
 
 def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None):
