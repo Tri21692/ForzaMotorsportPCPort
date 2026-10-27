@@ -609,7 +609,7 @@ name (0x374076). The game booted and raced with it (headless). Room for
 more makers: 6 logo slots, 20 free ids; Mega.ca2 has about 0.4 MB of its
 12 left, which cars use up first. addcar.py --make takes the maker's name,
 --physics-like takes another car's drivetrain, gearbox, brakes and so on.
-The Gallardo's brake-light textures are HUFF-packed (not decoded yet).
+The Gallardo's brake-light textures are HUFF-packed (decoded since: see the Hero's M3 GTR).
 
 Gallardo, second pass (26 Oct): the shop's slots grow by copying template
 parts (hoodb-e from hoodf, winga/e/f from wingc): a part id is a hash of its
@@ -685,3 +685,44 @@ spokes painted on a flat face (DXT1, no alpha); nfsu2forza.py --wheel puts
 it on a Forza wheel with a 128 x 128 quarter for it, updatecar.py --wheel
 gives the car tires\art\<car>. The Gallardo and Cobalt have theirs too.
 Mega.ca2 is at 11.74 of its 12 MB in run/mods_lambo.
+
+### Second pass (27 Oct): lamps, the Hero livery, the black patches
+
+HUFF: Most Wanted packs some textures (the lamps, nearly all vinyls) with
+EA's codex Huffman (a 16-byte 'HUFF' header, then type 0x30fb, a 3-byte
+big-endian size, a clue byte, the code lengths and a leapfrog symbol
+table). nfsu.huff is a port of huffdecode.cpp from EA's GPL release of the
+Command & Conquer Generals source; the leapfrog counter is a byte and
+wraps. The lamps are <CAR>_KIT00_BRAKELIGHT_OFF (unlit), _ON (lit) and
+HEADLIGHT_ON (the headlights have no OFF; a 32 x 32 glow shares the
+cut-short name, and the M3 had been given it). Lamps and vinyls are now
+drawn from the right textures on all three MW cars.
+
+Black patches on the Gallardo's and Cobalt's wings and quarters: the
+Civic has painted triangles whose texture coordinates collapse to a few
+texels or one point on its dashboard's dark texels (seams); the vinyl
+layout copied them over a hand's width of the new body. template_layout
+now leaves out triangles with under a tenth of the median texel density.
+The race template's glass is drawn from its livery (its banner), which the
+clear made free room: a lamp packed there showed on the side windows, so
+with --clear-livery the new glass takes the paint texel.
+
+The Hero's livery is not a shop vinyl: Most Wanted's preset ride
+M3GTRCAREERSTART (GLOBALB.BUN, 0x290-byte records) names the body paint
+METAL_L1_COLOR41 (183, 183, 183), the vinyl PSRTEST (its navy 23, 48, 106
+and white edging, fixed colours, 8-bit palette, a _MASK beside it) and
+swatches VINYL_L1_COLOR01 and 03. Paint parts are in chunk 80034602:
+00034604 records of a hash and two u16s, the second indexing 0003460c (a
+count, then indexes of 00034605 key/value pairs: RED, GREEN, BLUE, GLOSS).
+nfsu2forza.py --vinyl PSRTEST:b7b7b7 packs Most Wanted's whole vinyl canvas
+into the atlas (white, plain paint, in livery0) and points the painted
+triangles at it with their own coordinates (the race template's vinyl
+layout shares texels between the sides, and one side took the other's
+stripes); livery1*.xpr is the same atlas with the vinyl over silver. The
+car's first stock livery uses it (texture="livery1", a white override), as
+the disc's AC Cobra, Ford GT and Carrera do for their stripes. The canvas
+fits at 256 in the 1024 atlas (the race car's kept banners, cage and arch
+trim leave no 528 square), so the white edging is thin. The DXT5 encoder
+now tries each pair of a block's own pixels as end points where the
+bounding box fits badly (navy, white and silver in one block came out pale
+blue). The car is on sale from the start for testing (tunecar.py --unlock 0).

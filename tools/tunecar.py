@@ -17,7 +17,8 @@ level in rarity/<region>/rarityregiondef.xml (a level's rewards: the
 index is the level), and the unlock text the dealer shows (model.dat's
 u16 string ids at 72, 74, 76 for the three regions, 78 Arcade's; 1 none),
 "Reach Level N to unlock this car for purchase in Buy Cars." in every
-language (the disc's own sentence, its number changed). --paint-like: the
+language (the disc's own sentence, its number changed); --unlock 0 puts it
+on sale from the start. --paint-like: the
 paint shop's colour choices of that car, without its vinyl layers. Writes only into
 the mods folder, never the saves.
 """
@@ -36,7 +37,16 @@ UNLOCK_TEXT = 86  # IDS_Model_139_AsiaUnlockString, the Ferrari 360's: "Reach Le
 
 def set_unlock(disc, mods, mega, o, mrow, levels):
     """The car of ordinal o on sale from those levels (one a region); returns
-    the string files to write ({path: bytes})."""
+    the string files to write ({path: bytes}). Level 0 everywhere: on sale
+    from the start, no unlock text (as the disc's starting cars)."""
+    if not any(levels):
+        for region, _ in REGIONS:
+            rk = B.join(('rarity', region, 'rarityregiondef.xml'))
+            mega.files[rk] = re.sub(r'\s*CareerCarUnlock="%d"(?=\s)' % o, '', mega.files[rk].decode('latin-1')).encode('latin-1')
+        struct.pack_into('<4H', mrow, 72, 1, 1, 1, 1)
+        mrow[93:96] = b'\1\1\1'
+        print('unlock: on sale from the start')
+        return {}
     for (region, _), lv in zip(REGIONS, levels):
         rk = B.join(('rarity', region, 'rarityregiondef.xml'))
         x = mega.files[rk].decode('latin-1')

@@ -93,7 +93,25 @@ def encode_dxt5(img):
     c0, c1 = np.where(swap, c1, c0), np.where(swap, c0, c1)
     p0, p1 = rgb565(c0).astype(np.int32), rgb565(c1).astype(np.int32)
     pal = np.stack([p0, p1, (2 * p0 + p1) // 3, (p0 + 2 * p1) // 3], 1)
-    sel = ((rgb[:, :, None, :] - pal[:, None, :, :]) ** 2).sum(3).argmin(2).astype(np.int64)
+    d2 = ((rgb[:, :, None, :] - pal[:, None, :, :]) ** 2).sum(3)
+    sel = d2.argmin(2).astype(np.int64)
+    # Blocks of three colours off one line (a vinyl's navy stripe, its white
+    # edge and the silver): the bounding box's corners blended to a pale blue
+    # over the silver. Those try each pair of their own pixels as the ends.
+    bad = np.nonzero(d2.min(2).sum(1) > 16 * 300)[0]
+    pairs = np.array([(i, j) for i in range(16) for j in range(i + 1, 16)])
+    for b in np.array_split(bad, max(1, len(bad) // 512)) if len(bad) else ():
+        e0, e1 = q(rgb[b][:, pairs[:, 0]].reshape(-1, 3)).reshape(len(b), -1), q(rgb[b][:, pairs[:, 1]].reshape(-1, 3)).reshape(len(b), -1)
+        e0, e1 = np.maximum(e0, e1), np.minimum(e0, e1)
+        q0, q1 = rgb565(e0.reshape(-1)).astype(np.int32).reshape(len(b), -1, 3), rgb565(e1.reshape(-1)).astype(np.int32).reshape(len(b), -1, 3)
+        cp = np.stack([q0, q1, (2 * q0 + q1) // 3, (q0 + 2 * q1) // 3], 2)  # blocks, pairs, 4, 3
+        dd = ((rgb[b][:, None, :, None, :] - cp[:, :, None, :, :]) ** 2).sum(4)  # blocks, pairs, 16, 4
+        err = dd.min(3).sum(2) + np.where(e0 == e1, 1 << 40, 0)
+        k = err.argmin(1)
+        better = err[np.arange(len(b)), k] < d2[b].min(2).sum(1)
+        r = np.arange(len(b))[better]; kk = k[better]
+        c0[b[r]], c1[b[r]] = e0[r, kk], e1[r, kk]
+        sel[b[r]] = dd[r, kk].argmin(2)
     sel[c0 == c1] = 0
     out[:, 8], out[:, 9], out[:, 10], out[:, 11] = c0 & 255, c0 >> 8, c1 & 255, c1 >> 8
     bits = sum(sel[:, i] << (2 * i) for i in range(16))

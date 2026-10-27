@@ -145,6 +145,86 @@ def jdlz(src):
     return bytes(out)
 
 
+def huff(src):
+    """EA's HUFF: 'HUFF', 0x01, 0x10, u16 0, u32 unpacked size, u32 packed
+    size, then EA's codex Huffman stream (type 0x30fb), ported from
+    huffdecode.cpp in EA's GPL Command & Conquer Generals source: big-endian
+    bits; the type word and the size; a clue byte; per code length the
+    number of codes (getnum); the symbols in code order as leaps over the
+    ones not yet used; then the codes, the clue's code escaping a run of the
+    previous byte (getnum, its length), the end (a 1 bit) or a byte as is.
+    Types 0x32fb and 0x34fb are summed once or twice after."""
+    assert src[:4] == b'HUFF', src[:4]
+    data = src[16:]
+    s = bin(int.from_bytes(b'\x01' + data + bytes(8), 'big'))[3:]
+    p = 0
+    def get(n):
+        nonlocal p
+        p += n
+        return int(s[p - n:p], 2) if n else 0
+    def getnum():  # as SQgetnum (its two ways of counting the leading zeros differ by one)
+        nonlocal p
+        if s[p] == '1':
+            return get(3) - 4
+        k = s.find('1', p) - p
+        n = k + 2 if '1' in s[p:p + 16] else k + 3
+        p += k + 1
+        if n > 16:
+            v = get(n - 16)
+            return (get(16) | (v << 16)) + (1 << n) - 4
+        return get(n) + (1 << n) - 4
+    kind = get(16)
+    if kind & 0x8000:
+        if kind & 0x100: get(32)
+        size = get(32)
+    else:
+        if kind & 0x100: get(24)
+        size = get(24)
+    kind &= ~0x100
+    clue = get(8)
+    counts, delta, limit = [0], [0], [0]
+    chars = base = 0
+    while True:
+        base <<= 1
+        delta.append(base - chars)
+        n = getnum()
+        counts.append(n)
+        chars += n; base += n
+        cmp = (base << (16 - (len(counts) - 1))) & 0xFFFF if n else 0
+        limit.append(cmp)
+        if n and not cmp: break
+    limit[-1] = 1 << 32
+    used, codes, nxt = bytearray(256), [], -1
+    for _ in range(chars):
+        leap = getnum() + 1
+        while leap:
+            nxt = (nxt + 1) & 0xFF  # (a byte: the leaps wrap round)
+            if not used[nxt]: leap -= 1
+        used[nxt] = 1
+        codes.append(nxt)
+    lengths = [L for L in range(1, len(counts)) if counts[L]]
+    out = bytearray()
+    while len(out) < size + 1:
+        peek = int(s[p:p + 16], 2)
+        L = next(L for L in lengths if peek < limit[L])
+        code = codes[get(L) - delta[L]]
+        if code != clue:
+            out.append(code); continue
+        run = getnum()
+        if run:
+            out += bytes([out[-1]]) * run; continue
+        if get(1): break
+        out.append(get(8))
+    out = out[:size]
+    if kind in (0x32fb, 0xb2fb, 0x34fb, 0xb4fb):
+        i = c = 0
+        for k in range(len(out)):
+            i = (i + out[k]) & 0xFF
+            c = (c + i) & 0xFF
+            out[k] = i if kind in (0x32fb, 0xb2fb) else c
+    return bytes(out)
+
+
 def read_textures(path):
     """TEXTURES.BIN, a texture pack: b3300000 holding b3310000 (33310002
     hashes, 33310004 headers, 33310005 32-byte format entries) and b3320000
@@ -187,16 +267,16 @@ def read_textures(path):
         # hash, u32 file offset, u32 packed size, u32 unpacked size, u32
         # flags, u32 0); each texture unpacks to its top level's pixels and
         # then a 0x9C-byte header: the name at 0x0C, u32 hash at 0x24, u16
-        # width and height at 0x44, the FourCC at 0x90. JDLZ or HUFF (not
-        # decoded: those textures come back without data).
+        # width and height at 0x44, the FourCC at 0x90. JDLZ or HUFF (the
+        # lamps and vinyls); anything else comes back without data.
         for k in range(len(packed) // 24):
             th, off, psize, usize = struct.unpack_from('<4I', packed, 24 * k)
             blob = d[off:off + psize]
-            if blob[:4] != b'JDLZ':
+            if blob[:4] not in (b'JDLZ', b'HUFF'):
                 out[th] = {'name': '', 'width': 0, 'height': 0, 'fourcc': '', 'size': 0, 'top': 0, 'data': b'',
                            'packing': blob[:4].decode('latin-1')}
                 continue
-            u = jdlz(blob)
+            u = jdlz(blob) if blob[:4] == b'JDLZ' else huff(blob)
             h = u[-0x9C:]
             w, hh = struct.unpack_from('<HH', h, 0x44)
             out[th] = {'name': h[0x0C:0x24].split(b'\0')[0].decode('latin-1'), 'width': w, 'height': hh,
