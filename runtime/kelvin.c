@@ -116,6 +116,7 @@ void nv2a_kelvin(uint32_t method, uint32_t arg) {
     case FLIP_INCREMENT_WRITE: {
         nv2a.flips++, nv2a.queued++;
         nv2a_trace('F', nv2a.draws);
+        if (nv2a_depth_dump_at_flip) nv2a_depth_dump_at_flip = 0, nv2a_raster_sync(), nv2a_raster_dump_depths();
         nv2a_raster_flip(); /* the display gets its buffers at notifies (trap_method) */
         nv2a_raster_invalidate();
         uint32_t mod = nv2a.kelvin[FLIP_MODULO / 4];

@@ -366,6 +366,7 @@ static unsigned pb_n;
  * PUT moves; that returns 0, so the device thread goes back to its timed
  * wait (and keeps raising vertical blanks) instead of spinning here. */
 uint32_t rt_frame_interval_at;
+int nv2a_depth_dump_at_flip;
 static uint64_t vblank_due; /* when the device loop raises the next vertical blank */
 
 static int run_pushbuf(void) {
@@ -854,7 +855,7 @@ static void *device_main(void *arg) {
                 if (rt_ram_dump_wanted) { /* F4 (display.c): the GPU's drawing read back first */
                     rt_ram_dump_wanted = 0;
                     nv2a_raster_sync();
-                    nv2a_raster_dump_depths();
+                    nv2a_depth_dump_at_flip = 1; /* the depth maps when this frame is done (kelvin.c): at a blank the next may be half drawn */
                     char path[256];
 #ifdef _WIN32
                     mkdir("screenshots");

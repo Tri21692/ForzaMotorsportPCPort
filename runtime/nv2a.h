@@ -35,6 +35,7 @@ void nv2a_raster_dump_state(FILE *f, uint32_t flip);    /* XBRT_GPU_DUMP: the ve
 void nv2a_raster_flush(void);                           /* finish the batched drawing */
 void nv2a_raster_sync(void);
 void nv2a_raster_dump_depths(void); /* F4: framebuffers' depth to screenshots/ (debugging) */
+extern int nv2a_depth_dump_at_flip;  /* F4: do it at the next flip, a whole frame drawn */
 void nv2a_raster_cpu_reads(uint32_t base, uint32_t size); /* the GPU's drawing over these bytes reaches RAM (device thread) */
 void nv2a_cpu_reads(uint32_t base, uint32_t size);        /* ... asked from the CPU's side, which waits for it */
 void nv2a_raster_sync_range(uint32_t base, uint32_t size); /* the colour drawn over these bytes on its way to RAM */
