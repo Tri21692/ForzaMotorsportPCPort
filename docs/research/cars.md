@@ -610,3 +610,18 @@ more makers: 6 logo slots, 20 free ids; Mega.ca2 has about 0.4 MB of its
 12 left, which cars use up first. addcar.py --make takes the maker's name,
 --physics-like takes another car's drivetrain, gearbox, brakes and so on.
 The Gallardo's brake-light textures are HUFF-packed (not decoded yet).
+
+Gallardo, second pass (26 Oct): the shop's slots grow by copying template
+parts (hoodb-e from hoodf, winga/e/f from wingc): a part id is a hash of its
+name in which the last letter counts 0x30000 apiece, and tooldata's part
+names are matched without regard to case (the Civic's own lists say
+wingRaceA_LOD for wingraceA_LOD1). Six hoods and nine shared spoilers, the
+spoilers as wide as the tail (nfsu2forza.py --no-stock-wing: the stock car
+has none). The interior's tuck under the shell ignores the underbody (a MW
+stock body has its floor, and the dash and steering wheel lay flat on it).
+The spec screen's 0-60, 0-100 mph and top speed are model.dat 80-88 (m/s);
+the Civic's 195/55 R15 tyres and 13" brakes were what braked so badly
+(addcar --tooldata-like Ferrari360:Brakes,Tire, --tires); the Civic's small
+tyres made the 360 gearbox top out at 253 km/h (--final-drive 3.75 with
+19" tyres: about 330 km/h at the limiter). DriverPosition moves with the
+roof (-0.19 m). Stock paints are the car cab's liveries/standard/liveryN.livery.

@@ -10,6 +10,8 @@ to a new car, and --restore gives the Civic SI back its own files.
                          [--engine-like <car> [--engine <name>] [--power <hp>] [--torque <lb-ft>]]
                          [--mass <kg>] [--stats-like <car>] [--upgrades <upgrades.xml>]
                          [--liveries <liveries.bin>] [--physics-like <car>:<part>[,<part>...]]...
+                         [--tooldata-like <car>:<Section>[,...]]... [--tires <front>,<rear>]
+                         [--final-drive <ratio>] [--performance <0-60 s>,<0-100 mph s>,<top km/h>]
   e.g.  <disc>  run/mods  CivicSI  Nissan240SXS13  --name "240SX" --restore
 
 <from> and <new> are car names as in cars\\carlist.xml (<new> must not be
@@ -41,7 +43,13 @@ nfsu2forza.py writes for a Most Wanted car. --liveries: the paint shop's copy of
 livery (nfsu2forza.py --liveries) instead of <from>'s. --physics-like (any
 number): those folders of cars\\<car>\\physics (every upgrade level), e.g.
 AudiRS6:drivetraindiff (its differentials, and so all-wheel drive) or
-Ferrari360:transmission,brakes.
+Ferrari360:transmission,brakes. --tooldata-like (any number): those
+upgrade lists of tooldata.xml (stock level, prices, brake parts, tyre
+sizes), e.g. Ferrari360:Brakes,Tire. --tires: every tyre level's sizes,
+e.g. 235/35R19,295/30R19. --final-drive: the stock gearbox's final drive
+(every level scaled alike). --performance: the spec screen's 0-60 mph and
+0-100 mph times and top speed. --mass scales every weight level; with
+--cab the driver's seat and mirror view move with the roof's height.
 
 The ordinal is a number no car has and nothing names as a car
 (carlist, AI opponents, career prizes): the lists skip 13 numbers, and
@@ -251,7 +259,7 @@ def write_strings(d, add):
 
 def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=False, cab=None, make=None, year=None,
          engine_like=None, engine=None, power=None, torque=None, mass=None, stats_like=None, price=None, upgrades=None, liveries=None,
-         physics_like=None):
+         physics_like=None, tooldata_like=None, tires=None, final_drive=None, performance=None):
     mega, cars, xpr = Archive(disc, mods, 'Mega.ca2'), Archive(disc, mods, 'Cars.ca2'), Archive(disc, mods, 'MegaXPR.ca2')
     m = mega.files
     key = 'cars' + B + 'carlist.xml'
@@ -319,6 +327,12 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
             new_entry = re.sub(r'\b%s="[^"]*"' % attr, '%s="%s"' % (attr, val), entry)
             xml, entry = xml.replace(entry, new_entry), new_entry
         mrow[32:72] = row_of(model, so2)[32:72]  # specs (the prices at 24 and 28 stay, see --price)
+        mrow[80:92] = row_of(model, so2)[80:92]  # the spec screen's 0-60 mph and 0-100 mph (s) and top speed (m/s)
+    if performance:  # those figures as the real car's: model.dat's 80-88, gamecars.dat's 48, 52 and 64
+        t60, t100, vmax = performance
+        struct.pack_into('<3f', mrow, 80, t60, t100, vmax / 3.6)
+        struct.pack_into('<2f', grow, 48, t60, t100)
+        struct.pack_into('<f', grow, 64, vmax / 3.6)
     if power:  # gamecars.dat's power figure: tenths of a kilowatt
         struct.pack_into('<f', grow, 12, power * 0.745699872 * 10)
     if price:  # model.dat's two prices (24, 28) and gamecars.dat's (88, 92)
@@ -387,12 +401,6 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
             if k.lower().endswith('.ini'): v = re.sub(re.escape(eng).encode(), ename.encode(), v, flags=re.I)
             audio[B.join(('engines', ename.lower(), 'audio')) + B + rest] = v
         print('engine sound: %d files from car_%s.cab' % (len(audio), engine_like))
-    if mass:  # the stock (l0) weight, kg
-        wk = cdst + B.join(('physics', 'weight', 'l0.xml'))
-        w = cars.files[wk].decode('latin-1')
-        old = re.search(r' Mass="([0-9.]+)"', w)
-        cars.files[wk] = (w[:old.start(1)] + '%.3f' % mass + w[old.end(1):]).encode('latin-1')
-        print('weight: %s kg -> %.1f kg' % (old.group(1), mass))
     for spec in physics_like or ():  # <car>:<part>,<part>: those parts' physics (every level) from another car
         car, parts = spec.split(':')
         pp = B.join(('cars', car.lower(), 'physics')) + B
@@ -410,8 +418,63 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
                 new_entry = re.sub(r'\bcarDriveType="[^"]*"', 'carDriveType="%s"' % val, entry)
                 xml, entry = xml.replace(entry, new_entry), new_entry
                 m[key] = xml.encode('latin-1')
+                mrow[52:56] = row_of(model, ordinal_of(xml, car))[52:56]  # the spec screen's drivetrain (drivetraintype.dat)
                 print('drivetrain: %s (%s)' % (dtype.decode(), car))
             print('physics\\%s: %d files from %s' % (part.lower(), len(got), car))
+    for spec in tooldata_like or ():  # <car>:<Section>,<Section>: tooldata's upgrade lists (stock level, prices, brake parts, tyre sizes) of another car
+        car, secs = spec.split(':')
+        theirs = cars.files[B.join(('cars', car.lower(), 'tooldata.xml'))].decode('latin-1')
+        for sec in secs.split(','):
+            pat = r'\t*<%s\b[^>]*>.*?</%s>' % (sec, sec)
+            blk = re.search(pat, theirs, re.S)
+            if not blk or not re.search(pat, tool, re.S): raise SystemExit('--tooldata-like %s: no <%s> in both' % (spec, sec))
+            tool = re.sub(pat, lambda _: blk.group(0), tool, count=1, flags=re.S)
+            print('tooldata <%s>: %s\'s' % (sec, car))
+    if tires:  # every tyre level's sizes: "235/35R19,295/30R19", the front's and the rear's (the top level 10 mm wider)
+        sizes = [re.fullmatch(r'(\d+)/(\d+)R(\d+)', s).groups() for s in tires.split(',')]
+        def level(m_):
+            body = m_.group(0)
+            wider = 10 if m_.group(1) == '3' else 0
+            for end, (w_, r_, d_) in zip(('Fronts', 'Rears'), sizes):
+                body = re.sub(r'<%s [^>]*/>' % end, '<%s TireWidth="%d" TireRatio="%s" WheelDiameter="%s" />' % (end, int(w_) + wider, r_, d_), body)
+            return body
+        tire = re.search(r'<Tire\b.*?</Tire>', tool, re.S).group(0)
+        tool = tool.replace(tire, re.sub(r'<L(\d)\b.*?</L\1>', level, tire, flags=re.S))
+        print('tyres: %s' % tires)
+    if final_drive:  # every gearbox level's final drive ratio scaled so the stock one is this (longer: a higher top speed)
+        tl = [cdst + B.join(('physics', 'transmission', 'l%d.xml' % lv)) for lv in range(4)]
+        k_ = final_drive / float(re.search(rb'FinalDriveRatio="([0-9.]+)"', cars.files[tl[0]]).group(1))
+        for t in tl:
+            if t in cars.files:
+                cars.files[t] = re.sub(rb'FinalDriveRatio="([0-9.]+)"', lambda g: b'FinalDriveRatio="%.3f"' % (float(g.group(1)) * k_), cars.files[t])
+        print('final drive: %.2f (x%.3f at every level)' % (final_drive, k_))
+    if mass:  # the stock weight, kg, and the lighter upgrade levels by as much
+        wl = [cdst + B.join(('physics', 'weight', 'l%d.xml' % lv)) for lv in range(4)]
+        old = float(re.search(rb' Mass="([0-9.]+)"', cars.files[wl[0]]).group(1))
+        for wk in wl:
+            if wk in cars.files:
+                cars.files[wk] = re.sub(rb' Mass="([0-9.]+)"', lambda g: b' Mass="%.3f"' % (float(g.group(1)) * mass / old), cars.files[wk])
+        print('weight: %.1f kg -> %.1f kg (every level x%.3f)' % (old, mass, mass / old))
+    if cab:  # the driver and mirror view as much lower (or higher) as the new roof is than <from>'s: the driver's head stuck out of the Gallardo's roof
+        import carbin
+        def roof_and_length(blob):
+            parts = carbin.read(blob)['parts']
+            body = [v for p in parts if p['name'] == 'body_LOD1' for v in p['verts']]
+            return max(v[1] for v in body) / 4096, (max(v[2] for v in body) - min(v[2] for v in body)) / 4096
+        def carbin_of(path):
+            fs, _ = cab_files(open(path, 'rb').read())
+            return next(v for k, v in fs.items() if k.lower().endswith('car.carbin'))
+        theirs_cab = disc_file(disc, 'media', 'cabs', 'car_%s.cab' % src)
+        (r0, len0), (r1, _) = roof_and_length(carbin_of(theirs_cab)), roof_and_length(carbin_of(cab))
+        md = cars.files[cdst + B.join(('physics', 'maxdata.xml'))].decode('latin-1')
+        bb = re.search(r'MinZ="([-0-9.]+)"[^>]*MaxZ="([-0-9.]+)"', md)
+        dy = (r1 - r0) * (float(bb.group(2)) - float(bb.group(1))) / len0  # carbin units to metres, by the body's length
+        nk = cdst + 'nontooldata.xml'
+        nt = cars.files[nk].decode('latin-1')
+        for tag in ('DriverPosition', 'RearViewPosition'):
+            nt = re.sub(r'(<%s\b[^>]*\by=")([-+0-9.]+)"' % tag, lambda g: '%s%.2f"' % (g.group(1), float(g.group(2)) + dy), nt)
+        cars.files[nk] = nt.encode('latin-1')
+        print('driver: %+.2f m (the roof %+.2f carbin units)' % (dy, r1 - r0))
     if upgrades:  # the shop's body parts (nfsu2forza.py's upgrades.xml for a Most Wanted car)
         u = open(upgrades).read()
         for tag in ('FrontBumper', 'RearBumper', 'SideSkirt', 'Hood', 'Wing'):
@@ -515,7 +578,8 @@ if __name__ == '__main__':
     for a in it:
         if a in ('--ordinal', '--name', '--short', '--cab', '--make', '--year', '--engine-like', '--engine', '--power', '--torque',
                  '--mass', '--stats-like', '--price', '--upgrades', '--liveries'): opts[a[2:].replace('-', '_')] = next(it)
-        elif a == '--physics-like': opts.setdefault('physics_like', []).append(next(it))
+        elif a in ('--physics-like', '--tooldata-like'): opts.setdefault(a[2:].replace('-', '_'), []).append(next(it))
+        elif a in ('--tires', '--final-drive', '--performance'): opts[a[2:].replace('-', '_')] = next(it)
         elif a == '--restore': opts['restore'] = True
         else: args.append(a)
     if len(args) != 4: raise SystemExit(__doc__)
@@ -526,4 +590,7 @@ if __name__ == '__main__':
          engine_like=opts.get('engine_like'), engine=opts.get('engine'), power=float(opts['power']) if 'power' in opts else None,
          torque=float(opts['torque']) if 'torque' in opts else None, mass=float(opts['mass']) if 'mass' in opts else None,
          stats_like=opts.get('stats_like'), price=int(opts['price']) if 'price' in opts else None, upgrades=opts.get('upgrades'), liveries=opts.get('liveries'),
-         physics_like=opts.get('physics_like'), restore=opts.get('restore', False))
+         physics_like=opts.get('physics_like'), tooldata_like=opts.get('tooldata_like'), tires=opts.get('tires'),
+         final_drive=float(opts['final_drive']) if 'final_drive' in opts else None,
+         performance=tuple(float(x) for x in opts['performance'].split(',')) if 'performance' in opts else None,
+         restore=opts.get('restore', False))

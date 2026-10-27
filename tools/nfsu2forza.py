@@ -24,7 +24,7 @@ now, so parts are flat-coloured. Damage shapes are the undamaged shape
 (no dents yet).
 
 Usage:
-  python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass] [--badges <folder>] [--liveries <template .liveries.bin>]
+  python tools/nfsu2forza.py <template car.carbin> <NFSU car folder> <out car.carbin> [--keep-glass] [--badges <folder>] [--liveries <template .liveries.bin>] [--no-stock-wing]
 
 The NFSU car's windows are holes in its body: they are filled with glass
 (window_panes), put in the template's glass parts. --keep-glass keeps the
@@ -33,6 +33,8 @@ template's own windows instead (they stand out of a lower roof).
 model.* (the model's lettering, on the tail), any image ffmpeg
 reads, used instead of the NFSU badge sheet's small ones. Your own files:
 trademarks, so they stay out of anything shared.
+--no-stock-wing: a Most Wanted car whose stock version has no wing (the
+Gallardo): its own spoiler is a shop choice instead.
 --liveries: the template's media/cars/<car>.liveries.bin; writes the
 paint shop's copy of the new livery to liveries.bin beside the output
 (addcar.py --liveries), or every repaint takes the new lamps' texture.
@@ -81,15 +83,46 @@ SHADERS = {bhash('CARSKIN'): BODY, bhash('WINDSHIELD'): WINDOW, 0x12C9453C: WIND
            bhash('MIRROR'): CHROME}  # the mirrors' glass, as the Civic's (as paint it was a flat blue slab)
 
 
-MW_HOODS = (4, 21)  # a Most Wanted car's STYLE<n>_HOOD for the shop's two other hoods: a big scoop, a vented one
-MW_SPOILERS = (44, 5, 13, 6)  # CARS/SPOILER's STYLE<n> as the other wings: a lip, a low one, two tall
+MW_HOODS = (4, 21, 2, 7, 10, 16, 26, 31, 13, 20, 3, 5)  # a Most Wanted car's STYLE<n>_HOOD for the shop's other hoods, the first the car has
+MW_SPOILERS = (44, 5, 13, 6, 1, 3, 9, 26, 30, 2, 15)  # CARS/SPOILER's STYLE<n> as the other wings, the first there are
+# The shop's slots: parts the template has (the Civic: hooda, f, g; wingb, c, d, g,
+# raceA-C), and more made as copies of one of them. A part's id is a hash of its
+# name in which the name's last letter counts 0x30000 apiece (hooda 0xa3dd3101,
+# hoodf 0xa3ec3101, wingraceA 0xbbbbdb01, wingraceB 0xbbbedb01), so a copy named
+# hoodb has the id the game looks for (tooldata's lists name the parts).
+HOOD_SLOTS = 'fgbcde'
+WING_SLOTS = ('wingc', 'wingd', 'wingg', 'wingraceA', 'wingraceB', 'wingraceC', 'winga', 'winge', 'wingf')
+SLOT_LIKE = {'hoodb': 'hoodf', 'hoodc': 'hoodf', 'hoodd': 'hoodf', 'hoode': 'hoodf',
+             'winga': 'wingc', 'winge': 'wingc', 'wingf': 'wingc'}
 
 
-def write_upgrades(path, kits, hoods, spoilers):
+def slot_id(like_id, like, name):
+    """The part id of `name` from that of `like`, a name differing only in its last letter."""
+    assert len(like) == len(name) and like[:-1] == name[:-1], (like, name)
+    return (like_id + (ord(name[-1]) - ord(like[-1])) * 0x30000) & 0xFFFFFFFF
+
+
+def add_slots(car, names):
+    """Copies of template parts for the shop slots it lacks (SLOT_LIKE), next to the part copied."""
+    import copy
+    have = {p['name'] for p in car['parts']}
+    for name in names:
+        if name + '_LOD1' in have or name not in SLOT_LIKE: continue
+        like = SLOT_LIKE[name]
+        i, p = next((i, p) for i, p in enumerate(car['parts']) if p['name'] == like + '_LOD1')
+        q = copy.deepcopy(p)
+        q['name'], q['id'] = name + '_LOD1', slot_id(p['id'], like, name)
+        car['parts'].insert(i + 1, q)
+        have.add(q['name'])
+
+
+def write_upgrades(path, kits, hoods, spoilers, stock_wing=True):
     """The shop's body parts for a Most Wanted car (tooldata.xml's
     FrontBumper, RearBumper, SideSkirt, Hood and Wing; addcar.py --upgrades
     puts them in): each front bumper is a whole body kit, the rear bumpers
-    and skirts keep only their stock choice (the kits bring them)."""
+    and skirts keep only their stock choice (the kits bring them). hoods
+    and spoilers: (slot, style) pairs. stock_wing: the car's own spoiler
+    is its stock wing (else a choice, the stock car having none)."""
     def opt(i, name, price, parts, extra=''):
         ps = ' '.join('P%d="%s_LOD"' % (k, p) for k, p in enumerate(parts))
         inner = '\n\t\t\t\t<Parts %s/>' % ps if parts else ''
@@ -101,14 +134,21 @@ def write_upgrades(path, kits, hoods, spoilers):
     x += '\t\t</FrontBumper>\n\t\t<RearBumper>\n' + opt(0, 'Stock', 0, [], ' DragScale="1.0"') + '\t\t</RearBumper>\n'
     x += '\t\t<SideSkirt>\n' + opt(0, 'Stock', 0, [], ' DragScale="1.0"') + '\t\t</SideSkirt>\n'
     x += '\t\t<Hood>\n' + opt(0, 'Stock', 0, ['hooda'], ' DragScale="1.0"')
-    for i, (slot, n) in enumerate(zip('fg', hoods), 1):
+    for i, (slot, n) in enumerate(hoods, 1):
         x += opt(i, 'Hood %d' % n, 900 + 100 * i, ['hood' + slot], ' DragScale="1.0"')
-    x += '\t\t</Hood>\n\t\t<Wing>\n' + opt(0, 'Stock', 0, ['wingb'], ' DragScale="1.0"')
-    for i, (slot, n) in enumerate(zip(('wingc', 'wingd', 'wingg', 'wingRaceA'), spoilers), 1):
+    x += '\t\t</Hood>\n\t\t<Wing>\n'
+    if stock_wing:
+        x += opt(0, 'Stock', 0, ['wingb'], ' DragScale="1.0"')
+    else:  # the stock car has none: its own spoiler is a choice
+        x += opt(0, 'Stock', 0, [], ' DragScale="1.0"') + opt(1, 'Factory Wing', 750, ['wingb'], aero)
+    k = 1 if stock_wing else 2
+    for i, (slot, n) in enumerate(spoilers, k):
         x += opt(i, 'Wing %d' % n, 750 + 250 * i, [slot], aero)
-    x += opt(len(spoilers) + 1, 'No Wing', 0, [], ' DragScale="0.998"') + '\t\t</Wing>\n'
+    if stock_wing:
+        x += opt(len(spoilers) + 1, 'No Wing', 0, [], ' DragScale="0.998"')
+    x += '\t\t</Wing>\n'
     open(path, 'w').write(x)
-    print('upgrades: %d body kits, %d hoods, %d wings (%s)' % (len(kits), len(hoods), len(spoilers), path))
+    print('upgrades: %d body kits, %d hoods, %d wings (%s)' % (len(kits), len(hoods), len(spoilers) + (0 if stock_wing else 1), path))
 
 
 def mw_material(name):
@@ -371,7 +411,7 @@ def dark_uv(xpr_path):
     return (int((best[0] + 0.5) / w * 65536), int((best[1] + 0.5) / h * 65536))
 
 
-def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None):
+def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None, stock_wing=True):
     import numpy as np
     car = carbin.read(open(template_path, 'rb').read())
     nparts = nfsu.read(os.path.join(nfsu_dir, 'GEOMETRY.BIN'))
@@ -875,7 +915,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             # a corner through the glass or roof, brought down just under the shell
             # above it (the triangles it belongs to stay, so nothing tears)
             x, y, z = v[0] / 4096, v[1] / 4096, v[2] / 4096
-            hs = above[0].get((int(x // above[1]), int(z // above[1])), ())
+            # only the roof, glass and panels well up off the floor: a Most Wanted car's stock body
+            # (bumperFa) has its underside too, and tucked under that the dashboard and steering wheel lay flat on the floor
+            hs = [h for h in above[0].get((int(x // above[1]), int(z // above[1])), ()) if h > floor + 0.3]
             if hs and y > min(hs) - margin:
                 return (v[0], int(round((min(hs) - margin) * 4096))) + tuple(v[2:])
             return v
@@ -981,17 +1023,29 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             return sorted([p for p in nparts if re.fullmatch(re.escape(prefix + '_KIT%02d_' % n + suffix) + '_[A-D]', p['name'])],
                           key=lambda p: -len(p['verts']))
 
+        def rear_width():
+            """The stock body's width across the tail where the car's own
+            spoiler stands, a little in from its sides: how wide the shared
+            spoilers are made (Most Wanted spans them across the car's
+            back; as wide as the Gallardo's narrow lip they were stubs)."""
+            S = np.array([v[:3] for v in find('SPOILER')[0]['verts']])
+            B_ = np.array([v[:3] for p in find('BODY')[:1] for v in p['verts']])
+            fx, fz = (S[:, 0].min() + S[:, 0].max()) / 2, S[:, 2].min()
+            near = B_[(np.abs(B_[:, 0] - fx) < 0.12) & (B_[:, 2] > fz - 0.2) & (B_[:, 2] < fz + 0.05)]
+            return max(np.ptp(S[:, 1]), 0.94 * np.ptp(near[:, 1]) if len(near) else 0)
+
         def style(name, levels):
             """Parts of another file placed on this car: Most Wanted's shared
             spoilers (CARS/SPOILER) stand at the origin, their foot at z 0;
-            stood where the car's own spoiler is, as wide as it."""
+            stood where the car's own spoiler is, as wide as the tail there."""
             own = find('SPOILER')[0]
             S = np.array([v[:3] for v in own['verts']])
             foot = S[S[:, 2] < S[:, 2].min() + 0.03]
+            width = rear_width()
             out = []
             for p in levels:
                 V = np.array([v[:3] for v in p['verts']])
-                sy = np.ptp(S[:, 1]) / max(np.ptp(V[:, 1]), 1e-6)
+                sy = width / max(np.ptp(V[:, 1]), 1e-6)
                 dx = foot[:, 0].mean() - (V[:, 0].min() + V[:, 0].max()) / 2
                 q = dict(p)
                 q['verts'] = [(v[0] + dx, v[1] * sy, v[2] + S[:, 2].min()) + tuple(v[3:]) for v in p['verts']]
@@ -1005,7 +1059,12 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         def spoiler(n):
             got = sorted(spoilers.get('SPOILER_STYLE%02d' % n, []), key=lambda p: -len(p['verts']))
             return style('SPOILER_STYLE%02d' % n, got) if got else []
-        for n in MW_SPOILERS:
+        def hood(n):
+            return [p for p in nparts if p['name'].startswith('%s_STYLE%02d_HOOD_' % (prefix, n))]
+        hoods = list(zip(HOOD_SLOTS, [n for n in MW_HOODS if hood(n)]))
+        wings = list(zip(WING_SLOTS, [n for n in MW_SPOILERS if spoilers.get('SPOILER_STYLE%02d' % n)]))
+        add_slots(car, ['hood' + s for s, _ in hoods] + [s for s, _ in wings])
+        for _, n in wings:
             for lv in spoilers.get('SPOILER_STYLE%02d' % n, []):
                 for name in lv['materials']: SHADERS.setdefault(bhash(name), mw_material(name))
 
@@ -1026,10 +1085,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             'bumperFa': ([find('BODY')], 0, False, True),
             **{'bumperF' + 'bcdef'[n - 1]: ([kit(n, 'BODY')[:2] + find('BODY')[2:4]], 0, False, False) for n in range(1, 6)},  # far off, the stock body's levels
             'hooda': ([find('HOOD')], 0),
-            **{'hood' + slot: ([[p for p in nparts if p['name'].startswith('%s_STYLE%02d_HOOD_' % (prefix, n))]], 0)
-               for slot, n in zip('fg', MW_HOODS)},
+            **{'hood' + slot: ([hood(n)], 0) for slot, n in hoods},
             'wingb': ([find('SPOILER')], 0),
-            **{slot: ([spoiler(n)], 0) for slot, n in zip(('wingc', 'wingd', 'wingg', 'wingraceA'), MW_SPOILERS)},
+            **{slot: ([spoiler(n)], 0) for slot, n in wings},
             'glassLF': ([find('FRONT_LEFT_WINDOW')], 0, True), 'glassRF': ([find('FRONT_RIGHT_WINDOW')], 0, True),
             'glassLR': ([find('REAR_LEFT_WINDOW')], 0, True), 'glassRR': ([find('REAR_RIGHT_WINDOW')], 0, True),
             'glassF': ([find('FRONT_WINDOW')], 0, True), 'glassR': ([find('REAR_WINDOW')], 0, True),
@@ -1039,13 +1097,14 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             'mirrorL': ([find('LEFT_SIDE_MIRROR')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRROR')], 0),
         }
         write_upgrades(os.path.join(os.path.dirname(os.path.abspath(out_path)), 'upgrades.xml'),
-                       [n for n in range(1, 6) if kit(n, 'BODY')], [n for n in MW_HOODS], [n for n in MW_SPOILERS if spoiler(n)])
+                       [n for n in range(1, 6) if kit(n, 'BODY')], hoods, wings, stock_wing)
     plan = {k: v + (None, False)[len(v) - 2:] for k, v in plan.items()}
     built = {}
     done = []
     for part in car['parts']:
         if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name']) and not mw  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
                 or mw and part['name'].startswith(('glassT', 'bumperR', 'bumperFg', 'bumperFrace', 'skirt', 'trunk', 'wingraceB', 'wingraceC'))  # Most Wanted: in the kits, or none
+                and not part['name'].startswith(tuple(k for k in plan if k.startswith('wingrace')))  # (unless a shop slot)
                 or part['name'].startswith(('BADGE', 'bands', 'exhaust', 'cagerace'))):  # (the race cage too: not on a stock car, and its bars showed through the glass)  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
@@ -1446,7 +1505,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 7 and sys.argv[1] == '--wheel':
         convert_wheel(*sys.argv[2:])
         raise SystemExit
-    args = [a for a in sys.argv[1:] if a != '--keep-glass']
+    args = [a for a in sys.argv[1:] if a not in ('--keep-glass', '--no-stock-wing')]
     badges = None
     if '--badges' in args:
         i = args.index('--badges')
@@ -1459,4 +1518,4 @@ if __name__ == '__main__':
         del args[i:i + 2]
     if len(args) != 3:
         raise SystemExit(__doc__)
-    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges, liveries=liveries)
+    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges, liveries=liveries, stock_wing='--no-stock-wing' not in sys.argv)
