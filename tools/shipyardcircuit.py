@@ -31,7 +31,7 @@ START = (-343.0, -185.0)   # the lap line: on the upper road, the user's green c
 HALF = 7.0                 # off the course, the road's half width (metres)
 
 # the course points the loop runs between (forward order of the buffers)
-OLD_ROAD = 515     # the old road by the concrete barricade, where the strip comes in
+OLD_ROAD = 514     # the old road by the concrete barricade: the hairpin from the strip comes onto it here
 TURN2 = 550        # Turn 2, where the loop leaves the upper road for side road 31
 START_ROAD = 593   # Pacific Shipyards II's start road, where side road 39 meets it
 JUNCTION = 569     # the junction at the start road's top, where the strip leaves
@@ -40,11 +40,11 @@ SIDE_ROADS = [(-140, -326), (-100, -350), (-74, -368), (-90, -410), (-114, -454)
 # metal building to the west at (-129, -487) with a metre to spare
 GAP = [(-129, -560), (-262, -726)]       # where the tunnel is to go
 ROAD39 = [(-262, -726), (-385, -646), (-503, -566)]
-STRIP = [(-462, -232), (-650, -103)]  # straight: warehouse 14 to its south-west, the long green
+STRIP = [(-462, -232), (-636, -114), (-655, -104)]  # straight: warehouse 14 to its south-west, the long green
 # building to its north-east; the junction's low walls on it are hidden and cut
 
 # the course's branches the loop does not take, closed by walls across them
-CLOSED = (553, 596, 566, 512)
+CLOSED = (553, 596, 566, 509)  # 509: 20 m west of the hairpin's apex (at 512 the smoothed hairpin met it)
 
 # what closes the side roads and the strip off from the course: at Turn 2 the barricades and
 # detour, turn and road-closed signs; at the strip's end the concrete barricade and a chevron sign
@@ -434,7 +434,7 @@ def into_road(centre, half, pts):
     return half[k] - d[np.arange(len(pts)), k]
 
 
-def clear_road(col, centre, half, reach=1.5, keep_in=0.5):
+def clear_road(col, centre, half, reach=0.5, keep_in=0.0):
     """Every wall reaching more than `reach` m into the loop's road, from either edge (the course's
     walls where the loop leaves or joins it at an angle, the walls put back beside an off-course
     stretch, those along it on the inside of a tight bend), cut back: its parts more than `keep_in`
@@ -522,6 +522,14 @@ def build(disc, mods, preview_png=None):
         w = L.link_walls(link, 2 * HALF, sp) + (walls if k == 0 else [])
         g, a = L.make_collision(col, link, 2 * HALF, w, sp)
         gone += g; added += a
+    # ground under each stretch at its full width and 2 m over: where the loop leaves the course at
+    # Turn 2 and the junction it is wider than the link's own ground
+    left2, _ = frame(centre)
+    for r in runs(off):
+        for i, j in zip(r[:-1], r[1:]):
+            q = [centre[i] + np.array([left2[i][0], 0, left2[i][1]]) * (half[i] + 2), centre[i] - np.array([left2[i][0], 0, left2[i][1]]) * (half[i] + 2),
+                 centre[j] - np.array([left2[j][0], 0, left2[j][1]]) * (half[j] + 2), centre[j] + np.array([left2[j][0], 0, left2[j][1]]) * (half[j] + 2)]
+            col.add(0, [q[0], q[1], q[2]]); col.add(0, [q[2], q[3], q[0]])
     cut = clear_road(col, centre, half)
     holes, blocked = check(col, centre, half)
     print('walls cut back off the road: %d triangles' % cut)
