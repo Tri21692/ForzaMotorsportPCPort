@@ -151,7 +151,7 @@ def drawn_heights(res, centre, off):
     return out, int(known[off].sum()), int(off.sum())
 
 
-def obstacles(res, centre, half, where, inside=1.0, low=0.4, high=3.5):
+def obstacles(res, centre, half, where, inside=1.0, low=0.4, high=3.5, deep_inside=2.5):
     """The meshes drawn standing on the loop's road at the points `where` (the off-course stretches
     and their joins: on the course, its own rails and posts stand at the road's edge and stay):
     any triangle with a point more than `inside` m inside the road, between `low` and `high` m
@@ -173,7 +173,7 @@ def obstacles(res, centre, half, where, inside=1.0, low=0.4, high=3.5):
         return road
     # lamp posts (a row of them is one mesh, its lamps' glows another) only well inside: on the side
     # roads' sidewalks, inside this wider road's edge, a row went and left its glows in the air
-    shallow, deep = grid(inside), grid(2.5)
+    shallow, deep = grid(inside), grid(deep_inside)
     flat = lambda nm: nm.startswith(GROUND + ('curb', 'shadow', 'line', 'parkinglot')) or 'lines_' in nm
     found = {}
     for i, nm, t in mesh_tris(res, names, lambda nm: not flat(nm), (*lo, *hi)):
@@ -582,6 +582,9 @@ CONCRETE = [(-490, -575), (-262, -726)]   # side road 39 from the start road to 
 CONCRETE_H = 2.4
 
 
+HEAD, HEAD_GLOW = 2158, 2159   # pole_streetlight154's head (its strip, and its foot's plate) and its glow: the tunnel's lamps
+LAMP_EVERY = 24.0  # m between the tunnel's lamps, each wall in turn
+MARGIN = 2.0       # the track's edges (the suggested line) this far short of any wall
 TUNNEL_LEAD = 12   # points (2 m each) the tunnel reaches back along side road 39, round the corner into the gap
 
 
@@ -604,7 +607,123 @@ def walkway_width(n):
     return WALKWAY * np.clip(np.minimum(k, n - 1 - k) / 2.0, 0, 1)
 
 
-def tunnel_faces(centre, half, idx, out=0.6):
+def tunnel_walk(centre, idx):
+    """The walkways' width at each of the tunnel's points idx: only where it runs straight along the
+    gap (round the corner into it they showed in the turn), growing from nothing at each end."""
+    g0, g1 = np.array(GAP[0], float), np.array(GAP[1], float)
+    gd = g1 - g0
+    u = ((centre[:, [0, 2]] - g0) @ gd) / (gd @ gd)
+    across = np.abs(((centre[:, [0, 2]] - g0) @ np.array([-gd[1], gd[0]])) / np.linalg.norm(gd))
+    _, fwd = frame(centre)
+    along = np.abs(fwd @ (gd / np.linalg.norm(gd)))
+    straight = [k for k, i in enumerate(idx) if 0.04 < u[i] < 0.96 and across[i] < 6 and along[i] > np.cos(np.radians(8))]
+    w = np.zeros(len(idx))
+    if straight:
+        a, b = straight[0], straight[-1]
+        w[a:b + 1] = walkway_width(b - a + 1)
+    return w
+
+
+def lamp_faces(res, foot, facing, y_top):
+    """The street light HEAD as faces (its strip's runs, not to be simplified), its pole's foot
+    moved to `foot` (x, z), its arm turned along `facing` (x, z, unit), its top at y_top; and its
+    glow's vertices (HEAD_GLOW, 20 bytes each) moved the same: (faces, glow bytes, glow indices)."""
+    import struct
+    import xb2
+    names, _ = xb2.resources(bytes(res))
+    def raw(i):
+        a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * i)[0]
+        _, _, nidx, vbytes, vb = struct.unpack_from('<IIIIH', res, L.MODEL + a)
+        o = names[vb - 9][3]
+        return bytes(res[o:o + vbytes]), np.frombuffer(bytes(res[o + vbytes:o + vbytes + 2 * nidx]), '<u2')
+    vb, idx = raw(HEAD)
+    v = np.frombuffer(vb, np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)]))
+    p = v['p'].astype(float)
+    high = p[:, 1] > 4.0           # the head (its foot's plate is low)
+    base = p[~high][:, [0, 2]].mean(0)
+    d = p[high][:, [0, 2]].mean(0) - base
+    ang = np.arctan2(facing[1], facing[0]) - np.arctan2(d[1], d[0])
+    c_, s_ = np.cos(ang), np.sin(ang)
+    top = p[high][:, 1].max()
+    def move(q):
+        x, z = q[..., 0] - base[0], q[..., 2] - base[1]
+        return np.stack([foot[0] + c_ * x - s_ * z, q[..., 1] - top + y_top, foot[1] + s_ * x + c_ * z], -1)
+    def turn(n):
+        return np.array([c_ * n[0] - s_ * n[2], n[1], s_ * n[0] + c_ * n[2]])
+    P = move(p)
+    vert = lambda k: (P[k], turn(unpack_normal(int(v['n'][k]))), int(v['st'][k][0]), int(v['st'][k][1]))
+    faces, run = [], []
+    for k in list(range(len(idx))) + [None]:  # runs of the strip through the head alone
+        if k is not None and high[idx[k]]:
+            run.append(k); continue
+        if len(run) >= 3:
+            f = ([run[0]] if run[0] % 2 else []) + run  # its first triangle as odd as it was
+            if len(f) % 2: f.append(f[-1])
+            faces.append([vert(idx[j]) for j in f])
+        run = []
+    g, gi = raw(HEAD_GLOW)
+    gv = np.frombuffer(g, np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<u4')])).copy()
+    gv['p'] = move(gv['p'].astype(float))
+    gv['n'] = [pack_normal(turn(unpack_normal(int(w)))) for w in gv['n']]
+    return faces, gv.tobytes(), gi
+
+
+def unpack_normal(w):
+    """pack_normal's word as a vector."""
+    x, y, z = w & 0x7ff, (w >> 11) & 0x7ff, (w >> 22) & 0x3ff
+    x, y, z = x - 0x800 * (x >= 0x400), y - 0x800 * (y >= 0x400), z - 0x400 * (z >= 0x200)
+    return np.array([x / 1023, y / 1023, z / 511])
+
+
+def glow_pool(res, used, ppw, allowed, vbytes_, nidx_):
+    """Glows (prim 15, 20-byte vertices) to move: in `allowed` (the svb's), not in `used`, nor part
+    of anything used, holding vbytes_ and nidx_, their sphere found: [(mesh, sphere offset)]."""
+    import struct
+    import xb2
+    names, _ = xb2.resources(bytes(res))
+    n_mesh = struct.unpack_from('<I', res, L.MODEL)[0]
+    def rec(i):
+        return struct.unpack_from('<IIIIHHH', res, L.MODEL + struct.unpack_from('<I', res, L.MODEL + 4 + 4 * i)[0])
+    nm = lambda vb: names[vb - 9][0] if 9 <= vb < len(names) + 9 else ''
+    seen = {object_of(nm(rec(i)[4])) for i in used if i < n_mesh}
+    out = []
+    for i in range(n_mesh):
+        fl, ab, nidx, vbytes, vb, stride, prim = rec(i)
+        if i in used or prim != 15 or vb not in allowed or vbytes < vbytes_ or nidx < nidx_ or vbytes % 20: continue
+        if object_of(nm(vb)) in seen: continue
+        o = names[vb - 9][3]
+        q = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, 5)[:, :3].astype(float)
+        if not np.all(np.isfinite(q)): continue
+        c = (q.min(0) + q.max(0)) / 2
+        at = sphere_at(ppw, c, float(np.max(np.linalg.norm(q - c, axis=1))))
+        if at is not None: out.append((i, at))
+    return out
+
+
+def write_glow(res, mesh, data, idx):
+    """Glow `mesh` rewritten as HEAD_GLOW's vertices `data` and indices (its spare ones repeating the
+    last), with HEAD_GLOW's texture and shader. Returns its bounding sphere."""
+    import struct
+    import xb2
+    names, _ = xb2.resources(bytes(res))
+    a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * mesh)[0]
+    _, _, nidx, vbytes, vb = struct.unpack_from('<IIIIH', res, L.MODEL + a)
+    ga = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * HEAD_GLOW)[0]
+    gfl = struct.unpack_from('<I', res, L.MODEL + ga)[0]
+    gt = struct.unpack_from('<HHH', res, L.MODEL + ga + 22)
+    o = names[vb - 9][3]
+    nv = vbytes // 20
+    d = data + data[-20:] * (nv - len(data) // 20)
+    res[o:o + vbytes] = d
+    res[o + vbytes:o + vbytes + 2 * nidx] = np.array(list(idx) + [idx[-1]] * (nidx - len(idx)), '<u2').tobytes()
+    struct.pack_into('<HHH', res, L.MODEL + a + 22, *gt)
+    struct.pack_into('<I', res, L.MODEL + a, gfl)
+    q = np.frombuffer(data, '<f4').reshape(-1, 5)[:, :3].astype(float)
+    c = (q.min(0) + q.max(0)) / 2
+    return c, float(np.max(np.linalg.norm(q - c, axis=1)))
+
+
+def tunnel_faces(centre, half, idx, out=0.6, apron=6):
     """Over loop points idx (the gap, where nothing is drawn): a floor of road, walls `out` m outside
     each edge (on the invisible walls' line) up to the roof, and the roof, its underside facing down
     and its top up. Returns ([floor face], [concrete faces]) in kerb_strips' form."""
@@ -625,7 +744,12 @@ def tunnel_faces(centre, half, idx, out=0.6):
         return [v for pr in pairs for v in pr]
     s_of = lambda pts: -32000 + 53.0 * (pts[:, 0] - x0)
     t_of = lambda pts: -32000 + 51.7 * (pts[:, 2] - z0)
-    fl, fr = P + L3 * w + (0, 0.03, 0), P - L3 * w + (0, 0.03, 0)
+    # the floor, and on out of the mouth at the gap's start (the side road's drawn end falls short
+    # of it: the void showed past the mouth)
+    fk = list(range(max(0, idx[0] - apron), idx[0])) + keep
+    PF, LF = centre[fk], np.stack([left[fk][:, 0], np.zeros(len(fk)), left[fk][:, 1]], 1)
+    WF = (half[fk] + out)[:, None]
+    fl, fr = PF + LF * WF + (0, 0.03, 0), PF - LF * WF + (0, 0.03, 0)
     floor = face(fl, fr, up, s_of(fl), t_of(fl), s_of(fr), t_of(fr))
     sd = -32000 + 162 * dist
     lo_t, hi_t = np.full(len(P), -32369.0), np.full(len(P), -32268.0)
@@ -633,26 +757,37 @@ def tunnel_faces(centre, half, idx, out=0.6):
              face(P - L3 * w, P - L3 * w + up * TUNNEL_H, L3, sd, lo_t, sd, hi_t),    # the right wall
              face(P + L3 * w + up * TUNNEL_H, P - L3 * w + up * TUNNEL_H, -up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32485.0)),  # the roof, from below
              face(P - L3 * w + up * (TUNNEL_H + 0.3), P + L3 * w + up * (TUNNEL_H + 0.3), up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32485.0))]  # and above
-    # three strip lights along the roof, facing down
-    (s0, t0), (s1, t1) = LAMP_ST
-    lights = []
-    for c_ in (w - 1.0, 0.75, -(w - 2.5)):  # one over each walkway and one down the middle, 1.5 m wide each
-        a = P + L3 * c_ + up * (TUNNEL_H - 0.05)
-        b = P + L3 * (c_ - 1.5) + up * (TUNNEL_H - 0.05)
-        lights.append(face(a, b, -up, np.full(len(P), float(s0)), np.full(len(P), float(t0)), np.full(len(P), float(s1)), np.full(len(P), float(t1))))
+    ww_all = tunnel_walk(centre, idx)
+    ww_ = ww_all[[idx.index(i) for i in keep]][:, None]
+    # street lamps under the roof along the walkways, each wall in turn: where they are lamps go
+    lights = []  # (foot (x, z), facing (x, z), top y)
+    full = [i for i, ww in zip(idx, ww_all) if ww >= WALKWAY - 1e-6]
+    if full:
+        run_ = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(centre[full][:, [0, 2]], axis=0), axis=1))])
+        side, nxt = 1, LAMP_EVERY / 2
+        for i, d_ in zip(full, run_):
+            if d_ < nxt: continue
+            l2 = np.array(left[i]) * side
+            foot = centre[i][[0, 2]] + l2 * (half[i] + out)
+            lights.append((foot, -l2, centre[i][1] + TUNNEL_H - 0.02))
+            side, nxt = -side, nxt + LAMP_EVERY
     # a raised walkway along each wall, its kerb, its end at each mouth, and a two-bar railing at its
     # edge (the tunnel at Tokyo's way)
     walkways, railings = [], []
-    ww_ = walkway_width(len(P))[:, None]
+    on = np.nonzero(ww_[:, 0] > 0)[0]
+    span = slice(max(0, on[0] - 1), min(len(P), on[-1] + 2)) if len(on) else slice(0, 0)
     for side in (1, -1):
+        if not len(on): break
         edge = P + L3 * side * (w - ww_)
         wall = P + L3 * side * w
         out_ = L3 * side
-        walkways.append(face(edge, edge + up * WALKWAY_H, -out_, sd, lo_t, sd, np.full(len(P), -32369.0 + 101 * WALKWAY_H / 0.9)))  # the kerb
-        walkways.append(face(edge + up * WALKWAY_H, wall + up * WALKWAY_H, up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32255.0 - 115 * WALKWAY)))  # its top
+        edge, wall, out_, sd_, lo_ = edge[span], wall[span], out_[span], sd[span], lo_t[span]
+        m_ = len(edge)
+        walkways.append(face(edge, edge + up * WALKWAY_H, -out_, sd_, lo_, sd_, np.full(m_, -32369.0 + 101 * WALKWAY_H / 0.9)))  # the kerb
+        walkways.append(face(edge + up * WALKWAY_H, wall + up * WALKWAY_H, up, sd_, np.full(m_, -32255.0), sd_, np.full(m_, -32255.0 - 115 * WALKWAY)))  # its top
         for y0, y1 in RAILS:
             for facing in (-1, 1):  # both sides of each bar
-                railings.append(face(edge + up * (WALKWAY_H + y0), edge + up * (WALKWAY_H + y1), out_ * facing, -32765 + 162 * dist, np.full(len(P), -32517.0), -32765 + 162 * dist, np.full(len(P), -32260.0)))
+                railings.append(face(edge + up * (WALKWAY_H + y0), edge + up * (WALKWAY_H + y1), out_ * facing, -32765 + 162 * dist[span], np.full(m_, -32517.0), -32765 + 162 * dist[span], np.full(m_, -32260.0)))
     # each mouth a face of concrete round its opening, so nothing past the tunnel's sides or roof
     # shows through: beside it PORTAL m each way, and above it up to PORTAL m over the roof
     portals = []
@@ -661,12 +796,71 @@ def tunnel_faces(centre, half, idx, out=0.6):
         d = P[0] - P[1] if end == 0 else P[-1] - P[-2]
         n = np.array([d[0], 0.0, d[2]]) / np.hypot(d[0], d[2])  # facing out of the tunnel
         top = TUNNEL_H + PORTAL_TOP
-        for lo_, hi_, y0, y1 in ((ww, ww + PORTAL, -1.0, top), (-ww - PORTAL, -ww, -1.0, top), (-ww, ww, TUNNEL_H, top)):
+        panels = [(ww, ww + PORTAL, -1.0, top), (-ww - PORTAL, -ww, -1.0, top), (-ww, ww, TUNNEL_H, top)]
+        if end == len(P) - 1:  # round the corner: the panel on the turn's outside stood alone, flat, by nothing
+            inside = np.sign(l3 @ (P[len(P) // 2] - c))
+            panels = [q for q in panels if not (q[0] * inside < 0 and q[1] * inside < 0)]
+        for lo_, hi_, y0, y1 in panels:
             a = np.array([c + l3 * lo_ + up * y0, c + l3 * hi_ + up * y0])
             b = np.array([c + l3 * lo_ + up * y1, c + l3 * hi_ + up * y1])
             ss = np.array([-32000.0, -32000.0 + 162 * (hi_ - lo_)])
             portals.append(face(a, b, n, ss, np.full(2, -32369.0), ss, np.full(2, -32369.0 + 101 * (y1 - y0) / 0.9)))
     return [floor], walls, lights, portals, walkways, railings
+
+
+def concrete_mask(centre):
+    """The loop points along side road 39 between the start road and the tunnel (CONCRETE)."""
+    c0, c1 = np.array(CONCRETE[0], float), np.array(CONCRETE[1], float)
+    cd = c1 - c0
+    cu = ((centre[:, [0, 2]] - c0) @ cd) / (cd @ cd)
+    return (cu > 0) & (cu < 1) & (np.abs(((centre[:, [0, 2]] - c0) @ np.array([-cd[1], cd[0]])) / np.linalg.norm(cd)) < 10)
+
+
+def fill_ground(col, centre, half, dist, where, step=1.5):
+    """Ground where the collision has none, out to the walls (`dist`) beside loop points `where`,
+    at the height of the ground found round it: at the hairpin, between its road and the walls out
+    on what is drawn, the car fell through. Returns the squares added."""
+    left, fwd = frame(centre)
+    lo, hi = centre[where][:, [0, 2]].min(0) - 40, centre[where][:, [0, 2]].max(0) + 40
+    tris = []
+    for _, pts, n, _ in col.triangles():
+        q = np.array(pts, float)
+        if abs(n[1]) <= 0.7 or q[:, 0].max() < lo[0] or q[:, 0].min() > hi[0] or q[:, 2].max() < lo[1] or q[:, 2].min() > hi[1]: continue
+        tris.append(q)
+    cells = {}
+    for k, t in enumerate(tris):
+        for gx in range(int(np.floor(t[:, 0].min() / 5)), int(np.floor(t[:, 0].max() / 5)) + 1):
+            for gz in range(int(np.floor(t[:, 2].min() / 5)), int(np.floor(t[:, 2].max() / 5)) + 1):
+                cells.setdefault((gx, gz), []).append(k)
+    def height(x, z, y):
+        for k in cells.get((int(np.floor(x / 5)), int(np.floor(z / 5))), ()):
+            a, b, c = tris[k]
+            m = np.array([[b[0] - a[0], c[0] - a[0]], [b[2] - a[2], c[2] - a[2]]])
+            if abs(np.linalg.det(m)) < 1e-9: continue
+            u, v = np.linalg.solve(m, [x - a[0], z - a[2]])
+            if u < -1e-4 or v < -1e-4 or u + v > 1 + 1e-4: continue
+            h = a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1])
+            if y - 2.0 < h < y + 1.5: return h
+        return None
+    added = 0
+    for i in where:
+        c, l2, f2 = centre[i], np.array(left[i]), np.array(fwd[i])
+        l3, f3 = np.array([l2[0], 0, l2[1]]), np.array([f2[0], 0, f2[1]])
+        for side in (1, -1):
+            for u in np.arange(step / 2, dist.get((side, i), half[i] + WIDE) + 1.0, step):
+                q = c[[0, 2]] + l2 * side * u
+                if height(q[0], q[1], c[1]) is not None: continue
+                h = None
+                for r in (step, 2 * step, 3 * step):
+                    hs = [height(q[0] + dx, q[1] + dz, c[1]) for dx, dz in ((r, 0), (-r, 0), (0, r), (0, -r))]
+                    hs = [x for x in hs if x is not None]
+                    if hs: h = float(np.mean(hs)); break
+                Q = np.array([q[0], c[1] - 0.05 if h is None else h, q[1]])
+                a_, w_ = 1.2, step / 2 + 0.15
+                sq = [Q + l3 * w_ - f3 * a_, Q - l3 * w_ - f3 * a_, Q - l3 * w_ + f3 * a_, Q + l3 * w_ + f3 * a_]
+                col.add(0, [sq[0], sq[1], sq[2]]); col.add(0, [sq[2], sq[3], sq[0]])
+                added += 1
+    return added
 
 
 def object_of(name):
@@ -703,7 +897,7 @@ def donor_pool(res, used, ppw, allowed):
         if v is None: continue
         c = (v.min(0) + v.max(0)) / 2
         at = sphere_at(ppw, c, float(np.max(np.linalg.norm(v - c, axis=1))))
-        if at is not None: pool.append((pairs, i, at))
+        if at is not None: pool.append((pairs, i, at, vbytes // 24, nidx))
     return sorted(pool, key=lambda r: -r[0])
 
 
@@ -742,18 +936,29 @@ def simplify(face, tol=0.1):
     return [v for i in sorted(keep) for v in pairs[i]]
 
 
-def pack(faces, pool):
-    """Faces cut into pieces, each the size of the largest donor left (popped from `pool`, as
-    donor_pool), the pieces overlapping by a pair: [(mesh, sphere offset, piece, face index)]."""
+def pack(faces, pool, mats):
+    """Faces gathered by material into the donors (popped from `pool`, as donor_pool, the largest
+    left first), as many to each as fit (write_strips joins them), one too long for what is left
+    cut, its pieces overlapping by a pair: [(mesh, sphere offset, [pieces], material)]."""
     out = []
-    for fi, face in enumerate(faces):
-        pairs = [face[i:i + 2] for i in range(0, len(face), 2)]
-        i = 0
-        while i < len(pairs) - 1:
-            if not pool: raise SystemExit('out of donor meshes: %d faces, at %d' % (len(faces), fi))
-            n, mesh, at = pool.pop(0)
-            out.append((mesh, at, [v for pr in pairs[i:i + n] for v in pr], fi))
-            i += n - 1
+    print('donors: %d, room for %d pairs; needed %s' % (len(pool), sum(r[0] for r in pool), {str(m_): sum(len(f) // 2 for f, mm in zip(faces, mats) if mm == m_) for m_ in set(mats)}))
+    by = {}
+    for f, m in zip(faces, mats): by.setdefault(m, []).append([f[i:i + 2] for i in range(0, len(f), 2)])
+    for m, queue in by.items():
+        while queue:
+            if not pool: raise SystemExit('out of donor meshes: %d faces; left %s' % (len(faces), {str(m_): sum(len(q) for q in qq) for m_, qq in by.items() if qq}))
+            _, mesh, at, nv, nidx = pool.pop(0)
+            pieces, v, ix = [], 0, 0
+            while queue:
+                pr = queue[0]
+                join = 3 if pieces else 0
+                k = min(nv - v, nidx - ix - join) // 2  # the pairs there is room for
+                if k >= len(pr): take = len(pr); queue.pop(0)
+                elif k >= 2 and (not pieces or k >= 8): take = k; queue[0] = pr[k - 1:]
+                else: break
+                pieces.append([q for p_ in pr[:take] for q in p_])
+                v += 2 * take; ix += 2 * take + join
+            out.append((mesh, at, pieces, m))
     return out
 
 
@@ -899,18 +1104,24 @@ def build(disc, mods, preview_png=None, reverse=False):
     on_road = obstacles(res, centre, half, sorted({i for r in runs(off) for i in r}))
     print('standing on the road, hidden: %s' % ', '.join(sorted({nm for nm in on_road.values()})))
     hide |= set(on_road)
+    # and between the concrete walls up to the tunnel and in it, everything up to the walls (a lamp
+    # post stood in the road there)
+    walled = sorted(set(np.nonzero(concrete_mask(centre))[0]) | set(tunnel_points(centre)))
+    inside_walls = obstacles(res, centre, half, walled, inside=-0.3, deep_inside=-0.3)
+    print('between the concrete walls, hidden: %s' % ', '.join(sorted({nm for nm in inside_walls.values()})))
+    hide |= set(inside_walls)
     hide = whole_objects(res, hide)
     hide.discard(L.DONOR)
     # the track's edges (what the game measures it by, and draws the suggested line within) half a
     # metre short of any fence, wall or building inside them: at the strip's junction the line went
     # through a fence
     bd = boundaries(res, centre, half, range(len(centre)), hidden=hide, reach=0.5, inner=2.0)
-    cap = np.array([min(half[i], bd[(1, i)] - 1.5, bd[(-1, i)] - 1.5) for i in range(len(centre))])  # a car's width short of it
+    cap = np.array([min(half[i], bd[(1, i)] - MARGIN, bd[(-1, i)] - MARGIN) for i in range(len(centre))])  # a car's width and more short of it
     g0c, g1c = np.array(GAP[0], float), np.array(GAP[1], float)
     gdc = g1c - g0c
     guc = ((centre[:, [0, 2]] - g0c) @ gdc) / (gdc @ gdc)
-    tunnel = np.zeros(len(centre), bool); tunnel[tunnel_points(centre)] = True
-    cap[tunnel] = np.minimum(cap[tunnel], half[tunnel] + 0.6 - WALKWAY - 1.5)  # off the tunnel's railings
+    tunnel_idx = tunnel_points(centre)
+    cap[tunnel_idx] = np.minimum(cap[tunnel_idx], half[tunnel_idx] + 0.6 - tunnel_walk(centre, tunnel_idx) - MARGIN)  # off the tunnel's railings
     cap = np.maximum(cap, 4.0)
     k_ = np.arange(-3, 4); w_ = np.exp(-0.5 * (k_ / 1.5) ** 2); w_ /= w_.sum()
     cap = np.minimum(cap, sum(w_[j] * np.roll(cap, -k_[j]) for j in range(len(k_))))
@@ -952,10 +1163,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     wide = boundaries(res, centre, half, [i for i in range(len(centre)) if at_hairpin[i]], hidden=hide, reach=25.0)
     for (side, i), d in wide.items():
         if (side, i) in dist: dist[(side, i)] = d if d < half[i] + WIDE else half[i] + 25.0
-    c0, c1 = np.array(CONCRETE[0], float), np.array(CONCRETE[1], float)
-    cd = c1 - c0
-    cu = ((centre[:, [0, 2]] - c0) @ cd) / (cd @ cd)
-    by_concrete = (cu > 0) & (cu < 1) & (np.abs(((centre[:, [0, 2]] - c0) @ np.array([-cd[1], cd[0]])) / np.linalg.norm(cd)) < 10)
+    by_concrete = concrete_mask(centre)
     for (side, i) in list(dist):
         if by_concrete[i]: dist[(side, i)] = half[i] + 0.6
     g0_, g1_ = np.array(GAP[0], float), np.array(GAP[1], float)
@@ -964,7 +1172,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     tunnel_idx = tunnel_points(centre)
     in_gap_strict = np.zeros(len(centre), bool); in_gap_strict[tunnel_idx] = True
     by_concrete &= ~in_gap_strict  # the concrete walls end where the tunnel's begin, on the same line
-    in_gap_strict_w = dict(zip(tunnel_idx, walkway_width(len(tunnel_idx))))
+    in_gap_strict_w = dict(zip(tunnel_idx, tunnel_walk(centre, tunnel_idx)))
     in_gap = (gu > -10 / np.linalg.norm(gd_)) & (gu < 1 + 10 / np.linalg.norm(gd_)) & \
              (np.abs(((centre[:, [0, 2]] - g0_) @ np.array([-gd_[1], gd_[0]])) / np.linalg.norm(gd_)) < 12)
     for (side, i) in list(dist):
@@ -975,6 +1183,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     # the walls beside the new road after the cut (the tunnel's railings stand inside the road's
     # width, and were cut away), no ground of theirs at the hairpin
     for r in runs(off): boundary_collision(col, centre, half, r, dist, sp, at_hairpin)
+    print('hairpin: %d squares of ground where there was none' % fill_ground(col, centre, half, dist, [i for i in range(len(centre)) if at_hairpin[i]]))
     holes, blocked = check(col, centre, half)
     print('walls cut back off the road: %d triangles' % cut)
     for what, items in (('no ground', holes), ('wall on the road', blocked)):
@@ -995,6 +1204,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     lamp_light = tuple(int(v) for v in np.median(sl[:, 2:4], axis=0))
     sl = np.frombuffer(bytes(res[L.vb_offset(res, L.mesh(res, RAIL)[3]):][:L.mesh(res, RAIL)[2]]), '<i2').reshape(-1, 12)[:, 8:12]
     rail_light = tuple(int(v) for v in np.median(sl[:, 2:4], axis=0))
+    sl = np.frombuffer(bytes(res[L.vb_offset(res, L.mesh(res, HEAD)[3]):][:L.mesh(res, HEAD)[2]]), '<i2').reshape(-1, 12)[:, 8:12]
+    head_light = tuple(int(v) for v in np.median(sl[:, 2:4], axis=0))
     rev = os.path.join(disc, 'media', 'tracks', 'VancouverReverse')
     ppw = open(os.path.join(rev, 'QuickPreview1.pvs.ppw'), 'rb').read()
     pvs_in = open(os.path.join(rev, 'QuickPreview1.pvs'), 'rb').read()
@@ -1029,20 +1240,36 @@ def build(disc, mods, preview_png=None, reverse=False):
     u = ((centre[:, [0, 2]] - g0) @ gd) / gl ** 2
     across_ = np.abs(((centre[:, [0, 2]] - g0) @ np.array([-gd[1], gd[0]])) / gl)
     gap = tunnel_points(centre)
+    glows = []
     if gap:
-        floor, concrete, lights, portals, walkways, railings = tunnel_faces(centre, half, gap)
-        kerbs += [floor] + [[f] for f in concrete + lights + portals + walkways + railings]
-        mats += [ASPHALT] + [None] * len(concrete) + [LAMP] * len(lights) + [None] * (len(portals) + len(walkways)) + [RAIL] * len(railings)
-        print('tunnel: %.0f m over the gap, %.1f m high, two strip lights, a face round each mouth' % (2 * len(gap), TUNNEL_H))
+        floor, concrete, lamps, portals, walkways, railings = tunnel_faces(centre, half, gap)
+        kerbs += [floor] + [[f] for f in concrete + portals + walkways + railings]
+        mats += [ASPHALT] + [None] * len(concrete) + [None] * (len(portals) + len(walkways)) + [RAIL] * len(railings)
+        glows = []
+        for foot, facing, y_top in lamps:
+            hf, gdata, gidx = lamp_faces(res, foot, facing, y_top)
+            kerbs += [[f] for f in hf]; mats += [HEAD] * len(hf)
+            glows.append((gdata, gidx))
+        print('tunnel: %.0f m, %.1f m high, %d street lamps, a face round each mouth' % (2 * len(gap), TUNNEL_H, len(lamps)))
     # ground where nothing is drawn beside the new stretches (the void showed past the edges)
     skirts = void_ground(res_bytes, centre, half, dist, sorted({i for r in runs(off) for i in r}), hide)
+    def other_leg(q, own=25, reach=12.0):  # within `reach` of the road of a part of the loop not its own
+        d = np.hypot(centre[:, 0] - q[0], centre[:, 2] - q[2])
+        k, n = int(np.argmin(d)), len(centre)
+        apart = np.abs((np.arange(n) - k + n // 2) % n - n // 2)
+        return bool(np.any((apart > own) & (d < half + reach)))
+    def foot_of(f, k):
+        return min((np.asarray(f[k][0], float), np.asarray(f[k + 1][0], float)), key=lambda q: np.min(np.hypot(centre[:, 0] - q[0], centre[:, 2] - q[2])))
+    n_sk = len(skirts)
+    skirts = [f for f in skirts if not any(np.hypot(foot_of(f, k)[0] - HAIRPIN[0], foot_of(f, k)[2] - HAIRPIN[1]) < HAIRPIN_R + 25 or other_leg(foot_of(f, k)) for k in range(0, len(f), 2))]
+    print('ground over the void: %d of %d stretches dropped (at the hairpin, or by another part of the loop)' % (n_sk - len(skirts), n_sk))
     kerbs += [[f] for f in skirts]
     mats += [ASPHALT] * len(skirts)
     # and a concrete wall along each, on the barrier's line, to hide what lies past it
     masks = 0
     for f in skirts:
         # each pair's end nearer the road: the wall's foot
-        feet = [min((np.asarray(f[k][0], float), np.asarray(f[k + 1][0], float)), key=lambda q: np.min(np.hypot(centre[:, 0] - q[0], centre[:, 2] - q[2]))) for k in range(0, len(f), 2)]
+        feet = [foot_of(f, k) for k in range(0, len(f), 2)]
         keep, stack = {0, len(feet) - 1}, [(0, len(feet) - 1)]  # the line within 1 m (a chord cut into a bend)
         F = np.array(feet)
         while stack:
@@ -1062,7 +1289,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     # larger ones stream in with their own part of the track only, and were never drawn here
     faces, fmats = [], []
     for fs, mat in zip(kerbs, mats):
-        for f in fs: faces.append(simplify(f)); fmats.append(mat)
+        for f in fs: faces.append(f if mat == HEAD else simplify(f)); fmats.append(mat)
     svb_raw = bytearray(zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.svb'), 'rb').read()))
     svb = read_svb(svb_raw)
     near = near_meshes(res_bytes, centre[sorted({i for r in runs(off) for i in r})], 50.0) - hide
@@ -1074,21 +1301,29 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('drawn as well, within 50 m of the new stretches: %d meshes' % len(near - shown))
     pool = donor_pool(res_bytes, shown | near | {L.DONOR}, ppw, set(svb))
     have = len(pool)
-    placed = pack(faces, pool)
+    placed = pack(faces, pool, fmats)
     print('pieces: %d faces, %d vertex pairs, in %d of %d loaded meshes' % (len(faces), sum(len(f) for f in faces) // 2, len(placed), have))
     picked = [(mesh, at) for mesh, at, _, _ in placed]
-    kerbs = [[piece] for _, _, piece, _ in placed]
-    mats = [fmats[fi] for _, _, _, fi in placed]
+    kerbs = [pieces for _, _, pieces, _ in placed]
+    mats = [m for _, _, _, m in placed]
+    # the lamps' glows, each in a glow from far off moved to its lamp
+    gpool = glow_pool(res_bytes, shown | near | hide, ppw, set(svb), len(glows[0][0]) if glows else 0, len(glows[0][1]) if glows else 0) if gap else []
+    print('lamp glows: %d of %d spare glows' % (min(len(glows), len(gpool)), len(gpool)))
+    glowed = list(zip(gpool, glows))
     ppw = bytearray(ppw)
     at = sphere_at(bytes(ppw), *road_was)  # the strip's road: its sphere where the donor was, moved too
     if at is None: print('  the strip road: bounding sphere not found, it may be culled')
     else: struct.pack_into('<4f', ppw, at, road_now[1], *road_now[0])
     for (mesh, at), fs, mat in zip(picked, kerbs, mats):
-        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light={ASPHALT: road_light, LAMP: lamp_light, RAIL: rail_light}.get(mat, (-32724, -32645)))
+        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light={ASPHALT: road_light, LAMP: lamp_light, RAIL: rail_light, HEAD: head_light}.get(mat, (-32724, -32645)))
+        struct.pack_into('<4f', ppw, at, r1, *c1)
+    for (mesh, at), (gdata, gidx) in glowed:
+        c1, r1 = write_glow(res_bytes, mesh, gdata, gidx)
         struct.pack_into('<4f', ppw, at, r1, *c1)
     ppw = bytes(ppw)
-    for mesh, _ in picked:  # the svb's copies of the rewritten buffers too
-        rec, nidx, vbytes, vb = L.mesh(res_bytes, mesh)
+    for mesh, _ in picked + [g for g, _ in glowed]:  # the svb's copies of the rewritten buffers too
+        a_ = struct.unpack_from('<I', res_bytes, L.MODEL + 4 + 4 * mesh)[0]
+        _, _, nidx, vbytes, vb = struct.unpack_from('<IIIIH', res_bytes, L.MODEL + a_)
         o, sz = svb[vb]
         ro = L.vb_offset(res_bytes, vb)
         assert sz == vbytes + 2 * nidx, (mesh, sz, vbytes, nidx)
@@ -1098,7 +1333,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side, idx in stretches:
         print('  %s edge, %3.0f m from (%.0f, %.0f) to (%.0f, %.0f)' % ('left' if side > 0 else 'right', 2 * len(idx), centre[idx[0]][0], centre[idx[0]][2], centre[idx[-1]][0], centre[idx[-1]][2]))
     n_cells = len(cells_in)
-    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + sorted(near - shown), hide=hide)
+    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown), hide=hide)
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
     cbx = zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read())
     dropped = 0
