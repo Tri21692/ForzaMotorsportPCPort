@@ -180,29 +180,38 @@ def obstacles(res, centre, half, where, inside=1.0, low=0.4, high=3.5):
 EDGE = ('curb', 'sidewalk', 'fence', 'guardrail', 'wall', 'barrier', 'building', 'rail', 'cementblock', 'bollard')
 
 
-def bare_edges(res, centre, half, off, hidden=(), min_len=3):
-    """Where the road's edges off the course have nothing drawn defining them (a kerb, sidewalk,
-    fence, guardrail, wall, barrier or building within 3 m outside the edge): [(side, [loop
-    indices])], side +1 the left edge, -1 the right, each stretch at least `min_len` points."""
+def bare_edges(res, centre, half, hidden=(), min_len=3):
+    """Where the road's edges round the whole loop have nothing drawn defining them: nothing
+    standing 0.12 to 6 m above the road (a kerb, sidewalk's edge, fence, rail, wall, building)
+    within 3 m outside the edge; flat ground and sidewalks at the road's level do not count, nor
+    do the meshes hidden. [(side, [loop indices])], side +1 the left edge, -1 the right, each
+    stretch at least `min_len` points."""
     import xb2
     names, _ = xb2.resources(bytes(res))
     lo, hi = centre[:, [0, 2]].min(0) - 20, centre[:, [0, 2]].max(0) + 20
+    flat = ('road', 'parkinglot', 'ground', 'sideroad', 'shadow', 'line', 'terrain')
     pts = []
-    for i, nm, t in mesh_tris(res, names, lambda nm: any(e in nm for e in EDGE) and 'lines_' not in nm, (*lo, *hi)):
+    for i, nm, t in mesh_tris(res, names, lambda nm: not nm.startswith(flat) and 'lines_' not in nm, (*lo, *hi)):
         if i in hidden: continue
-        pts += [t[0][[0, 2]], t[1][[0, 2]], t[2][[0, 2]], t.mean(0)[[0, 2]]]
+        pts += [t[0], t[1], t[2], t.mean(0)]
         for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
             n = int(np.hypot(*(b - a)[[0, 2]]) / 1.5)
-            pts += [(a + (b - a) * u)[[0, 2]] for u in np.linspace(0, 1, n + 2)[1:-1]]
+            pts += [a + (b - a) * u for u in np.linspace(0, 1, n + 2)[1:-1]]
     P = np.array(pts)
+    cells = {}
+    for k, key in enumerate(map(tuple, np.floor(P[:, [0, 2]] / 5).astype(int))): cells.setdefault(key, []).append(k)
     left, fwd = frame(centre)
     out = []
     for side in (1, -1):
         bare = []
         for i, c in enumerate(centre):
-            if not off[i]: bare.append(False); continue
-            rel = P - c[[0, 2]]
-            lat = rel[np.abs(rel @ fwd[i]) < 1.5] @ left[i] * side
+            gx, gz = int(np.floor(c[0] / 5)), int(np.floor(c[2] / 5))
+            r = int(np.ceil((half[i] + 4) / 5))
+            ks = [k for dx in range(-r, r + 1) for dz in range(-r, r + 1) for k in cells.get((gx + dx, gz + dz), ())]
+            Q = P[ks] if ks else np.zeros((0, 3))
+            rel = Q[:, [0, 2]] - c[[0, 2]]
+            near = (np.abs(rel @ fwd[i]) < 1.5) & (Q[:, 1] > c[1] + 0.12) & (Q[:, 1] < c[1] + 6)
+            lat = rel[near] @ left[i] * side
             bare.append(not np.any((lat > half[i] - 1) & (lat < half[i] + 3)))
         n, i = len(centre), 0
         while i < n:
@@ -213,6 +222,32 @@ def bare_edges(res, centre, half, off, hidden=(), min_len=3):
                 i = j + 1
             else: i += 1
     return out
+
+
+def wall_strips(a, b, height=0.9, thick=0.4):
+    """A concrete wall from a to b ((x, y, z), its foot): both faces and its top, as kerb_strips'
+    faces."""
+    d = np.subtract(b, a); d[1] = 0; L_ = np.linalg.norm(d); d /= L_
+    n = np.array([-d[2], 0.0, d[0]])
+    steps = np.linspace(0, 1, max(2, int(L_ / 2) + 1))
+    faces = []
+    for face in ('front', 'back', 'top'):
+        pairs = []
+        for u in steps:
+            p = np.add(a, np.subtract(b, a) * u)
+            s = -32000 + 162 * L_ * u
+            if face == 'front':
+                q0, q1, nn, ta, tb = p + n * thick / 2 + (0, -0.1, 0), p + n * thick / 2 + (0, height, 0), n, -32369, -32268
+            elif face == 'back':
+                q0, q1, nn, ta, tb = p - n * thick / 2 + (0, -0.1, 0), p - n * thick / 2 + (0, height, 0), -n, -32369, -32268
+            else:
+                q0, q1, nn, ta, tb = p + n * thick / 2 + (0, height, 0), p - n * thick / 2 + (0, height, 0), np.array([0.0, 1, 0]), -32255, -32300
+            pairs.append(((q0, nn, s, ta), (q1, nn, s, tb)))
+        a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
+        if np.dot(np.cross(b0 - a0, a1 - a0), pairs[0][0][1]) > 0:
+            pairs = [(q, p) for p, q in pairs]
+        faces.append([v for pr in pairs for v in pr])
+    return faces
 
 
 def frame(centre):
@@ -507,8 +542,10 @@ def build(disc, mods, preview_png=None):
     shown = {struct.unpack_from('<H', e)[0] for c in cells_in[:8] for l in c for e in l}
     # a kerb and sidewalk wherever a new stretch's edge has nothing drawn, each in a mesh from
     # far off that this layout never shows, its bounding sphere moved with it
-    stretches = bare_edges(res_bytes, centre, half, off, hidden=hide)
+    stretches = bare_edges(res_bytes, centre, half, hidden=hide)
     kerbs = [kerb_strips(centre, half, side, idx) for side, idx in stretches]
+    # and a concrete wall to be seen on each invisible one closing a branch of the course
+    kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
     need = [(sum(len(f) for f in fs), sum(len(f) for f in fs) + 4) for fs in kerbs]
     picked = donors(res_bytes, shown | {L.DONOR}, need, centre[:, [0, 2]], ppw)
     ppw = bytearray(ppw)
@@ -519,8 +556,8 @@ def build(disc, mods, preview_png=None):
         c1, r1 = write_strips(res_bytes, mesh, fs)
         struct.pack_into('<4f', ppw, at, r1, *c1)
     ppw = bytes(ppw)
-    print('kerbs: %d stretches, %.0f m of edge, in meshes %s' % (
-        len(stretches), sum(2 * len(i) for _, i in stretches), [m for m, _ in picked]))
+    print('kerbs: %d stretches, %.0f m of edge; %d walls across the course; in meshes %s' % (
+        len(stretches), sum(2 * len(i) for _, i in stretches), len(walls), [m for m, _ in picked]))
     n_cells = len(cells_in)
     pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked], hide=hide)
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
