@@ -380,6 +380,7 @@ def write_road(res, left, right):
     normal = vals[np.argmax(counts)]
     cx, cz = pts[:, 0].mean(), pts[:, 2].mean()
     med = np.median(old['st'].astype(float), axis=0)
+    med[:2] %= 4096  # the asphalt where the donor has it, moved by whole repeats near 0: a long road stays in s16
     for j in range(nv):
         p = pts[min(j, k - 1)]
         new['p'][j] = p + (0, 0.02, 0)
