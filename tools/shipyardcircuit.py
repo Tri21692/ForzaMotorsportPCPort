@@ -534,6 +534,9 @@ LAMP_ST = ((-6000, -6000), (6000, 6000))  # the glow's middle (the light box's o
 HAIRPIN = (-648.0, -100.0)   # the hairpin from the strip onto the old road: open, no kerbs, its walls out on what is drawn
 HAIRPIN_R = 32.0
 PORTAL = 14.0      # a tunnel mouth's face: this far beyond each wall
+RAIL = 2297       # jw_blackrail_barrier01b: a black rail (texture 1673); the tunnel walkways' railings
+WALKWAY, WALKWAY_H = 1.2, 0.25   # the tunnel's walkways: their width in from its walls, their height
+RAILS = ((0.50, 0.60), (0.88, 1.00))  # the railing's two bars, from and to (m over the walkway)
 PORTAL_TOP = 3.0   # and this far over the roof (higher, close up it hid the HUD's map)
 CONCRETE = [(-490, -575), (-262, -726)]   # side road 39 from the start road to the tunnel: concrete walls both sides, in front of its fences
 CONCRETE_H = 2.4
@@ -575,6 +578,23 @@ def tunnel_faces(centre, half, idx, out=0.6):
         a = P + L3 * side * (w - 1.0) + up * (TUNNEL_H - 0.05)
         b = P + L3 * side * (w - 2.0) + up * (TUNNEL_H - 0.05)  # a metre wide: half that was not seen
         lights.append(face(a, b, -up, np.full(len(P), float(s0)), np.full(len(P), float(t0)), np.full(len(P), float(s1)), np.full(len(P), float(t1))))
+    # a raised walkway along each wall, its kerb, its end at each mouth, and a two-bar railing at its
+    # edge (the tunnel at Tokyo's way)
+    walkways, railings = [], []
+    for side in (1, -1):
+        edge = P + L3 * side * (w - WALKWAY)
+        wall = P + L3 * side * w
+        out_ = L3 * side
+        walkways.append(face(edge, edge + up * WALKWAY_H, -out_, sd, lo_t, sd, np.full(len(P), -32369.0 + 101 * WALKWAY_H / 0.9)))  # the kerb
+        walkways.append(face(edge + up * WALKWAY_H, wall + up * WALKWAY_H, up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32255.0 - 115 * WALKWAY)))  # its top
+        for end in (0, len(P) - 1):  # its end at each mouth, facing out of the tunnel
+            d = P[0] - P[1] if end == 0 else P[-1] - P[-2]
+            n = np.array([d[0], 0.0, d[2]]) / np.hypot(d[0], d[2])
+            a = np.array([edge[end], wall[end]]); b = a + up * WALKWAY_H
+            walkways.append(face(a, b, n, np.array([-32000.0, -32000.0 + 162 * WALKWAY]), np.full(2, -32369.0), np.array([-32000.0, -32000.0 + 162 * WALKWAY]), np.full(2, -32341.0)))
+        for y0, y1 in RAILS:
+            for facing in (-1, 1):  # both sides of each bar
+                railings.append(face(edge + up * (WALKWAY_H + y0), edge + up * (WALKWAY_H + y1), out_ * facing, -32765 + 162 * dist, np.full(len(P), -32517.0), -32765 + 162 * dist, np.full(len(P), -32260.0)))
     # each mouth a face of concrete round its opening, so nothing past the tunnel's sides or roof
     # shows through: beside it PORTAL m each way, and above it up to PORTAL m over the roof
     portals = []
@@ -588,7 +608,7 @@ def tunnel_faces(centre, half, idx, out=0.6):
             b = np.array([c + l3 * lo_ + up * y1, c + l3 * hi_ + up * y1])
             ss = np.array([-32000.0, -32000.0 + 162 * (hi_ - lo_)])
             portals.append(face(a, b, n, ss, np.full(2, -32369.0), ss, np.full(2, -32369.0 + 101 * (y1 - y0) / 0.9)))
-    return [floor], walls, lights, portals
+    return [floor], walls, lights, portals, walkways, railings
 
 
 def object_of(name):
@@ -828,6 +848,11 @@ def build(disc, mods, preview_png=None, reverse=False):
     # through a fence
     bd = boundaries(res, centre, half, range(len(centre)), hidden=hide, reach=0.5, inner=2.0)
     cap = np.array([min(half[i], bd[(1, i)] - 1.5, bd[(-1, i)] - 1.5) for i in range(len(centre))])  # a car's width short of it
+    g0c, g1c = np.array(GAP[0], float), np.array(GAP[1], float)
+    gdc = g1c - g0c
+    guc = ((centre[:, [0, 2]] - g0c) @ gdc) / (gdc @ gdc)
+    tunnel = (guc > 0.04) & (guc < 0.96) & (np.abs(((centre[:, [0, 2]] - g0c) @ np.array([-gdc[1], gdc[0]])) / np.linalg.norm(gdc)) < 10)
+    cap[tunnel] = np.minimum(cap[tunnel], half[tunnel] + 0.6 - WALKWAY - 1.5)  # off the tunnel's railings
     cap = np.maximum(cap, 4.0)
     k_ = np.arange(-3, 4); w_ = np.exp(-0.5 * (k_ / 1.5) ** 2); w_ /= w_.sum()
     cap = np.minimum(cap, sum(w_[j] * np.roll(cap, -k_[j]) for j in range(len(k_))))
@@ -882,7 +907,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     in_gap = (gu > -10 / np.linalg.norm(gd_)) & (gu < 1 + 10 / np.linalg.norm(gd_)) & \
              (np.abs(((centre[:, [0, 2]] - g0_) @ np.array([-gd_[1], gd_[0]])) / np.linalg.norm(gd_)) < 12)
     for (side, i) in list(dist):
-        if in_gap_strict[i]: dist[(side, i)] = half[i] + 0.6  # the tunnel's walls, on the concrete's line
+        if in_gap_strict[i]: dist[(side, i)] = half[i] + 0.6 - WALKWAY  # in the tunnel, its railings (its walls on the concrete's line)
     for r in runs(off): boundary_collision(col, centre, half, r, dist, sp)
     near = sum(1 for (side, i), d in dist.items() if d < half[i] + WIDE - 0.2)
     print('walls beside the new road: %d of %d on a drawn fence, wall or building' % (near, len(dist)))
@@ -905,6 +930,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     road_now = L.write_road(res_bytes, left, right)
     sl = np.frombuffer(bytes(res[L.vb_offset(res, L.mesh(res, LAMP)[3]):][:L.mesh(res, LAMP)[2]]), '<i2').reshape(-1, 12)[:, 8:12]
     lamp_light = tuple(int(v) for v in np.median(sl[:, 2:4], axis=0))
+    sl = np.frombuffer(bytes(res[L.vb_offset(res, L.mesh(res, RAIL)[3]):][:L.mesh(res, RAIL)[2]]), '<i2').reshape(-1, 12)[:, 8:12]
+    rail_light = tuple(int(v) for v in np.median(sl[:, 2:4], axis=0))
     rev = os.path.join(disc, 'media', 'tracks', 'VancouverReverse')
     ppw = open(os.path.join(rev, 'QuickPreview1.pvs.ppw'), 'rb').read()
     pvs_in = open(os.path.join(rev, 'QuickPreview1.pvs'), 'rb').read()
@@ -940,9 +967,9 @@ def build(disc, mods, preview_png=None, reverse=False):
     across_ = np.abs(((centre[:, [0, 2]] - g0) @ np.array([-gd[1], gd[0]])) / gl)
     gap = [i for i in range(len(centre)) if 0.04 < u[i] < 0.96 and across_[i] < 10]
     if gap:
-        floor, concrete, lights, portals = tunnel_faces(centre, half, gap)
-        kerbs += [floor] + [[f] for f in concrete] + [[f] for f in lights] + [[f] for f in portals]
-        mats += [ASPHALT] + [None] * len(concrete) + [LAMP] * len(lights) + [None] * len(portals)
+        floor, concrete, lights, portals, walkways, railings = tunnel_faces(centre, half, gap)
+        kerbs += [floor] + [[f] for f in concrete + lights + portals + walkways + railings]
+        mats += [ASPHALT] + [None] * len(concrete) + [LAMP] * len(lights) + [None] * (len(portals) + len(walkways)) + [RAIL] * len(railings)
         print('tunnel: %.0f m over the gap, %.1f m high, two strip lights, a face round each mouth' % (2 * len(gap), TUNNEL_H))
     # ground where nothing is drawn beside the new stretches (the void showed past the edges)
     skirts = void_ground(res_bytes, centre, half, dist, sorted({i for r in runs(off) for i in r}), hide)
@@ -970,7 +997,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     if at is None: print('  the strip road: bounding sphere not found, it may be culled')
     else: struct.pack_into('<4f', ppw, at, road_now[1], *road_now[0])
     for (mesh, at), fs, mat in zip(picked, kerbs, mats):
-        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light={ASPHALT: road_light, LAMP: lamp_light}.get(mat, (-32724, -32645)))
+        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light={ASPHALT: road_light, LAMP: lamp_light, RAIL: rail_light}.get(mat, (-32724, -32645)))
         struct.pack_into('<4f', ppw, at, r1, *c1)
     ppw = bytes(ppw)
     for mesh, _ in picked:  # the svb's copies of the rewritten buffers too
