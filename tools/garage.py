@@ -1,0 +1,313 @@
+"""The Pacific Shipyards Circuit's garage: an auto shop over the gap in place of a tunnel.
+
+A box of corrugated tin over the gap (shipyardcircuit.GAP, where nothing is
+drawn), laid out in the gap's frame: u along it from its east end (GAP[0])
+west, v across (+v north of the road). The road comes in from side road 04
+through a door in the east wall, runs the length of the shop and turns south
+inside it, out through a door in the south wall onto side road 39. Each door
+is where the road crosses a wall, as wide as the road and a little more, a
+roll-up shutter's bottom showing under its lintel. Inside: a concrete floor,
+the road's asphalt down the middle, service bays (shutter doors) along the
+walls, strip lights under the roof, and on the north side a row of parked
+vehicles (scenery meshes from far off that the circuit never shows, moved
+here: they cost no borrowed meshes).
+
+Faces are kerb_strips' form (lists of (position, normal, s, t) in strip
+order) with the scenery mesh whose texture, lightmap and shader they take.
+"""
+import struct
+
+import numpy as np
+
+GAP = [(-129, -560), (-262, -726)]
+U0, U1 = -4.0, 224.0       # the box along the gap: 14 m past the old tunnel's east mouth (the void showed past it), and just past side road 39's far edge
+V0, V1 = -8.2, 15.0        # across: a metre past the road's south edge; to the north room for a row of parked vehicles
+TOP = 7.2                  # the roof (world y)
+BASE = -1.2                # the walls' feet, under the ground
+DOOR_H = 4.8               # the doors' opening over the road
+SHUTTER_H = 0.9            # the raised shutter showing under each lintel
+OPEN_PAD = 0.6             # each door this much wider than the road each side
+
+TIN = 2984      # building_steelmill_trailer_vb3: building_wall_tin (27 a metre across, 99 up)
+SHUTTER = 2871  # building_warehouse_green_00_vb3: building_garagedoor_02, a roll-up shutter 3.6 m wide, 4.45 m high
+BAY = 1118      # prop_propanestand04_vb2: building_garagedoor_01, a shutter with a door beside it
+LAMP = 1359     # light_box07: a strip light (the glow texture)
+BAY_EVERY = 14.0
+
+# vehicles moved in: (its meshes, u, v, heading in degrees from +u), parked on the floor nose in, across the bays
+PARKED = [((2600,), 30.0, 11.8, 90), ((2591,), 52.0, 11.8, 90), ((2542, 2543), 76.0, 11.8, 90),
+          ((2595,), 104.0, 11.8, 90), ((2602,), 128.0, 11.8, 90), ((2592,), 152.0, 11.8, 90), ((2601,), 176.0, 11.8, 90)]
+
+
+def basis():
+    g0, g1 = np.array(GAP[0], float), np.array(GAP[1], float)
+    u = (g1 - g0) / np.linalg.norm(g1 - g0)
+    return g0, u, np.array([-u[1], u[0]])
+
+
+def to_uv(p):
+    """World (x, z) points to the box's (u, v)."""
+    g0, u, v = basis()
+    p = np.asarray(p, float) - g0
+    return np.stack([p @ u, p @ v], -1)
+
+
+def to_world(uv, y):
+    g0, u, v = basis()
+    uv = np.asarray(uv, float)
+    xz = g0 + uv[..., :1] * u + uv[..., 1:2] * v
+    return np.stack([xz[..., 0], np.broadcast_to(y, xz[..., 0].shape), xz[..., 1]], -1)
+
+
+def inside(xz, pad=0.0):
+    q = to_uv(xz)
+    return (q[..., 0] > U0 - pad) & (q[..., 0] < U1 + pad) & (q[..., 1] > V0 - pad) & (q[..., 1] < V1 + pad)
+
+
+def points(centre):
+    """The loop points inside the box."""
+    return [i for i in range(len(centre)) if inside(centre[i][[0, 2]])]
+
+
+def floor_y(centre, uv):
+    """The road's height nearest each (u, v) (the floor follows it)."""
+    w = to_world(uv, 0.0)[..., [0, 2]].reshape(-1, 2)
+    d = np.hypot(w[:, None, 0] - centre[None, :, 0], w[:, None, 1] - centre[None, :, 2])
+    return centre[d.argmin(1), 1].reshape(np.shape(uv)[:-1])
+
+
+WALLS = [  # (from (u, v), to (u, v), its outward normal in (u, v))
+    ((U0, V1), (U0, V0), (-1, 0)),   # east
+    ((U0, V0), (U1, V0), (0, -1)),   # south
+    ((U1, V0), (U1, V1), (1, 0)),    # west
+    ((U1, V1), (U0, V1), (0, 1)),    # north
+]
+
+
+def openings(centre, half):
+    """Per wall, the stretches (from, to: metres along it) where the road crosses it, OPEN_PAD wider
+    each side."""
+    out = []
+    c = to_uv(centre[:, [0, 2]])
+    for a, b, _ in WALLS:
+        a, b = np.array(a), np.array(b)
+        L_ = np.linalg.norm(b - a)
+        s = np.arange(0, L_ + 1e-9, 0.25)
+        pts = a + (b - a) / L_ * s[:, None]
+        d = np.hypot(pts[:, None, 0] - c[None, :, 0], pts[:, None, 1] - c[None, :, 1])
+        k = d.argmin(1)
+        hit = d[np.arange(len(s)), k] < half[k] + OPEN_PAD
+        runs, start = [], None
+        for j, h in enumerate(hit):
+            if h and start is None: start = s[j]
+            if not h and start is not None: runs.append((start, s[j - 1])); start = None
+        if start is not None: runs.append((start, s[-1]))
+        out.append(runs)
+    return out
+
+
+def _face(a, b, n, sa, ta, sb, tb):
+    """A strip face from polylines a (one edge) and b (the other), normal n, as kerb_strips' faces."""
+    pairs = [((a[k], n, sa[k], ta[k]), (b[k], n, sb[k], tb[k])) for k in range(len(a))]
+    a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
+    if np.dot(np.cross(b0 - a0, a1 - a0), n) > 0: pairs = [(q, p) for p, q in pairs]
+    return [v for pr in pairs for v in pr]
+
+
+def _wall(a, b, n, y0, y1, s0, inward=False, every=6.0):
+    """A wall face from (u, v) a to b between heights y0 and y1 (arrays along it or numbers), tin's
+    texture from s0 along it; facing out (n) or in."""
+    a, b = np.array(a, float), np.array(b, float)
+    L_ = np.linalg.norm(b - a)
+    k = np.linspace(0, 1, max(2, int(np.ceil(L_ / every)) + 1))
+    uv = a + (b - a) * k[:, None]
+    y0 = np.broadcast_to(y0, k.shape) if np.ndim(y0) == 0 else y0
+    y1 = np.broadcast_to(y1, k.shape) if np.ndim(y1) == 0 else y1
+    lo, hi = to_world(uv, 0.0), to_world(uv, 0.0)
+    lo[:, 1], hi[:, 1] = y0, y1
+    g0, u, v = basis()
+    nw = n[0] * u + n[1] * v
+    nn = np.array([nw[0], 0.0, nw[1]]) * (-1 if inward else 1)
+    s = -32768 + 27 * (s0 + L_ * k)
+    return _face(lo, hi, nn, s, -32768 + 99 * (TOP - lo[:, 1]), s, -32768 + 99 * (TOP - hi[:, 1]))
+
+
+def faces(centre, half):
+    """The shop's faces: [(faces, material)], material a mesh number or None (the sidewalk's
+    concrete), 'ASPHALT' (the road's)."""
+    out = []
+    up = np.array([0.0, 1, 0])
+    opens = openings(centre, half)
+    road_y = lambda uv: floor_y(centre, np.array(uv, float)[None])[0]
+    for (a, b, n), runs in zip(WALLS, opens):
+        a, b = np.array(a, float), np.array(b, float)
+        L_ = np.linalg.norm(b - a)
+        d = (b - a) / L_
+        cuts = [0.0]
+        for r0, r1 in runs: cuts += [r0, r1]
+        cuts.append(L_)
+        tin = []
+        for j in range(0, len(cuts), 2):  # the solid stretches, floor to roof, both faces
+            s0, s1 = cuts[j], cuts[j + 1]
+            if s1 - s0 < 0.05: continue
+            for inward in (False, True):
+                tin.append(_wall(a + d * s0, a + d * s1, n, BASE, TOP, s0, inward))
+        shutters = []
+        for r0, r1 in runs:  # over each door: its lintel, and the shutter's bottom under it
+            ys = road_y(a + d * (r0 + r1) / 2) + DOOR_H
+            for inward in (False, True):
+                tin.append(_wall(a + d * r0, a + d * r1, n, ys, TOP, r0, inward))
+                f = _wall(a + d * r0, a + d * r1, n, ys - SHUTTER_H, ys, 0.0, inward)
+                # the shutter's texture (141 a metre across, 115 a metre down from its top): its
+                # slats from 2 m down, the rolled-up door's bottom
+                along = lambda p: np.linalg.norm(to_uv(p[[0, 2]]) - (a + d * r0))
+                shutters.append([(p, nn, -32767 + 141 * along(p), -32767 + 115 * (2.0 + ys - p[1])) for p, nn, _, _ in f])
+        out += [(tin, TIN), (shutters, SHUTTER)]
+    # the roof, its underside and top
+    k = np.linspace(U0, U1, int((U1 - U0) / 8) + 1)
+    roof = []
+    for y, nn in ((TOP, -up), (TOP + 0.05, up)):
+        a_, b_ = to_world(np.stack([k, np.full(len(k), V0)], 1), y), to_world(np.stack([k, np.full(len(k), V1)], 1), y)
+        roof.append(_face(a_, b_, nn, -32768 + 27 * (k - U0), np.full(len(k), -32768.0), -32768 + 27 * (k - U0), np.full(len(k), -32768 + 99 * (V1 - V0))))
+    out.append((roof, TIN))
+    # the floor: concrete over the whole box, under the road's asphalt
+    rows = np.linspace(V0, V1, 5)
+    k = np.linspace(U0, U1, int((U1 - U0) / 4) + 1)
+    floor = []
+    for v0_, v1_ in zip(rows[:-1], rows[1:]):
+        uva, uvb = np.stack([k, np.full(len(k), v0_)], 1), np.stack([k, np.full(len(k), v1_)], 1)
+        a_, b_ = to_world(uva, floor_y(centre, uva) - 0.02), to_world(uvb, floor_y(centre, uvb) - 0.02)
+        floor.append(_face(a_, b_, up, -32000 + 53 * (k - U0), np.full(len(k), -32000 + 51.7 * (v0_ - V0)), -32000 + 53 * (k - U0), np.full(len(k), -32000 + 51.7 * (v1_ - V0))))
+    out.append((floor, None))
+    # service bays along the inside of the long walls, where nothing crosses them
+    bays = []
+    for (a, b, n), runs in zip(WALLS, opens):
+        a, b = np.array(a, float), np.array(b, float)
+        L_ = np.linalg.norm(b - a)
+        if L_ < 30: continue
+        d = (b - a) / L_
+        for s in np.arange(BAY_EVERY / 2, L_ - 4, BAY_EVERY):
+            if any(r0 - 4 < s < r1 + 4 for r0, r1 in runs): continue
+            p0, p1 = a + d * (s - 1.8) - np.array(n) * 0.03, a + d * (s + 1.8) - np.array(n) * 0.03
+            y = road_y((p0 + p1) / 2)
+            f = _wall(p0, p1, n, y, y + 4.45, 0.0, inward=True, every=4.0)
+            bays.append([(p, nn, -32767 + 512 * np.linalg.norm(to_uv(p[[0, 2]]) - p0) / 3.6, -32767 + 115 * (y + 4.45 - p[1])) for p, nn, _, _ in f])
+    out.append((bays, BAY))
+    # strip lights under the roof, along the shop
+    lights = []
+    for v_ in (-3.0, 4.0, 11.0):
+        a_, b_ = to_world(np.stack([k, np.full(len(k), v_)], 1), TOP - 0.05), to_world(np.stack([k, np.full(len(k), v_ + 1.2)], 1), TOP - 0.05)
+        lights.append(_face(a_, b_, -up, np.full(len(k), -6000.0), np.full(len(k), -6000.0), np.full(len(k), 6000.0), np.full(len(k), 6000.0)))
+    out.append((lights, LAMP))
+    return out
+
+
+def lateral(centre, half, i, side, left):
+    """How far from loop point i the box's wall stands to its `side` (+1 left), straight out."""
+    c = to_uv(centre[i][[0, 2]])
+    g0, u, v = basis()
+    l = np.array(left[i]) * side
+    du = np.array([l @ u, l @ v])
+    best = half[i] + 25.0
+    for a, b, n in WALLS:
+        a, b = np.array(a, float), np.array(b, float)
+        m = np.array([du, a - b]).T
+        if abs(np.linalg.det(m)) < 1e-9: continue
+        t, w = np.linalg.solve(m, a - c)
+        if t > 0 and 0 <= w <= 1: best = min(best, t)
+    return best
+
+
+def meshes_inside(res, centre, model=0x4e0600, share=0.6):
+    """The scenery meshes standing in the shop: most of their vertices (`share`) inside the box,
+    and reaching 0.3 m over its floor (ground under it, and a sidewalk only running into it, are
+    left: clear_tunnel moves those vertices out)."""
+    import xb2
+    names, _ = xb2.resources(bytes(res))
+    n = struct.unpack_from('<I', res, model)[0]
+    out = set()
+    for m in range(n):
+        a = struct.unpack_from('<I', res, model + 4 + 4 * m)[0]
+        _, _, _, vbytes, vb, stride = struct.unpack_from('<IIIIHH', res, model + a)
+        if stride != 6 or vbytes % 24 or not vbytes or not (9 <= vb < len(names) + 9): continue
+        v = np.frombuffer(bytes(res[names[vb - 9][3]:names[vb - 9][3] + vbytes]), '<f4').reshape(-1, 6)[:, :3]
+        if not np.all(np.isfinite(v)): continue
+        ins = inside(v[:, [0, 2]])
+        if ins.mean() < share: continue
+        if v[ins, 1].max() > floor_y(centre, to_uv(v[ins][:, [0, 2]])).min() + 0.3: out.add(m)
+    return out
+
+
+def collision(col, centre, half):
+    """The box's walls (both faces, BASE to 4 m over the road) where no door is, and its floor
+    (ground over the whole box at the road's height). Returns triangles added."""
+    added = 0
+    up = np.array([0.0, 1, 0])
+    for (a, b, n), runs in zip(WALLS, openings(centre, half)):
+        a, b = np.array(a, float), np.array(b, float)
+        L_ = np.linalg.norm(b - a)
+        d = (b - a) / L_
+        cuts = [0.0] + [x for r in runs for x in r] + [L_]
+        for j in range(0, len(cuts), 2):
+            s0, s1 = cuts[j], cuts[j + 1]
+            if s1 - s0 < 0.05: continue
+            p0, p1 = to_world(a + d * s0, BASE), to_world(a + d * s1, BASE)
+            q = [p0, p1, p1 + up * (4.0 - BASE + 1), p0 + up * (4.0 - BASE + 1)]
+            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+                col.add(0x900, tri); added += 1
+    k = np.linspace(U0, U1, int((U1 - U0) / 4) + 1)
+    rows = np.linspace(V0, V1, 9)
+    for v0_, v1_ in zip(rows[:-1], rows[1:]):
+        uva, uvb = np.stack([k, np.full(len(k), v0_)], 1), np.stack([k, np.full(len(k), v1_)], 1)
+        A, B = to_world(uva, floor_y(centre, uva)), to_world(uvb, floor_y(centre, uvb))
+        for j in range(len(k) - 1):
+            q = [A[j], B[j], B[j + 1], A[j + 1]]
+            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]]):
+                n = np.cross(tri[1] - tri[0], tri[2] - tri[0])
+                col.add(0, tri if n[1] > 0 else tri[::-1]); added += 1
+    return added
+
+
+def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_normal, sphere_at):
+    """The PARKED vehicles moved into the shop, each one's meshes together: turned to its heading
+    (from the long side of its footprint) and set on the floor; their svb copies and bounding
+    spheres (ppw) too. Returns ([meshes moved], ppw)."""
+    ppw = bytearray(ppw)
+    moved = []
+    dt = np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)])
+    g0, u, _ = basis()
+    for meshes, u_, v_, heading in PARKED:
+        parts = []
+        for mesh in meshes:
+            a = struct.unpack_from('<I', res, model + 4 + 4 * mesh)[0]
+            _, _, _, vbytes, vb = struct.unpack_from('<IIIIH', res, model + a)
+            if vbytes % 24: break
+            o = names[vb - 9][3]
+            v = np.frombuffer(bytes(res[o:o + vbytes]), dt).copy()
+            p = v['p'].astype(float)
+            c = (p.min(0) + p.max(0)) / 2
+            at = sphere_at(bytes(ppw), c, float(np.max(np.linalg.norm(p - c, axis=1))))
+            if at is None: break
+            parts.append((mesh, vb, o, vbytes, v, at))
+        if len(parts) != len(meshes):
+            print('  parked %s: a mesh or its bounding sphere not found, left' % (meshes,)); continue
+        allp = np.concatenate([q[4]['p'] for q in parts]).astype(float)
+        lo, hi = allp.min(0), allp.max(0)
+        own = 0.0 if hi[0] - lo[0] >= hi[2] - lo[2] else 90.0  # its long side along x or z
+        ang = np.radians(heading) + np.arctan2(u[1], u[0]) - np.radians(own)
+        R = np.array([[np.cos(ang), 0, -np.sin(ang)], [0, 1, 0], [np.sin(ang), 0, np.cos(ang)]])
+        base = np.array([(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2])  # its footprint's middle, at its wheels
+        target = to_world(np.array([u_, v_]), floor_y(centre, np.array([[u_, v_]]))[0])
+        for mesh, vb, o, vbytes, v, at in parts:
+            p2 = (v['p'].astype(float) - base) @ R.T + target
+            n2 = np.array([unpack_normal(int(x)) for x in v['n']]) @ R.T
+            v['p'] = p2.astype('<f4')
+            v['n'] = [pack_normal(x) for x in n2]
+            res[o:o + vbytes] = v.tobytes()
+            if vb in svb:
+                so, _ = svb[vb]
+                svb_raw[so:so + vbytes] = res[o:o + vbytes]
+            c2 = (p2.min(0) + p2.max(0)) / 2
+            struct.pack_into('<4f', ppw, at, float(np.max(np.linalg.norm(p2 - c2, axis=1))), *c2)
+            moved.append(mesh)
+    return moved, bytes(ppw)

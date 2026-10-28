@@ -27,6 +27,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coledit
 import evening
+import garage
 import shipyardloop as L
 
 L.TIME_OF_DAY, L.TRACK_INI = evening.TIME, evening.track_ini
@@ -661,15 +662,8 @@ TUNNEL_LEAD = 12   # points (2 m each) the tunnel reaches back along side road 3
 
 
 def tunnel_points(centre):
-    """The loop points the tunnel covers: the gap's (GAP), and TUNNEL_LEAD more after it, along side
-    road 39 (the loop runs the gap towards it): its mouth there faces down the road, not across the
-    right angle where the road turns in (its portal stood over the turn)."""
-    g0, g1 = np.array(GAP[0], float), np.array(GAP[1], float)
-    gd = g1 - g0
-    u = ((centre[:, [0, 2]] - g0) @ gd) / (gd @ gd)
-    across = np.abs(((centre[:, [0, 2]] - g0) @ np.array([-gd[1], gd[0]])) / np.linalg.norm(gd))
-    gap = [i for i in range(len(centre)) if 0.04 < u[i] < 0.96 and across[i] < 10]
-    return list(range(gap[0], min(gap[-1] + TUNNEL_LEAD + 1, len(centre)))) if gap else []
+    """The loop points under a roof: inside the garage (tools/garage.py) over the gap."""
+    return garage.points(centre)
 
 
 WALK_IN, WALK_RAMP = 3, 6   # points (2 m each): the walkways begin this far into the straight, and grow over this many
@@ -1010,17 +1004,13 @@ def donor_pool(res, used, ppw, allowed):
     return sorted(pool, key=lambda r: -r[0])
 
 
-def clear_tunnel(res, centre, half, idx, svb, svb_raw, out=0.6, keep=()):
-    """The scenery's vertices inside the tunnel (within its walls, `out` m past the road's edges, over
-    loop points idx) and not under its floor, moved out behind its wall: side road 39's raised
-    sidewalk (sidewalk_79) ran on into it at the mouths. In the bundle and the svb's copies.
-    Returns the vertices moved."""
+def clear_tunnel(res, centre, half, idx, svb, svb_raw, keep=()):
+    """The scenery's vertices inside the garage (tools/garage.py's box) and not under its floor,
+    moved out past its nearest wall: side road 39's raised sidewalk (sidewalk_79) ran on into it.
+    In the bundle and the svb's copies. Returns the vertices moved."""
     import struct
     import xb2
     names, _ = xb2.resources(bytes(res))
-    left, _ = frame(centre)
-    tc = centre[idx][:, [0, 2]]
-    lo, hi = tc.min(0) - 20, tc.max(0) + 20
     n = struct.unpack_from('<I', res, L.MODEL)[0]
     moved = 0
     for m in range(n):
@@ -1030,21 +1020,23 @@ def clear_tunnel(res, centre, half, idx, svb, svb_raw, out=0.6, keep=()):
         if stride != 6 or prim != 6 or vbytes % 24 or not (9 <= vb < len(names) + 9): continue
         o = names[vb - 9][3]
         v = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, 6).copy()
-        p = v[:, [0, 2]]
-        if p[:, 0].max() < lo[0] or p[:, 0].min() > hi[0] or p[:, 1].max() < lo[1] or p[:, 1].min() > hi[1]: continue
-        d = np.hypot(p[:, None, 0] - tc[None, :, 0], p[:, None, 1] - tc[None, :, 1])
-        k = np.array(idx)[d.argmin(1)]
-        lat = np.einsum('ij,ij->i', p - centre[k][:, [0, 2]], left[k])
-        inside = (np.abs(lat) < half[k] + out) & (d.min(1) < 3.0) & (v[:, 1] > centre[k][:, 1] - 0.05)
-        if not inside.any(): continue
-        side = np.where(lat >= 0, 1.0, -1.0)
-        new = centre[k][:, [0, 2]] + left[k] * (side * (half[k] + out + 0.3))[:, None]
-        v[inside, 0], v[inside, 2] = new[inside, 0], new[inside, 1]
+        ins = garage.inside(v[:, [0, 2]])
+        if not ins.any(): continue
+        uv = garage.to_uv(v[:, [0, 2]])
+        ins &= v[:, 1] > garage.floor_y(centre, uv) - 0.05
+        if not ins.any(): continue
+        q = uv[ins]
+        gaps = np.stack([q[:, 0] - garage.U0, garage.U1 - q[:, 0], q[:, 1] - garage.V0, garage.V1 - q[:, 1]], 1)
+        k = gaps.argmin(1)
+        q[k == 0, 0] = garage.U0 - 0.3; q[k == 1, 0] = garage.U1 + 0.3
+        q[k == 2, 1] = garage.V0 - 0.3; q[k == 3, 1] = garage.V1 + 0.3
+        w = garage.to_world(q, 0.0)
+        v[ins, 0], v[ins, 2] = w[:, 0], w[:, 2]
         res[o:o + vbytes] = v.astype('<f4').tobytes()
         if vb in svb:
-            so, sz = svb[vb]
+            so, _ = svb[vb]
             svb_raw[so:so + vbytes] = res[o:o + vbytes]
-        moved += int(inside.sum())
+        moved += int(ins.sum())
     return moved
 
 
@@ -1257,6 +1249,9 @@ def build(disc, mods, preview_png=None, reverse=False):
     inside_walls = obstacles(res, centre, half, walled, inside=-0.3, deep_inside=-0.3)
     print('between the concrete walls, hidden: %s' % ', '.join(sorted({nm for nm in inside_walls.values()})))
     hide |= set(inside_walls)
+    in_shop = garage.meshes_inside(res, centre)
+    print('inside the garage, hidden: %d meshes' % len(in_shop))
+    hide |= in_shop
     hide = whole_objects(res, hide)
     hide.discard(L.DONOR)
     # the track's edges (what the game measures it by, and draws the suggested line within) half a
@@ -1268,7 +1263,10 @@ def build(disc, mods, preview_png=None, reverse=False):
     gdc = g1c - g0c
     guc = ((centre[:, [0, 2]] - g0c) @ gdc) / (gdc @ gdc)
     tunnel_idx = tunnel_points(centre)
-    cap[tunnel_idx] = np.minimum(cap[tunnel_idx], half[tunnel_idx] + 0.6 - tunnel_walk(centre, tunnel_idx) - MARGIN)  # off the tunnel's railings
+    left_c, _ = frame(centre)
+    shop_wall = {(side, i): min(garage.lateral(centre, half, i, side, left_c), half[i] + 1.0) for i in tunnel_idx for side in (1, -1)}
+    for i in tunnel_idx:  # off the garage's walls and its parked vehicles
+        cap[i] = min(cap[i], shop_wall[(1, i)] - MARGIN, shop_wall[(-1, i)] - MARGIN)
     cap = np.maximum(cap, 4.0)
     k_ = np.arange(-3, 4); w_ = np.exp(-0.5 * (k_ / 1.5) ** 2); w_ /= w_.sum()
     cap = np.minimum(cap, sum(w_[j] * np.roll(cap, -k_[j]) for j in range(len(k_))))
@@ -1319,11 +1317,10 @@ def build(disc, mods, preview_png=None, reverse=False):
     tunnel_idx = tunnel_points(centre)
     in_gap_strict = np.zeros(len(centre), bool); in_gap_strict[tunnel_idx] = True
     by_concrete &= ~in_gap_strict  # the concrete walls end where the tunnel's begin, on the same line
-    in_gap_strict_w = dict(zip(tunnel_idx, tunnel_walk(centre, tunnel_idx)))
     in_gap = (gu > -10 / np.linalg.norm(gd_)) & (gu < 1 + 10 / np.linalg.norm(gd_)) & \
              (np.abs(((centre[:, [0, 2]] - g0_) @ np.array([-gd_[1], gd_[0]])) / np.linalg.norm(gd_)) < 12)
     for (side, i) in list(dist):
-        if in_gap_strict[i]: dist[(side, i)] = half[i] + 0.6 - in_gap_strict_w[i]  # in the tunnel, its railings (its walls on the concrete's line)
+        if in_gap_strict[i]: dist[(side, i)] = shop_wall[(side, i)]  # in the garage: its walls, or a metre past the road by the parked row
     near = sum(1 for (side, i), d in dist.items() if d < half[i] + WIDE - 0.2)
     print('walls beside the new road: %d of %d on a drawn fence, wall or building' % (near, len(dist)))
     cut = clear_road(col, centre, half)
@@ -1371,6 +1368,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     kerbs = [kerb_strips(centre, half, side, idx) for side, idx in stretches]
     # and the kerbs and sidewalks solid: the car rode through them at the road's level
     print('kerbs solid: %d triangles' % sum(kerb_collision(col, centre, half, side, idx) for side, idx in stretches))
+    print('garage: %d collision triangles' % garage.collision(col, centre, half))
     col_bytes = col.to_bytes()
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
@@ -1394,15 +1392,11 @@ def build(disc, mods, preview_png=None, reverse=False):
     gap = tunnel_points(centre)
     glows = []
     if gap:
-        floor, concrete, lamps, portals, walkways, railings = tunnel_faces(centre, half, gap)
-        kerbs += [floor] + [[f] for f in concrete + portals + walkways + railings]
-        mats += [ASPHALT] + [None] * len(concrete) + [None] * (len(portals) + len(walkways)) + [RAIL] * len(railings)
-        glows = []
-        for foot, facing, y_top in lamps:
-            hf, gdata, gidx = lamp_faces(res, foot, facing, y_top)
-            kerbs += [[f] for f in hf]; mats += [HEAD] * len(hf)
-            glows.append((gdata, gidx))
-        print('tunnel: %.0f m, %.1f m high, %d street lamps, a face round each mouth' % (2 * len(gap), TUNNEL_H, len(lamps)))
+        floor = tunnel_faces(centre, half, gap)[0]  # the road's asphalt through it
+        kerbs.append(floor); mats.append(ASPHALT)
+        for fs, mat in garage.faces(centre, half):
+            if fs: kerbs.append(fs); mats.append(mat)
+        print('garage: %.0f m by %.0f m, %.1f m high, its road %.0f m' % (garage.U1 - garage.U0, garage.V1 - garage.V0, garage.TOP, 2 * len(gap)))
     # ground where nothing is drawn beside the new stretches (the void showed past the edges)
     skirts = void_ground(res_bytes, centre, half, dist, sorted({i for r in runs(off) for i in r}), hide)
     def other_leg(q, own=25, reach=12.0):  # within `reach` of the road of a part of the loop not its own
@@ -1447,7 +1441,7 @@ def build(disc, mods, preview_png=None, reverse=False):
         for f in fs: faces.append(f if mat == HEAD else simplify(f)); fmats.append(mat)
     svb_raw = bytearray(zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.svb'), 'rb').read()))
     svb = read_svb(svb_raw)
-    print('scenery moved out of the tunnel: %d vertices' % clear_tunnel(res_bytes, centre, half, tunnel_points(centre), svb, svb_raw, keep={L.DONOR}))
+    print('scenery moved out of the garage: %d vertices' % clear_tunnel(res_bytes, centre, half, tunnel_points(centre), svb, svb_raw, keep={L.DONOR}))
     near = near_meshes(res_bytes, centre[sorted({i for r in runs(off) for i in r})], 50.0) - hide
     # every part of each object it shows at all (a landmark drawn in part, its rest left out: the
     # cells' lists were made for Pacific Shipyards II's course)
@@ -1471,7 +1465,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     if at is None: print('  the strip road: bounding sphere not found, it may be culled')
     else: struct.pack_into('<4f', ppw, at, road_now[1], *road_now[0])
     for (mesh, at), fs, mat in zip(picked, kerbs, mats):
-        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light={ASPHALT: road_light, LAMP: lamp_light, RAIL: rail_light, HEAD: head_light, GUARD: guard_light, POST: post_light}.get(mat, (-32724, -32645)))
+        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light={ASPHALT: road_light, LAMP: lamp_light, RAIL: rail_light, HEAD: head_light, GUARD: guard_light, POST: post_light}.get(mat, (-32724, -32645) if mat is None else lightmap_st(res, mat)))
         struct.pack_into('<4f', ppw, at, r1, *c1)
     for (mesh, at), (gdata, gidx) in glowed:
         c1, r1 = write_glow(res_bytes, mesh, gdata, gidx)
@@ -1494,7 +1488,12 @@ def build(disc, mods, preview_png=None, reverse=False):
     lifted, sky = evening.apply(res_bytes)
     print('evening: %d lightmaps lifted, %d sky texels, %d lamp glows off' % (lifted, sky, len(dark)))
     n_cells = len(cells_in)
-    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark), hide=hide)
+    # the garage's parked vehicles, moved in from far off
+    import xb2
+    parked, ppw = garage.park(res_bytes, centre, svb, svb_raw, ppw, xb2.resources(bytes(res_bytes))[0], L.MODEL, pack_normal, unpack_normal, sphere_at)
+    hide -= set(parked)
+    print('garage: %d parked vehicle meshes' % len(parked))
+    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide)
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
     cbx = zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read())
     dropped = 0
