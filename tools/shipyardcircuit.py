@@ -52,7 +52,7 @@ STRIP = [(-462, -232), (-636, -114), (-655, -104)]  # straight: warehouse 14 to 
 # building to its north-east; the junction's low walls on it are hidden and cut
 
 # the course's branches the loop does not take, closed by walls across them
-CLOSED = (553, 596, 566, 509)  # 509: 20 m west of the hairpin's apex (at 512 the smoothed hairpin met it)
+CLOSED = (553, 596, 566)  # (509, 20 m west of the hairpin's apex, closed the old road there: its wall read as a ledge across the hairpin, and is gone)
 
 # what closes the side roads and the strip off from the course: at Turn 2 the barricades and
 # detour, turn and road-closed signs; at the strip's end the concrete barricade and a chevron sign
@@ -1359,10 +1359,11 @@ def build(disc, mods, preview_png=None, reverse=False):
     # a kerb and sidewalk wherever a new stretch's edge has nothing drawn, each in a mesh from
     # far off that this layout never shows, its bounding sphere moved with it
     stretches = []
+    by_shop = garage.inside(centre[:, [0, 2]], pad=12.0)  # in the garage and up to its doors
     for side, idx in bare_edges(res_bytes, centre, half, hidden=hide):  # none in the tunnel or by the concrete
         run = []
         for i in idx + [None]:
-            if i is not None and not (in_gap[i] or by_concrete[i]): run.append(i); continue
+            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i]): run.append(i); continue
             if len(run) >= 3: stretches.append((side, run))
             run = []
     kerbs = [kerb_strips(centre, half, side, idx) for side, idx in stretches]
@@ -1407,7 +1408,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     def foot_of(f, k):
         return min((np.asarray(f[k][0], float), np.asarray(f[k + 1][0], float)), key=lambda q: np.min(np.hypot(centre[:, 0] - q[0], centre[:, 2] - q[2])))
     n_sk = len(skirts)
-    skirts = [f for f in skirts if not any(np.hypot(foot_of(f, k)[0] - HAIRPIN[0], foot_of(f, k)[2] - HAIRPIN[1]) < HAIRPIN_R + 25 or other_leg(foot_of(f, k)) for k in range(0, len(f), 2))]
+    skirts = [f for f in skirts if not any(np.hypot(foot_of(f, k)[0] - HAIRPIN[0], foot_of(f, k)[2] - HAIRPIN[1]) < HAIRPIN_R + 25 or other_leg(foot_of(f, k))
+                                           or garage.inside(foot_of(f, k)[[0, 2]], pad=3.0) for k in range(0, len(f), 2))]
     print('ground over the void: %d of %d stretches dropped (at the hairpin, or by another part of the loop)' % (n_sk - len(skirts), n_sk))
     kerbs += [[f] for f in skirts]
     mats += [ASPHALT] * len(skirts)
@@ -1449,7 +1451,11 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('drawn whole: %d parts of objects shown in part' % len(whole))
     near |= whole
     print('drawn as well, within 50 m of the new stretches: %d meshes' % len(near - shown))
-    pool = donor_pool(res_bytes, shown | near | {L.DONOR}, ppw, set(svb))
+    # the meshes whose textures the new faces take: drawn where they are, so their textures are
+    # loaded in full (else only the stx's 32-texel copies: the garage's tin was a blur), and never
+    # borrowed themselves
+    sources = {int(m) for m in fmats if m is not None} | {SIDEWALK}
+    pool = donor_pool(res_bytes, shown | near | {L.DONOR} | sources, ppw, set(svb))
     have = len(pool)
     placed = pack(faces, pool, fmats)
     print('pieces: %d faces, %d vertex pairs, in %d of %d loaded meshes' % (len(faces), sum(len(f) for f in faces) // 2, len(placed), have))
@@ -1493,7 +1499,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     parked, ppw = garage.park(res_bytes, centre, svb, svb_raw, ppw, xb2.resources(bytes(res_bytes))[0], L.MODEL, pack_normal, unpack_normal, sphere_at)
     hide -= set(parked)
     print('garage: %d parked vehicle meshes' % len(parked))
-    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide)
+    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked + sorted(sources - hide), hide=hide)
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
     cbx = zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read())
     dropped = 0
