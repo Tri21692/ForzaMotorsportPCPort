@@ -43,7 +43,12 @@ INI = {
     'GeneralRender\\Effects\\Desaturate\\PostMod\\Blue': '196',
     'GeneralRender\\Particles\\Flare\\AlphaScale': '0.000000',
     'GeneralRender\\Particles\\Flare\\MinimumAlphaScale': '0.000000',
+    'GeneralRender\\Particles\\Flare\\Scale': '0.000000',
+    'GeneralRender\\Particles\\Flare\\MinimumScale': '0.000000',
 }
+for _g in range(16):  # and each group's (the lamps' cones still drew)
+    for _k, _v in (('Color\\Alpha', '0'), ('FadeNearAlpha', '0'), ('FadeFarAlpha', '0')):
+        INI['GeneralRender\\Particles\\Flare\\Group%d\\%s' % (_g, _k)] = _v
 
 
 def lightmaps(names):
@@ -141,6 +146,49 @@ def apply(res):
     for r in sky:
         res[r[3]:r[3] + r[4]] = tint_sky(bytes(res[r[3]:r[3] + r[4]]))
     return n, sum(r[4] // 4 for r in sky)
+
+
+def stx(data, names):
+    """QuickPreview1.pvs.stx (the scenery's textures at 32 texels or less, drawn while the full ones
+    are not loaded: after the first turn the sky went back to night and the tunnel's floor black,
+    its lightmap's copy the night's) made evening as the bundle is. Its layout: u32 4, 16 bytes, u32
+    the data's size, u32 slots, u32 20, u32 resources; per resource (numbered as the bundle's, 9
+    on) an i32 slot or -1; per slot a D3D texture header (its data word & 0x7fffffff the offset in
+    the data); the data. Returns (the new file, lightmaps changed, sky texels)."""
+    out = bytearray(data)
+    size, slots, _, nres = struct.unpack_from('<4I', data, 20)
+    table = np.frombuffer(data, '<i4', nres, 36)
+    heads = 36 + 4 * nres
+    base = heads + 20 * slots
+    lms = sky = 0
+    for j, r in enumerate(names):
+        light = r[0].startswith('tex_tracks_vancouver_textures_shadows')
+        if not (light or r[0] == 'tex_tracks_vancouver_textures_sky__newcloudsky') or j + 9 >= nres: continue
+        k = table[j + 9]
+        if k < 0: continue
+        _, word, _, fmt, _ = struct.unpack_from('<5I', data, heads + 20 * k)
+        f, w, h, mips = (fmt >> 8) & 0xFF, 1 << ((fmt >> 20) & 15), 1 << ((fmt >> 24) & 15), max((fmt >> 16) & 15, 1)
+        o = base + (word & 0x7FFFFFFF)
+        if light and f in (0x0C, 0x0F):
+            bs = 8 if f == 0x0C else 16
+            n = sum(max(w >> m, 4) // 4 * (max(h >> m, 4) // 4) for m in range(mips)) * bs
+            if f == 0x0F:
+                blocks = np.frombuffer(bytes(out[o:o + n]), np.uint8).reshape(-1, 16).copy()
+                blocks[:, 8:] = lift_blocks(np.ascontiguousarray(blocks[:, 8:]).reshape(-1), True).reshape(-1, 8)
+                out[o:o + n] = blocks.tobytes()
+            else:
+                out[o:o + n] = lift_blocks(np.frombuffer(bytes(out[o:o + n]), np.uint8).copy(), False).tobytes()
+            lms += 1
+        elif not light and f in (0x06, 0x07):
+            n = sum(max(w >> m, 1) * max(h >> m, 1) * 4 for m in range(mips))
+            px = np.frombuffer(bytes(out[o:o + n]), np.uint8).reshape(-1, 4).astype(float) / 255
+            lum = px[:, 2] * 0.3 + px[:, 1] * 0.59 + px[:, 0] * 0.11
+            tone = (np.array(DUSK) + np.array(SKY)) / 2  # too few texels for the height's colours: their middle
+            rgb = np.clip(tone * np.clip(lum / max(lum.mean(), 1e-3), 0.7, 1.5)[:, None], 0, 1)
+            px[:, 2], px[:, 1], px[:, 0] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+            out[o:o + n] = np.round(px * 255).astype(np.uint8).tobytes()
+            sky += n // 4
+    return bytes(out), lms, sky
 
 
 def lamp_glows(res, model):
