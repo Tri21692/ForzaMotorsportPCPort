@@ -110,6 +110,12 @@ def mesh_tris(res, names, want, box):
     return out
 
 
+def facing_up(t):
+    """Whether a triangle is ground: its normal within 15 degrees of straight up."""
+    n = np.cross(t[1] - t[0], t[2] - t[0])
+    return np.linalg.norm(n) > 1e-9 and abs(n[1]) > 0.966 * np.linalg.norm(n)
+
+
 def drawn_heights(res, centre, off):
     """The loop's centre with its height, off the course, taken from the drawn ground under it (a
     side road, lot or sidewalk: the road there is drawn lower than the course, and sloping), and
@@ -118,7 +124,7 @@ def drawn_heights(res, centre, off):
     names, _ = xb2.resources(bytes(res))
     lo, hi = centre[:, [0, 2]].min(0) - 10, centre[:, [0, 2]].max(0) + 10
     tris = [t for i, nm, t in mesh_tris(res, names, lambda nm: nm.startswith(GROUND) and 'lines_' not in nm, (*lo, *hi))
-            if np.ptp(t[:, 1]) < 1.5]
+            if facing_up(t)]  # any slope: side road 39's triangles fall 1.8 m along their 250 m
     bb = np.array([[t[:, 0].min(), t[:, 0].max(), t[:, 2].min(), t[:, 2].max()] for t in tris])
     y = centre[:, 1].copy()
     known = ~off.copy()
@@ -393,11 +399,12 @@ def half_widths(centre, sp):
 
 
 def edges(centre, half):
-    """The six edge splines (even ones on the right, odd on the left, as the course has them)."""
+    """The six edge splines: the even ones on the left of the way round, the odd on the right, as
+    the first layout had them (the course's, run backwards as Pacific Shipyards II runs them)."""
     t = np.roll(centre, -1, 0) - np.roll(centre, 1, 0)
     left = np.stack([-t[:, 2], np.zeros(len(t)), t[:, 0]], 1)
     left /= np.linalg.norm(left, axis=1)[:, None]
-    return [centre + left * (half * (1 if k % 2 else -1))[:, None] for k in range(6)]
+    return [centre + left * (half * (-1 if k % 2 else 1))[:, None] for k in range(6)]
 
 
 def runs(off):
@@ -499,7 +506,9 @@ def build(disc, mods, preview_png=None):
     centre, drawn, total = drawn_heights(res, centre, off)
     print('heights off the course: %d of %d points over drawn ground, the rest blended' % (drawn, total))
     e = edges(centre, half)
-    loop, length = L.resample(e, centre, START)
+    # L.resample turns the loop round (the first layout was built in the buffers' order): given it
+    # backwards, so the way round comes out as built, south-east first along the upper road
+    loop, length = L.resample([x[::-1] for x in e], centre[::-1], START)
     print('loop %.0f m (%.2f mi); off-course stretches of %s m' % (length, length / 1609.344, [2 * len(r) for r in runs(off)]))
     col = coledit.Col(open(os.path.join(folder, 'QuickPreview1.col'), 'rb').read())
     walls = [L.across(sp, i) for i in CLOSED]
@@ -558,6 +567,8 @@ def build(disc, mods, preview_png=None):
     ppw = bytes(ppw)
     print('kerbs: %d stretches, %.0f m of edge; %d walls across the course; in meshes %s' % (
         len(stretches), sum(2 * len(i) for _, i in stretches), len(walls), [m for m, _ in picked]))
+    for (side, idx), (mesh, _) in zip(stretches, picked):
+        print('  %s edge, %3.0f m from (%.0f, %.0f) to (%.0f, %.0f): mesh %d' % ('left' if side > 0 else 'right', 2 * len(idx), centre[idx[0]][0], centre[idx[0]][2], centre[idx[-1]][0], centre[idx[-1]][2], mesh))
     n_cells = len(cells_in)
     pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked], hide=hide)
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
@@ -570,6 +581,18 @@ def build(disc, mods, preview_png=None):
     print('solid props: %d boxes on the off-course road dropped' % dropped)
     if preview_png: L.preview(preview_png, sp, loop, np.mean([loop[4], loop[5]], 0), col)
     L.install(disc, mods, loop, col_bytes, res_bytes, pvs, ppw, cbx, length)
+    # its AI files: what the game counts laps and progress by
+    import addcar, aitrack
+    mega = addcar.Archive(disc, mods, 'Mega.ca2')
+    ring = (loop[4] + loop[5]) / 2
+    wps, nseg, sounds = aitrack.install(mega, L.TAG, ring, np.linalg.norm(loop[4] - loop[5], axis=1) / 2)
+    mega.check(); mega.write()
+    # its audio spline, one record per AI waypoint (Pacific Shipyards II's has one per II's: the
+    # audio engine walked off its end and called through nothing at the start)
+    ai = 'ai' + chr(92) + 'drivatarv2' + chr(92)
+    audio = aitrack.audio_spline(wps, mega.files[ai + 'vancouverreversegeometry.bin'], open(os.path.join(rev, 'AudioSpline.bin'), 'rb').read())
+    open(os.path.join(mods, 'media', 'tracks', L.TAG, 'AudioSpline.bin'), 'wb').write(audio)
+    print('AI files: %d waypoints, %d segments; audio spline %d bytes; sounds kept %s' % (len(wps), nseg, len(audio), sounds))
 
 
 if __name__ == '__main__':
