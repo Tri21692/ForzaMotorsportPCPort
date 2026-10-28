@@ -468,6 +468,8 @@ PVS_CELLS = range(2, 6)  # Pacific Shipyards II's cells round the lot (0 and 1: 
 MAP_TILE = 45   # frontend\gfx_trackmaps.xpr: 128 x 128 tiles, 4 a row; the disc uses 0-44
 LOGO = 19       # ico_tracklogo_*: Pacific Shipyards' own logo (Pacific Shipyards II's is 20)
 LOAD_IMAGE = 'Load_Shipyards.xpr'  # the loading screen (Pacific Shipyards II's: Load_Shipyards_II.xpr)
+TIME_OF_DAY = None   # the track list's TimeOfDay (an hour), if not Pacific Shipyards'
+TRACK_INI = None     # a function of its track.ini's text, if it is changed
 
 
 def trackmap(centre, size=128, ss=4):
@@ -565,7 +567,7 @@ def track_entry(tracklist, name_id, length):
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
                  ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'false'),
                  ('Ordinal', ordinal), ('length', int(round(length))),
-                 ('minimap', MAP_TILE), ('icon', LOGO), ('Image', LOAD_IMAGE)):
+                 ('minimap', MAP_TILE), ('icon', LOGO), ('Image', LOAD_IMAGE)) + ((('TimeOfDay', TIME_OF_DAY),) if TIME_OF_DAY else ()):
         e = attr(e, k, v)
     e = re.sub(r'\s(p2pordinal|start|end)="[^"]*"', '', e)
     e = e.replace(' Ordinal="%d"' % ordinal, ' Ordinal="%d" hotlapordinal="%d"' % (ordinal, hotlap))
@@ -606,6 +608,7 @@ def install(disc, mods, loop, col_bytes, res_bytes, pvs_bytes, ppw_bytes, cbx_by
         if k.lower().startswith(src):
             v = mega.files[k]
             if k.lower().endswith('quickpreview.xml'): v = quickpreview(v.decode('latin-1'), loop).encode('latin-1')
+            if k.lower().endswith('track.ini') and TRACK_INI: v = TRACK_INI(v.decode('latin-1')).encode('latin-1')
             mega.files['tracks' + B + TAG.lower() + B + k[len(src):]] = v
     # its map on the track select screen
     import addseries

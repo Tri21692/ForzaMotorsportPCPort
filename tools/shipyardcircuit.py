@@ -13,7 +13,8 @@ From the lap line on the upper road (west of Turn 2), the forward way round:
 
 The side roads, the gap and the strip are off the course: drawn only (the strip and the gap not
 even that), so they get road, walls and visibility here, as the first layout's link did
-(tools/shipyardloop.py, whose pieces this reuses).
+(tools/shipyardloop.py, whose pieces this reuses). It is run in the early evening (tools/evening.py):
+the lightmaps lifted, the sky an evening's, the street lamps dark but for the tunnel's.
 
   python tools/shipyardcircuit.py <disc> <mods folder> [preview.png]
 """
@@ -25,7 +26,10 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coledit
+import evening
 import shipyardloop as L
+
+L.TIME_OF_DAY, L.TRACK_INI = evening.TIME, evening.track_ini
 
 START = (-343.0, -185.0)   # the lap line: on the upper road, the user's green circle
 HALF = 7.0                 # off the course, the road's half width (metres)
@@ -1332,8 +1336,13 @@ def build(disc, mods, preview_png=None, reverse=False):
         len(stretches), sum(2 * len(i) for _, i in stretches), len(walls), [m for m, _ in picked]))
     for side, idx in stretches:
         print('  %s edge, %3.0f m from (%.0f, %.0f) to (%.0f, %.0f)' % ('left' if side > 0 else 'right', 2 * len(idx), centre[idx[0]][0], centre[idx[0]][2], centre[idx[-1]][0], centre[idx[-1]][2]))
+    # the evening: the street lamps' glows off (the tunnel's own kept), the lightmaps and sky
+    dark = evening.lamp_glows(res_bytes, L.MODEL) - {g for (g, _), _ in glowed}
+    hide |= dark
+    lifted, sky = evening.apply(res_bytes)
+    print('evening: %d lightmaps lifted, %d sky texels, %d lamp glows off' % (lifted, sky, len(dark)))
     n_cells = len(cells_in)
-    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown), hide=hide)
+    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark), hide=hide)
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
     cbx = zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read())
     dropped = 0
