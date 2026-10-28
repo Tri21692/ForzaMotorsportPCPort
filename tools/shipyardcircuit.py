@@ -284,8 +284,9 @@ def boundary_collision(col, centre, half, run, dist, sp):
         for side in (1, -1):
             a, b = centre[i] + L3[i] * side * dist[(side, i)], centre[j] + L3[j] * side * dist[(side, j)]
             if np.all(L.off_course([a, b], sp)): wall([a + (0, -1, 0), b + (0, -1, 0), b + (0, 3, 0), a + (0, 3, 0)])
-        q = [centre[i] + L3[i] * (dist[(1, i)] + 1), centre[i] - L3[i] * (dist[(-1, i)] + 1),
-             centre[j] - L3[j] * (dist[(-1, j)] + 1), centre[j] + L3[j] * (dist[(1, j)] + 1)]
+        g = lambda side, k: min(dist[(side, k)], half[k] + 8) + 1  # no wider: over the course it made bumps
+        q = [centre[i] + L3[i] * g(1, i), centre[i] - L3[i] * g(-1, i),
+             centre[j] - L3[j] * g(-1, j), centre[j] + L3[j] * g(1, j)]
         col.add(0, [q[0], q[1], q[2]]); col.add(0, [q[2], q[3], q[0]])
 
 
@@ -336,6 +337,14 @@ def whole_objects(res, hide, near=20.0):
         if h not in info: continue
         o, c = info[h]
         out |= {i for i, (oi, ci) in info.items() if oi == o and np.hypot(*(ci - c)[[0, 2]]) < near}
+    # and its parts in other formats beside it in the model (a lamp's glow, 0x0F, after its pole):
+    # their vertices are not positions to go by
+    for h in list(out):
+        if h not in info: continue
+        for i in range(max(0, h - 6), min(n, h + 7)):
+            a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * i)[0]
+            vb = struct.unpack_from('<H', res, L.MODEL + a + 16)[0]
+            if i not in info and 9 <= vb < len(names) + 9 and object_of(names[vb - 9][0]) == info[h][0]: out.add(i)
     return out
 
 
@@ -365,7 +374,7 @@ def void_ground(res, centre, half, dist, where, hidden, out=40.0):
             if i is not None:
                 d0 = dist.get((side, i), half[i] + WIDE)
                 l2 = left[i] * side
-                if not any(drawn(*(centre[i][[0, 2]] + l2 * (d0 + u))) for u in (1.0, out / 3, 2 * out / 3, out)):
+                if sum(not drawn(*(centre[i][[0, 2]] + l2 * (d0 + u))) for u in (out / 3, 2 * out / 3, out)) >= 2:
                     run.append(i); continue
             if len(run) >= 3:
                 pairs = []
@@ -490,6 +499,8 @@ LAMP_ST = ((-32767, -32767), (-32225, -32255))  # its texture coordinates, corne
 HAIRPIN = (-648.0, -100.0)   # the hairpin from the strip onto the old road: open, no kerbs, its walls out on what is drawn
 HAIRPIN_R = 32.0
 PORTAL = 14.0      # a tunnel mouth's face: this far beyond each wall, and up to this above the road
+CONCRETE = [(-385, -646), (-262, -726)]   # side road 39 up to the tunnel: concrete walls both sides, in front of its fences
+CONCRETE_H = 2.4
 
 
 def tunnel_faces(centre, half, idx, out=2.0):
@@ -521,12 +532,12 @@ def tunnel_faces(centre, half, idx, out=2.0):
              face(P - L3 * w, P - L3 * w + up * TUNNEL_H, L3, sd, lo_t, sd, hi_t),    # the right wall
              face(P + L3 * w + up * TUNNEL_H, P - L3 * w + up * TUNNEL_H, -up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32485.0)),  # the roof, from below
              face(P - L3 * w + up * (TUNNEL_H + 0.3), P + L3 * w + up * (TUNNEL_H + 0.3), up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32485.0))]  # and above
-    # two strip lights along the roof, a metre in from each wall, facing down
+    # two strip lights along the roof, from a metre in from each wall, facing down
     (s0, t0), (s1, t1) = LAMP_ST
     lights = []
     for side in (1, -1):
         a = P + L3 * side * (w - 1.0) + up * (TUNNEL_H - 0.05)
-        b = P + L3 * side * (w - 1.5) + up * (TUNNEL_H - 0.05)
+        b = P + L3 * side * (w - 2.0) + up * (TUNNEL_H - 0.05)  # a metre wide: half that was not seen
         lights.append(face(a, b, -up, np.full(len(P), float(s0)), np.full(len(P), float(t0)), np.full(len(P), float(s1)), np.full(len(P), float(t1))))
     # each mouth a face of concrete round its opening, so nothing past the tunnel's sides or roof
     # shows through: beside it PORTAL m each way, and above it up to PORTAL m over the roof
@@ -794,6 +805,15 @@ def build(disc, mods, preview_png=None, reverse=False):
     for k, link in enumerate(links):
         g, a = L.make_collision(col, link, 2 * HALF, walls if k == 0 else [], sp)
         gone += g; added += a
+    # the old road's south walls inside the hairpin: its inside crosses them (the link's cut, as wide
+    # as the road, missed them at so tight a turn, and cutting the apex met them)
+    def open_hairpin(surface, pts):
+        q = np.array(pts, float)
+        n = np.cross(q[1] - q[0], q[2] - q[0])
+        if abs(n[1]) > 0.7 * np.linalg.norm(n): return True
+        m = q.mean(0)
+        return not (np.hypot(m[0] - HAIRPIN[0], m[2] - HAIRPIN[1]) < HAIRPIN_R and m[2] < HAIRPIN[1] + 6 and m[0] > HAIRPIN[0] - 14)  # not the wall closing the old road west of it
+    print('hairpin: %d of the old road\'s wall triangles on its inside removed' % col.remove(open_hairpin))
     # the walls beside the off-course stretches on what is drawn there (a fence, wall or building
     # face near the edge: the car stops at it, not through it or short of it), else at the back of
     # the sidewalk the kerbs draw; ground out to them
@@ -803,6 +823,17 @@ def build(disc, mods, preview_png=None, reverse=False):
     wide = boundaries(res, centre, half, [i for i in range(len(centre)) if at_hairpin[i]], hidden=hide, reach=25.0)
     for (side, i), d in wide.items():
         if (side, i) in dist: dist[(side, i)] = d if d < half[i] + WIDE else half[i] + 25.0
+    c0, c1 = np.array(CONCRETE[0], float), np.array(CONCRETE[1], float)
+    cd = c1 - c0
+    cu = ((centre[:, [0, 2]] - c0) @ cd) / (cd @ cd)
+    by_concrete = (cu > 0) & (cu < 1) & (np.abs(((centre[:, [0, 2]] - c0) @ np.array([-cd[1], cd[0]])) / np.linalg.norm(cd)) < 10)
+    for (side, i) in list(dist):
+        if by_concrete[i]: dist[(side, i)] = half[i] + 0.6
+    g0_, g1_ = np.array(GAP[0], float), np.array(GAP[1], float)
+    gd_ = g1_ - g0_
+    gu = ((centre[:, [0, 2]] - g0_) @ gd_) / (gd_ @ gd_)
+    in_gap = (gu > -10 / np.linalg.norm(gd_)) & (gu < 1 + 10 / np.linalg.norm(gd_)) & \
+             (np.abs(((centre[:, [0, 2]] - g0_) @ np.array([-gd_[1], gd_[0]])) / np.linalg.norm(gd_)) < 12)
     for r in runs(off): boundary_collision(col, centre, half, r, dist, sp)
     near = sum(1 for (side, i), d in dist.items() if d < half[i] + WIDE - 0.2)
     print('walls beside the new road: %d of %d on a drawn fence, wall or building' % (near, len(dist)))
@@ -834,15 +865,24 @@ def build(disc, mods, preview_png=None, reverse=False):
     # a kerb and sidewalk wherever a new stretch's edge has nothing drawn, each in a mesh from
     # far off that this layout never shows, its bounding sphere moved with it
     stretches = []
-    for side, idx in bare_edges(res_bytes, centre, half, hidden=hide):  # none at the hairpin
+    for side, idx in bare_edges(res_bytes, centre, half, hidden=hide):  # none at the hairpin, in the tunnel or by the concrete
         run = []
         for i in idx + [None]:
-            if i is not None and not at_hairpin[i]: run.append(i); continue
+            if i is not None and not (at_hairpin[i] or in_gap[i] or by_concrete[i]): run.append(i); continue
             if len(run) >= 3: stretches.append((side, run))
             run = []
     kerbs = [kerb_strips(centre, half, side, idx) for side, idx in stretches]
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
+    # concrete walls along side road 39 to the tunnel, in front of its fences, the collision's line
+    left_, _ = frame(centre)
+    for side in (1, -1):
+        run = [i for i in range(len(centre)) if by_concrete[i]]
+        if len(run) < 2: continue
+        pts = [centre[i] + np.array([left_[i][0], 0, left_[i][1]]) * side * dist.get((side, i), half[i] + 0.6) for i in run]
+        keep = [pts[0], pts[len(pts) // 2], pts[-1]]  # the road runs straight there
+        for a, b in zip(keep[:-1], keep[1:]):
+            kerbs.append(wall_strips(tuple(a), tuple(b), height=CONCRETE_H))
     mats = [None] * len(kerbs)
     # the tunnel over the gap, where nothing is drawn: its floor in asphalt, its walls and roof in concrete
     g0, g1 = np.array(GAP[0], float), np.array(GAP[1], float)
