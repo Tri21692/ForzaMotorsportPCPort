@@ -236,7 +236,7 @@ def bare_edges(res, centre, half, hidden=(), min_len=3):
 BOUNDARY = ('fence', 'guardrail', 'wall', 'barrier', 'building', 'rail', 'cementblock', 'bridge_wall', 'sidewalk_fence')
 
 
-def boundaries(res, centre, half, where, hidden=(), reach=8.0):
+def boundaries(res, centre, half, where, hidden=(), reach=8.0, inner=None):
     """For the loop points `where`, per side, how far from the centre the drawn boundary stands: the
     nearest fence, wall, rail or building face rising 0.5 m or more above the road, from 0.3 m
     inside the edge to `reach` m outside it; where there is none, the back of the sidewalk the
@@ -266,7 +266,7 @@ def boundaries(res, centre, half, where, hidden=(), reach=8.0):
         near = (np.abs(rel @ fwd[i]) < 1.2) & (Q[:, 2] < c[1] + 1.2) & (Q[:, 3] > c[1] + 0.5)
         for side in (1, -1):
             lat = rel[near] @ left[i] * side
-            lat = lat[(lat > half[i] - 0.3) & (lat < half[i] + reach)]
+            lat = lat[(lat > (half[i] - 0.3 if inner is None else inner)) & (lat < half[i] + reach)]
             out[(side, i)] = float(lat.min()) - 0.15 if len(lat) else half[i] + WIDE
     return out
 
@@ -778,7 +778,25 @@ def build(disc, mods, preview_png=None, reverse=False):
     half, off = half_widths(centre, sp)
     centre, drawn, total = drawn_heights(res, centre, off)
     print('heights off the course: %d of %d points over drawn ground, the rest blended' % (drawn, total))
-    e = edges(centre, half)
+    links = [centre[r] for r in runs(off)]
+    # what stands on the new road is hidden (and is no boundary): found first, the walls go by it
+    hide = set()
+    for link in links: hide |= set(L.hidden_meshes(res, link, sp))
+    on_road = obstacles(res, centre, half, sorted({i for r in runs(off) for i in r}))
+    print('standing on the road, hidden: %s' % ', '.join(sorted({nm for nm in on_road.values()})))
+    hide |= set(on_road)
+    hide = whole_objects(res, hide)
+    hide.discard(L.DONOR)
+    # the track's edges (what the game measures it by, and draws the suggested line within) half a
+    # metre short of any fence, wall or building inside them: at the strip's junction the line went
+    # through a fence
+    bd = boundaries(res, centre, half, range(len(centre)), hidden=hide, reach=0.5, inner=2.0)
+    cap = np.array([min(half[i], bd[(1, i)] - 0.5, bd[(-1, i)] - 0.5) for i in range(len(centre))])
+    cap = np.maximum(cap, 4.0)
+    k_ = np.arange(-3, 4); w_ = np.exp(-0.5 * (k_ / 1.5) ** 2); w_ /= w_.sum()
+    cap = np.minimum(cap, sum(w_[j] * np.roll(cap, -k_[j]) for j in range(len(k_))))
+    print('track edges kept off what is drawn at %d points' % int(np.sum(cap < half - 0.05)))
+    e = edges(centre, cap)
     # L.resample turns the loop round (the first layout was built in the buffers' order): given it
     # backwards, so the way round comes out as built, south-east first along the upper road
     if reverse:  # the other way round: north-west from the lap line, the even edges on the new left
@@ -794,14 +812,6 @@ def build(disc, mods, preview_png=None, reverse=False):
         print('  wall across the course at (%.0f, %.0f): %.1f m from the loop' % ((x0 + x1) / 2, (z0 + z1) / 2, dmin))
     gone = added = 0
     links = [centre[r] for r in runs(off)]
-    # what stands on the new road is hidden (and is no boundary): found first, the walls go by it
-    hide = set()
-    for link in links: hide |= set(L.hidden_meshes(res, link, sp))
-    on_road = obstacles(res, centre, half, sorted({i for r in runs(off) for i in r}))
-    print('standing on the road, hidden: %s' % ', '.join(sorted({nm for nm in on_road.values()})))
-    hide |= set(on_road)
-    hide = whole_objects(res, hide)
-    hide.discard(L.DONOR)
     for k, link in enumerate(links):
         g, a = L.make_collision(col, link, 2 * HALF, walls if k == 0 else [], sp)
         gone += g; added += a
