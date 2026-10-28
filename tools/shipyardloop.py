@@ -467,9 +467,7 @@ PVS_CELLS = range(2, 6)  # Pacific Shipyards II's cells round the lot (0 and 1: 
 
 MAP_TILE = 45   # frontend\gfx_trackmaps.xpr: 128 x 128 tiles, 4 a row; the disc uses 0-44
 LOGO = 19       # ico_tracklogo_*: Pacific Shipyards' own logo (Pacific Shipyards II's is 20)
-LOAD_IMAGE = 'Load_Shipyards.xpr'  # the loading screen it is made from (Pacific Shipyards II's: Load_Shipyards_II.xpr)
-LOAD_DIR = ('media', 'FrontEnd', 'Loading_Track_bkgd')
-LOAD_BOX = (66, 182, 236, 378)  # x0, y0, x1, y1: the loading screen's map, where Pacific Shipyards' stands
+LOAD_IMAGE = 'Load_Shipyards.xpr'  # the loading screen (Pacific Shipyards II's: Load_Shipyards_II.xpr)
 
 
 def trackmap(centre, size=128, ss=4):
@@ -481,80 +479,38 @@ def trackmap(centre, size=128, ss=4):
     p[:, 1] = -p[:, 1]  # north (+z) up
     lo, hi = p.min(0), p.max(0)
     scale = (S * 0.78) / max(hi - lo)
-    return draw_course((p - (lo + hi) / 2) * scale + S / 2, size, size, ss)
-
-
-def draw_course(q, h, w, ss, line=(1.2, 2.2), white=(240, 240, 240), arrow=1.0):
-    """A course's map: the line through `q` (closed; pixels of an image `ss` times h x w), white
-    `line[0]` pixels each side of it and dark to `line[1]`, and the red arrow and dot at q[0]
-    pointing the way round (`arrow` times their size on the track select tile). Averaged down to
-    h x w RGBA, clear round it."""
-    H, S = h * ss, w * ss
-    yy, xx = np.mgrid[0:H, 0:S].astype(float) + 0.5
+    q = (p - (lo + hi) / 2) * scale + S / 2
+    yy, xx = np.mgrid[0:S, 0:S].astype(float) + 0.5
     def dist(pts):
-        d = np.full((H, S), 1e9)
+        d = np.full((S, S), 1e9)
         for a, b in zip(pts, np.roll(pts, -1, 0)):
             v = b - a
             t = np.clip(((xx - a[0]) * v[0] + (yy - a[1]) * v[1]) / max(v @ v, 1e-9), 0, 1)
             d = np.minimum(d, np.hypot(xx - a[0] - t * v[0], yy - a[1] - t * v[1]))
         return d
     d = dist(q[::2])
-    inner, edge = d < line[0] * ss, d < line[1] * ss
+    white, edge = d < 1.2 * ss, d < 2.2 * ss
     # the arrow: just before the line, pointing the way round
     fwd = q[3] - q[0]; fwd /= np.linalg.norm(fwd)
     side = np.array([-fwd[1], fwd[0]])
-    k = arrow * ss
-    tip, base = q[0] + fwd * 3 * k, q[0] - fwd * 9 * k
-    tri = [tip, base + side * 5 * k, base - side * 5 * k]
+    tip, base = q[0] + fwd * 3 * ss, q[0] - fwd * 9 * ss
+    tri = [tip, base + side * 5 * ss, base - side * 5 * ss]
     def inside(t):
         s = [np.sign((b[0] - a[0]) * (yy - a[1]) - (b[1] - a[1]) * (xx - a[0])) for a, b in zip(t, t[1:] + t[:1])]
         return ((s[0] >= 0) & (s[1] >= 0) & (s[2] >= 0)) | ((s[0] <= 0) & (s[1] <= 0) & (s[2] <= 0))
-    dot_c = q[0] - fwd * 12 * k
-    red = inside(tri) | (np.hypot(xx - dot_c[0], yy - dot_c[1]) < 2.4 * k)
+    dot_c = q[0] - fwd * 12 * ss
+    red = inside(tri) | (np.hypot(xx - dot_c[0], yy - dot_c[1]) < 2.4 * ss)
     red_edge = np.zeros_like(red)
     for dy in range(-ss, ss + 1, max(1, ss // 2)):
         for dx in range(-ss, ss + 1, max(1, ss // 2)):
             red_edge |= np.roll(np.roll(red, dy, 0), dx, 1)
-    img = np.zeros((H, S, 4), float)
+    img = np.zeros((S, S, 4), float)
     img[edge | red_edge] = (0, 0, 0, 255)
-    img[inner] = white + (255,)
+    img[white] = (240, 240, 240, 255)
     img[red] = (200, 30, 30, 255)
-    img = img.reshape(h, ss, w, ss, 4).mean((1, 3))
+    img = img.reshape(size, ss, size, ss, 4).mean((1, 3))
     rgb = img[..., :3] / np.maximum(img[..., 3:], 1e-6) * 255  # colour not darkened by the averaged alpha
     return np.concatenate([np.clip(rgb, 0, 255), img[..., 3:]], -1).round().astype(np.uint8)
-
-
-def loading_image(disc, centre, ss=4):
-    """The loading screen: LOAD_IMAGE with its map of the old course taken off (the panel there as
-    every other track's loading screen has it, their median: their maps stand in different places)
-    and the circuit's drawn in its place, as large as LOAD_BOX holds, in the same style. An XPR0
-    like it (a 1024 x 512 DXT5)."""
-    import glob
-    import addcar
-    import forzaxpr
-    folder = addcar.disc_file(disc, *LOAD_DIR)
-    def read(path):
-        d = open(path, 'rb').read()
-        t = forzaxpr.textures(d)[0]
-        return d, forzaxpr.dxt(d[t['start']:], t['w'], t['h'], 5)
-    template, img = read(os.path.join(folder, LOAD_IMAGE))
-    others = [read(f)[1] for f in sorted(glob.glob(os.path.join(folder, 'Load_*.xpr'))) if 'shipyards' not in os.path.basename(f).lower()]
-    x0, y0, x1, y1 = LOAD_BOX
-    pad = 16
-    win = (slice(y0 - pad, y1 + pad), slice(x0 - pad, x1 + pad))
-    panel = np.median(np.stack([o[win] for o in others]), 0)
-    out = img.astype(float)
-    out[win] = panel
-    p = centre[:, [0, 2]].astype(float)
-    p[:, 1] = -p[:, 1]  # north (+z) up, as the disc's maps
-    lo, hi = p.min(0), p.max(0)
-    scale = min((x1 - x0) / (hi - lo)[0], (y1 - y0) / (hi - lo)[1])
-    h, w = y1 - y0 + 2 * pad, x1 - x0 + 2 * pad
-    q = ((p - (lo + hi) / 2) * scale + (w / 2, h / 2)) * ss
-    course = draw_course(q, h, w, ss, line=(1.3, 2.5), white=(232, 232, 232), arrow=1.5).astype(float)
-    a = course[..., 3:] / 255
-    out[win][..., :3] = out[win][..., :3] * (1 - a) + course[..., :3] * a
-    return forzaxpr.write_dxt5(template, np.clip(out, 0, 255).round().astype(np.uint8))
 
 
 NAME, TAG = 'Pacific Shipyards Circuit', 'VancouverLoop'
@@ -609,7 +565,7 @@ def track_entry(tracklist, name_id, length):
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
                  ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'false'),
                  ('Ordinal', ordinal), ('length', int(round(length))),
-                 ('minimap', MAP_TILE), ('icon', LOGO), ('Image', 'Load_%s.xpr' % TAG)):
+                 ('minimap', MAP_TILE), ('icon', LOGO), ('Image', LOAD_IMAGE)):
         e = attr(e, k, v)
     e = re.sub(r'\s(p2pordinal|start|end)="[^"]*"', '', e)
     e = e.replace(' Ordinal="%d"' % ordinal, ' Ordinal="%d" hotlapordinal="%d"' % (ordinal, hotlap))
@@ -656,10 +612,6 @@ def install(disc, mods, loop, col_bytes, res_bytes, pvs_bytes, ppw_bytes, cbx_by
     xpr = addcar.Archive(disc, mods, 'MegaXPR.ca2')
     key = next(k for k in xpr.files if k.lower() == 'frontend' + B + 'gfx_trackmaps.xpr')
     xpr.files[key] = addseries.put_tile(xpr.files[key], MAP_TILE, trackmap((loop[4] + loop[5]) / 2), (128, 128, 4))
-    # and on its loading screen
-    d = os.path.join(mods, *LOAD_DIR)
-    os.makedirs(d, exist_ok=True)
-    open(os.path.join(d, 'Load_%s.xpr' % TAG), 'wb').write(loading_image(disc, (loop[4] + loop[5]) / 2))
     for a in (mega, xpr): a.check()
     for a in (mega, xpr): a.write()
     d = os.path.join(mods, 'media', 'tracks', TAG)
