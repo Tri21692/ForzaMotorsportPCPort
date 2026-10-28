@@ -84,12 +84,17 @@ WALLS = [  # (from (u, v), to (u, v), its outward normal in (u, v))
 ]
 
 
-def openings(centre, half):
+def rect_walls(u0, u1, v0, v1):
+    """A box's walls as WALLS has them (from, to, outward normal)."""
+    return [((u0, v1), (u0, v0), (-1, 0)), ((u0, v0), (u1, v0), (0, -1)), ((u1, v0), (u1, v1), (1, 0)), ((u1, v1), (u0, v1), (0, 1))]
+
+
+def openings(centre, half, walls=WALLS):
     """Per wall, the stretches (from, to: metres along it) where the road crosses it, OPEN_PAD wider
     each side."""
     out = []
     c = to_uv(centre[:, [0, 2]])
-    for a, b, _ in WALLS:
+    for a, b, _ in walls:
         a, b = np.array(a), np.array(b)
         L_ = np.linalg.norm(b - a)
         s = np.arange(0, L_ + 1e-9, 0.25)
@@ -114,9 +119,10 @@ def _face(a, b, n, sa, ta, sb, tb):
     return [v for pr in pairs for v in pr]
 
 
-def _wall(a, b, n, y0, y1, s0, inward=False, every=6.0):
-    """A wall face from (u, v) a to b between heights y0 and y1 (arrays along it or numbers), tin's
-    texture from s0 along it; facing out (n) or in."""
+def _wall(a, b, n, y0, y1, s0, inward=False, every=6.0, tex=(27, 99, None)):
+    """A wall face from (u, v) a to b between heights y0 and y1 (arrays along it or numbers), its
+    texture (tex: s a metre along, t a metre down from height tex[2], TOP if None; tin's by
+    default) from s0 along it; facing out (n) or in."""
     a, b = np.array(a, float), np.array(b, float)
     L_ = np.linalg.norm(b - a)
     k = np.linspace(0, 1, max(2, int(np.ceil(L_ / every)) + 1))
@@ -128,8 +134,9 @@ def _wall(a, b, n, y0, y1, s0, inward=False, every=6.0):
     g0, u, v = basis()
     nw = n[0] * u + n[1] * v
     nn = np.array([nw[0], 0.0, nw[1]]) * (-1 if inward else 1)
-    s = -32768 + 27 * (s0 + L_ * k)
-    return _face(lo, hi, nn, s, -32768 + 99 * (TOP - lo[:, 1]), s, -32768 + 99 * (TOP - hi[:, 1]))
+    s = -32768 + tex[0] * (s0 + L_ * k)
+    top = TOP if tex[2] is None else tex[2]
+    return _face(lo, hi, nn, s, -32768 + tex[1] * (top - lo[:, 1]), s, -32768 + tex[1] * (top - hi[:, 1]))
 
 
 def faces(centre, half):
@@ -311,3 +318,69 @@ def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_norma
             struct.pack_into('<4f', ppw, at, float(np.max(np.linalg.norm(p2 - c2, axis=1))), *c2)
             moved.append(mesh)
     return moved, bytes(ppw)
+
+
+# the yard round the shop: concrete over the void, inside a tin fence; warehouses on its empty lots
+YARD = (-45.0, 262.0, -50.0, 55.0)   # u0, u1, v0, v1
+YARD_DROP = 0.12                     # under the road and the drawn ground (they cover it where they are)
+FENCE_H = 5.0
+WAREHOUSE = 3787  # building_federal_00_vb2: building_warehouse_03, concrete with rows of windows (51 a metre across, 18 up)
+WAREHOUSES = [  # (u0, u1, v0, v1, height): on the yard's empty lots, clear of the road
+    (10.0, 110.0, 24.0, 46.0, 11.0), (125.0, 215.0, 24.0, 46.0, 9.0),   # north of the shop
+    (100.0, 158.0, -48.0, -20.0, 10.0),                                 # south, between the two buildings
+    (236.0, 258.0, -40.0, 40.0, 9.0),                                   # west, past side road 39
+    (-40.0, -12.0, 20.0, 50.0, 8.0)]                                    # by the shop's east door
+
+
+def yard_faces(centre, half):
+    """The yard's faces: the ground (concrete, a face a row, 8 m apart), the fence (tin, both faces,
+    open where the loop crosses it) and the warehouses (their outsides). [(faces, material)]."""
+    u0, u1, v0, v1 = YARD
+    up = np.array([0.0, 1, 0])
+    k = np.linspace(u0, u1, int((u1 - u0) / 16) + 1)
+    ground = []
+    for va, vb_ in zip(np.arange(v0, v1, 8.0), np.minimum(np.arange(v0, v1, 8.0) + 8.0, v1)):
+        A, B = np.stack([k, np.full(len(k), va)], 1), np.stack([k, np.full(len(k), vb_)], 1)
+        a_, b_ = to_world(A, floor_y(centre, A) - YARD_DROP), to_world(B, floor_y(centre, B) - YARD_DROP)
+        ground.append(_face(a_, b_, up, -32000 + 53 * (k - u0) % 30000, np.full(len(k), -32000 + 51.7 * ((va - v0) % 500)),
+                            -32000 + 53 * (k - u0) % 30000, np.full(len(k), -32000 + 51.7 * ((vb_ - v0) % 500))))
+    fence = []
+    walls = rect_walls(*YARD)
+    for (a, b, n), runs in zip(walls, openings(centre, half, walls)):
+        a, b = np.array(a, float), np.array(b, float)
+        L_ = np.linalg.norm(b - a)
+        d = (b - a) / L_
+        cuts = [0.0] + [x for r in runs for x in r] + [L_]
+        for j in range(0, len(cuts), 2):
+            s0, s1 = cuts[j], cuts[j + 1]
+            if s1 - s0 < 0.5: continue
+            y = floor_y(centre, np.array([a + d * (s0 + s1) / 2]))[0]
+            for inward in (False, True):
+                fence.append(_wall(a + d * s0, a + d * s1, n, y - 1.0, y + FENCE_H, s0, inward, every=12.0, tex=(27, 99, y + FENCE_H)))
+    sheds = []
+    for w0, w1, x0, x1, h in WAREHOUSES:
+        for a, b, n in rect_walls(w0, w1, x0, x1):
+            a, b = np.array(a, float), np.array(b, float)
+            y = floor_y(centre, np.array([(a + b) / 2]))[0]
+            sheds.append(_wall(a, b, n, y - 1.0, y + h, 0.0, every=12.0, tex=(51, 18, y + h + 8)))
+    return [(ground, None), (fence, TIN), (sheds, WAREHOUSE)]
+
+
+def yard_collision(col, centre, half):
+    """The fence's walls (both faces, 4 m) where the loop does not cross it. Returns triangles."""
+    added = 0
+    up = np.array([0.0, 1, 0])
+    walls = rect_walls(*YARD)
+    for (a, b, n), runs in zip(walls, openings(centre, half, walls)):
+        a, b = np.array(a, float), np.array(b, float)
+        L_ = np.linalg.norm(b - a)
+        d = (b - a) / L_
+        cuts = [0.0] + [x for r in runs for x in r] + [L_]
+        for j in range(0, len(cuts), 2):
+            s0, s1 = cuts[j], cuts[j + 1]
+            if s1 - s0 < 0.5: continue
+            p0, p1 = to_world(a + d * s0, -2.0), to_world(a + d * s1, -2.0)
+            q = [p0, p1, p1 + up * 6.5, p0 + up * 6.5]
+            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+                col.add(0x900, tri); added += 1
+    return added

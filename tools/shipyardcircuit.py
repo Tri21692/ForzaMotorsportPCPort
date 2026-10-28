@@ -1369,7 +1369,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     kerbs = [kerb_strips(centre, half, side, idx) for side, idx in stretches]
     # and the kerbs and sidewalks solid: the car rode through them at the road's level
     print('kerbs solid: %d triangles' % sum(kerb_collision(col, centre, half, side, idx) for side, idx in stretches))
-    print('garage: %d collision triangles' % garage.collision(col, centre, half))
+    print('garage: %d collision triangles, its yard fence %d' % (garage.collision(col, centre, half), garage.yard_collision(col, centre, half)))
     col_bytes = col.to_bytes()
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
@@ -1395,7 +1395,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     if gap:
         floor = tunnel_faces(centre, half, gap)[0]  # the road's asphalt through it
         kerbs.append(floor); mats.append(ASPHALT)
-        for fs, mat in garage.faces(centre, half):
+        for fs, mat in garage.faces(centre, half) + garage.yard_faces(centre, half):  # the shop, its yard, fence and warehouses
             if fs: kerbs.append(fs); mats.append(mat)
         print('garage: %.0f m by %.0f m, %.1f m high, its road %.0f m' % (garage.U1 - garage.U0, garage.V1 - garage.V0, garage.TOP, 2 * len(gap)))
     # ground where nothing is drawn beside the new stretches (the void showed past the edges)
