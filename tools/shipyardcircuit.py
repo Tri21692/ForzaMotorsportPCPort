@@ -304,16 +304,16 @@ def kerb_strips(centre, half, side, idx):
     return faces
 
 
-def write_strips(res, mesh, faces, light=(-32724, -32645)):
-    """Mesh `mesh` of model_quickpreview rewritten as the strips `faces` with the sidewalk's
-    texture, lightmap and shader; its spare vertices and indices repeat the last. Returns its
-    bounding sphere (centre, radius)."""
+def write_strips(res, mesh, faces, light=(-32724, -32645), material=None):
+    """Mesh `mesh` of model_quickpreview rewritten as the strips `faces` with the texture, lightmap
+    and shader of mesh `material` (the sidewalk's unless given); its spare vertices and indices
+    repeat the last. Returns its bounding sphere (centre, radius)."""
     import struct
     import xb2
     names, _ = xb2.resources(bytes(res))
     a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * mesh)[0]
     fl, ab, nidx, vbytes, vb, stride, prim, t0, t1, sh = struct.unpack_from('<IIIIHHHHHH', res, L.MODEL + a)
-    sa = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * SIDEWALK)[0]
+    sa = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * (SIDEWALK if material is None else material))[0]
     sfl, _, _, _, _, _, _, st0, st1, ssh = struct.unpack_from('<IIIIHHHHHH', res, L.MODEL + sa)
     verts = [v for f in faces for v in f]
     order, base = [], 0
@@ -355,6 +355,42 @@ def sphere_at(ppw, centre, radius):
         k = int(np.argmin(e))
         if best is None or e[k] < best[0]: best = (e[k], shift + 4 * k)
     return best[1] if best[0] < 1.0 else None
+
+
+TUNNEL_H = 5.5   # the tunnel's roof above the road
+ASPHALT = L.DONOR  # mesh 714's material (texture 553: asphalt) for the tunnel's floor; it is read before being rewritten
+
+
+def tunnel_faces(centre, half, idx, out=2.0):
+    """Over loop points idx (the gap, where nothing is drawn): a floor of road, walls `out` m outside
+    each edge (on the invisible walls' line) up to the roof, and the roof, its underside facing down
+    and its top up. Returns ([floor face], [concrete faces]) in kerb_strips' form."""
+    left, fwd = frame(centre)
+    keep = list(idx[::2]) if len(idx) > 60 else list(idx)
+    if keep[-1] != idx[-1]: keep.append(idx[-1])
+    P = centre[keep]
+    L3 = np.stack([left[keep][:, 0], np.zeros(len(keep)), left[keep][:, 1]], 1)
+    w = (half[keep] + out)[:, None]
+    dist = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(P[:, [0, 2]], axis=0), axis=1))])
+    x0, z0 = P[:, 0].min() - 20, P[:, 2].min() - 20  # the texture's origin: everything above it stays in s16
+    up = np.array([0.0, 1.0, 0.0])
+    def face(a, b, n, sa, ta, sb, tb):
+        pairs = [((a[k], n if np.ndim(n) == 1 else n[k], sa[k], ta[k]), (b[k], n if np.ndim(n) == 1 else n[k], sb[k], tb[k])) for k in range(len(a))]
+        a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
+        n0 = pairs[0][0][1]
+        if np.dot(np.cross(b0 - a0, a1 - a0), n0) > 0: pairs = [(q, p) for p, q in pairs]
+        return [v for pr in pairs for v in pr]
+    s_of = lambda pts: -32000 + 53.0 * (pts[:, 0] - x0)
+    t_of = lambda pts: -32000 + 51.7 * (pts[:, 2] - z0)
+    fl, fr = P + L3 * w + (0, 0.03, 0), P - L3 * w + (0, 0.03, 0)
+    floor = face(fl, fr, up, s_of(fl), t_of(fl), s_of(fr), t_of(fr))
+    sd = -32000 + 162 * dist
+    lo_t, hi_t = np.full(len(P), -32369.0), np.full(len(P), -32268.0)
+    walls = [face(P + L3 * w, P + L3 * w + up * TUNNEL_H, -L3, sd, lo_t, sd, hi_t),   # the left wall, facing in
+             face(P - L3 * w, P - L3 * w + up * TUNNEL_H, L3, sd, lo_t, sd, hi_t),    # the right wall
+             face(P + L3 * w + up * TUNNEL_H, P - L3 * w + up * TUNNEL_H, -up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32485.0)),  # the roof, from below
+             face(P - L3 * w + up * (TUNNEL_H + 0.3), P + L3 * w + up * (TUNNEL_H + 0.3), up, sd, np.full(len(P), -32255.0), sd, np.full(len(P), -32485.0))]  # and above
+    return [floor], walls
 
 
 def donors(res, used, need, keep_away, ppw):
@@ -496,7 +532,7 @@ def check(col, centre, half):
     return holes, blocked
 
 
-def build(disc, mods, preview_png=None):
+def build(disc, mods, preview_png=None, reverse=False):
     folder = os.path.join(disc, 'media', 'tracks', 'Vancouver')
     res = L.unpack_xb2(os.path.join(folder, 'QuickPreview1.xb2'))
     sp = L.read_splines(res)
@@ -508,7 +544,10 @@ def build(disc, mods, preview_png=None):
     e = edges(centre, half)
     # L.resample turns the loop round (the first layout was built in the buffers' order): given it
     # backwards, so the way round comes out as built, south-east first along the upper road
-    loop, length = L.resample([x[::-1] for x in e], centre[::-1], START)
+    if reverse:  # the other way round: north-west from the lap line, the even edges on the new left
+        loop, length = L.resample([e[k ^ 1] for k in range(6)], centre, START)
+    else:
+        loop, length = L.resample([x[::-1] for x in e], centre[::-1], START)
     print('loop %.0f m (%.2f mi); off-course stretches of %s m' % (length, length / 1609.344, [2 * len(r) for r in runs(off)]))
     col = coledit.Col(open(os.path.join(folder, 'QuickPreview1.col'), 'rb').read())
     walls = [L.across(sp, i) for i in CLOSED]
@@ -544,6 +583,8 @@ def build(disc, mods, preview_png=None):
     import xb2
     v0 = L.mesh_vertices(res, xb2.resources(bytes(res))[0], L.DONOR)
     road_was = ((v0.min(0) + v0.max(0)) / 2, float(np.max(np.linalg.norm(v0 - (v0.min(0) + v0.max(0)) / 2, axis=1))))
+    st0 = np.frombuffer(bytes(res[L.vb_offset(res, L.mesh(res, L.DONOR)[3]):][:L.mesh(res, L.DONOR)[2]]), '<i2').reshape(-1, 12)[:, 8:12]
+    road_light = tuple(int(v) for v in np.median(st0[:, 2:4], axis=0))  # the asphalt's lightmap where the donor has it
     road_now = L.write_road(res_bytes, left, right)
     hide = set()
     for link in links: hide |= set(L.hidden_meshes(res_bytes, link, sp))
@@ -563,14 +604,26 @@ def build(disc, mods, preview_png=None):
     kerbs = [kerb_strips(centre, half, side, idx) for side, idx in stretches]
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
+    mats = [None] * len(kerbs)
+    # the tunnel over the gap, where nothing is drawn: its floor in asphalt, its walls and roof in concrete
+    g0, g1 = np.array(GAP[0], float), np.array(GAP[1], float)
+    gd = g1 - g0; gl = np.linalg.norm(gd)
+    u = ((centre[:, [0, 2]] - g0) @ gd) / gl ** 2
+    across_ = np.abs(((centre[:, [0, 2]] - g0) @ np.array([-gd[1], gd[0]])) / gl)
+    gap = [i for i in range(len(centre)) if 0.04 < u[i] < 0.96 and across_[i] < 10]
+    if gap:
+        floor, concrete = tunnel_faces(centre, half, gap)
+        kerbs += [floor] + [[f] for f in concrete]
+        mats += [ASPHALT] + [None] * len(concrete)
+        print('tunnel: %.0f m over the gap, %.1f m high' % (2 * len(gap), TUNNEL_H))
     need = [(sum(len(f) for f in fs), sum(len(f) for f in fs) + 4) for fs in kerbs]
     picked = donors(res_bytes, shown | {L.DONOR}, need, centre[:, [0, 2]], ppw)
     ppw = bytearray(ppw)
     at = sphere_at(bytes(ppw), *road_was)  # the strip's road: its sphere where the donor was, moved too
     if at is None: print('  the strip road: bounding sphere not found, it may be culled')
     else: struct.pack_into('<4f', ppw, at, road_now[1], *road_now[0])
-    for (mesh, at), fs in zip(picked, kerbs):
-        c1, r1 = write_strips(res_bytes, mesh, fs)
+    for (mesh, at), fs, mat in zip(picked, kerbs, mats):
+        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light=road_light if mat == ASPHALT else (-32724, -32645))
         struct.pack_into('<4f', ppw, at, r1, *c1)
     ppw = bytes(ppw)
     print('kerbs: %d stretches, %.0f m of edge; %d walls across the course; in meshes %s' % (
@@ -607,3 +660,8 @@ if __name__ == '__main__':
     if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(sys.argv[2]).split(os.sep)):
         raise SystemExit('%s: a save folder' % sys.argv[2])
     build(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    # and the reverse, as Pacific Shipyards II is Pacific Shipyards': its own track, Hot Lap entry,
+    # map tile (46), Pacific Shipyards II's logo and loading screen
+    L.NAME, L.TAG = 'Pacific Shipyards Circuit II', 'VancouverLoopReverse'
+    L.MAP_TILE, L.LOGO, L.LOAD_IMAGE = 46, 20, 'Load_Shipyards_II.xpr'
+    build(sys.argv[1], sys.argv[2], None, reverse=True)
