@@ -101,16 +101,92 @@ def edges(centre, half):
 
 
 def runs(off):
-    """The off-course stretches, as index ranges round the loop (each with two points of course
-    either side, so their ends meet the course)."""
+    """The off-course stretches, as index ranges round the loop, each with eight points (16 m) of
+    course either side, so their ground and the walls cut overlap the course at the joins."""
     n = len(off)
     starts = [i for i in range(n) if off[i] and not off[i - 1]]
     out = []
     for s in starts:
         e = s
         while off[(e + 1) % n]: e += 1
-        out.append([(i % n) for i in range(s - 2, e + 3)])
+        out.append([(i % n) for i in range(s - 8, e + 9)])
     return out
+
+
+def footprint(p):
+    """A wall triangle seen from above: its two furthest corners (x, z)."""
+    i, j = max(((0, 1), (1, 2), (0, 2)), key=lambda e: np.hypot(*(p[e[0]][[0, 2]] - p[e[1]][[0, 2]])))
+    return p[i][[0, 2]], p[j][[0, 2]]
+
+
+def into_road(centre, half, pts):
+    """For points (x, z): how far each is inside the loop's road (half width less the distance to
+    the nearest centre point; negative outside)."""
+    d = np.hypot(pts[:, None, 0] - centre[None, :, 0], pts[:, None, 1] - centre[None, :, 2])
+    k = np.argmin(d, axis=1)
+    return half[k] - d[np.arange(len(pts)), k]
+
+
+def clear_road(col, centre, half, reach=1.5, keep_in=0.5):
+    """Every wall reaching more than `reach` m into the loop's road, from either edge (the course's
+    walls where the loop leaves or joins it at an angle, the walls put back beside an off-course
+    stretch, those along it on the inside of a tight bend), cut back: its parts more than `keep_in`
+    m inside the road removed, the rest put back with both faces. Returns the triangles removed."""
+    lo, hi = centre[:, [0, 2]].min(0) - 30, centre[:, [0, 2]].max(0) + 30
+    removed = []
+    def keep(surface, pts):
+        p = np.array(pts, float)
+        n = np.cross(p[1] - p[0], p[2] - p[0])
+        if abs(n[1]) > 0.7 * np.linalg.norm(n): return True
+        a, b = footprint(p)
+        if max(a[0], b[0]) < lo[0] or min(a[0], b[0]) > hi[0] or max(a[1], b[1]) < lo[1] or min(a[1], b[1]) > hi[1]: return True
+        s = np.array([a + (b - a) * t for t in np.linspace(0, 1, max(2, int(np.hypot(*(b - a)) / 0.5) + 1))])
+        if np.any(into_road(centre, half, s) > reach):
+            removed.append((surface, p))
+            return False
+        return True
+    col.remove(keep)
+    for surface, p in removed:
+        a, b = footprint(p)
+        y0, y1 = p[:, 1].min(), p[:, 1].max()
+        ts = np.linspace(0, 1, max(2, int(np.hypot(*(b - a)) / 0.5) + 1))
+        s = np.array([a + (b - a) * t for t in ts])
+        out = into_road(centre, half, s) <= keep_in
+        for k in range(len(ts) - 1):
+            if out[k] and out[k + 1]:
+                q = [(s[k][0], y0, s[k][1]), (s[k + 1][0], y0, s[k + 1][1]), (s[k + 1][0], y1, s[k + 1][1]), (s[k][0], y1, s[k][1])]
+                for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+                    col.add(surface, tri)
+    return len(removed)
+
+
+def check(col, centre, half):
+    """Round the loop every 2 m: walls on the road (nearer the centre than the half width less 1 m)
+    and road with no ground under it (the centre and 1 m inside each edge)."""
+    t = np.roll(centre, -1, 0) - np.roll(centre, 1, 0)
+    left = np.stack([-t[:, 2], t[:, 0]], 1); left /= np.linalg.norm(left, axis=1)[:, None]
+    tris = [(np.array(p, float), n) for s, p, n, w in col.triangles()]
+    lo, hi = centre[:, [0, 2]].min(0) - 20, centre[:, [0, 2]].max(0) + 20
+    ground, walls = [], []
+    for p, n in tris:
+        if p[:, 0].max() < lo[0] or p[:, 0].min() > hi[0] or p[:, 2].max() < lo[1] or p[:, 2].min() > hi[1]: continue
+        (ground if abs(n[1]) > 0.7 else walls).append(p)
+    gb = np.array([[p[:, 0].min(), p[:, 0].max(), p[:, 2].min(), p[:, 2].max()] for p in ground])
+    holes, blocked = [], []
+    for i, c in enumerate(centre):
+        for off in (0, half[i] - 1, -(half[i] - 1)):
+            q = c[[0, 2]] + left[i] * off
+            cand = np.nonzero((gb[:, 0] <= q[0]) & (gb[:, 1] >= q[0]) & (gb[:, 2] <= q[1]) & (gb[:, 3] >= q[1]))[0]
+            if not any(L.in_quad(tuple(q), [(v[0], v[2]) for v in ground[k]]) for k in cand): holes.append((i, off))
+    wpts = []
+    for p in walls:
+        a, b = footprint(p)
+        for t_ in np.linspace(0, 1, max(2, int(np.hypot(*(b - a)) / 1.0) + 1)): wpts.append(a + (b - a) * t_)
+    wpts = np.array(wpts)
+    for i in range(0, len(centre)):
+        d = np.hypot(wpts[:, 0] - centre[i][0], wpts[:, 1] - centre[i][2]).min()
+        if d < half[i] - 1: blocked.append((i, d))
+    return holes, blocked
 
 
 def build(disc, mods, preview_png=None):
@@ -135,6 +211,11 @@ def build(disc, mods, preview_png=None):
         w = L.link_walls(link, 2 * HALF, sp) + (walls if k == 0 else [])
         g, a = L.make_collision(col, link, 2 * HALF, w, sp)
         gone += g; added += a
+    cut = clear_road(col, centre, half)
+    holes, blocked = check(col, centre, half)
+    print('walls cut back off the road: %d triangles' % cut)
+    for what, items in (('no ground', holes), ('wall on the road', blocked)):
+        print('  %s at %d points%s' % (what, len(items), ': ' + ', '.join('(%.0f, %.0f)' % (centre[i][0], centre[i][2]) for i, _ in items[:12]) if items else ''))
     col_bytes = col.to_bytes()
     res_bytes = L.write_splines(res, loop)
     print('collision: %d wall triangles removed, %d road triangles added' % (gone, added))
