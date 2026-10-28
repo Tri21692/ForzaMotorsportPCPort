@@ -723,6 +723,7 @@ static const char *present_fs =
     "}\n";
 
 static void gl_overlay_draw(int vx, int vy, int vw, int vh);
+static void gl_tt_hud_draw(int vx, int vy, int vw, int vh);
 
 static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     static GLuint prog, empty_vao;
@@ -793,6 +794,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glBlitFramebuffer(0, 0, w, h, x, H - y, x + cw, H - y - ch, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     }
     if (rt_overlay_open()) gl_overlay_draw(x, H - y - ch, cw, ch);
+    else gl_tt_hud_draw(x, H - y - ch, cw, ch);
     rt_gl_window_swap();
     return 1;
 }

@@ -169,13 +169,20 @@ def install(mega, name, centre, half, circuit=True):
     ai = 'ai' + B + 'drivatarv2' + B
     crc = mlp.read(mega.files[ai + 'vancouverreversegeometry.bin'])[0]['iCRC']
     geo, p = geometry(centre, half, crc, circuit)
-    seg, nseg = segmentation(p)
-    mega.files[ai + name.lower() + 'geometry.bin'] = geo
-    mega.files[ai + name.lower() + 'segmentation.bin'] = seg
     # the AI drivers' files: a track in the list needs them all or its load fails ("disc error"), and
     # they go by its segments (Pacific Shipyards II's 55 against this one's 14: a crash at the start);
-    # a stock track's with as many segments, named for this one
-    donor = like(mega, nseg)
+    # a stock track's with as many segments, named for this one. The turns' threshold is eased or
+    # tightened until the lap cuts into a count a stock track has.
+    for turn in (0.012, 0.011, 0.013, 0.010, 0.014, 0.009, 0.015, 0.016, 0.008, 0.018, 0.020):
+        seg, nseg = segmentation(p, turn=turn)
+        try:
+            donor = like(mega, nseg)
+            break
+        except SystemExit:
+            continue
+    else: raise SystemExit('no stock track with the segments of %s at any threshold' % name)
+    mega.files[ai + name.lower() + 'geometry.bin'] = geo
+    mega.files[ai + name.lower() + 'segmentation.bin'] = seg
     for sub in ('level1', 'level2', 'level3'):
         mega.files[ai + sub + B + name.lower() + '.bin'] = renamed(mega.files[ai + sub + B + donor + '.bin'], name)
     mega.files[ai + 'interaction-rt-' + name.lower() + '.bin'] = renamed(mega.files[ai + 'interaction-rt-' + donor + '.bin'], name)

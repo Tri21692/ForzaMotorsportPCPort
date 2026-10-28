@@ -76,6 +76,8 @@ int rt_overlay_open(void);
 void rt_overlay_toggle(void);
 void rt_overlay_key(int key);
 int rt_overlay_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]); /* 1: the game sees nothing */
+/* A career time trial running (hle_career.c): its three target times, the time so far (ms), the lap done. */
+int rt_tt_hud(uint32_t targets[3], uint32_t *elapsed, int *done);
 int rt_overlay_items(void);
 int rt_overlay_selected(void);
 int rt_overlay_needs_restart(void);

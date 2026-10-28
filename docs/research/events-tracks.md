@@ -193,14 +193,61 @@ link has collision but nothing drawn: the scenery has no ground there.
 - Each category also plays D:\MEDIA\Events\<name>.bik; a missing one is a
   disc error. Its title is GameStrings IDS_Event_OnlineCareer (49), its
   description UIStrings IDS_Event_OnlineCareer_Help (141).
-- tools/careertimetrial.py fills it from the main menu's Time Trials
-  (driverchallenge\ser00001.xml: one lap from a rolling start, no other cars):
-  21 events in 6 series, any car, event ordinals 355-375, series 85-90.
-  Headless: the category, its series, the race select with a local
-  scoreboard, the grid and the rolling start work.
-- Not done: scoring by time. Events score by finishing place (rewards per
-  place); alone, a player always finishes first. A target time per event
-  would need the game's end-of-race scoring changed, or a rival car as the
-  pace to beat (an AI field of one).
+- tools/careertimetrial.py fills it: a series a class, Class D (any level)
+  to R-P1 (level 50) as the Spec series' ladder, two one-lap time trials
+  each with the main menu's Time Trials' rolling starts
+  (driverchallenge\ser00001.xml), no other cars; event ordinals 355-370,
+  series 85-92. Headless (the first version): the category, its series, the
+  race select with a local scoreboard, the grid and the rolling start work.
+- Placed by the clock (runtime/hle_career.c): everything after the finish
+  reads the player's place from the racer the game gets through 0x755D0
+  (the racer list at 0x58DAA0: +4 the racers, +0x10 their count; a racer's
+  +0x14 type, 0 a person; +0xBC its place, 1 first; +0xC0 its timing: +0x94
+  the best lap, +0xA0 the race's time, seconds, +0x9C laps done): the
+  results table (0x1A5BFB), the podium flag (0x184407) and the scoring
+  (0x17E270: rewards per place, and the medal, 0x77B60, the profile's byte
+  at +0x4A4 + the event's ordinal, kept at its lowest). The running event
+  is [0x592984]+0x318 (its EventOrdinal at +0x10, its laps at +0x24; the
+  series at +0x314). The replacement 0x755D0 sets the place from the time
+  against timetrial.txt's three targets (laptime.py's estimate for the
+  track and class, times 1.04, 1.09 and 1.15), once the lap is done.
+- The series' place (0x1A76B0) is the worst of its events' best places
+  (each event's medal byte, 9 unplayed; the profile fills them with 9 at
+  0x78715), and its rewards come as it improves (0x17E400); so a car on a
+  series' 1st place is won by winning every event in it. Each time trial
+  series gives one no other career series gives.
+- The race HUD shows the three targets under the game's lap timer
+  (glover.c, gl_tt_hud_draw), each dimmed once the clock passes it.
+- The game formats times from milliseconds at 0x169F00 ("%d:%.2d.%.3d").
+- Both runs of the first version crashed on leaving the results (an
+  indirect call through nothing at 0x26C6AC in the heap's code, then a
+  thread started at 0): its series had an empty AI field. Each series now
+  lists its class's Spec series' field (none of them race); not yet
+  tested.
 - .str files carry padding after their structure (its size at +20);
   addcar.replace_strings keeps it, and round-trips a file unchanged.
+
+## Pacific Shipyards Circuit: what drew and what blocked (28 Oct)
+
+- Solid props are quickpreview1.xbp.cbx's boxes (no CollObjs.xml for
+  this track): a hidden barricade keeps its box, an invisible wall (the
+  hairpin's west half: a 54 x 20 m box). The circuit drops every box
+  reaching into its road anywhere round it, not only on the new stretches.
+- quickpreview1.xbp.svb (zlib; u32 1, a 16-byte id, u32 count, then per
+  buffer u32 resource, u32 size, its bytes) holds byte for byte copies of
+  the bundle's small vertex buffers (up to 2 KB; 1993 of them), loaded
+  with the scenery. The kerbs, walls and tunnel were drawn in meshes from
+  far off: the small ones had their svb copies left as they were, the large
+  ones stream in with their own part of the track only. Now each strip is
+  simplified (a straight run is one quad), cut to fit the svb meshes the
+  loop never shows (243), and the svb rewritten for the track
+  (track\<track>\media\tracks\Vancouver\quickpreview1.xbp.svb). Not yet
+  seen in the game.
+- The walls beside the new road stand on what is drawn there (a fence,
+  wall, rail or building face within 8 m of the edge), else 2 m out behind
+  the drawn kerb: at 2 m a car went through a fence half a metre out first.
+- The side roads 31 and 04 meet at a right angle; the loop cut it by 5 m
+  through a wall. The strip left the start road at its top (569) with a
+  120 degree, 2 m turn back whose edges crossed; it leaves at 571 now.
+- A new track's AI files borrow a stock track's with as many segments;
+  aitrack.install eases the turns' threshold until the count is one there.

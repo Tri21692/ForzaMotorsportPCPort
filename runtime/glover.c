@@ -160,17 +160,18 @@ static const char *ov_fs =
     "    o = c;\n"
     "}\n";
 
-/* The overlay over the picture, in the window rectangle x, y, w, h (GL's
- * lower-left origin for y). */
-static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
-    static GLuint prog, vao, vbo;
-    static GLint u_size;
+static GLuint ov_prog, ov_vao, ov_vbo;
+static GLint ov_u_size;
+
+/* The shader, buffers and fonts, made once: 0 if they could not be. */
+static int ov_init(void) {
+    GLuint prog = ov_prog, vao, vbo;
     if (!prog) {
         GLuint vs = compile(GL_VERTEX_SHADER, ov_vs), fs = compile(GL_FRAGMENT_SHADER, ov_fs);
-        if (!vs || !fs) return;
+        if (!vs || !fs) return 0;
         prog = glCreateProgram();
         glAttachShader(prog, vs), glAttachShader(prog, fs), glLinkProgram(prog);
-        u_size = glGetUniformLocation(prog, "u_size");
+        ov_u_size = glGetUniformLocation(prog, "u_size");
         glUseProgram(prog);
         static const char *fn[4] = {"u_f0", "u_f1", "u_f2", "u_f3"};
         for (int i = 0; i < 4; i++) glUniform1i(glGetUniformLocation(prog, fn[i]), i);
@@ -188,7 +189,41 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
         ov_font_load(&ov_font[OVF_MENU], "menu_font_-28", 0.62f);
         ov_font_load(&ov_font[OVF_ITEM], "item_font_-25", 0.64f);
         ov_font_load(&ov_font[OVF_TEXT], "text_font_-25", 0.56f);
+        ov_prog = prog, ov_vao = vao, ov_vbo = vbo;
     }
+    return 1;
+}
+
+/* The quads built (ov_v) drawn over the window rectangle x, y, w, h (GL's lower-left origin for
+ * y), in coordinates W by H. */
+static void ov_submit(int vx, int vy, int vw, int vh, float W, float H) {
+    glViewport(vx, vy, vw, vh);
+    glDisable(GL_SCISSOR_TEST), glDisable(GL_DEPTH_TEST), glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
+    glBlendEquation(GL_FUNC_ADD);
+    glUseProgram(ov_prog);
+    gl_using = NULL;
+    glUniform2fv(ov_u_size, 1, (float[2]){W, H});
+    for (int i = 0; i < 4; i++) {
+        glActiveTexture(GL_TEXTURE0 + (GLenum)i);
+        glBindTexture(GL_TEXTURE_2D, ov_font[i].tex ? ov_font[i].tex : gl_dummy2d);
+        glBindSampler((GLuint)i, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindVertexArray(ov_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, ov_vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)ov_n * (GLsizeiptr)sizeof(OvVert), ov_v, GL_STREAM_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, ov_n);
+    glBindVertexArray(gl_vao);
+    glDisable(GL_BLEND);
+}
+
+/* The settings overlay over the picture, in the window rectangle x, y, w, h. */
+static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
+    if (!ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, X0 = rt_display_widescreen() ? 106 : 0; /* the 4:3 menu, centred */
     static const float black[4] = {0, 0, 0, 0.92f}, dim[4] = {0, 0, 0, 0.55f}, olive[4] = {0.42f, 0.53f, 0.16f, 1},
                        panel[4] = {0.86f, 0.87f, 0.88f, 0.97f}, white[4] = {1, 1, 1, 1}, ink[4] = {0.13f, 0.14f, 0.15f, 1},
@@ -240,27 +275,34 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     ov_button(X0 + 64, 428, "A", green, "Change");
     ov_button(X0 + 190, 428, "B", red, "Back");
     ov_text(OVF_MENU, X0 + 590, 425, "F1  Close", white, 1);
+    ov_submit(vx, vy, vw, vh, W, H);
+}
 
-    glViewport(vx, vy, vw, vh);
-    glDisable(GL_SCISSOR_TEST), glDisable(GL_DEPTH_TEST), glDisable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
-    glBlendEquation(GL_FUNC_ADD);
-    glUseProgram(prog);
-    gl_using = NULL;
-    glUniform2fv(u_size, 1, (float[2]){W, H});
-    for (int i = 0; i < 4; i++) {
-        glActiveTexture(GL_TEXTURE0 + (GLenum)i);
-        glBindTexture(GL_TEXTURE_2D, ov_font[i].tex ? ov_font[i].tex : gl_dummy2d);
-        glBindSampler((GLuint)i, 0);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+/* During a career time trial (hle_career.c), its three target times under the game's lap timer
+ * (top right): gold, silver and bronze, each struck dim once the clock has passed it, and when the
+ * lap is done the place it earned picked out. */
+static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
+    uint32_t target[3], elapsed;
+    int done;
+    if (!rt_tt_hud(target, &elapsed, &done) || !ov_init()) return;
+    float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
+    static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
+                       gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1};
+    static const char *place[3] = {"1ST", "2ND", "3RD"};
+    ov_n = 0;
+    float y = 146, row = 19;
+    ov_rect(R - 150, y - 4, R + 6, y + 3 * row + 2, box);
+    int earned = 3;
+    for (int k = 2; k >= 0; k--)
+        if (elapsed <= target[k]) earned = k;
+    for (int k = 0; k < 3; k++) {
+        char t[32];
+        snprintf(t, sizeof t, "%02u:%02u.%03u", target[k] / 60000, target[k] / 1000 % 60, target[k] % 1000);
+        int missed = elapsed > target[k];
+        const float *c = missed ? gone : medal[k];
+        if (done && k == earned) ov_rect(R - 150, y + k * row - 2, R + 6, y + (k + 1) * row - 2, (float[4]){medal[k][0], medal[k][1], medal[k][2], 0.35f});
+        ov_text(OVF_ITEM, R - 144, y + k * row - 3, place[k], c, 0);
+        ov_text(OVF_ITEM, R, y + k * row - 3, t, done && k == earned ? white : c, 1);
     }
-    glActiveTexture(GL_TEXTURE0);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)ov_n * (GLsizeiptr)sizeof(OvVert), ov_v, GL_STREAM_DRAW);
-    glDrawArrays(GL_TRIANGLES, 0, ov_n);
-    glBindVertexArray(gl_vao);
-    glDisable(GL_BLEND);
+    ov_submit(vx, vy, vw, vh, W, H);
 }

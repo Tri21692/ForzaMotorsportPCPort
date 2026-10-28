@@ -480,6 +480,10 @@ uint32_t rt_open(uint32_t *handle, uint32_t oa, uint32_t desired, uint32_t share
     return STATUS_SUCCESS;
 missing:
     rt_log("  open %s -> %s: not found\n", xbox, host);
+    { /* a file the disc lacks is the usual cause of the game's "disc error" (the first 200) */
+        static int misses;
+        if ((xbox[0] == 'D' || xbox[0] == 'd') && xbox[1] == ':' && misses++ < 200) fprintf(stderr, "xbrt: not on the disc: %s\n", xbox);
+    }
     return STATUS_OBJECT_NAME_NOT_FOUND;
 }
 

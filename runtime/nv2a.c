@@ -865,6 +865,18 @@ static void *device_main(void *arg) {
             if (nv2a.vblanks % 30 == 0) draw_distance();
             if (nv2a.vblanks % 300 == 0) zone_lead();
             if (nv2a.vblanks % 60 == 0) career_timetrial();
+            if (nv2a.vblanks % 30 == 0 && getenv("XBRT_RACER_DUMP")) { /* debugging: the first racer's record */
+                static FILE *f;
+                if (!f) f = fopen(getenv("XBRT_RACER_DUMP"), "wb");
+                uint32_t n = xb_rd32(0x58daa0 + 0x10), arr = xb_rd32(0x58daa0 + 4);
+                uint32_t ev = xb_rd32(0x592984) ? xb_rd32(xb_rd32(0x592984) + 0x318) : 0;
+                if (f && n && n < 16 && arr) {
+                    uint32_t r = xb_rd32(arr), hdr[4] = {nv2a.vblanks, r, n, ev};
+                    fwrite(hdr, 4, 4, f);
+                    for (uint32_t i = 0; i < 0x800; i += 4) { uint32_t v = r ? xb_rd32(r + i) : 0; fwrite(&v, 4, 1, f); }
+                    fflush(f);
+                }
+            }
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
                 static const char *spec;
                 static int checked;
