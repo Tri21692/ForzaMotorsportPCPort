@@ -175,3 +175,32 @@ link has collision but nothing drawn: the scenery has no ground there.
   in world space, u32, four s16 texture coordinates) then u16 strip
   indices. quickpreview1.xbp.svb: the small vertex buffers again (u32
   resource, u32 size, data; 1993), loaded with the bundle; .cbx: 140 boxes.
+
+## A Time Trial category in career mode (28 Oct)
+
+- The career's Go Race screen shows six categories, a table at 0x52E850
+  (0x34 bytes each, filled by the static initializer at 0x307F30): +0 the
+  folder's name (series are read from D:\MEDIA\Events\<name>\Ser%05u.xml),
+  +4 the kind (5 online, 1 point to point, 2 club, 3 spec, 4 pro series, 0
+  endurance), +8 and +0x18 its title and description. The order is Online
+  Career, Point to Point, Amateur (Club), Spec, Pro Series, Endurance; loops
+  stop at 0x52E988, so a seventh means patching the translated code.
+- Online Career is told apart by its name (strcmp with "OnlineCareer" at
+  0x4A7194, 0x184FA5 and 0x18575A) and offline only says to sign in to Xbox
+  Live. XBRT_CAREER_TIMETRIAL=1 (runtime/nv2a.c) renames it "TimeTrial" (a
+  string put in 274 bytes of .rdata nothing uses, 0x4D02B0) and gives it a
+  club's kind: it then opens like the other categories.
+- Each category also plays D:\MEDIA\Events\<name>.bik; a missing one is a
+  disc error. Its title is GameStrings IDS_Event_OnlineCareer (49), its
+  description UIStrings IDS_Event_OnlineCareer_Help (141).
+- tools/careertimetrial.py fills it from the main menu's Time Trials
+  (driverchallenge\ser00001.xml: one lap from a rolling start, no other cars):
+  21 events in 6 series, any car, event ordinals 355-375, series 85-90.
+  Headless: the category, its series, the race select with a local
+  scoreboard, the grid and the rolling start work.
+- Not done: scoring by time. Events score by finishing place (rewards per
+  place); alone, a player always finishes first. A target time per event
+  would need the game's end-of-race scoring changed, or a rival car as the
+  pace to beat (an AI field of one).
+- .str files carry padding after their structure (its size at +20);
+  addcar.replace_strings keeps it, and round-trips a file unchanged.

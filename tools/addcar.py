@@ -324,6 +324,31 @@ def write_strings(d, add):
     return bytes(head) + blk1 + blk2
 
 
+def replace_strings(d, changes):
+    """d with the text of existing strings replaced (changes: {id: text}): the new texts appended to
+    the text block and the ids pointed at them, everything else left as it is."""
+    e1, text, e2, names = read_strings(d)
+    end = e1[-1][1]
+    body, tail = bytearray(text[:end * 2]), text[end * 2:]
+    e1n = []
+    for i, o in e1[:-1]:
+        if i in changes:
+            e1n.append((i, len(body) // 2))
+            body += changes[i].encode('utf-16-le') + b'\0\0'
+        else: e1n.append((i, o))
+    e1n.append((0xFFFF, len(body) // 2))
+    blk1 = b''.join(struct.pack('<HI', i, o) for i, o in e1n) + bytes(body) + tail
+    blk1 = struct.pack('<II', 8 + len(blk1), len(e1n) - 1) + blk1
+    blk2 = b''.join(struct.pack('<HHI', i, j, o) for i, j, o in e2) + bytes(names)
+    blk2 = struct.pack('<II', 8 + len(blk2), len(e2)) + blk2
+    head = bytearray(d[:28])
+    struct.pack_into('<II', head, 12, 28, 28 + len(blk1))
+    total = struct.unpack_from('<I', d, 20)[0]  # the structure's size: the files have padding after it
+    out = bytes(head) + blk1 + blk2
+    out = out[:20] + struct.pack('<I', len(out)) + out[24:]
+    return out + d[total:]
+
+
 PHYSICS_OF = {'Brakes': 'brakes', 'Tire': 'tiremod', 'Suspension': 'suspension', 'Clutch': 'clutch',
               'Transmission': 'transmission', 'DrivetrainDiff': 'drivetraindiff', 'Weight': 'weight'}
 

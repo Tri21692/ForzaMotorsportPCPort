@@ -795,6 +795,28 @@ static void zone_lead(void) {
         if (xb_rd32(found[i] + 0xBC0) != (uint32_t)want) xb_wr32(found[i] + 0xBC0, (uint32_t)want);
 }
 
+/* XBRT_CAREER_TIMETRIAL=1: the career's Online Career category (Race Type,
+ * the first tile), which offline only says to sign in to Xbox Live, becomes
+ * a Time Trial category: its series are read from D:\MEDIA\Events\TimeTrial
+ * (events\timetrial\ in Mega.ca2). The six categories are a table at
+ * 0x52E850, 0x34 bytes each, filled by a static initializer (0x307F30):
+ * +0 the folder's name, +4 the kind (5 online, 1 point to point, 2 club,
+ * 3 spec, 4 pro series, 0 endurance). The online one is told apart by its
+ * name (strcmp with the literal at 0x4A7194, 0x184FA5 and 0x18575A), so a
+ * new name, in 274 bytes of .rdata nothing uses (0x4D02B0), makes it an
+ * ordinary category; its kind becomes a club's. */
+static void career_timetrial(void) {
+    static int want = -1, done;
+    if (want < 0) want = getenv("XBRT_CAREER_TIMETRIAL") && atoi(getenv("XBRT_CAREER_TIMETRIAL"));
+    if (!want || done || xb_rd32(0x52E850) != 0x4A7194) return;
+    static const char name[] = "TimeTrial";
+    for (unsigned i = 0; i < sizeof name; i++) xb_wr8(0x4D02C0 + i, (uint8_t)name[i]);
+    xb_wr32(0x52E850, 0x4D02C0);
+    xb_wr32(0x52E854, 2);
+    done = 1;
+    fprintf(stderr, "xbrt: XBRT_CAREER_TIMETRIAL: the Online Career category reads Events\\TimeTrial\n");
+}
+
 /* Wakes the device loop when a vertical blank is due. Its own timed wait
  * goes by winpthreads' millisecond clock and woke up to 15 ms late, which
  * the game saw as a dropped frame. */
@@ -842,6 +864,7 @@ static void *device_main(void *arg) {
             if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
             if (nv2a.vblanks % 30 == 0) draw_distance();
             if (nv2a.vblanks % 300 == 0) zone_lead();
+            if (nv2a.vblanks % 60 == 0) career_timetrial();
             { /* XBRT_RAM_DUMP=<file>:<seconds>: the 64 MB of RAM, once (debugging) */
                 static const char *spec;
                 static int checked;
