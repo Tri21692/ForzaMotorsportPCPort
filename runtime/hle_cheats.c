@@ -4,13 +4,12 @@
  * profile's name with those two (0x4AC344, 0x4AC33C) and sets the flags at
  * 0x5BAA8D-0x5BAA90 that the career's start (0x36CE5C) reads.
  *
- * Named "D3bUg", a new career's profile gets 999,999,999 credits and level
- * 50 (PlayerLevelDef.xml's last level, 8,000,000 experience), and nothing
- * else: no unlocks. The name is put in .rdata nothing uses (0x4D02B0 on,
- * after nv2a.c's TimeTrial at 0x4D02C0) and compared after the other two;
- * the career's start then sets the credits it starts with (sub_00078D40,
- * returning to 0x36CE6F) to that, and the experience (sub_00078E30) with
- * them. The profile is the game's to save: nothing is written to a save.
+ * Named "D3bUg", a new career's profile gets what "nOsLiW" gives (level 50,
+ * every car and track: its flags are set) and 999,999,999 credits. The name
+ * is put in .rdata nothing uses (0x4D02B0 on, after nv2a.c's TimeTrial at
+ * 0x4D02C0) and compared after the other two; the career's start then sets
+ * the credits it starts with (sub_00078D40, returning to 0x36CE6F) to that.
+ * The profile is the game's to save: nothing is written to a save.
  *
  * The rest is out/code_0042.c's f_00364970 and out/code_0009.c's f_00078D40
  * as they were generated: if the game is recompiled again, copy them anew
@@ -24,7 +23,6 @@
 static const char D3BUG[] = "D3bUg";
 #define D3BUG_AT 0x4D02E0u
 #define D3BUG_CREDITS 999999999u
-#define D3BUG_XP 8000000u  /* level 50 */
 
 static int rt_d3bug;
 
@@ -204,6 +202,7 @@ L_00364A59:;
     c->ecx = (uint32_t)((uint32_t)(c->esp + 0x00000014u));
     /* 00364A5D  mov byte ptr [0x5baa8d], 0x0 */
     xb_wr8((uint32_t)(0x005BAA8Du), (uint8_t)(0x0u));
+    if (rt_d3bug) { xb_wr8(0x005BAA8Du, 1); xb_wr8(0x005BAA8Eu, 1); }  /* changed: "nOsLiW"'s flags as well */
     /* 00364A64  call 0x2753b0 */
     xb_push(c, 0x00364A69u); f_002753B0(c);
     /* 00364A69  pop ebx */
@@ -247,14 +246,7 @@ L_00078D5F:;
 
 
 void f_00078D40(XbCtx *c) {
-    if (rt_d3bug && xb_rd32(c->esp) == 0x0036CE6Fu) {  /* the career's start, its credits */
-        uint32_t profile = c->ecx;
+    if (rt_d3bug && xb_rd32(c->esp) == 0x0036CE6Fu)  /* the career's start, its credits */
         xb_wr32(c->esp + 4, D3BUG_CREDITS);
-        set_credits(c);
-        c->ecx = profile;
-        xb_push(c, D3BUG_XP);
-        xb_push(c, 0x0036CE6Fu); f_00078E30(c);
-        return;
-    }
     set_credits(c);
 }
