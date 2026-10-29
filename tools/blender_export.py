@@ -62,14 +62,21 @@ def mesh_geometry(res, names, m):
     """Mesh m's vertices (n x 3), texture coordinates (n x 2, in repeats) and triangles (k x 3,
     from its strip, the degenerate ones dropped), its texture, or None."""
     a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * m)[0]
-    _, _, nidx, vbytes, vb, stride, _, t0, _ = struct.unpack_from('<IIIIHHHHH', res, L.MODEL + a)
-    if not (9 <= vb < len(names) + 9) or stride != 6 or not vbytes or vbytes % 24: return None
+    fl, _, nidx, vbytes, vb, stride, _, t0, _ = struct.unpack_from('<IIIIHHHHH', res, L.MODEL + a)
+    if not (9 <= vb < len(names) + 9) or stride != 6 or not vbytes: return None
     o = names[vb - 9][3]
-    v = np.frombuffer(bytes(res[o:o + vbytes]), dtype=np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)]))
+    # 24 bytes a vertex, or 28 (the course's roads, side roads, some retaining walls: flags 0x1000
+    # or 0x4; a third pair of texture coordinates after the lightmap's): whichever reads as places
+    v = None
+    for size in ((28, 24) if fl & 0x1004 else (24, 28)):
+        if vbytes % size: continue
+        w = np.frombuffer(bytes(res[o:o + vbytes]), dtype=np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 2 * (size - 16) // 4)]))
+        with np.errstate(all='ignore'):
+            q = w['p'].astype(float)
+            if np.all(np.isfinite(q)) and np.abs(q).max() < 5000 and np.ptp(q[:, 1]) < 300: v = w; break
+    if v is None: return None
     idx = np.frombuffer(bytes(res[o + vbytes:o + vbytes + 2 * nidx]), '<u2').astype(int)
     p = v['p'].astype(float)
-    # (a few, retaining walls and stretches of the course's road, are in another layout: read as
-    # this one they reach to the origin and 1e38 m up)
     if not len(idx) or idx.max() >= len(p) or not np.all(np.isfinite(p)) or np.ptp(p[:, 0]) > 800: return None
     uv = (v['st'][:, :2].astype(float) + 32768.0) / ST
     tris = np.stack([idx[:-2], idx[1:-1], idx[2:]], 1)

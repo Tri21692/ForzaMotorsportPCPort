@@ -2,6 +2,10 @@
 Blender with no window (Eevee, textures unlit; where nothing is drawn, the void, magenta).
 
   blender -b --python tools/blender_render.py -- <obj> <out.png> <shot.cst | top:x,z,size> [what] [fov]
+  blender -b --python tools/blender_render.py -- <obj> <out folder> cams:<cameras.json> [what] [fov]
+
+With cams:, a level camera at each of a list ([name, position, forward], game coordinates), each
+render's share of magenta below the horizon printed ("VOID <name> <share>").
 
 The camera from the constants saved beside a screenshot (rows 166-169: up, forward, -, side and
 the translation, as tools/shotpos.py reads them). `what`: scene (the scenery and the AI line; the
@@ -61,6 +65,25 @@ cam.clip_start, cam.clip_end = 0.1, 3000.0
 co = bpy.data.objects.new('cam', cam)
 sc.collection.objects.link(co)
 sc.camera = co
+if view.startswith('cams:'):  # many cameras: out a folder, each [name, (x, y, z), forward (x, y, z)]
+    import json
+    os.makedirs(out, exist_ok=True)
+    cam.sensor_fit, cam.angle_y = 'VERTICAL', math.radians(fov)
+    for name, pos, fwd in json.load(open(view[5:])):
+        z = -B(fwd).normalized()
+        x = Vector((0, 0, 1)).cross(z).normalized()
+        y = z.cross(x)
+        co.matrix_world = Matrix(((x[0], y[0], z[0], 0), (x[1], y[1], z[1], 0), (x[2], y[2], z[2], 0), (0, 0, 0, 1)))
+        co.location = B(pos)
+        sc.render.filepath = os.path.join(out, name + '.png')
+        bpy.ops.render.render(write_still=True)
+        # the void: magenta below the horizon (the lower half, the camera level)
+        im = bpy.data.images.load(sc.render.filepath)
+        px = np.array(im.pixels[:]).reshape(im.size[1], im.size[0], 4)[:im.size[1] // 2]  # rows from the bottom
+        void = (px[..., 0] > 0.9) & (px[..., 1] < 0.1) & (px[..., 2] > 0.9)
+        print('VOID %s %.4f' % (name, void.mean()))
+        bpy.data.images.remove(im)
+    sys.exit(0)
 if view.startswith('top:'):
     x, z, size = map(float, view[4:].split(','))
     cam.type, cam.ortho_scale = 'ORTHO', size
