@@ -381,7 +381,31 @@ def wall_strips(a, b, height=0.9, thick=0.4):
     return faces
 
 
-GUARD, POST = 1895, 1084   # guardrail09 (barrier_guardrail_rusty_01) and guardrailposts25 (wood): the turns' guardrail
+BRICK = 178          # wall03_vb0: barrier_brickwall_01 (texture 310), 75 a metre along, 153 up
+OLD_ROAD_END = 506   # the old road west of the hairpin closed here, 34 m from the loop, by a brick wall
+                     # (it led on where the sprint went; a low concrete wall at 509 read as a ledge)
+BRICK_H = 3.0
+
+
+def brick_wall(a, b, height=BRICK_H):
+    """A brick wall from a to b ((x, y, z), its foot), both faces, half a metre into the ground: as
+    kerb_strips' faces."""
+    d = np.subtract(b, a); d[1] = 0; L_ = np.linalg.norm(d); d /= L_
+    n = np.array([-d[2], 0.0, d[0]])
+    faces = []
+    for nn in (n, -n):
+        pairs = []
+        for u in np.linspace(0, 1, max(2, int(L_ / 4) + 1)):
+            p = np.add(a, np.subtract(b, a) * u)
+            s = -32768 + 75 * L_ * u
+            pairs.append(((p + (0, height, 0), nn, s, -32768), (p + (0, -0.5, 0), nn, s, -32768 + 153 * (height + 0.5))))
+        a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
+        if np.dot(np.cross(b0 - a0, a1 - a0), nn) > 0: pairs = [(q, p) for p, q in pairs]
+        faces.append([v for pr in pairs for v in pr])
+    return faces
+
+
+GUARD, POST = 1895, 1084  # guardrail09 (barrier_guardrail_rusty_01) and guardrailposts25 (wood): the turns' guardrail
 GUARD_Y = (0.25, 0.50)     # its beam, from and to (m over the ground)
 POST_EVERY = 16.0  # (every 8 m was more than the borrowed meshes hold once every invisible wall had a guardrail; the beam reads the same)
 RETEXTURE = {GUARD: POST}  # the guardrail's texture drawn the posts' way (its own, a primitive 13's, drew black as strips)
@@ -1600,10 +1624,16 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('guardrails at the bare edges: %d pieces over %d stretches' % (len(rails) // 2, len(stretches)))
     kerbs = []
     print('garage: %d collision triangles, its yard fence %d' % (garage.collision(col, centre, half), garage.yard_collision(col, centre, half)))
+    # the old road west of the hairpin closed by a brick wall (solid, 4 m)
+    (bx0, bz0, by0), (bx1, bz1, by1) = L.across(sp, OLD_ROAD_END, extra=1.0)
+    q = [(bx0, by0 - 1, bz0), (bx1, by1 - 1, bz1), (bx1, by1 + 3, bz1), (bx0, by0 + 3, bz0)]
+    for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+        col.add(0x900, tri)
     col_bytes = col.to_bytes()
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
     mats = [None] * len(kerbs)
+    kerbs.append(brick_wall((bx0, by0, bz0), (bx1, by1, bz1))); mats.append(BRICK)
     kerbs += [f for f, _ in rails]; mats += [m for _, m in rails]
     # guardrails along side road 39 to the tunnel, in front of its fences, the collision's line (it
     # was concrete: too much of it)
