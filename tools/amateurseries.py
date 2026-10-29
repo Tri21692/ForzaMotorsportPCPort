@@ -8,6 +8,11 @@
   - Underdog Challenge (level 30): Class A or below (perfclass D, C, B or A), against the
     Class S Championship's field.
 
+Each logo is made from the game's own art: a tile of the large events logo strip
+(frontend\\en\\ico_events_lg.xpr, MegaXPR.ca2) with a dark band and its name set in the game's
+font (ArialUni.Ttf, on the disc) by ffmpeg. The tile is the highest one no series uses
+(addseries.py), so the series list draws it.
+
 Restrictions are alternatives (each <or>) of conditions that all hold, as the disc's
 (pro series 8: Viper and not R, or Corvette and not R). An AI car model id is 100 + the car's
 ordinal stock, 1000 more a stage of upgrades (ai\\aicarmodellist.xml). Run after
@@ -17,10 +22,15 @@ and the Time Trial's are fixed at 85-92. Event ordinals 371-384, after the Time 
   python tools/amateurseries.py <disc> <mods folder>
 """
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import addcar
 import addseries
 
 EVENT_ORDINAL = 371
@@ -40,24 +50,51 @@ BEETLE = [[('carid', '=', 48)]]
 JAPAN = [[('location', '=', 'Japan')]]
 CLASS_A_OR_BELOW = [[('perfclass', '=', c)] for c in 'DCBA']
 
-# (name, level, description, icon (a disc series' logo), the car won (ordinal) and its name,
-#  who may enter, the AI field, the drivers (Easy, Medium, Hard), duplicates, 1st place's xp,
-#  events (track ordinal, laps))
+# (name, level, description, logo (the strip's tile, a top band's height, a bottom band's, the
+#  texts [(text, y, size)]), the car won (ordinal) and its name, who may enter, the AI field, the
+#  drivers (Easy, Medium, Hard), duplicates, 1st place's xp, events (track ordinal, laps))
 SERIES = [
     ('Sunday Stroll', 0, 'An easy drive for tuner and compact cars: hatchbacks, small coupes and saloons.',
-     27, 174, 'Mugen Civic Type R', TUNER, TUNER_CARS, (22, 36, 50), False, 3000,
+     (27, 42, 0, [('SUNDAY', 2, 38), ('STROLL', 84, 32)]), 174, 'Mugen Civic Type R', TUNER, TUNER_CARS, (22, 36, 50), False, 3000,
      [(26, 3), (47, 3), (46, 2)]),                      # Tsukuba, Silverstone Club, Road Atlanta Club
     ('Beetle Face Off', 5, 'Volkswagen Beetles only. Upgrade yours as far as you like.',
-     41, 203, 'Mugen S2000', BEETLE, BEETLE_CARS, (25, 36, 50), True, 5000,
+     (43, 42, 0, [('BEETLE', 2, 38), ('FACE OFF', 84, 32)]), 203, 'Mugen S2000', BEETLE, BEETLE_CARS, (25, 36, 50), True, 5000,
      [(1, 2), (26, 3), (27, 2)]),                       # Laguna Seca, Tsukuba, Alpine Ring
     ('Japanese Showdown', 10, 'Japanese cars only.',
-     4, 194, 'Mines Skyline GT-R R34', JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
+     (4, 42, 0, [('JAPANESE', 2, 34), ('SHOWDOWN', 84, 32)]), 194, 'Mines Skyline GT-R R34', JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
      [(3, 2), (26, 3), (4, 3), (6, 2)]),                # Fujimi Kaido, Tsukuba, Fujimi Kaido Short, Sunset Peninsula
     ('Underdog Challenge', 30, 'Class A cars at most, against a field of Class S supercars.',
-     11, 40, 'Koenigsegg CC', CLASS_A_OR_BELOW, CLASS_S_CARS, (24, 35, 49), False, 18000,
+     (10, 0, 40, [('UNDERDOG', 84, 30)]), 40, 'Koenigsegg CC', CLASS_A_OR_BELOW, CLASS_S_CARS, (24, 35, 49), False, 18000,
      [(27, 2), (18, 2), (57, 2), (1, 3)]),              # Alpine Ring, New York, Maple Valley Reverse, Laguna Seca
 ]
 PLACES = ((10, 1.0), (8, 0.7), (6, 0.5), (5, 0.4), (4, 0.3), (3, 0.2), (2, 0.1), (1, 0.0))   # points, share of 1st's xp
+
+
+def logo(disc, mods, base, top, bottom, texts, tmp):
+    """The events logo's tile base, a dark band of top and bottom rows, and the texts [(text, y, size)]
+    in the game's font, as a PNG in tmp."""
+    xpr = addcar.Archive(disc, mods, 'MegaXPR.ca2')
+    strip = next(k for k in xpr.files if k.lower() == chr(92).join(('frontend', 'en', 'ico_events_lg.xpr')))
+    d = xpr.files[strip]
+    hdr, w, h, pitch = addseries.linear(d)
+    tw, th, per = addseries.LG
+    x, y = base % per * tw, base // per * th
+    a = np.frombuffer(d, np.uint8, count=th * pitch, offset=hdr + y * pitch).reshape(th, pitch // 4, 4)[:, x:x + tw][:, :, [2, 1, 0, 3]].copy()
+    a[..., 3] = 255
+    # a little grain (a few levels): flat art compresses to less than the archive's streams need
+    grain = np.random.default_rng(base).integers(-3, 4, size=(th, tw, 3))
+    a[..., :3] = np.clip(a[..., :3].astype(int) + grain, 0, 255).astype(np.uint8)
+    f = []
+    if top: f.append('drawbox=x=0:y=0:w=iw:h=%d:color=black@0.8:t=fill' % top)
+    if bottom: f.append('drawbox=x=0:y=ih-%d:w=iw:h=%d:color=black@0.8:t=fill' % (bottom, bottom))
+    f += ["drawtext=fontfile=ArialUni.ttf:text='%s':fontsize=%d:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=%d"
+          % (t, size, ty) for t, ty, size in texts]
+    if not os.path.exists(os.path.join(tmp, 'ArialUni.ttf')):
+        shutil.copyfile(addcar.disc_file(disc, 'media', 'ArialUni.Ttf'), os.path.join(tmp, 'ArialUni.ttf'))
+    out = os.path.join(os.path.abspath(tmp), 'logo%d.png' % base)
+    subprocess.run([os.environ.get('XBRT_FFMPEG') or 'ffmpeg', '-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba',
+                    '-s', '%dx%d' % (tw, th), '-i', '-', '-vf', ','.join(f), out], input=a.tobytes(), check=True, cwd=tmp)
+    return out
 
 
 def restrictions(alternatives):
@@ -67,13 +104,13 @@ def restrictions(alternatives):
                    for alt in alternatives)
 
 
-def series_xml(k, ordinal, name, level, icon, prize, allowed, field, drivers, duplicates, xp, events):
+def series_xml(k, ordinal, name, level, prize, allowed, field, drivers, duplicates, xp, events):
     ai = ''.join('\t\t<AIPlayer name="If you see this, it is a bug" aicarmodelid="%d" AIDriverModelID="%d" AppearanceID="0" %s />\r\n'
                  % (car, driver, skill) for driver, skill in zip(drivers, ('Easy', 'Medium', 'Hard')) for car in field)
     x = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{SERIES_NAME_ID}" seriesdescid="{SERIES_DESC_ID}" '
-         'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="%d"%s>\r\n'
+         'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}"%s>\r\n'
          '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n' %
-         (name, SERIES_ID + k, icon, ' Level="%d"' % level if level else '', prize, prize) +
+         (name, SERIES_ID + k, ' Level="%d"' % level if level else '', prize, prize) +
          ''.join('\t\t<score pos="%d"></score>\r\n' % p for p in range(2, 9)) +
          '\t</Scoring>\r\n\t<Restrictions>\r\n' + restrictions(allowed) + '\t</Restrictions>\r\n'
          '\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
@@ -94,11 +131,13 @@ def series_xml(k, ordinal, name, level, icon, prize, allowed, field, drivers, du
 def install(disc, mods):
     ordinal = EVENT_ORDINAL
     with tempfile.TemporaryDirectory() as tmp:
-        for k, (name, level, desc, icon, prize, car, allowed, field, drivers, dup, xp, events) in enumerate(SERIES):
-            x, ordinal = series_xml(k, ordinal, name, level, icon, prize, allowed, field, drivers, dup, xp, events)
+        for k, (name, level, desc, spec, prize, car, allowed, field, drivers, dup, xp, events) in enumerate(SERIES):
+            x, ordinal = series_xml(k, ordinal, name, level, prize, allowed, field, drivers, dup, xp, events)
             p = os.path.join(tmp, 'series%d.xml' % k)
             open(p, 'w', encoding='latin-1', newline='').write(x)
-            addseries.main(disc, mods, 'club', p, name, '%s Win the series to win the %s.' % (desc, car), event_name=name)
+            png = logo(disc, mods, *spec, tmp)
+            addseries.main(disc, mods, 'club', p, name, '%s Win the series to win the %s.' % (desc, car), event_name=name,
+                           logo='%s,%s' % (png, png))
 
 
 if __name__ == '__main__':
