@@ -383,7 +383,7 @@ def wall_strips(a, b, height=0.9, thick=0.4):
 
 GUARD, POST = 1895, 1084   # guardrail09 (barrier_guardrail_rusty_01) and guardrailposts25 (wood): the turns' guardrail
 GUARD_Y = (0.25, 0.50)     # its beam, from and to (m over the ground)
-POST_EVERY = 8.0
+POST_EVERY = 16.0  # (every 8 m was more than the borrowed meshes hold once every invisible wall had a guardrail; the beam reads the same)
 RETEXTURE = {GUARD: POST}  # the guardrail's texture drawn the posts' way (its own, a primitive 13's, drew black as strips)
 
 
@@ -790,6 +790,8 @@ LAMP_ST = ((-6000, -6000), (6000, 6000))  # the glow's middle (the light box's o
 HAIRPIN = (-648.0, -100.0)   # the hairpin from the strip onto the old road: open, no kerbs, its walls out on what is drawn
 HAIRPIN_R = 32.0
 TURN2_EXIT = (-156.0, -342.0)  # where the loop leaves the course at Turn 2 for side road 31
+TURN2_GAP = ((-150.6, -329.5), (-148.2, -333.0))  # between the end of the course's wall there and side road 31's: a
+                                                  # car's way behind both, onto ground that ends in the void
 PORTAL = 14.0      # a tunnel mouth's face: this far beyond each wall
 RAIL = 2297       # jw_blackrail_barrier01b: a black rail (texture 1673); the tunnel walkways' railings
 WALKWAY, WALKWAY_H = 1.2, 0.25   # the tunnel's walkways: their width in from its walls, their height
@@ -1532,6 +1534,11 @@ def build(disc, mods, preview_png=None, reverse=False):
     # of the wall there for 19 m: a gap to drive into)
     t2 = np.hypot(centre[:, 0] - TURN2_EXIT[0], centre[:, 2] - TURN2_EXIT[1]) < 25
     print('Turn 2\'s exit: %d squares of ground where there was none' % fill_ground(col, centre, half, dist, [i for i in range(len(centre)) if t2[i]], margin=3))
+    (gx0, gz0), (gx1, gz1) = TURN2_GAP
+    gy0, gy1 = ground_y(sp, gx0, gz0), ground_y(sp, gx1, gz1)
+    q = [(gx0, gy0 - 1, gz0), (gx1, gy1 - 1, gz1), (gx1, gy1 + 3, gz1), (gx0, gy0 + 3, gz0)]
+    for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+        col.add(0x900, tri)
     holes, blocked = check(col, centre, half)
     print('walls cut back off the road: %d triangles' % cut)
     for what, items in (('no ground', holes), ('wall on the road', blocked)):
@@ -1707,11 +1714,11 @@ def build(disc, mods, preview_png=None, reverse=False):
             if groups and i == groups[-1][-1][0] + 1: groups[-1].append((i, F))
             else: groups.append([(i, F)])
         for run in groups:
-            if len(run) < 3: continue
+            if len(run) < 2: continue
             F_ = np.array([f for _, f in run])
             for a, b in zip(*(lambda k: (k[:-1], k[1:]))(chords(F_, 0.5))):
                 if np.hypot(*(F_[b] - F_[a])[[0, 2]]) < 1.0: continue
-                beam, posts = guard_strips(tuple(F_[a]), tuple(F_[b]), centre[run[(a + b) // 2][0]][[0, 2]], every=16.0)  # (posts every 8 m were more than the borrowed meshes hold)
+                beam, posts = guard_strips(tuple(F_[a]), tuple(F_[b]), centre[run[(a + b) // 2][0]][[0, 2]])
                 kerbs += [beam, posts]; mats += [GUARD, POST]; added += 1
     print('guardrails on invisible walls: %d pieces' % added)
     # each face simplified, then in pieces the size of buffers the scenery keeps loaded (the svb's):
