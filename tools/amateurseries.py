@@ -52,20 +52,20 @@ JAPAN = [[('location', '=', 'Japan')]]
 CLASS_A_OR_BELOW = [[('perfclass', '=', c)] for c in 'DCBA']
 
 # (name, level, description, logo (its art: an official tile with rows painted out, emblems and
-#  flames, or the flag; its captions [(text, y, size, style)]), the car won (ordinal) and its name, who may enter, the AI field, the
+#  flames, or the flag; its captions [(text, y, size, style)]), the car won (ordinal), who may enter, the AI field, the
 #  drivers (Easy, Medium, Hard), duplicates, 1st place's xp, events (track ordinal, laps))
 SERIES = [
-    ('Sunday Stroll', 0, 'An easy drive for tuner and compact cars: hatchbacks, small coupes and saloons.',
-     (dict(tile=27, clear=[(5, 40)]), [('SUNDAY STROLL', 7, 28, 'category')]), 174, 'Mugen Civic Type R', TUNER, TUNER_CARS, (22, 36, 50), False, 3000,
+    ('Sunday Stroll', 0, 'Open to tuner and compact cars: hatchbacks, small coupes and sedans.',
+     (dict(tile=27, clear=[(5, 40)]), [('SUNDAY STROLL', 7, 28, 'category')]), 174, TUNER, TUNER_CARS, (22, 36, 50), False, 3000,
      [(26, 3), (47, 3), (46, 2)]),                      # Tsukuba, Silverstone Club, Road Atlanta Club
-    ('Beetle Face Off', 5, 'Volkswagen Beetles only. Upgrade yours as far as you like.',
-     (dict(tile=34, clear=[(8, 34), (86, 107)], emblems=[(5, 32, 58, 30), (5, 178, 58, 30)]), [('BEETLE', 9, 24, 'faceoff'), ('BEETLE', 86, 24, 'faceoff')]), 203, 'Mugen S2000', BEETLE, BEETLE_CARS, (25, 36, 50), True, 5000,
+    ('Beetle Face Off', 5, 'Open to Volkswagen New Beetle models, upgrades allowed.',
+     (dict(tile=34, clear=[(8, 34), (86, 107)], emblems=[(5, 32, 58, 30), (5, 178, 58, 30)]), [('BEETLE', 9, 24, 'faceoff'), ('BEETLE', 86, 24, 'faceoff')]), 203, BEETLE, BEETLE_CARS, (25, 36, 50), True, 5000,
      [(1, 2), (26, 3), (27, 2)]),                       # Laguna Seca, Tsukuba, Alpine Ring
-    ('Japanese Showdown', 10, 'Japanese cars only.',
-     (dict(flag=True), [('JAPANESE', 6, 22, 'faceoff'), ('SHOWDOWN', 88, 22, 'faceoff')]), 194, 'Mines Skyline GT-R R34', JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
+    ('Japanese Showdown', 10, 'Open to cars originating from Japan.',
+     (dict(flag=True), [('JAPANESE', 6, 22, 'faceoff'), ('SHOWDOWN', 88, 22, 'faceoff')]), 194, JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
      [(3, 2), (26, 3), (4, 3), (6, 2)]),                # Fujimi Kaido, Tsukuba, Fujimi Kaido Short, Sunset Peninsula
-    ('Underdog Challenge', 30, 'Class A cars at most, against a field of Class S supercars.',
-     (dict(tile=10, clear=[(80, 112)], flames=0.5), [('UNDERDOG', 84, 22, 'chrome')]), 40, 'Koenigsegg CC', CLASS_A_OR_BELOW, CLASS_S_CARS, (24, 35, 49), False, 18000,
+    ('Underdog Challenge', 30, 'Open to Class A cars and below, against a field of Class S cars.',
+     (dict(tile=10, clear=[(80, 112)], flames=0.5), [('UNDERDOG', 84, 22, 'chrome')]), 40, CLASS_A_OR_BELOW, CLASS_S_CARS, (24, 35, 49), False, 18000,
      [(27, 2), (18, 2), (57, 2), (1, 3)]),              # Alpine Ring, New York, Maple Valley Reverse, Laguna Seca
 ]
 PLACES = ((10, 1.0), (8, 0.7), (6, 0.5), (5, 0.4), (4, 0.3), (3, 0.2), (2, 0.1), (1, 0.0))   # points, share of 1st's xp
@@ -264,12 +264,13 @@ def series_xml(k, ordinal, name, level, prize, allowed, field, drivers, duplicat
 def install(disc, mods):
     ordinal = EVENT_ORDINAL
     with tempfile.TemporaryDirectory() as tmp:
-        for k, (name, level, desc, spec, prize, car, allowed, field, drivers, dup, xp, events) in enumerate(SERIES):
+        for k, (name, level, desc, spec, prize, allowed, field, drivers, dup, xp, events) in enumerate(SERIES):
             x, ordinal = series_xml(k, ordinal, name, level, prize, allowed, field, drivers, dup, xp, events)
             p = os.path.join(tmp, 'series%d.xml' % k)
             open(p, 'w', encoding='latin-1', newline='').write(x)
             png = logo(disc, mods, *spec, tmp)
-            addseries.main(disc, mods, 'club', p, name, '%s Win the series to win the %s.' % (desc, car), event_name=name,
+            # worded as the disc's: "Open to ... First place receives the <make> <model>."
+            addseries.main(disc, mods, 'club', p, name, '%s First place receives the %s.' % (desc, addcar.car_name(disc, mods, prize)), event_name=name,
                            logo='%s,%s' % (png, png))
 
 

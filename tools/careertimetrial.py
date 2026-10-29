@@ -63,7 +63,7 @@ def put_strings(base, texts):
     return addcar.replace_strings(d, {have[n]: t for n, t in texts if n in have})
 
 
-def build(mega, tracks):
+def build(disc, mods, mega, tracks):
     """The series' XML, the targets' lines, and the strings they need [(name, text)]."""
     dc = mega.files['driverchallenge' + B + 'ser00001.xml'].decode('latin-1')
     starts = {}
@@ -71,24 +71,21 @@ def build(mega, tracks):
         t = int(re.search(r'<track Ordinal="(\d+)"', e).group(1))
         starts[t] = (re.search(r'eventtextid="(\d+)"', e).group(1), re.search(r'<rollingstart [^>]*/>', e).group(0))
     names = {int(r['Ordinal']): r['name'] for r in tracks}
-    # the cars won, by ordinal: carlist.xml's display name (its make and name where it has none)
-    cars = {}
-    for b in re.findall(r'<car\b[^>]*>', mega.files['cars' + B + 'carlist.xml'].decode('latin-1')):
-        a = dict(re.findall(r'(\w+)="([^"]*)"', b))
-        if 'Ordinal' in a: cars[int(a['Ordinal'])] = a.get('displayName') or ('%s %s' % (a.get('Make', ''), a['name'])).strip()
+    # the cars won, by ordinal, named as the menus name them (make and model)
+    cars = {prize: addcar.car_name(disc, mods, prize) for *_, prize, _ in LADDER}
     series, targets, strings, ordinal = [], [], [], EVENT_ORDINAL
     for k, (cls, (attr, value), level, icon, ts, prize, spec) in enumerate(LADDER):
         tag = re.sub(r'\W', '', cls)
         strings += [('IDS_Mod_TT%s_Name' % tag, 'Class %s Time Trials' % cls),
                     ('IDS_Mod_TT%s_Desc' % tag, 'One flying lap each, alone, in a Class %s car: beat the target times for a podium. '
-                                                'Win both to win the %s.' % (cls, cars[prize]))]
+                                                'First place in both receives the %s.' % (cls, cars[prize]))]
         events = []
         for i, t in enumerate(ts):
             est, _ = laptime.lap(mega, names[t], SIM_CLASS.get(cls, cls))
             ms = [int(round(est * f * 10)) * 100 for f in FACTORS]
             targets.append('%d %d %d %d' % (ordinal, *ms))
             desc = 'IDS_Mod_TT%s_Event%d' % (tag, i)
-            strings.append((desc, 'Targets: 1st %s, 2nd %s, 3rd %s. Prize: the %s, for a win in both events.' % (*(clock(m) for m in ms), cars[prize])))
+            strings.append((desc, 'Targets: 1st %s, 2nd %s, 3rd %s. First place in both events receives the %s.' % (*(clock(m) for m in ms), cars[prize])))
             text, start = starts[t]
             xp = int(XP_1ST * (1 + level / 10))
             events.append(
@@ -117,7 +114,7 @@ def install(disc, mods):
     mega = addcar.Archive(disc, mods, 'Mega.ca2')
     tl = mega.files['forzadb' + B + 'tracklist.xml'].decode('latin-1')
     tracks = [dict(re.findall(r'(\w+)="([^"]*)"', r)) for r in re.findall(r'<track\s.*?/>', tl, re.S)]
-    series, targets, strings = build(mega, tracks)
+    series, targets, strings = build(disc, mods, mega, tracks)
     loc = addcar.disc_file(disc, 'media', 'Loc')
     ids = None
     for lang in sorted(os.listdir(loc)):

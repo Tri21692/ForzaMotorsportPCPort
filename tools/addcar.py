@@ -300,6 +300,21 @@ def string_ids(d):
     return out
 
 
+def car_name(disc, mods, ordinal):
+    """A car's name as the menus give it, its make and model ('Honda Mugen Civic Type-R'): model.dat's
+    make id (make.dat's name string at 8) and name string (at 12), from English CarDataStrings.str."""
+    mega = Archive(disc, mods, 'Mega.ca2')
+    m = mega.files[B.join(('forzadb', 'cardb', 'model.dat'))]
+    mk = mega.files[B.join(('forzadb', 'cardb', 'make.dat'))]
+    row = next(r for r in range(len(m) // 104) if struct.unpack_from('<I', m, r * 104)[0] == ordinal) * 104
+    make = next(struct.unpack_from('<H', mk, i + 8)[0] for i in range(0, len(mk), 28)
+                if struct.unpack_from('<I', mk, i)[0] == struct.unpack_from('<I', m, row + 4)[0])
+    p = os.path.join(mods, 'media', 'Loc', 'en', 'CarDataStrings.str')
+    e1, text, _, _ = read_strings(open(p if os.path.exists(p) else disc_file(disc, 'media', 'Loc', 'en', 'CarDataStrings.str'), 'rb').read())
+    s = {i: text[o * 2:o2 * 2].decode('utf-16-le').rstrip('\0') for (i, o), (_, o2) in zip(e1, e1[1:])}
+    return '%s %s' % (s[make], s[struct.unpack_from('<H', m, row + 12)[0]])
+
+
 def write_strings(d, add):
     """d with strings added: add is [(name, text)]; ids after the highest."""
     e1, text, e2, names = read_strings(d)
