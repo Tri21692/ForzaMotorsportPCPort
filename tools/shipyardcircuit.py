@@ -48,6 +48,7 @@ SIDE_ROADS = [(-140, -326), (-100, -348), (-75, -368), (-61, -376), (-71, -390),
 # metal building to the west at (-129, -487) with a metre to spare
 GAP = [(-129, -560), (-262, -726)]       # where the tunnel is to go
 ROAD39 = [(-262, -726), (-385, -646), (-503, -566)]
+STRIP_OPEN, STRIP_OPEN_SIDE = 25.0, -1  # m of the strip from the junction left open on its north-east side (-1: right of the way round)
 STRIP = [(-462, -232), (-636, -114), (-655, -104)]  # straight: warehouse 14 to its south-west, the long green
 # building to its north-east; the junction's low walls on it are hidden and cut
 
@@ -130,10 +131,11 @@ def facing_up(t):
     return np.linalg.norm(n) > 1e-9 and abs(n[1]) > 0.966 * np.linalg.norm(n)
 
 
-def drawn_heights(res, centre, off):
+def drawn_heights(res, centre, off, blend=None):
     """The loop's centre with its height, off the course, taken from the drawn ground under it (a
     side road, lot or sidewalk: the road there is drawn lower than the course, and sloping), and
-    where nothing is drawn (the gap, the strip) blended along the loop from either side."""
+    where nothing is drawn (the gap, the strip) or at the points `blend` (a mask) blended along the
+    loop from either side."""
     import xb2
     names, _ = xb2.resources(bytes(res))
     lo, hi = centre[:, [0, 2]].min(0) - 10, centre[:, [0, 2]].max(0) + 10
@@ -142,7 +144,7 @@ def drawn_heights(res, centre, off):
     bb = np.array([[t[:, 0].min(), t[:, 0].max(), t[:, 2].min(), t[:, 2].max()] for t in tris])
     y = centre[:, 1].copy()
     known = ~off.copy()
-    for i in np.nonzero(off)[0]:
+    for i in np.nonzero(off & (True if blend is None else ~blend))[0]:
         x, z = centre[i][0], centre[i][2]
         hits = []
         for k in np.nonzero((bb[:, 0] <= x) & (bb[:, 1] >= x) & (bb[:, 2] <= z) & (bb[:, 3] >= z))[0]:
@@ -332,10 +334,11 @@ def sidewalk_edges(res, centre, half, dist, hidden=(), reach=8.0, rise=(0.06, 0.
     return keep
 
 
-def boundary_collision(col, centre, half, run, dist, sp, no_ground=None):
+def boundary_collision(col, centre, half, run, dist, sp, no_ground=None, no_wall=None):
     """Along an off-course run: walls (both faces, 4 m high from below the road) on the drawn
     boundary each side (`dist`, as boundaries()) where they stand off the course's road (at the
-    joins the course's own walls), and ground out to them and a metre over."""
+    joins the course's own walls) but at the (side, point)s `no_wall`, and ground out to them and
+    a metre over."""
     left, _ = frame(centre)
     L3 = np.stack([left[:, 0], np.zeros(len(left)), left[:, 1]], 1)
     def wall(q):
@@ -346,7 +349,7 @@ def boundary_collision(col, centre, half, run, dist, sp, no_ground=None):
             a, b = centre[i] + L3[i] * side * dist[(side, i)], centre[j] + L3[j] * side * dist[(side, j)]
             span = np.array([a + (b - a) * t for t in np.linspace(0, 1, 6)])[:, [0, 2]]
             # not across another part of the loop (at the hairpin, 25 m out from one leg was the other)
-            if np.all(L.off_course([a, b], sp)) and np.all(into_road(centre, half, span) < -0.5):
+            if np.all(L.off_course([a, b], sp)) and np.all(into_road(centre, half, span) < -0.5) and not (no_wall and ((side, i) in no_wall or (side, j) in no_wall)):
                 wall([a + (0, -1, 0), b + (0, -1, 0), b + (0, 3, 0), a + (0, 3, 0)])
         if no_ground is not None and (no_ground[i] or no_ground[j]): continue  # not here (the hairpin: flat quads over the old road made a ledge)
         g = lambda side, k: min(dist[(side, k)], half[k] + 8) + 1  # no wider: over the course it made bumps
@@ -603,7 +606,7 @@ def void_ground(res, centre, half, dist, where, hidden, out=40.0):
     return faces
 
 
-def edge_ground(drawn, centre, half, dist, where, sp, past=12.0, reach=22.0):
+def edge_ground(drawn, centre, half, dist, where, sp, past=12.0, reach=22.0, skip=()):
     """Ground (strip faces, asphalt) at the road's edge beside the loop points `where` wherever
     nothing is drawn between the edge and `past` m beyond the wall (no more than `reach` m from the
     edge), out to the last bare probe: void_ground looks 13 m out and more, and the void showed in
@@ -615,7 +618,7 @@ def edge_ground(drawn, centre, half, dist, where, sp, past=12.0, reach=22.0):
     for side in (1, -1):
         run = []
         for i in list(where) + [None]:
-            if i is not None:
+            if i is not None and (side, i) not in skip:
                 out = min(dist.get((side, i), half[i] + WIDE) + past, half[i] + reach)
                 us = np.arange(half[i] + 0.5, out + 1e-6, 1.0)
                 l2 = left[i] * side
@@ -1455,7 +1458,9 @@ def build(disc, mods, preview_png=None, reverse=False):
     c = (sp[4] + sp[5]) / 2
     centre = centre_line(sp)
     half, off = half_widths(centre, sp)
-    centre, drawn, total = drawn_heights(res, centre, off)
+    # in the garage blended between its doors (the old lots hidden under it took its floor up 0.4 m
+    # over both ends: a ramp in at each door)
+    centre, drawn, total = drawn_heights(res, centre, off, garage.inside(centre[:, [0, 2]], pad=6.0))
     print('heights off the course: %d of %d points over drawn ground, the rest blended' % (drawn, total))
     links = [centre[r] for r in runs(off)]
     # what stands on the new road is hidden (and is no boundary): found first, the walls go by it
@@ -1541,7 +1546,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     in_gap = (gu > -10 / np.linalg.norm(gd_)) & (gu < 1 + 10 / np.linalg.norm(gd_)) & \
              (np.abs(((centre[:, [0, 2]] - g0_) @ np.array([-gd_[1], gd_[0]])) / np.linalg.norm(gd_)) < 12)
     for (side, i) in list(dist):
-        if in_gap_strict[i]: dist[(side, i)] = shop_wall[(side, i)]  # in the garage: its walls, or a metre past the road by the parked row
+        if in_gap_strict[i]: dist[(side, i)] = garage.lateral(centre, half, i, side, left_c)  # in the garage: its walls (the parked vehicles solid; a wall a metre past the road had a guardrail on it that did not belong)
     # with nothing standing by an edge, the road open out to a sidewalk drawn within 8 m, the wall
     # at its kerb; the ground over the void still laid from the old line (dist0)
     dist0 = dict(dist)
@@ -1553,7 +1558,12 @@ def build(disc, mods, preview_png=None, reverse=False):
     cut = clear_road(col, centre, half)
     # the walls beside the new road after the cut (the tunnel's railings stand inside the road's
     # width, and were cut away), no ground of theirs at the hairpin
-    for r in runs(off): boundary_collision(col, centre, half, r, dist, sp, at_hairpin)
+    # the strip's first 25 m from the junction open on its north-east side: no walls, guardrails or
+    # ground of ours (the junction's asphalt and its sidewalk are there, the course's walls past
+    # them; a wall and a guardrail stood across it). Its south-west side ends in the void.
+    near_end = off & (np.hypot(centre[:, 0] - STRIP[0][0], centre[:, 2] - STRIP[0][1]) < STRIP_OPEN)
+    open_end = {(STRIP_OPEN_SIDE, i) for i in np.nonzero(near_end)[0]}
+    for r in runs(off): boundary_collision(col, centre, half, r, dist, sp, at_hairpin, open_end)
     print('hairpin: %d squares of ground where there was none' % fill_ground(col, centre, half, dist, [i for i in range(len(centre)) if at_hairpin[i]]))
     # and at Turn 2's exit onto side road 31 (a collision audit found the ground ending a metre short
     # of the wall there for 19 m: a gap to drive into)
@@ -1607,7 +1617,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side, idx in bare_edges(res_bytes, centre, half, hidden=hide):  # none in the tunnel or by the concrete
         run = []
         for i in idx + [None]:
-            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or turning[i] or (side, i) in kerbed or on_course[side][i]): run.append(i); continue
+            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or turning[i] or (side, i) in kerbed or on_course[side][i] or (side, i) in open_end): run.append(i); continue
             if len(run) >= 12: stretches.append((side, run))  # 24 m or more: short stubs were ledges in odd places
             run = []
     # each on the walls' line where the new stretches have one, else just off the road, in straight
@@ -1625,6 +1635,15 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('guardrails at the bare edges: %d pieces over %d stretches' % (len(rails) // 2, len(stretches)))
     kerbs = []
     print('garage: %d collision triangles, its yard fence %d' % (garage.collision(col, centre, half), garage.yard_collision(col, centre, half)))
+    # its parked vehicles solid, each a box round its footprint (they are moved in after: park())
+    import xb2
+    boxes = garage.parked_boxes(res_bytes, centre, xb2.resources(bytes(res_bytes))[0], L.MODEL, ppw, sphere_at)
+    for corners, fy in boxes:
+        for a, b in zip(corners, corners[1:] + corners[:1]):
+            q = [(a[0], fy - 0.5, a[1]), (b[0], fy - 0.5, b[1]), (b[0], fy + 1.8, b[1]), (a[0], fy + 1.8, a[1])]
+            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+                col.add(0x900, tri)
+    print('garage: %d parked vehicles solid' % len(boxes))
     # the old road west of the hairpin closed by a brick wall between its kerbs (the guardrails along
     # them keep cars off its sidewalks; a metre over each edge it stood on them), solid to half a
     # metre past them, into the guardrails
@@ -1684,7 +1703,7 @@ def build(disc, mods, preview_png=None, reverse=False):
         return not np.all(L.off_course([foot(side, i) + out * u for u in (1.0, 5.0)], sp, margin=0.0))
     skirts = []
     for side, run, f in found:
-        ok = [not (np.hypot(*(foot(side, i)[[0, 2]] - HAIRPIN)) < HAIRPIN_R + 25 or other_leg(foot(side, i)) or by_course(side, i)
+        ok = [not (np.hypot(*(foot(side, i)[[0, 2]] - HAIRPIN)) < HAIRPIN_R + 25 or other_leg(foot(side, i)) or by_course(side, i) or (side, i) in open_end
                    or garage.inside(foot(side, i)[[0, 2]], pad=3.0) or garage.in_yard(foot(side, i)[[0, 2]], pad=1.0)) for i in run]
         k = 0
         while k < len(run):
@@ -1727,7 +1746,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     # and at the road's very edge, where it is bare short of what is drawn (outside the garage, and
     # off the concrete walls' stretch)
     drawn_ = ground_test(res_bytes, hide, centre[:, [0, 2]].min(0) - 20, centre[:, [0, 2]].max(0) + 20)
-    edges_ = edge_ground(drawn_, centre, half, dist, [i for i in sorted({i for r in runs(off) for i in r}) if not (in_gap_strict[i] or by_concrete[i])], sp)
+    edges_ = edge_ground(drawn_, centre, half, dist, [i for i in sorted({i for r in runs(off) for i in r}) if not (in_gap_strict[i] or by_concrete[i])], sp, skip=open_end)
     kerbs += [[f] for f in edges_]; mats += [ASPHALT] * len(edges_)
     print('ground at the road\'s bare edges: %d stretches, %d points' % (len(edges_), sum(len(f) // 2 for f in edges_)))
     # and a guardrail on every invisible wall left: the walls beside the new stretches with nothing
@@ -1738,11 +1757,9 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side in (1, -1):
         bare = []  # (point, the wall's foot) where it stands unseen
         for i in sorted({i for r in runs(off) for i in r}):
-            if (side, i) not in dist or by_concrete[i]: continue
+            if (side, i) not in dist or by_concrete[i] or in_gap_strict[i] or (side, i) in open_end: continue  # (none in the garage: its walls are the edge)
             F = centre[i] + np.array([left_[i][0], 0, left_[i][1]]) * side * dist[(side, i)]
-            if in_gap_strict[i]:  # in the garage: unseen unless the shop's own wall (its lamps cut a run up)
-                if dist[(side, i)] < garage.lateral(centre, half, i, side, left_c) - 0.5: bare.append((i, F))
-            elif L.off_course([F], sp, margin=0.0)[0] and not seen(F[0], F[2], centre[i][1]): bare.append((i, F))
+            if L.off_course([F], sp, margin=0.0)[0] and not seen(F[0], F[2], centre[i][1]): bare.append((i, F))
         groups = []
         for i, F in bare:  # in runs of neighbouring points
             if groups and i == groups[-1][-1][0] + 1: groups[-1].append((i, F))

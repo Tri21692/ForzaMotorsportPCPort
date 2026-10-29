@@ -270,6 +270,38 @@ def collision(col, centre, half):
     return added
 
 
+def parked_boxes(res, centre, names, model, ppw, sphere_at):
+    """Where park() sets the PARKED vehicles: each one's footprint, four (x, z) corners in order,
+    and the floor's height under it, for their collision (before they are moved: the collision is
+    written first); none for one park() leaves (a mesh's bounding sphere not found)."""
+    dt = np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)])
+    g0, u, _ = basis()
+    out = []
+    for meshes, u_, v_, heading in PARKED:
+        ps = []
+        for mesh in meshes:
+            a = struct.unpack_from('<I', res, model + 4 + 4 * mesh)[0]
+            _, _, _, vbytes, vb = struct.unpack_from('<IIIIH', res, model + a)
+            if vbytes % 24: break
+            o = names[vb - 9][3]
+            p = np.frombuffer(bytes(res[o:o + vbytes]), dt)['p'].astype(float)
+            c = (p.min(0) + p.max(0)) / 2
+            if sphere_at(bytes(ppw), c, float(np.max(np.linalg.norm(p - c, axis=1)))) is None: break
+            ps.append(p)
+        if len(ps) != len(meshes): continue
+        allp = np.concatenate(ps)
+        lo, hi = allp.min(0), allp.max(0)
+        own = 0.0 if hi[0] - lo[0] >= hi[2] - lo[2] else 90.0  # as park()
+        ang = np.radians(heading) + np.arctan2(u[1], u[0]) - np.radians(own)
+        R = np.array([[np.cos(ang), 0, -np.sin(ang)], [0, 1, 0], [np.sin(ang), 0, np.cos(ang)]])
+        base = np.array([(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2])
+        y = floor_y(centre, np.array([[u_, v_]]))[0]
+        target = to_world(np.array([u_, v_]), y)
+        corners = [np.array([x, lo[1], z]) for x, z in ((lo[0], lo[2]), (hi[0], lo[2]), (hi[0], hi[2]), (lo[0], hi[2]))]
+        out.append(([((q - base) @ R.T + target)[[0, 2]] for q in corners], y))
+    return out
+
+
 def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_normal, sphere_at):
     """The PARKED vehicles moved into the shop, each one's meshes together: turned to its heading
     (from the long side of its footprint) and set on the floor; their svb copies and bounding
