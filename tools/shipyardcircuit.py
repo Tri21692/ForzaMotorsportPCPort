@@ -1544,9 +1544,9 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('drawn whole: %d parts of objects shown in part' % len(whole))
     near |= whole
     print('drawn as well, within 50 m of the new stretches: %d meshes' % len(near - shown))
-    # the meshes whose textures the new faces take: drawn where they are, so their textures are
-    # loaded in full (else only the stx's 32-texel copies: the garage's tin was a blur), and never
-    # borrowed themselves
+    # the meshes whose textures the new faces take: never borrowed themselves (their textures are
+    # streamed in by near_textures; drawn where they stand to load them, a piece of a building far
+    # off floated in the sky)
     sources = {int(m) for m in fmats if m is not None} | {SIDEWALK}
     pool = donor_pool(res_bytes, shown | near | {L.DONOR} | sources, ppw, set(svb))
     have = len(pool)
@@ -1601,7 +1601,7 @@ def build(disc, mods, preview_png=None, reverse=False):
         streamed[0].update(t for t in (t0_, t1_) if t >= 9)
         if m in parked: streamed[1].add(vb_)
     print('streamed in every cell: %d textures, %d vertex buffers' % (len(streamed[0]), len(streamed[1])))
-    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked + sorted(sources - hide), hide=hide,
+    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide,
                             textures=sorted(streamed[0]), buffers=sorted(streamed[1]))
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
     pvs = near_textures(pvs, res_bytes, (loop[4] + loop[5]) / 2)
