@@ -2,8 +2,8 @@
 
   - Sunday Stroll (any level): tuner and compact cars, the Hatch, Integra and Eclipse families
     and the other small coupes and saloons by car;
-  - Miata Face Off (level 5): Miatas (both, carid 28 and 162), upgrades allowed; stock and
-    stage 1 Miatas against you;
+  - Beetle Face Off (level 5): Volkswagen Beetles only (carid 48), upgrades allowed; stock and
+    upgraded Beetles against you;
   - Japanese Showdown (level 10): Japanese cars (location, the make's country);
   - Underdog Challenge (level 30): Class A or below (perfclass D, C, B or A), against the
     Class S Championship's field.
@@ -28,7 +28,7 @@ SERIES_ID = 229          # after the Forced Induction Cup's 228
 
 # AI fields: eight cars, raced by the drivers given for Easy, Medium and Hard
 TUNER_CARS = [107, 110, 114, 109, 124, 102, 208, 207]    # Civic Type R, RSX Type S, Celica GTS, Integra Type R, Eclipse GSX, Focus SVT, Mini Cooper S, Mazda 3
-MIATA_CARS = [128, 1128, 262, 128, 1128, 262, 128, 1128]  # Miata stock and stage 1, the MX-5 stock
+BEETLE_CARS = [148, 1148, 2148, 3148, 148, 1148, 2148, 3148]  # the Beetle at each upgrade stage
 JAPAN_CARS = [192, 113, 106, 253, 116, 105, 127, 191]    # Skyline R34, Supra, RX-7, NSX-R, Evo VIII, WRX STi, 350Z, S2000
 CLASS_S_CARS = [136, 173, 143, 199, 239, 137, 285, 202]  # the Class S Championship's: Enzo, Carrera GT, Zonda, Cerbera, ME412, F50, Tuscan R, S7
 
@@ -36,7 +36,7 @@ CLASS_S_CARS = [136, 173, 143, 199, 239, 137, 285, 202]  # the Class S Champions
 TUNER = ([[('family', '=', f)] for f in ('Hatch', 'Integra', 'Eclipse')] +
          # RSX, Celica GTS, Civic SI, Tiburon, Protege, Del Sol, Jetta, Talon, the 1.8 Celica, APR's Celica
          [[('carid', '=', o)] for o in (10, 14, 44, 47, 49, 52, 61, 127, 164, 226)])
-MIATA = [[('carid', '=', 28)], [('carid', '=', 162)]]
+BEETLE = [[('carid', '=', 48)]]
 JAPAN = [[('location', '=', 'Japan')]]
 CLASS_A_OR_BELOW = [[('perfclass', '=', c)] for c in 'DCBA']
 
@@ -47,8 +47,8 @@ SERIES = [
     ('Sunday Stroll', 0, 'An easy drive for tuner and compact cars: hatchbacks, small coupes and saloons.',
      27, 174, 'Mugen Civic Type R', TUNER, TUNER_CARS, (22, 36, 50), False, 3000,
      [(26, 3), (47, 3), (46, 2)]),                      # Tsukuba, Silverstone Club, Road Atlanta Club
-    ('Miata Face Off', 5, 'Miatas only. Upgrade yours as far as you like.',
-     41, 203, 'Mugen S2000', MIATA, MIATA_CARS, (25, 36, 50), True, 5000,
+    ('Beetle Face Off', 5, 'Volkswagen Beetles only. Upgrade yours as far as you like.',
+     41, 203, 'Mugen S2000', BEETLE, BEETLE_CARS, (25, 36, 50), True, 5000,
      [(1, 2), (26, 3), (27, 2)]),                       # Laguna Seca, Tsukuba, Alpine Ring
     ('Japanese Showdown', 10, 'Japanese cars only.',
      4, 194, 'Mines Skyline GT-R R34', JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
