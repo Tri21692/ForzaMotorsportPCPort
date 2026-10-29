@@ -246,8 +246,9 @@ def meshes_inside(res, centre, model=0x4e0600, share=0.6):
 
 
 def collision(col, centre, half):
-    """The box's walls (both faces, BASE to 4 m over the road) where no door is, and its floor
-    (ground over the whole box at the road's height). Returns triangles added."""
+    """The box's walls (both faces, BASE to 4 m over the road) where no door is. No floor of its
+    own: the road's ground runs through (a second ground at nearly its height made the doors
+    bumpy). Returns triangles added."""
     added = 0
     up = np.array([0.0, 1, 0])
     for (a, b, n), runs in zip(WALLS, openings(centre, half)):
@@ -262,16 +263,6 @@ def collision(col, centre, half):
             q = [p0, p1, p1 + up * (4.0 - BASE + 1), p0 + up * (4.0 - BASE + 1)]
             for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
                 col.add(0x900, tri); added += 1
-    k = np.linspace(U0, U1, int((U1 - U0) / 4) + 1)
-    rows = np.linspace(V0, V1, 9)
-    for v0_, v1_ in zip(rows[:-1], rows[1:]):
-        uva, uvb = np.stack([k, np.full(len(k), v0_)], 1), np.stack([k, np.full(len(k), v1_)], 1)
-        A, B = to_world(uva, floor_y(centre, uva)), to_world(uvb, floor_y(centre, uvb))
-        for j in range(len(k) - 1):
-            q = [A[j], B[j], B[j + 1], A[j + 1]]
-            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]]):
-                n = np.cross(tri[1] - tri[0], tri[2] - tri[0])
-                col.add(0, tri if n[1] > 0 else tri[::-1]); added += 1
     return added
 
 

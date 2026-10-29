@@ -298,9 +298,13 @@ def parse_pvs(d):
     return d[:0x1c], cells, d[o:]
 
 
-def loop_pvs(d, use, extra=(), hide=()):
+def loop_pvs(d, use, extra=(), hide=(), textures=(), buffers=()):
     """A visibility file for the loop: cell i shows everything Pacific Shipyards II's cells use[i]
-    show, seen from every step, and the meshes `extra`; meshes in `hide` are left out."""
+    show, seen from every step, and the meshes `extra`; meshes in `hide` are left out. Each cell's
+    three lists are the meshes drawn, the textures streamed in and the vertex buffers streamed in
+    (resource numbers, not meshes: `hide` is for the first only; it dropped textures that shared a
+    hidden mesh's number); `textures` and `buffers` are added to every cell's (the borrowed faces'
+    textures were otherwise loaded by chance, else drawn from the stx's 32-texel copies or not)."""
     head, cells, tail = parse_pvs(d)
     out, sizes = [], []
     for want in use:
@@ -310,12 +314,11 @@ def loop_pvs(d, use, extra=(), hide=()):
             for c in want:
                 for e in cells[c][li]:
                     obj = struct.unpack_from('<H', e)[0]
-                    if obj in hide: continue
+                    if li == 0 and obj in hide: continue
                     rest = e[4:]
                     old = objs.get(obj)
                     objs[obj] = rest if old is None else bytes(a | b for a, b in zip(old, rest))
-            if li == 0:
-                for obj in extra: objs.setdefault(obj, b'')
+            for obj in (extra, textures, buffers)[li]: objs.setdefault(obj, (b'', bytes(4), b'')[li])
             merged.append([struct.pack('<HH', obj, 0xFFFF) + rest for obj, rest in sorted(objs.items())])
         out.append(b''.join(struct.pack('<I', len(l)) + b''.join(l) for l in merged))
         sizes.append(len(merged[0]))
