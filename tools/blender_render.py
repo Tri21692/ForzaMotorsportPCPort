@@ -20,7 +20,7 @@ import numpy as np
 from mathutils import Matrix, Vector
 
 argv = sys.argv[sys.argv.index('--') + 1:]
-obj_path, out, view = argv[0], argv[1], argv[2]
+obj_path, out, view = argv[0], os.path.abspath(argv[1]), argv[2]  # (Blender reads a relative output path from its own folder)
 what = argv[3] if len(argv) > 3 else 'scene'
 fov = float(argv[4]) if len(argv) > 4 else 60.0
 

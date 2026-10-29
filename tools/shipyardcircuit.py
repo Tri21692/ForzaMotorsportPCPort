@@ -292,10 +292,11 @@ def boundaries(res, centre, half, where, hidden=(), reach=8.0, inner=None):
 
 
 def sidewalk_edges(res, centre, half, dist, hidden=(), reach=8.0, rise=(0.06, 0.6)):
-    """For the (side, point)s of `dist` with no drawn boundary (half + WIDE), how far out past that
-    the drawn ground first stands a sidewalk's height over the road (`rise`), within `reach` m of
-    the edge: the road open out to it, the wall at its kerb (a guardrail across the asphalt short of
-    a sidewalk was a fence in the road). {(side, i): distance}."""
+    """For the (side, point)s of `dist`, where the drawn ground first steps up a sidewalk's height
+    (`rise`) going out from the road's edge, short of the wall there (or, with no drawn boundary at
+    half + WIDE, within `reach` m past it): the wall at that kerb, so a car keeps off the sidewalk
+    (a guardrail across the asphalt short of one was a fence in the road; a wall at the building
+    behind one let cars drive along it). {(side, i): distance}."""
     import xb2
     names, _ = xb2.resources(bytes(res))
     lo, hi = centre[:, [0, 2]].min(0) - reach - 10, centre[:, [0, 2]].max(0) + reach + 10
@@ -305,24 +306,34 @@ def sidewalk_edges(res, centre, half, dist, hidden=(), reach=8.0, rise=(0.06, 0.
         for gx in range(int(np.floor(t[:, 0].min() / 5)), int(np.floor(t[:, 0].max() / 5)) + 1):
             for gz in range(int(np.floor(t[:, 2].min() / 5)), int(np.floor(t[:, 2].max() / 5)) + 1):
                 cells.setdefault((gx, gz), []).append(k)
-    def raised(x, z, y):
+    def height(x, z, y):
+        """The drawn ground's height at (x, z): the highest within a metre of y, or None."""
+        best = None
         for k in cells.get((int(np.floor(x / 5)), int(np.floor(z / 5))), ()):
             a, b, c = tris[k]
             m = np.array([[b[0] - a[0], c[0] - a[0]], [b[2] - a[2], c[2] - a[2]]])
             if abs(np.linalg.det(m)) < 1e-9: continue
             u, v = np.linalg.solve(m, [x - a[0], z - a[2]])
             if u < -1e-4 or v < -1e-4 or u + v > 1 + 1e-4: continue
-            if y + rise[0] < a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1]) < y + rise[1]: return True
-        return False
+            h = a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1])
+            if abs(h - y) < 1.0 and (best is None or h > best): best = h
+        return best
     left, _ = frame(centre)
     out = {}
     for (side, i), d in dist.items():
-        if abs(d - (half[i] + WIDE)) > 1e-6: continue
-        for u in np.arange(d + 0.25, half[i] + reach, 0.25):  # out past the old wall only
+        # from a metre inside the road's edge outward: where nothing is drawn at the edge, past the
+        # old wall as far as `reach`; where something is (a building or fence behind a sidewalk), up
+        # to it. The kerb is a step up of a sidewalk's height within a quarter metre (a slope or the
+        # road's camber is no step), and the wall stands on it: the sidewalk is not road.
+        bare = abs(d - (half[i] + WIDE)) < 1e-6
+        prev = None
+        for u in np.arange(max(half[i] - 1.0, 1.0), half[i] + reach if bare else d - 0.3, 0.25):
             p = centre[i][[0, 2]] + left[i] * side * u
-            if raised(p[0], p[1], centre[i][1]):
+            h = height(p[0], p[1], centre[i][1] if prev is None else prev)
+            if h is not None and prev is not None and rise[0] < h - prev < rise[1]:
                 out[(side, i)] = float(u) - 0.2
                 break
+            if h is not None: prev = h
     # only runs of 6 points or more (a lone point's kerb was a lamp's plinth or a step)
     keep = {}
     for side in (1, -1):
@@ -394,9 +405,13 @@ CORNER, CORNER_R, CORNER_SIDE = (-58.0, -376.0), 24.0, 1  # the corner from side
                                                           # outside (+1) on the walls' line (the road looked to go on ahead)
 
 
+BRICK_ENDS = []  # every brick wall's (a, b) feet, for join_bricks
+
+
 def brick_wall(a, b, height=BRICK_H):
     """A brick wall from a to b ((x, y, z), its foot), both faces, half a metre into the ground: as
     kerb_strips' faces."""
+    BRICK_ENDS.append((np.array(a, float), np.array(b, float)))
     d = np.subtract(b, a); d[1] = 0; L_ = np.linalg.norm(d); d /= L_
     n = np.array([-d[2], 0.0, d[0]])
     faces = []
@@ -415,6 +430,28 @@ def brick_wall(a, b, height=BRICK_H):
 BRICK_AREA = (-160.0, 0.0, -80.0, 60.0)  # garage (u0, u1, v0, v1): east of the shop, side road 04 to its corner with 31 and the
                                          # yard's east end, where the edges have brick walls, not guardrails (they looked rough
                                          # there; a 3 m wall hides what lay past them)
+
+
+def join_bricks(centre, half, reach=12.0):
+    """Brick walls closing the gaps between brick walls (where the walls' line jogged or one run of
+    them ended and the next began, the ground past them showed): each end joined to the nearest end
+    of another within `reach` m, where the join keeps off the road. [faces]."""
+    ends = [(k, e, seg[e]) for k, seg in enumerate(BRICK_ENDS) for e in (0, 1)]
+    out, done = [], set()
+    for k, e, p in ends:
+        best = None
+        for k2, e2, q in ends:
+            if k2 == k: continue
+            d = np.hypot(*(q - p)[[0, 2]])
+            if d < 0.3: best = None; break  # already meets one
+            if d < reach and (best is None or d < best[0]): best = (d, k2, e2, q)
+        if best is None or frozenset(((k, e), best[1:3])) in done: continue
+        q = best[3]
+        line = np.array([p[[0, 2]] + (q - p)[[0, 2]] * t for t in np.linspace(0, 1, 9)])
+        if np.any(into_road(centre, half, line) > -0.5): continue
+        done.add(frozenset(((k, e), best[1:3])))
+        out.append(brick_wall(tuple(p), tuple(q)))
+    return out
 
 
 def barrier(a, b, road):
@@ -1084,7 +1121,7 @@ def concrete_mask(centre):
     return (cu > 0) & (cu < 1) & (np.abs(((centre[:, [0, 2]] - c0) @ np.array([-cd[1], cd[0]])) / np.linalg.norm(cd)) < 10)
 
 
-def fill_ground(col, centre, half, dist, where, step=1.0, margin=15):
+def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
     """Ground where the collision has none, out to the walls (`dist`) beside loop points `where`
     and `margin` points either side, at the height of the ground found round it: at the hairpin,
     between its road and the walls out on what is drawn, the car fell through. Looked for on a
@@ -1092,7 +1129,10 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15):
     between them), each gap a square half as wide again, and along each road edge a quarter metre
     apart out to 3 m (a strip at the edge narrower than the grid, on the inside of the apex, was
     the hole). Half a metre's grid was 21,000 squares, the collision twice its size: textures were
-    let go. Returns the squares added."""
+    let go. With `under`, a sheet of ground that much under all of it, out to the walls (2 m quads
+    sharing their corners, each corner under the ground found there): a car's wheel that found a
+    crack between the course's road and the ground put beside it sank, or the car fell through.
+    Returns the squares added."""
     n = len(centre)
     near = sorted({(i + k) % n for i in where for k in range(-margin, margin + 1)})
     left, fwd = frame(centre)
@@ -1166,6 +1206,28 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15):
             y = centre[i][1]
             if height(p[0], p[1], y) is not None: continue
             square(p, y, step * 0.75)
+    if under:
+        run = [i for i in near if (i - 1) % n in near_set]  # consecutive pairs (i - 1, i)
+        corner = {}
+        def at(i, u):
+            if (i, u) not in corner:  # (a corner in a hole: the lowest ground round it, else the road's height)
+                q = c2[i] + left[i] * u
+                h = height(q[0], q[1], centre[i][1])
+                for r in (0.5, 1.0, 2.0):
+                    if h is not None: break
+                    hs = [x for x in (height(q[0] + dx, q[1] + dz, centre[i][1]) for dx, dz in ((r, 0), (-r, 0), (0, r), (0, -r))) if x is not None]
+                    h = min(hs) if hs else None
+                corner[(i, u)] = np.array([q[0], (centre[i][1] if h is None else h) - under, q[1]])
+            return corner[(i, u)]
+        for i in run:
+            j = (i - 1) % n
+            w = max(dist.get((sd, k), half[k] + 8.0) for k in (i, j) for sd in (1, -1)) + 1.0
+            us = np.arange(-np.ceil(w / 2) * 2, np.ceil(w / 2) * 2 + 0.1, 2.0)
+            for u0, u1 in zip(us[:-1], us[1:]):
+                q = [at(j, u0), at(j, u1), at(i, u1), at(i, u0)]
+                for tri in ([q[0], q[2], q[1]], [q[2], q[0], q[3]]):
+                    nrm = np.cross(tri[1] - tri[0], tri[2] - tri[0])
+                    col.add(0, tri if nrm[1] > 0 else [tri[0], tri[2], tri[1]])  # facing up
     return added
 
 
@@ -1289,6 +1351,52 @@ def near_textures(pvs, res, ring, reach=TEX_REACH, keep=()):
     sizes = [len(c[1]) for c in L.parse_pvs(new)[1]]
     print('textures streamed per cell: %d to %d of the %d listed' % (min(sizes), max(sizes), len(texs)))
     return new
+
+
+PICK_REACH = 100.0  # what a cell draws now within this of its stretch, its picked cells must cover
+
+
+def pick_cells(cells_in, res, ring, hide, first=8, reach=PICK_REACH, most=6):
+    """For each of the loop's cells, the cells of Pacific Shipyards II's visibility it draws, and the
+    meshes (with their textures and vertex buffers) to add to them: of what Pacific Shipyards II's
+    cells 0 to `first` together draw (what every cell drew until now), those within `reach` m of the
+    cell's stretch and the stretches either side (`ring`: the loop's points in driving order, the
+    cells equal stretches of it from the lap line) are covered by the fewest of its cells (at most
+    `most`), and what those leave out is added (no cells found: cells 0 to `first`). Every cell drew
+    those 8 cells' 1,840 meshes (the disc's take 200 to 1,065): the strip and the hairpin road dropped
+    frames. (Covering what all 24 draw near each stretch took 5 or 6 cells, 1,700 to 3,200 meshes
+    and 480 textures a cell.) Its later cells hold
+    what Pacific Shipyards II saw from further round (the buildings by the north-east corner drew
+    only their stand-ins). ([cells for each], [(meshes, textures, buffers) for each])."""
+    import struct
+    import xb2
+    import blender_export
+    names, _ = xb2.resources(bytes(res))
+    ids = lambda l: {struct.unpack_from('<H', e)[0] for e in l}
+    cell_meshes = [ids(c[0]) - set(hide) for c in cells_in]
+    base = set().union(*cell_meshes[:first])
+    box, rec = {}, {}
+    for m in base:
+        g = blender_export.mesh_geometry(res, names, m)
+        if g is not None: box[m] = (g[0][:, [0, 2]].min(0), g[0][:, [0, 2]].max(0))
+        a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * m)[0]
+        _, _, _, _, vb, _, _, t0, t1 = struct.unpack_from('<IIIIHHHHH', res, L.MODEL + a)
+        rec[m] = (vb, {t for t in (t0, t1) if t >= 9})
+    P = np.asarray(ring, float)
+    P = P[:, [0, 2]] if P.shape[1] == 3 else P
+    N, nc = len(P), len(cells_in)
+    use, per = [], []
+    for k in range(nc):
+        Q = P[[j % N for j in range((k - 1) * N // nc, (k + 2) * N // nc)]]
+        near = {m for m, (bl, bh) in box.items() if np.min(np.hypot(*(np.clip(Q, bl, bh) - Q).T)) < reach}
+        picked, got = [], set()
+        for c in sorted(range(nc), key=lambda c: -len(near & cell_meshes[c])):
+            if len(near & got) >= 0.97 * len(near) or len(picked) >= most: break
+            if near & cell_meshes[c] - got: picked.append(c); got |= cell_meshes[c]
+        left = near - got
+        use.append(picked or list(range(first)))
+        per.append((sorted(left), sorted({t for m in left for t in rec[m][1]}), sorted({rec[m][0] for m in left})))
+    return use, per
 
 
 def read_svb(d):
@@ -1511,7 +1619,12 @@ def build(disc, mods, preview_png=None, reverse=False):
     # metre short of any fence, wall or building inside them: at the strip's junction the line went
     # through a fence
     bd = boundaries(res, centre, half, range(len(centre)), hidden=hide, reach=0.5, inner=2.0)
-    cap = np.array([min(half[i], bd[(1, i)] - MARGIN, bd[(-1, i)] - MARGIN) for i in range(len(centre))])  # a car's width and more short of it
+    # (on the course's own road, ten points or more from a new stretch, its full width: there the
+    # course's lamp posts and kerbs drew the edges in to 7 m of a 10 m half, and the turn by the main
+    # road counted a car on its asphalt as off it)
+    near_new = np.zeros(len(centre), bool)
+    for i in np.nonzero(off)[0]: near_new[[(i + k) % len(centre) for k in range(-10, 11)]] = True
+    cap = np.array([min(half[i], bd[(1, i)] - MARGIN, bd[(-1, i)] - MARGIN) if near_new[i] else half[i] for i in range(len(centre))])  # a car's width and more short of it
     g0c, g1c = np.array(GAP[0], float), np.array(GAP[1], float)
     gdc = g1c - g0c
     guc = ((centre[:, [0, 2]] - g0c) @ gdc) / (gdc @ gdc)
@@ -1577,7 +1690,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     # with nothing standing by an edge, the road open out to a sidewalk drawn within 8 m, the wall
     # at its kerb; the ground over the void still laid from the old line (dist0)
     dist0 = dict(dist)
-    kerbed = sidewalk_edges(res, centre, half, {k: d for k, d in dist.items() if not (at_hairpin[k[1]] or in_gap[k[1]] or by_concrete[k[1]])}, hidden=hide)
+    at_corner = np.hypot(centre[:, 0] - CORNER[0], centre[:, 2] - CORNER[1]) < CORNER_R  # (its brick wall wraps to the ledge)
+    kerbed = sidewalk_edges(res, centre, half, {k: d for k, d in dist.items() if not (at_hairpin[k[1]] or in_gap[k[1]] or by_concrete[k[1]] or (k[0] == CORNER_SIDE and at_corner[k[1]]))}, hidden=hide)
     dist.update(kerbed)
     print('walls out at a sidewalk\'s kerb: %d points' % len(kerbed))
     near = sum(1 for (side, i), d in dist.items() if d < half[i] + WIDE - 0.2)
@@ -1602,7 +1716,7 @@ def build(disc, mods, preview_png=None, reverse=False):
         m = q.mean(0)
         return not (JUNCTION_CORNER[0] <= m[0] <= JUNCTION_CORNER[2] and JUNCTION_CORNER[1] <= m[2] <= JUNCTION_CORNER[3])
     print('junction corner: %d wall triangles removed' % col.remove(not_corner))
-    print('hairpin: %d squares of ground where there was none' % fill_ground(col, centre, half, dist, [i for i in range(len(centre)) if at_hairpin[i]]))
+    print('hairpin: %d squares of ground where there was none, and a sheet under it all' % fill_ground(col, centre, half, dist, [i for i in range(len(centre)) if at_hairpin[i]], under=0.15))
     # and at Turn 2's exit onto side road 31 (a collision audit found the ground ending a metre short
     # of the wall there for 19 m: a gap to drive into)
     t2 = np.hypot(centre[:, 0] - TURN2_EXIT[0], centre[:, 2] - TURN2_EXIT[1]) < 25
@@ -1641,6 +1755,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     head, cells_in, tail = L.parse_pvs(pvs_in)
     shown = {struct.unpack_from('<H', e)[0] for c in cells_in[:8] for l in c for e in l}
     # a low guardrail wherever the road's edge has nothing drawn (kerbs and sidewalks were ledges)
+    BRICK_ENDS.clear()
     stretches = []
     by_shop = garage.inside(centre[:, [0, 2]], pad=12.0)  # in the garage and up to its doors
     # and none through a turn: over 20 m either side the road turns more than 20 degrees (a kerb at a
@@ -1689,6 +1804,10 @@ def build(disc, mods, preview_png=None, reverse=False):
     q = [(cx0, cy0 - 1, cz0), (cx1, cy1 - 1, cz1), (cx1, cy1 + 3, cz1), (cx0, cy0 + 3, cz0)]
     for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
         col.add(0x900, tri)
+    # and every edge of the ground a car reaches that ends with no wall (as the collision audit finds
+    # them: past the hairpin two walls' ends jogged 4 m apart and a car went through and fell)
+    import collision_audit
+    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, centre))
     col_bytes = col.to_bytes()
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
@@ -1814,6 +1933,9 @@ def build(disc, mods, preview_png=None, reverse=False):
                 for fs, m_ in barrier(tuple(F_[a]), tuple(F_[b]), centre[run[(a + b) // 2][0]][[0, 2]]): kerbs.append(fs); mats.append(m_)
                 added += 1
     print('guardrails on invisible walls: %d pieces' % added)
+    joins = join_bricks(centre, half)
+    kerbs += joins; mats += [BRICK] * len(joins)
+    print('brick walls joined across their gaps: %d' % len(joins))
     # each face simplified, then in pieces the size of buffers the scenery keeps loaded (the svb's):
     # larger ones stream in with their own part of the track only, and were never drawn here
     faces, fmats = [], []
@@ -1887,9 +2009,12 @@ def build(disc, mods, preview_png=None, reverse=False):
         streamed[0].update(t for t in (t0_, t1_) if t >= 9)
         if m in parked: streamed[1].add(vb_)
     print('streamed in every cell: %d textures, %d vertex buffers' % (len(streamed[0]), len(streamed[1])))
-    pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide,
+    use, per = pick_cells(cells_in, res_bytes, (loop[4] + loop[5]) / 2, hide)
+    print('visibility: each cell draws %d to %d of Pacific Shipyards II\'s cells, and %d to %d meshes more' % (
+        min(len(u) for u in use), max(len(u) for u in use), min(len(p_[0]) for p_ in per), max(len(p_[0]) for p_ in per)))
+    pvs, sizes = L.loop_pvs(pvs_in, use, per_cell=per, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide,
                             textures=sorted(streamed[0]), buffers=sorted(streamed[1]))
-    print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
+    print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d to %d meshes a cell' % (len(left), len(hide), min(sizes), max(sizes)))
     pvs = near_textures(pvs, res_bytes, (loop[4] + loop[5]) / 2, keep=streamed[0])
     cbx = zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read())
     dropped = 0

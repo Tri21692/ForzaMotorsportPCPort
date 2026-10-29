@@ -88,18 +88,11 @@ def clusters(mask):
     return out
 
 
-def audit(mods, out, tag='VancouverLoop'):
-    t = os.path.join(mods, 'track', tag)
-    res = open(os.path.join(t, 'hdd', 'Partition4', 'vancouver.res'), 'rb').read()
-    names, _ = xb2.resources(res)
-    col = coledit.Col(open(os.path.join(t, 'hdd', 'Partition4', tag + '.col'), 'rb').read())
-    _, cells, _ = L.parse_pvs(open(os.path.join(t, 'media', 'tracks', 'VancouverReverse', 'QuickPreview1.pvs'), 'rb').read())
-    sp = L.read_splines(bytearray(res))
-    ring = (sp[4] + sp[5]) / 2
-    lo, hi = ring[:, [0, 2]].min(0) - MARGIN, ring[:, [0, 2]].max(0) + MARGIN
-    W, H = grid_of(lo, hi)
+def collision_grids(col, ring, lo, W, H):
+    """The collision laid on the grid: ground within 3 m of the loop's height near it (not an
+    overpass's), and walls high enough to stop a car and not overhead. (ground, wall, near_y)."""
     near_y = lambda p: ring[int(np.argmin(np.hypot(ring[:, 0] - p[0], ring[:, 2] - p[2]))), 1]
-    # the collision: ground within 3 m of the loop's height near it (not an overpass's), walls
+    hi = (lo[0] + W * CELL, lo[1] + H * CELL)
     ground = np.zeros((H, W), bool)
     wall = np.zeros((H, W), bool)
     for s, pts, n, w in col.triangles():
@@ -113,6 +106,106 @@ def audit(mods, out, tag='VancouverLoop'):
         elif q[:, 1].min() < y0 + 1.2 and q[:, 1].max() > y0 + 0.3:  # high enough to stop a car, not overhead
             r, c = raster_seg(*footprint(q), lo, W, H)
             wall[r, c] = True
+    return ground, wall, near_y
+
+
+def grow(m, k):
+    """m and the cells within k of it."""
+    g = m.copy()
+    for dr in range(-k, k + 1):
+        for dc in range(-k, k + 1):
+            g |= np.roll(np.roll(m, dr, 0), dc, 1)
+    return g
+
+
+def nb(m):
+    return np.roll(m, 1, 0) | np.roll(m, -1, 0) | np.roll(m, 1, 1) | np.roll(m, -1, 1)
+
+
+def flood(ground, wall, ring, lo):
+    """The ground a car reaches from the loop's road, keeping a car's half width (a metre) off any
+    wall (it squeezed through gaps between walls' ends, and behind the course's walls through
+    openings)."""
+    H, W = ground.shape
+    near_wall = grow(wall, 2)
+    reach = np.zeros((H, W), bool)
+    q = collections.deque()
+    for p in ring:
+        c, r = int((p[0] - lo[0]) / CELL), int((p[2] - lo[1]) / CELL)
+        if 0 <= r < H and 0 <= c < W and ground[r, c] and not near_wall[r, c] and not reach[r, c]: reach[r, c] = True; q.append((r, c))
+    while q:
+        r, c = q.popleft()
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            rr, cc = r + dr, c + dc
+            if 0 <= rr < H and 0 <= cc < W and not reach[rr, cc] and ground[rr, cc] and not near_wall[rr, cc]:
+                reach[rr, cc] = True; q.append((rr, cc))
+    return reach
+
+
+def behind_wall(pts, ring, wall, lo):
+    """Whether most of the cells' points (x, z) have a wall between them and the loop's nearest
+    point (the ground past the course's own walls, reached through a gap at some end of them)."""
+    H, W = wall.shape
+    sample = pts[::max(1, len(pts) // 20)]
+    behind = 0
+    for p in sample:
+        k = int(np.argmin(np.hypot(ring[:, 0] - p[0], ring[:, 2] - p[1])))
+        d = np.hypot(ring[k, 0] - p[0], ring[k, 2] - p[1])
+        if d < 2.5: continue
+        r_, c_ = raster_seg(ring[k, [0, 2]], p - (p - ring[k, [0, 2]]) / d * 1.5, lo, W, H)
+        behind += bool(wall[r_, c_].any())
+    return behind > len(sample) / 2
+
+
+def seal_open_edges(col, ring, least=2):
+    """Walls (both faces, from a metre under the road to 3 m over it) along every edge of the ground a
+    car reaches from the loop where it ends with no wall (the void past it): where two walls' ends
+    jogged 4 m apart past the hairpin a car went through and fell. Not those behind a wall (the
+    course's own ground past its walls). Returns the metres of wall added."""
+    ring = np.asarray(ring, float)
+    lo, hi = ring[:, [0, 2]].min(0) - MARGIN, ring[:, [0, 2]].max(0) + MARGIN
+    W, H = grid_of(lo, hi)
+    ground, wall, near_y = collision_grids(col, ring, lo, W, H)
+    reach = flood(ground, wall, ring, lo)
+    open_edge = reach & nb(~ground)
+    xz = lambda r, c: (lo[0] + (c + 0.5) * CELL, lo[1] + (r + 0.5) * CELL)
+    segs = {}  # (axis, line, row or column) -> cell positions along it: merged into runs below
+    for grp in clusters(open_edge):
+        if len(grp) < least or behind_wall(np.array([xz(r, c) for r, c in grp]), ring, wall, lo): continue
+        for r, c in grp:
+            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                rr, cc = r + dr, c + dc
+                if not (0 <= rr < H and 0 <= cc < W) or ground[rr, cc]: continue
+                if dr: segs.setdefault(('z', r + (dr > 0)), []).append(c)   # a side at z = lo + line * CELL
+                else: segs.setdefault(('x', c + (dc > 0)), []).append(r)    # a side at x = lo + line * CELL
+    added = 0.0
+    for (axis, line), at in segs.items():
+        at = sorted(set(at))
+        runs, start = [], at[0]
+        for a, b in zip(at, at[1:] + [None]):
+            if b != a + 1: runs.append((start, a + 1)); start = b
+        for a, b in runs:
+            if axis == 'z': p0, p1 = (lo[0] + a * CELL, lo[1] + line * CELL), (lo[0] + b * CELL, lo[1] + line * CELL)
+            else: p0, p1 = (lo[0] + line * CELL, lo[1] + a * CELL), (lo[0] + line * CELL, lo[1] + b * CELL)
+            y0, y1 = near_y((p0[0], 0, p0[1])), near_y((p1[0], 0, p1[1]))
+            q = [(p0[0], y0 - 1, p0[1]), (p1[0], y1 - 1, p1[1]), (p1[0], y1 + 3, p1[1]), (p0[0], y0 + 3, p0[1])]
+            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+                col.add(0x900, tri)
+            added += (b - a) * CELL
+    return added
+
+
+def audit(mods, out, tag='VancouverLoop'):
+    t = os.path.join(mods, 'track', tag)
+    res = open(os.path.join(t, 'hdd', 'Partition4', 'vancouver.res'), 'rb').read()
+    names, _ = xb2.resources(res)
+    col = coledit.Col(open(os.path.join(t, 'hdd', 'Partition4', tag + '.col'), 'rb').read())
+    _, cells, _ = L.parse_pvs(open(os.path.join(t, 'media', 'tracks', 'VancouverReverse', 'QuickPreview1.pvs'), 'rb').read())
+    sp = L.read_splines(bytearray(res))
+    ring = (sp[4] + sp[5]) / 2
+    lo, hi = ring[:, [0, 2]].min(0) - MARGIN, ring[:, [0, 2]].max(0) + MARGIN
+    W, H = grid_of(lo, hi)
+    ground, wall, near_y = collision_grids(col, ring, lo, W, H)
     # what is drawn standing: any upright face from a kerb's height to a car's roof
     seen = np.zeros((H, W), bool)
     drawn = sorted({struct.unpack_from('<H', e)[0] for c in cells for e in c[0]})
@@ -134,27 +227,8 @@ def audit(mods, out, tag='VancouverLoop'):
     for dr in range(-2, 3):
         for dc in range(-2, 3):
             s2 |= np.roll(np.roll(seen, dr, 0), dc, 1)
-    def grow(m, k):  # m and the cells within k of it
-        g = m.copy()
-        for dr in range(-k, k + 1):
-            for dc in range(-k, k + 1):
-                g |= np.roll(np.roll(m, dr, 0), dc, 1)
-        return g
-    near_wall = grow(wall, 2)  # within a metre of a wall: a car's half width (it squeezed through gaps
-                               # between walls' ends, and behind the course's walls through openings)
     # filled from the loop's road: ground, a car's half width off any wall
-    reach = np.zeros((H, W), bool)
-    q = collections.deque()
-    for p in ring:
-        c, r = int((p[0] - lo[0]) / CELL), int((p[2] - lo[1]) / CELL)
-        if ground[r, c] and not near_wall[r, c] and not reach[r, c]: reach[r, c] = True; q.append((r, c))
-    while q:
-        r, c = q.popleft()
-        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            rr, cc = r + dr, c + dc
-            if 0 <= rr < H and 0 <= cc < W and not reach[rr, cc] and ground[rr, cc] and not near_wall[rr, cc]:
-                reach[rr, cc] = True; q.append((rr, cc))
-    nb = lambda m: np.roll(m, 1, 0) | np.roll(m, -1, 0) | np.roll(m, 1, 1) | np.roll(m, -1, 1)
+    reach = flood(ground, wall, ring, lo)
     edge_wall = wall & grow(reach, 3)
     invisible = edge_wall & ~s2
     open_edge = reach & nb(~ground)
@@ -165,16 +239,7 @@ def audit(mods, out, tag='VancouverLoop'):
             if len(grp) < least: continue
             pts = np.array([xz(r, c) for r, c in grp])
             i = int(np.argmin(np.hypot(ring[:, 0] - pts[:, 0].mean(), ring[:, 2] - pts[:, 1].mean())))
-            # behind a wall: most of it with a wall between it and the loop's nearest point (the
-            # ground past the course's own walls, reached through a gap at some end of them)
-            behind = 0
-            for p in pts[::max(1, len(pts) // 20)]:
-                k = int(np.argmin(np.hypot(ring[:, 0] - p[0], ring[:, 2] - p[1])))
-                d = np.hypot(ring[k, 0] - p[0], ring[k, 2] - p[1])
-                if d < 2.5: continue
-                r_, c_ = raster_seg(ring[k, [0, 2]], p - (p - ring[k, [0, 2]]) / d * 1.5, lo, W, H)
-                behind += bool(wall[r_, c_].any())
-            kind = what + (' (behind a wall)' if behind > len(pts[::max(1, len(pts) // 20)]) / 2 else '')
+            kind = what + (' (behind a wall)' if behind_wall(pts, ring, wall, lo) else '')
             if 'behind' in kind: behind_cells += grp
             report.append((kind, len(grp) * CELL, pts.mean(0), pts.min(0), pts.max(0), i))
     report.sort(key=lambda e: -e[1])
