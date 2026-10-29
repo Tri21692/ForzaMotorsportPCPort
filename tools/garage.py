@@ -319,7 +319,8 @@ def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_norma
 YARD = (-45.0, 262.0, -50.0, 55.0)   # u0, u1, v0, v1
 YARD_GROUND = (-77.0, 262.0, -66.0, 55.0)  # its ground over the void, reaching past its east fence's south end (a
                                           # wedge of void showed beside side road 04 there)
-YARD_DROP = 0.12                     # under the road and the drawn ground (they cover it where they are)
+WEDGE_CORNER = (-132.9, -466.9)      # parkinglot_12's north-east corner, 8 m off side road 04 (x, z)
+YARD_DROP = 0.12                    # under the road and the drawn ground (they cover it where they are)
 YARD_CELL = 4.0                      # its ground in squares this size, laid where none is drawn
 SKIRT = 1.5                          # its edges' drop
 FENCE_H = 5.0
@@ -409,6 +410,16 @@ def yard_faces(centre, half, drawn=None):
             a, b = np.array(a, float), np.array(b, float)
             y = floor_y(centre, np.array([(a + b) / 2]))[0]
             sheds.append(_wall(a, b, n, y - 1.0, y + h, 0.0, every=12.0, tex=(51, 18, y + h + 8)))
+    # and the fence on from its south-east corner to the lot's corner by side road 04, across the
+    # wedge between the road and the lot (parkinglot_12, its edge at an angle to the ground's squares
+    # and 1.3 m under the road: the void showed in teeth along it)
+    a = to_world(np.array([YARD[0], YARD[2]]), 0.0)[[0, 2]]
+    b = np.array(WEDGE_CORNER)
+    d = (b - a) / np.linalg.norm(b - a)
+    out = np.array([-d[1], d[0]])
+    road = centre[np.argmin(np.hypot(centre[:, 0] - (a[0] + b[0]) / 2, centre[:, 2] - (a[1] + b[1]) / 2))][[0, 2]]
+    if out @ (road - (a + b) / 2) > 0: out = -out
+    fence += fence_faces(a, b, out, floor_y(centre, to_uv((a + b) / 2)[None])[0])
     return [(ground + skirts, None), (fence, TIN), (sheds, WAREHOUSE)]
 
 
