@@ -90,9 +90,10 @@ def rect_walls(u0, u1, v0, v1):
     return [((u0, v1), (u0, v0), (-1, 0)), ((u0, v0), (u1, v0), (0, -1)), ((u1, v0), (u1, v1), (1, 0)), ((u1, v1), (u0, v1), (0, 1))]
 
 
-def openings(centre, half, walls=WALLS):
-    """Per wall, the stretches (from, to: metres along it) where the road crosses it, OPEN_PAD wider
-    each side."""
+def openings(centre, half, walls=WALLS, pad=None):
+    """Per wall, the stretches (from, to: metres along it) where the road crosses it, `pad` (OPEN_PAD)
+    wider each side."""
+    pad = OPEN_PAD if pad is None else pad
     out = []
     c = to_uv(centre[:, [0, 2]])
     for a, b, _ in walls:
@@ -102,7 +103,7 @@ def openings(centre, half, walls=WALLS):
         pts = a + (b - a) / L_ * s[:, None]
         d = np.hypot(pts[:, None, 0] - c[None, :, 0], pts[:, None, 1] - c[None, :, 1])
         k = d.argmin(1)
-        hit = d[np.arange(len(s)), k] < half[k] + OPEN_PAD
+        hit = d[np.arange(len(s)), k] < half[k] + pad
         runs, start = [], None
         for j, h in enumerate(hit):
             if h and start is None: start = s[j]
@@ -356,6 +357,8 @@ YARD_DROP = 0.12                    # under the road and the drawn ground (they 
 YARD_CELL = 4.0                      # its ground in squares this size, laid where none is drawn
 SKIRT = 1.5                          # its edges' drop
 FENCE_H = 5.0
+FENCE_OPEN = 25.0   # the fence ends this far from the road each side where the loop crosses it (cut at
+                    # the road's edge its ends stood by it, random slabs)
 WAREHOUSE = 3787  # building_federal_00_vb2: building_warehouse_03, concrete with rows of windows (51 a metre across, 18 up)
 WAREHOUSES = [  # (u0, u1, v0, v1, height): on the yard's empty lots, clear of the road
     (10.0, 110.0, 24.0, 46.0, 11.0), (125.0, 215.0, 24.0, 46.0, 9.0),   # north of the shop
@@ -425,7 +428,7 @@ def yard_faces(centre, half, drawn=None):
             c = e
     fence = []
     walls = rect_walls(*YARD)
-    for (a, b, n), runs in zip(walls, openings(centre, half, walls)):
+    for (a, b, n), runs in zip(walls, openings(centre, half, walls, FENCE_OPEN)):
         a, b = np.array(a, float), np.array(b, float)
         L_ = np.linalg.norm(b - a)
         d = (b - a) / L_
@@ -475,7 +478,7 @@ def yard_collision(col, centre, half):
     added = 0
     up = np.array([0.0, 1, 0])
     walls = rect_walls(*YARD)
-    for (a, b, n), runs in zip(walls, openings(centre, half, walls)):
+    for (a, b, n), runs in zip(walls, openings(centre, half, walls, FENCE_OPEN)):
         a, b = np.array(a, float), np.array(b, float)
         L_ = np.linalg.norm(b - a)
         d = (b - a) / L_

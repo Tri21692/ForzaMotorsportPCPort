@@ -49,6 +49,7 @@ SIDE_ROADS = [(-140, -326), (-100, -348), (-75, -368), (-61, -376), (-71, -390),
 GAP = [(-129, -560), (-262, -726)]       # where the tunnel is to go
 ROAD39 = [(-262, -726), (-385, -646), (-503, -566)]
 STRIP_OPEN, STRIP_OPEN_SIDE = 25.0, -1  # m of the strip from the junction left open on its north-east side (-1: right of the way round)
+JUNCTION_CORNER = (-455.0, -236.0, -437.5, -228.0)  # x0, z0, x1, z1: the course's kerb wall round the junction's north-east corner
 STRIP = [(-462, -232), (-636, -114), (-655, -104)]  # straight: warehouse 14 to its south-west, the long green
 # building to its north-east; the junction's low walls on it are hidden and cut
 
@@ -389,6 +390,8 @@ OLD_ROAD_END = 509   # the old road west of the hairpin closed here, 17 m from t
                      # (it led on where the sprint went; a low concrete one here read as a ledge, a brick
                      # wall at 506, 34 m out, was too far to tell)
 BRICK_H = 3.0
+CORNER, CORNER_R, CORNER_SIDE = (-58.0, -376.0), 24.0, 1  # the corner from side road 04 onto 31: a brick wall all round its
+                                                          # outside (+1) on the walls' line (the road looked to go on ahead)
 
 
 def brick_wall(a, b, height=BRICK_H):
@@ -409,10 +412,28 @@ def brick_wall(a, b, height=BRICK_H):
     return faces
 
 
+BRICK_AREA = (-160.0, 0.0, -80.0, 60.0)  # garage (u0, u1, v0, v1): east of the shop, side road 04 to its corner with 31 and the
+                                         # yard's east end, where the edges have brick walls, not guardrails (they looked rough
+                                         # there; a 3 m wall hides what lay past them)
+
+
+def barrier(a, b, road):
+    """A guardrail from a to b ((x, y, z) feet, facing `road`), or in BRICK_AREA a brick wall:
+    [(faces, material)]."""
+    u, v = garage.to_uv(((np.asarray(a, float) + np.asarray(b, float)) / 2)[[0, 2]])
+    if BRICK_AREA[0] < u < BRICK_AREA[1] and BRICK_AREA[2] < v < BRICK_AREA[3]:
+        return [(brick_wall(a, b), BRICK)]
+    beam, posts = guard_strips(a, b, road)
+    return [(beam, GUARD), (posts, POST)]
+
+
 GUARD, POST = 1895, 1084  # guardrail09 (barrier_guardrail_rusty_01) and guardrailposts25 (wood): the turns' guardrail
 GUARD_Y = (0.25, 0.50)     # its beam, from and to (m over the ground)
 POST_EVERY = 16.0  # (every 8 m was more than the borrowed meshes hold once every invisible wall had a guardrail; the beam reads the same)
-RETEXTURE = {GUARD: POST}  # the guardrail's texture drawn the posts' way (its own, a primitive 13's, drew black as strips)
+ROAD_PLAIN = 535           # sidewalk22_vb0: road__cs_road_plain_01 (texture 867), the side roads' concrete; the garage's road
+ROAD_PLAIN_S, ROAD_PLAIN_T = 20.0, 22.0  # its texture a metre across and along (as the side roads have it, about)
+RETEXTURE = {GUARD: POST,  # the guardrail's texture drawn the posts' way (its own, a primitive 13's, drew black as strips)
+             ROAD_PLAIN: L.DONOR}  # and the side roads' drawn the asphalt's way (theirs take 28-byte vertices)
 
 
 def guard_strips(a, b, road, every=None):
@@ -993,7 +1014,11 @@ def tunnel_faces(centre, half, idx, out=0.6, apron=6):
     PF, LF = centre[fk], np.stack([left[fk][:, 0], np.zeros(len(fk)), left[fk][:, 1]], 1)
     WF = (half[fk] + out)[:, None]
     fl, fr = PF + LF * WF + (0, 0.03, 0), PF - LF * WF + (0, 0.03, 0)
-    floor = face(fl, fr, up, s_of(fl), t_of(fl), s_of(fr), t_of(fr))
+    # in the side roads' concrete, along the road as theirs (the asphalt met them at both doors, a
+    # different road)
+    along = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(PF[:, [0, 2]], axis=0), axis=1))])
+    tf = -32000 + ROAD_PLAIN_T * along
+    floor = face(fl, fr, up, np.full(len(fk), -32000.0), tf, -32000 + ROAD_PLAIN_S * 2 * WF[:, 0], tf)
     sd = -32000 + 162 * dist
     lo_t, hi_t = np.full(len(P), -32369.0), np.full(len(P), -32268.0)
     walls = [face(P + L3 * w, P + L3 * w + up * TUNNEL_H, -L3, sd, lo_t, sd, hi_t),   # the left wall, facing in
@@ -1221,14 +1246,16 @@ def clear_tunnel(res, centre, half, idx, svb, svb_raw, keep=()):
 TEX_REACH = 100.0  # a cell streams in the textures of what is drawn within this of its stretch
 
 
-def near_textures(pvs, res, ring, reach=TEX_REACH):
+def near_textures(pvs, res, ring, reach=TEX_REACH, keep=()):
     """The visibility `pvs` with each cell's textures (its second list) cut to those of the meshes it
     draws within `reach` m of its stretch of the loop and the stretches either side (`ring`: the
     loop's points in driving order, the cells equal stretches of it from the lap line), the textures
     of meshes with no positions to go by, and those no mesh of the model takes. Every cell listed
     all 562 textures the cells together show (the original's take 327 at most): the game could not
     keep them all, and dropped some for the stx's 32-texel copies (the garage's tin a blur for a
-    while, the guardrails black)."""
+    while, the guardrails black). The textures `keep` stay in every cell (the new faces' and the
+    parked vehicles': cut by stretch the garage's tin was still the stx's copy in the garage, the
+    game's cell there not the stretch's this counts)."""
     import struct
     import xb2
     names, _ = xb2.resources(bytes(res))
@@ -1246,7 +1273,7 @@ def near_textures(pvs, res, ring, reach=TEX_REACH):
         if 9 <= vb < len(names) + 9 and stride == 6 and vbytes and vbytes % 24 == 0:
             v = np.frombuffer(bytes(res[names[vb - 9][3]:names[vb - 9][3] + vbytes]), '<f4').reshape(-1, 6)[:, [0, 2]]
             if np.all(np.isfinite(v)): box[m] = (v.min(0), v.max(0))
-    always = texs - set().union(*tex_of.values())
+    always = (texs - set().union(*tex_of.values())) | (set(keep) & texs)
     for m in set(tex_of) - set(box): always |= tex_of[m]
     out, N, nc = [], len(P), len(cells)
     for k, lists in enumerate(cells):
@@ -1546,7 +1573,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     in_gap = (gu > -10 / np.linalg.norm(gd_)) & (gu < 1 + 10 / np.linalg.norm(gd_)) & \
              (np.abs(((centre[:, [0, 2]] - g0_) @ np.array([-gd_[1], gd_[0]])) / np.linalg.norm(gd_)) < 12)
     for (side, i) in list(dist):
-        if in_gap_strict[i]: dist[(side, i)] = garage.lateral(centre, half, i, side, left_c)  # in the garage: its walls (the parked vehicles solid; a wall a metre past the road had a guardrail on it that did not belong)
+        if in_gap_strict[i]: dist[(side, i)] = min(garage.lateral(centre, half, i, side, left_c), half[i] + 8)  # in the garage: its walls (the parked vehicles solid; a wall a metre past the road had a guardrail on it that did not belong), no further than its ground (where the walls were missed, 25 m out: the car fell through)
     # with nothing standing by an edge, the road open out to a sidewalk drawn within 8 m, the wall
     # at its kerb; the ground over the void still laid from the old line (dist0)
     dist0 = dict(dist)
@@ -1563,7 +1590,18 @@ def build(disc, mods, preview_png=None, reverse=False):
     # them; a wall and a guardrail stood across it). Its south-west side ends in the void.
     near_end = off & (np.hypot(centre[:, 0] - STRIP[0][0], centre[:, 2] - STRIP[0][1]) < STRIP_OPEN)
     open_end = {(STRIP_OPEN_SIDE, i) for i in np.nonzero(near_end)[0]}
+    corner_pts = [i for i in range(len(centre)) if off[i] and np.hypot(centre[i][0] - CORNER[0], centre[i][2] - CORNER[1]) < CORNER_R]
+    no_rail = open_end | {(CORNER_SIDE, i) for i in corner_pts}  # (the corner has its own brick wall)
     for r in runs(off): boundary_collision(col, centre, half, r, dist, sp, at_hairpin, open_end)
+    # and the course's own kerb wall round the junction's north-east corner, between it and the
+    # strip's open side (an invisible wall across what reads as one lot of asphalt)
+    def not_corner(surface, pts):
+        q = np.array(pts, float)
+        n_ = np.cross(q[1] - q[0], q[2] - q[0])
+        if abs(n_[1]) > 0.7 * np.linalg.norm(n_): return True
+        m = q.mean(0)
+        return not (JUNCTION_CORNER[0] <= m[0] <= JUNCTION_CORNER[2] and JUNCTION_CORNER[1] <= m[2] <= JUNCTION_CORNER[3])
+    print('junction corner: %d wall triangles removed' % col.remove(not_corner))
     print('hairpin: %d squares of ground where there was none' % fill_ground(col, centre, half, dist, [i for i in range(len(centre)) if at_hairpin[i]]))
     # and at Turn 2's exit onto side road 31 (a collision audit found the ground ending a metre short
     # of the wall there for 19 m: a gap to drive into)
@@ -1617,7 +1655,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side, idx in bare_edges(res_bytes, centre, half, hidden=hide):  # none in the tunnel or by the concrete
         run = []
         for i in idx + [None]:
-            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or turning[i] or (side, i) in kerbed or on_course[side][i] or (side, i) in open_end): run.append(i); continue
+            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or turning[i] or (side, i) in kerbed or on_course[side][i] or (side, i) in no_rail): run.append(i); continue
             if len(run) >= 12: stretches.append((side, run))  # 24 m or more: short stubs were ledges in odd places
             run = []
     # each on the walls' line where the new stretches have one, else just off the road, in straight
@@ -1627,8 +1665,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side, idx in stretches:
         F = np.array([centre[i] + np.array([left_[i][0], 0, left_[i][1]]) * side * dist.get((side, i), half[i] + 0.8) for i in idx])
         for a, b in zip(*(lambda k: (k[:-1], k[1:]))(chords(F, 0.5))):
-            beam, posts = guard_strips(tuple(F[a]), tuple(F[b]), centre[idx[(a + b) // 2]][[0, 2]])
-            rails += [(beam, GUARD), (posts, POST)]
+            rails += barrier(tuple(F[a]), tuple(F[b]), centre[idx[(a + b) // 2]][[0, 2]])
             q = [F[a] + (0, -0.5, 0), F[b] + (0, -0.5, 0), F[b] + (0, 1.0, 0), F[a] + (0, 1.0, 0)]
             for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
                 col.add(0x900, tri)
@@ -1657,6 +1694,11 @@ def build(disc, mods, preview_png=None, reverse=False):
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
     mats = [None] * len(kerbs)
     kerbs.append(brick_wall((bx0, by0, bz0), (bx1, by1, bz1))); mats.append(BRICK)
+    # the corner's, on its walls' line at the loop's height there (the course's, 1.5 m over the side
+    # roads, stood it in the air)
+    Fc = np.array([centre[i] + np.array([left_[i][0], 0, left_[i][1]]) * CORNER_SIDE * dist.get((CORNER_SIDE, i), half[i] + WIDE) for i in corner_pts])
+    for a, b in zip(*(lambda k: (k[:-1], k[1:]))(chords(Fc, 0.5))):
+        if np.hypot(*(Fc[b] - Fc[a])[[0, 2]]) > 0.5: kerbs.append(brick_wall(tuple(Fc[a]), tuple(Fc[b]))); mats.append(BRICK)
     kerbs += [f for f, _ in rails]; mats += [m for _, m in rails]
     # guardrails along side road 39 to the tunnel, in front of its fences, the collision's line (it
     # was concrete: too much of it)
@@ -1677,8 +1719,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     gap = tunnel_points(centre)
     glows = []
     if gap:
-        floor = tunnel_faces(centre, half, gap)[0]  # the road's asphalt through it
-        kerbs.append(floor); mats.append(ASPHALT)
+        floor = tunnel_faces(centre, half, gap)[0]  # the road through it
+        kerbs.append(floor); mats.append(ROAD_PLAIN)
         yu0, yu1, yv0, yv1 = garage.YARD_GROUND
         corners = garage.to_world(np.array([[yu0, yv0], [yu0, yv1], [yu1, yv0], [yu1, yv1]]), 0.0)[:, [0, 2]]
         drawn = ground_test(res_bytes, hide, corners.min(0) - 5, corners.max(0) + 5)
@@ -1717,7 +1759,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     # and along each, on the old line, a guardrail where the edge has none and no sidewalk (the 3 m
     # concrete was everywhere); by the yard the yard's tin fence too, 1.5 m behind it, to hide the
     # buildings past it standing over nothing
-    railed = {(side, i) for side, idx in stretches for i in idx} | set(kerbed)
+    railed = {(side, i) for side, idx in stretches for i in idx} | set(kerbed) | no_rail
     masks = fences = 0
     for side, run, f in skirts:
         F = np.array([foot(side, i) for i in run])
@@ -1736,8 +1778,8 @@ def build(disc, mods, preview_png=None, reverse=False):
             i_mid = run[(ka + kb) // 2]
             road = centre[i_mid][[0, 2]]
             if not all((side, run[k]) in railed for k in (ka, kb)):
-                beam, posts = guard_strips(tuple(a + (0, 0.06, 0)), tuple(b + (0, 0.06, 0)), road)
-                kerbs += [beam, posts]; mats += [GUARD, POST]; masks += 1
+                for fs, m_ in barrier(tuple(a + (0, 0.06, 0)), tuple(b + (0, 0.06, 0)), road): kerbs.append(fs); mats.append(m_)
+                masks += 1
             if garage.in_yard((a[[0, 2]] + b[[0, 2]]) / 2, pad=90.0) and not any((side, run[k]) in kerbed for k in (ka, kb)):
                 out = np.array(left_[i_mid]) * side
                 kerbs.append(garage.fence_faces(a[[0, 2]] + out * 1.5, b[[0, 2]] + out * 1.5, out, centre[i_mid][1]))
@@ -1757,7 +1799,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side in (1, -1):
         bare = []  # (point, the wall's foot) where it stands unseen
         for i in sorted({i for r in runs(off) for i in r}):
-            if (side, i) not in dist or by_concrete[i] or in_gap_strict[i] or (side, i) in open_end: continue  # (none in the garage: its walls are the edge)
+            if (side, i) not in dist or by_concrete[i] or in_gap_strict[i] or (side, i) in no_rail: continue  # (none in the garage: its walls are the edge)
             F = centre[i] + np.array([left_[i][0], 0, left_[i][1]]) * side * dist[(side, i)]
             if L.off_course([F], sp, margin=0.0)[0] and not seen(F[0], F[2], centre[i][1]): bare.append((i, F))
         groups = []
@@ -1769,8 +1811,8 @@ def build(disc, mods, preview_png=None, reverse=False):
             F_ = np.array([f for _, f in run])
             for a, b in zip(*(lambda k: (k[:-1], k[1:]))(chords(F_, 0.5))):
                 if np.hypot(*(F_[b] - F_[a])[[0, 2]]) < 1.0: continue
-                beam, posts = guard_strips(tuple(F_[a]), tuple(F_[b]), centre[run[(a + b) // 2][0]][[0, 2]])
-                kerbs += [beam, posts]; mats += [GUARD, POST]; added += 1
+                for fs, m_ in barrier(tuple(F_[a]), tuple(F_[b]), centre[run[(a + b) // 2][0]][[0, 2]]): kerbs.append(fs); mats.append(m_)
+                added += 1
     print('guardrails on invisible walls: %d pieces' % added)
     # each face simplified, then in pieces the size of buffers the scenery keeps loaded (the svb's):
     # larger ones stream in with their own part of the track only, and were never drawn here
@@ -1806,8 +1848,9 @@ def build(disc, mods, preview_png=None, reverse=False):
     at = sphere_at(bytes(ppw), *road_was)  # the strip's road: its sphere where the donor was, moved too
     if at is None: print('  the strip road: bounding sphere not found, it may be culled')
     else: struct.pack_into('<4f', ppw, at, road_now[1], *road_now[0])
+    lights = {ASPHALT: road_light, ROAD_PLAIN: road_light, LAMP: lamp_light, RAIL: rail_light, HEAD: head_light, GUARD: post_light, POST: post_light}
     for (mesh, at), fs, mat in zip(picked, kerbs, mats):
-        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light={ASPHALT: road_light, LAMP: lamp_light, RAIL: rail_light, HEAD: head_light, GUARD: post_light, POST: post_light}.get(mat, (-32724, -32645) if mat is None else lightmap_st(res, mat)))
+        c1, r1 = write_strips(res_bytes, mesh, fs, material=mat, light=lights[mat] if mat in lights else (-32724, -32645) if mat is None else lightmap_st(res, mat))
         struct.pack_into('<4f', ppw, at, r1, *c1)
     for (mesh, at), (gdata, gidx) in glowed:
         c1, r1 = write_glow(res_bytes, mesh, gdata, gidx)
@@ -1847,7 +1890,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide,
                             textures=sorted(streamed[0]), buffers=sorted(streamed[1]))
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
-    pvs = near_textures(pvs, res_bytes, (loop[4] + loop[5]) / 2)
+    pvs = near_textures(pvs, res_bytes, (loop[4] + loop[5]) / 2, keep=streamed[0])
     cbx = zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read())
     dropped = 0
     for link in links:
