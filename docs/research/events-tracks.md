@@ -251,3 +251,22 @@ link has collision but nothing drawn: the scenery has no ground there.
   120 degree, 2 m turn back whose edges crossed; it leaves at 571 now.
 - A new track's AI files borrow a stock track's with as many segments;
   aitrack.install eases the turns' threshold until the count is one there.
+
+## Four more Amateur series (29 Oct)
+
+tools/amateurseries.py adds Sunday Stroll (any level, tuner and compact
+cars), Miata Face Off (5), Japanese Showdown (10) and Underdog Challenge
+(30, Class A or below against Class S) to the Club list through
+addseries.py; events 371-384, series ordinals 93-96 (after the Time
+Trial's, so it runs after careertimetrial.py).
+
+- `<Restrictions>`: each `<or>` is one alternative whose restrictions all
+  hold (pro series 8: Viper and not R, or Corvette and not R; the Miata
+  Sport Cup: carid 28 and maxupgrade 0); restrictions outside any `<or>`
+  must all hold.
+- model.dat: u32 at 4 the make (make.dat, whose u32 at 4 is the country in
+  location.dat: 5 Japan), u32 at 8 the family (modelfamily.dat, from 1:
+  none, Corvette, Mustang...). There is no Miata family (the Miata, 28,
+  and the MX-5, 162, are Roadsters) and no tuner one.
+- ai\aicarmodellist.xml: an AI car model is 100 + the car's ordinal stock,
+  and 1000, 2000 or 3000 more with every part at that upgrade stage.
