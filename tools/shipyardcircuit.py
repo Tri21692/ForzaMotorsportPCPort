@@ -382,8 +382,9 @@ def wall_strips(a, b, height=0.9, thick=0.4):
 
 
 BRICK = 178          # wall03_vb0: barrier_brickwall_01 (texture 310), 75 a metre along, 153 up
-OLD_ROAD_END = 506   # the old road west of the hairpin closed here, 34 m from the loop, by a brick wall
-                     # (it led on where the sprint went; a low concrete wall at 509 read as a ledge)
+OLD_ROAD_END = 509   # the old road west of the hairpin closed here, 17 m from the loop, by a brick wall
+                     # (it led on where the sprint went; a low concrete one here read as a ledge, a brick
+                     # wall at 506, 34 m out, was too far to tell)
 BRICK_H = 3.0
 
 
@@ -1624,9 +1625,12 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('guardrails at the bare edges: %d pieces over %d stretches' % (len(rails) // 2, len(stretches)))
     kerbs = []
     print('garage: %d collision triangles, its yard fence %d' % (garage.collision(col, centre, half), garage.yard_collision(col, centre, half)))
-    # the old road west of the hairpin closed by a brick wall (solid, 4 m)
-    (bx0, bz0, by0), (bx1, bz1, by1) = L.across(sp, OLD_ROAD_END, extra=1.0)
-    q = [(bx0, by0 - 1, bz0), (bx1, by1 - 1, bz1), (bx1, by1 + 3, bz1), (bx0, by0 + 3, bz0)]
+    # the old road west of the hairpin closed by a brick wall between its kerbs (the guardrails along
+    # them keep cars off its sidewalks; a metre over each edge it stood on them), solid to half a
+    # metre past them, into the guardrails
+    (bx0, bz0, by0), (bx1, bz1, by1) = L.across(sp, OLD_ROAD_END, extra=-0.3)
+    (cx0, cz0, cy0), (cx1, cz1, cy1) = L.across(sp, OLD_ROAD_END, extra=0.5)
+    q = [(cx0, cy0 - 1, cz0), (cx1, cy1 - 1, cz1), (cx1, cy1 + 3, cz1), (cx0, cy0 + 3, cz0)]
     for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
         col.add(0x900, tri)
     col_bytes = col.to_bytes()
