@@ -1495,10 +1495,15 @@ def build(disc, mods, preview_png=None, reverse=False):
     # junction's corner was where cars cut in and stopped)
     head_ = np.arctan2(*(np.roll(centre, -1, 0) - np.roll(centre, 1, 0))[:, [2, 0]].T)
     turning = np.abs((np.roll(head_, -10) - np.roll(head_, 10) + np.pi) % (2 * np.pi) - np.pi) > np.radians(20)
+    # nor on the course's own road, wider than the loop's (on Pacific Shipyards II's start road one
+    # stood 4 m inside its edge, a fence across the asphalt)
+    lf_, _ = frame(centre)
+    on_course = {side: ~L.off_course([centre[i] + np.array([lf_[i][0], 0, lf_[i][1]]) * side * dist.get((side, i), half[i] + 0.8) for i in range(len(centre))], sp, margin=0.0)
+                 for side in (1, -1)}
     for side, idx in bare_edges(res_bytes, centre, half, hidden=hide):  # none in the tunnel or by the concrete
         run = []
         for i in idx + [None]:
-            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or turning[i] or (side, i) in kerbed): run.append(i); continue
+            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or turning[i] or (side, i) in kerbed or on_course[side][i]): run.append(i); continue
             if len(run) >= 12: stretches.append((side, run))  # 24 m or more: short stubs were ledges in odd places
             run = []
     # each on the walls' line where the new stretches have one, else just off the road, in straight
@@ -1558,11 +1563,15 @@ def build(disc, mods, preview_png=None, reverse=False):
     def foot(side, i):  # where the ground over the void starts, by the road
         return centre[i] + np.array([left_[i][0], 0, left_[i][1]]) * side * dist0.get((side, i), half[i] + WIDE)
     # each run's points at the hairpin, by another part of the loop, in the garage or its yard (the
-    # yard lays its own) left out, the rest kept in pieces (a run touching the garage was dropped
-    # whole: the void showed beside side road 04 up to the yard)
+    # yard lays its own) or by the course's road (drawn, in meshes too wide for mesh_tris: at Turn
+    # 2's exit a guardrail stood on it) left out, the rest kept in pieces (a run touching the garage
+    # was dropped whole: the void showed beside side road 04 up to the yard)
+    def by_course(side, i):
+        out = np.array([left_[i][0], 0, left_[i][1]]) * side
+        return not np.all(L.off_course([foot(side, i) + out * u for u in (1.0, 5.0)], sp, margin=0.0))
     skirts = []
     for side, run, f in found:
-        ok = [not (np.hypot(*(foot(side, i)[[0, 2]] - HAIRPIN)) < HAIRPIN_R + 25 or other_leg(foot(side, i))
+        ok = [not (np.hypot(*(foot(side, i)[[0, 2]] - HAIRPIN)) < HAIRPIN_R + 25 or other_leg(foot(side, i)) or by_course(side, i)
                    or garage.inside(foot(side, i)[[0, 2]], pad=3.0) or garage.in_yard(foot(side, i)[[0, 2]], pad=1.0)) for i in run]
         k = 0
         while k < len(run):
