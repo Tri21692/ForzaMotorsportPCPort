@@ -33,6 +33,7 @@ SHUTTER = 2871  # building_warehouse_green_00_vb3: building_garagedoor_02, a rol
 BAY = 1118      # prop_propanestand04_vb2: building_garagedoor_01, a shutter with a door beside it
 LAMP = 1359     # light_box07: a strip light (the glow texture)
 BAY_EVERY = 14.0
+LIGHT_EVERY, LIGHT_LEN = 12.0, 3.0
 
 # vehicles moved in: (its meshes, u, v, heading in degrees from +u), parked on the floor nose in, across the bays
 PARKED = [((2600,), 30.0, 11.8, 90), ((2591,), 52.0, 11.8, 90), ((2542, 2543), 76.0, 11.8, 90),
@@ -200,11 +201,14 @@ def faces(centre, half):
             f = _wall(p0, p1, n, y, y + 4.45, 0.0, inward=True, every=4.0)
             bays.append([(p, nn, -32767 + 512 * np.linalg.norm(to_uv(p[[0, 2]]) - p0) / 3.6, -32767 + 115 * (y + 4.45 - p[1])) for p, nn, _, _ in f])
     out.append((bays, BAY))
-    # strip lights under the roof, along the shop
+    # strip lights under the roof, a short fitting every LIGHT_EVERY m in rows along the shop (one
+    # light the shop's length was a band across the roof)
     lights = []
     for v_ in (-3.0, 4.0, 11.0):
-        a_, b_ = to_world(np.stack([k, np.full(len(k), v_)], 1), TOP - 0.05), to_world(np.stack([k, np.full(len(k), v_ + 1.2)], 1), TOP - 0.05)
-        lights.append(_face(a_, b_, -up, np.full(len(k), -6000.0), np.full(len(k), -6000.0), np.full(len(k), 6000.0), np.full(len(k), 6000.0)))
+        for u_ in np.arange(U0 + LIGHT_EVERY / 2, U1 - 2, LIGHT_EVERY):
+            kk = np.array([u_ - LIGHT_LEN / 2, u_ + LIGHT_LEN / 2])
+            a_, b_ = to_world(np.stack([kk, np.full(2, v_)], 1), TOP - 0.05), to_world(np.stack([kk, np.full(2, v_ + 0.5)], 1), TOP - 0.05)
+            lights.append(_face(a_, b_, -up, np.full(2, -6000.0), np.full(2, -6000.0), np.full(2, 6000.0), np.full(2, 6000.0)))
     out.append((lights, LAMP))
     return out
 
@@ -314,6 +318,8 @@ def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_norma
 # the yard round the shop: concrete over the void, inside a tin fence; warehouses on its empty lots
 YARD = (-45.0, 262.0, -50.0, 55.0)   # u0, u1, v0, v1
 YARD_DROP = 0.12                     # under the road and the drawn ground (they cover it where they are)
+YARD_CELL = 4.0                      # its ground in squares this size, laid where none is drawn
+SKIRT = 1.5                          # its edges' drop
 FENCE_H = 5.0
 WAREHOUSE = 3787  # building_federal_00_vb2: building_warehouse_03, concrete with rows of windows (51 a metre across, 18 up)
 WAREHOUSES = [  # (u0, u1, v0, v1, height): on the yard's empty lots, clear of the road
@@ -323,18 +329,65 @@ WAREHOUSES = [  # (u0, u1, v0, v1, height): on the yard's empty lots, clear of t
     (-40.0, -12.0, 20.0, 50.0, 8.0)]                                    # by the shop's east door
 
 
-def yard_faces(centre, half):
-    """The yard's faces: the ground (concrete, a face a row, 8 m apart), the fence (tin, both faces,
-    open where the loop crosses it) and the warehouses (their outsides). [(faces, material)]."""
+def yard_void(centre, drawn):
+    """Which YARD_CELL squares of the yard have no ground drawn (drawn(x, z, y) as
+    shipyardcircuit.ground_test's, at the road's height): a bool array [v row, u column]."""
+    u0, u1, v0, v1 = YARD
+    us, vs = np.arange(u0, u1, YARD_CELL), np.arange(v0, v1, YARD_CELL)
+    void = np.zeros((len(vs), len(us)), bool)
+    for r, v_ in enumerate(vs):
+        for c, u_ in enumerate(us):
+            # its middle and four points in from its corners
+            q = np.array([[u_ + a * YARD_CELL, v_ + b * YARD_CELL] for a, b in ((0.5, 0.5), (0.12, 0.12), (0.88, 0.12), (0.12, 0.88), (0.88, 0.88))])
+            y = floor_y(centre, q[:1])[0]
+            w = to_world(q, 0.0)
+            void[r, c] = sum(not drawn(p[0], p[2], y) for p in w) >= 4
+    return void
+
+
+def yard_faces(centre, half, drawn=None):
+    """The yard's faces: its ground (concrete, a face a run of squares along u) where none is drawn
+    (all of it if `drawn` is None), each run's sides dropping SKIRT m where it ends by drawn ground or
+    the yard's edge (it lay over the drawn ground, steps and ledges, and the void showed black under
+    its edges); the fence (tin, both faces, open where the loop crosses it) and the warehouses (their
+    outsides). [(faces, material)]."""
     u0, u1, v0, v1 = YARD
     up = np.array([0.0, 1, 0])
-    k = np.linspace(u0, u1, int((u1 - u0) / 16) + 1)
-    ground = []
-    for va, vb_ in zip(np.arange(v0, v1, 8.0), np.minimum(np.arange(v0, v1, 8.0) + 8.0, v1)):
-        A, B = np.stack([k, np.full(len(k), va)], 1), np.stack([k, np.full(len(k), vb_)], 1)
-        a_, b_ = to_world(A, floor_y(centre, A) - YARD_DROP), to_world(B, floor_y(centre, B) - YARD_DROP)
-        ground.append(_face(a_, b_, up, -32000 + 53 * (k - u0) % 30000, np.full(len(k), -32000 + 51.7 * ((va - v0) % 500)),
-                            -32000 + 53 * (k - u0) % 30000, np.full(len(k), -32000 + 51.7 * ((vb_ - v0) % 500))))
+    us, vs = np.arange(u0, u1, YARD_CELL), np.arange(v0, v1, YARD_CELL)
+    void = yard_void(centre, drawn) if drawn is not None else np.ones((len(vs), len(us)), bool)
+    gy = lambda uv: floor_y(centre, uv) - YARD_DROP
+    st = lambda d: -32000 + 53 * (d % 500)  # the concrete's texture, 53 a metre
+    ground, skirts = [], []
+    def skirt(a, b, n):  # a vertical face from (u, v) a to b at the ground's edge, down SKIRT m
+        k = np.linspace(0, 1, max(2, int(np.linalg.norm(np.subtract(b, a)) / YARD_CELL) + 1))
+        uv = np.asarray(a, float) + np.subtract(b, a) * k[:, None]
+        top = to_world(uv, gy(uv))
+        bot = top.copy(); bot[:, 1] -= SKIRT
+        g0, u, v = basis()
+        nw = n[0] * u + n[1] * v
+        along = np.linalg.norm(np.subtract(b, a)) * k
+        skirts.append(_face(top, bot, np.array([nw[0], 0.0, nw[1]]), st(along), np.full(len(k), -32000.0), st(along), np.full(len(k), -32000 + 53 * SKIRT)))
+    for r, v_ in enumerate(vs):
+        va, vb_ = v_, min(v_ + YARD_CELL, v1)
+        c = 0
+        while c < len(us):
+            if not void[r, c]: c += 1; continue
+            e = c
+            while e < len(us) and void[r, e]: e += 1
+            k = np.append(us[c:e], min(us[e - 1] + YARD_CELL, u1))
+            A, B = np.stack([k, np.full(len(k), va)], 1), np.stack([k, np.full(len(k), vb_)], 1)
+            ground.append(_face(to_world(A, gy(A)), to_world(B, gy(B)), up, st(k - u0), np.full(len(k), st(va - v0)), st(k - u0), np.full(len(k), st(vb_ - v0))))
+            skirt((k[0], va), (k[0], vb_), (-1, 0))
+            skirt((k[-1], va), (k[-1], vb_), (1, 0))
+            for rr, vv, n in ((r - 1, va, (0, -1)), (r + 1, vb_, (0, 1))):  # along its long sides where the next row has no ground of ours
+                j = c
+                while j < e:
+                    if 0 <= rr < len(vs) and void[rr, j]: j += 1; continue
+                    m_ = j
+                    while m_ < e and not (0 <= rr < len(vs) and void[rr, m_]): m_ += 1
+                    skirt((us[j], vv), (min(us[m_ - 1] + YARD_CELL, u1), vv), n)
+                    j = m_
+            c = e
     fence = []
     walls = rect_walls(*YARD)
     for (a, b, n), runs in zip(walls, openings(centre, half, walls)):
@@ -354,7 +407,7 @@ def yard_faces(centre, half):
             a, b = np.array(a, float), np.array(b, float)
             y = floor_y(centre, np.array([(a + b) / 2]))[0]
             sheds.append(_wall(a, b, n, y - 1.0, y + h, 0.0, every=12.0, tex=(51, 18, y + h + 8)))
-    return [(ground, None), (fence, TIN), (sheds, WAREHOUSE)]
+    return [(ground + skirts, None), (fence, TIN), (sheds, WAREHOUSE)]
 
 
 def yard_collision(col, centre, half):

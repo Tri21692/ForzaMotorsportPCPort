@@ -476,23 +476,30 @@ def whole_objects(res, hide, near=20.0):
     return out
 
 
-def void_ground(res, centre, half, dist, where, hidden, out=40.0):
-    """Ground (strip faces) beside the loop points `where` wherever nothing is drawn: from the wall
-    (`dist`) out `out` m, a little under the road, each side, in runs; drawn ground anywhere across
-    that keeps a point out of them."""
+def ground_test(res, hidden, lo, hi):
+    """drawn(x, z, y): whether the scenery (but the meshes `hidden`) draws ground at (x, z) near
+    height y (from 3 m under it to 1.5 m over: a roof is no ground), within the box lo, hi (x, z)."""
     import xb2
     names, _ = xb2.resources(bytes(res))
-    lo, hi = centre[:, [0, 2]].min(0) - out - 10, centre[:, [0, 2]].max(0) + out + 10
     tris = [t for i, nm, t in mesh_tris(res, names, lambda nm: True, (*lo, *hi)) if i not in hidden and facing_up(t)]
     cells = {}
     for k, t in enumerate(tris):
         for gx in range(int(np.floor(t[:, 0].min() / 5)), int(np.floor(t[:, 0].max() / 5)) + 1):
             for gz in range(int(np.floor(t[:, 2].min() / 5)), int(np.floor(t[:, 2].max() / 5)) + 1):
                 cells.setdefault((gx, gz), []).append(k)
-    def drawn(x, z, y):  # ground near the road's level (a roof is no ground)
+    def drawn(x, z, y):
         for k in cells.get((int(np.floor(x / 5)), int(np.floor(z / 5))), ()):
             if y - 3 < tris[k][:, 1].mean() < y + 1.5 and L.in_quad((x, z), [(q[0], q[2]) for q in tris[k]]): return True
         return False
+    return drawn
+
+
+def void_ground(res, centre, half, dist, where, hidden, out=40.0):
+    """Ground (strip faces) beside the loop points `where` wherever nothing is drawn: from the wall
+    (`dist`) out `out` m, a little under the road, each side, in runs; drawn ground anywhere across
+    that keeps a point out of them."""
+    lo, hi = centre[:, [0, 2]].min(0) - out - 10, centre[:, [0, 2]].max(0) + out + 10
+    drawn = ground_test(res, hidden, lo, hi)
     left, _ = frame(centre)
     up = np.array([0.0, 1.0, 0.0])
     faces = []
@@ -1062,6 +1069,52 @@ def clear_tunnel(res, centre, half, idx, svb, svb_raw, keep=()):
     return moved
 
 
+TEX_REACH = 100.0  # a cell streams in the textures of what is drawn within this of its stretch
+
+
+def near_textures(pvs, res, ring, reach=TEX_REACH):
+    """The visibility `pvs` with each cell's textures (its second list) cut to those of the meshes it
+    draws within `reach` m of its stretch of the loop and the stretches either side (`ring`: the
+    loop's points in driving order, the cells equal stretches of it from the lap line), the textures
+    of meshes with no positions to go by, and those no mesh of the model takes. Every cell listed
+    all 562 textures the cells together show (the original's take 327 at most): the game could not
+    keep them all, and dropped some for the stx's 32-texel copies (the garage's tin a blur for a
+    while, the guardrails black)."""
+    import struct
+    import xb2
+    names, _ = xb2.resources(bytes(res))
+    head, cells, tail = L.parse_pvs(pvs)
+    n = struct.unpack_from('<I', res, L.MODEL)[0]
+    P = np.asarray(ring, float)
+    P = P[:, [0, 2]] if P.shape[1] == 3 else P
+    texs = {struct.unpack_from('<H', e)[0] for c in cells for e in c[1]}
+    box, tex_of = {}, {}
+    for m in {struct.unpack_from('<H', e)[0] for c in cells for e in c[0]}:
+        if m >= n: continue
+        a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * m)[0]
+        _, _, _, vbytes, vb, stride, _, t0, t1 = struct.unpack_from('<IIIIHHHHH', res, L.MODEL + a)
+        tex_of[m] = {t for t in (t0, t1) if t in texs}
+        if 9 <= vb < len(names) + 9 and stride == 6 and vbytes and vbytes % 24 == 0:
+            v = np.frombuffer(bytes(res[names[vb - 9][3]:names[vb - 9][3] + vbytes]), '<f4').reshape(-1, 6)[:, [0, 2]]
+            if np.all(np.isfinite(v)): box[m] = (v.min(0), v.max(0))
+    always = texs - set().union(*tex_of.values())
+    for m in set(tex_of) - set(box): always |= tex_of[m]
+    out, N, nc = [], len(P), len(cells)
+    for k, lists in enumerate(cells):
+        Q = P[[j % N for j in range((k - 1) * N // nc, (k + 2) * N // nc)]]
+        lo, hi = Q.min(0) - reach, Q.max(0) + reach
+        keep = set(always)
+        for m, (bl, bh) in box.items():
+            if bh[0] < lo[0] or bl[0] > hi[0] or bh[1] < lo[1] or bl[1] > hi[1] or tex_of[m] <= keep: continue
+            if np.min(np.hypot(*(np.clip(Q, bl, bh) - Q).T)) < reach: keep |= tex_of[m]
+        lists = [lists[0], [e for e in lists[1] if struct.unpack_from('<H', e)[0] in keep], lists[2]]
+        out.append(b''.join(struct.pack('<I', len(l)) + b''.join(l) for l in lists))
+    new = head + struct.pack('<I', nc) + b''.join(out) + tail
+    sizes = [len(c[1]) for c in L.parse_pvs(new)[1]]
+    print('textures streamed per cell: %d to %d of the %d listed' % (min(sizes), max(sizes), len(texs)))
+    return new
+
+
 def read_svb(d):
     """quickpreview1.xbp.svb, unpacked: u32 1, a 16-byte id, u32 count, then per buffer u32 resource,
     u32 size and its bytes, the same as the bundle's (vertices, then indices). The small buffers,
@@ -1432,7 +1485,10 @@ def build(disc, mods, preview_png=None, reverse=False):
     if gap:
         floor = tunnel_faces(centre, half, gap)[0]  # the road's asphalt through it
         kerbs.append(floor); mats.append(ASPHALT)
-        for fs, mat in garage.faces(centre, half) + garage.yard_faces(centre, half):  # the shop, its yard, fence and warehouses
+        yu0, yu1, yv0, yv1 = garage.YARD
+        corners = garage.to_world(np.array([[yu0, yv0], [yu0, yv1], [yu1, yv0], [yu1, yv1]]), 0.0)[:, [0, 2]]
+        drawn = ground_test(res_bytes, hide, corners.min(0) - 5, corners.max(0) + 5)
+        for fs, mat in garage.faces(centre, half) + garage.yard_faces(centre, half, drawn):  # the shop, its yard, fence and warehouses
             if fs: kerbs.append(fs); mats.append(mat)
         print('garage: %.0f m by %.0f m, %.1f m high, its road %.0f m' % (garage.U1 - garage.U0, garage.V1 - garage.V0, garage.TOP, 2 * len(gap)))
     # ground where nothing is drawn beside the new stretches (the void showed past the edges)
@@ -1548,6 +1604,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     pvs, sizes = L.loop_pvs(pvs_in, [list(range(0, 8))] * n_cells, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked + sorted(sources - hide), hide=hide,
                             textures=sorted(streamed[0]), buffers=sorted(streamed[1]))
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d meshes' % (len(left), len(hide), sizes[0]))
+    pvs = near_textures(pvs, res_bytes, (loop[4] + loop[5]) / 2)
     cbx = zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.cbx'), 'rb').read())
     dropped = 0
     for link in links:
@@ -1584,7 +1641,9 @@ def build(disc, mods, preview_png=None, reverse=False):
 if __name__ == '__main__':
     if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(sys.argv[2]).split(os.sep)):
         raise SystemExit('%s: a save folder' % sys.argv[2])
-    build(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    only = os.environ.get('CIRCUIT_ONLY')  # testing: 'I' or 'II' alone
+    if only != 'II': build(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    if only == 'I': raise SystemExit
     # and the reverse, as Pacific Shipyards II is Pacific Shipyards': its own track, Hot Lap entry,
     # map tile (46), Pacific Shipyards II's logo and loading screen
     L.NAME, L.TAG = 'Pacific Shipyards Circuit II', 'VancouverLoopReverse'
