@@ -317,6 +317,8 @@ def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_norma
 
 # the yard round the shop: concrete over the void, inside a tin fence; warehouses on its empty lots
 YARD = (-45.0, 262.0, -50.0, 55.0)   # u0, u1, v0, v1
+YARD_GROUND = (-77.0, 262.0, -66.0, 55.0)  # its ground over the void, reaching past its east fence's south end (a
+                                          # wedge of void showed beside side road 04 there)
 YARD_DROP = 0.12                     # under the road and the drawn ground (they cover it where they are)
 YARD_CELL = 4.0                      # its ground in squares this size, laid where none is drawn
 SKIRT = 1.5                          # its edges' drop
@@ -330,9 +332,9 @@ WAREHOUSES = [  # (u0, u1, v0, v1, height): on the yard's empty lots, clear of t
 
 
 def yard_void(centre, drawn):
-    """Which YARD_CELL squares of the yard have no ground drawn (drawn(x, z, y) as
+    """Which YARD_CELL squares of YARD_GROUND have no ground drawn (drawn(x, z, y) as
     shipyardcircuit.ground_test's, at the road's height): a bool array [v row, u column]."""
-    u0, u1, v0, v1 = YARD
+    u0, u1, v0, v1 = YARD_GROUND
     us, vs = np.arange(u0, u1, YARD_CELL), np.arange(v0, v1, YARD_CELL)
     void = np.zeros((len(vs), len(us)), bool)
     for r, v_ in enumerate(vs):
@@ -351,7 +353,7 @@ def yard_faces(centre, half, drawn=None):
     the yard's edge (it lay over the drawn ground, steps and ledges, and the void showed black under
     its edges); the fence (tin, both faces, open where the loop crosses it) and the warehouses (their
     outsides). [(faces, material)]."""
-    u0, u1, v0, v1 = YARD
+    u0, u1, v0, v1 = YARD_GROUND
     up = np.array([0.0, 1, 0])
     us, vs = np.arange(u0, u1, YARD_CELL), np.arange(v0, v1, YARD_CELL)
     void = yard_void(centre, drawn) if drawn is not None else np.ones((len(vs), len(us)), bool)
@@ -408,6 +410,21 @@ def yard_faces(centre, half, drawn=None):
             y = floor_y(centre, np.array([(a + b) / 2]))[0]
             sheds.append(_wall(a, b, n, y - 1.0, y + h, 0.0, every=12.0, tex=(51, 18, y + h + 8)))
     return [(ground + skirts, None), (fence, TIN), (sheds, WAREHOUSE)]
+
+
+def in_yard(xz, pad=0.0):
+    q = to_uv(xz)
+    u0, u1, v0, v1 = YARD
+    return (q[..., 0] > u0 - pad) & (q[..., 0] < u1 + pad) & (q[..., 1] > v0 - pad) & (q[..., 1] < v1 + pad)
+
+
+def fence_faces(a, b, out, y):
+    """A stretch of the yard's fence (tin, both faces) from world (x, z) a to b, `out` the unit
+    (x, z) away from the road, its foot at height y."""
+    g0, u, v = basis()
+    n = (float(np.dot(out, u)), float(np.dot(out, v)))
+    A, B = to_uv(np.asarray(a, float)), to_uv(np.asarray(b, float))
+    return [_wall(A, B, n, y - 1.0, y + FENCE_H, 0.0, inward, every=12.0, tex=(27, 99, y + FENCE_H)) for inward in (False, True)]
 
 
 def yard_collision(col, centre, half):
