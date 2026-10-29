@@ -577,6 +577,41 @@ def void_ground(res, centre, half, dist, where, hidden, out=40.0):
     return faces
 
 
+def edge_ground(drawn, centre, half, dist, where, sp, past=12.0, reach=22.0):
+    """Ground (strip faces, asphalt) at the road's edge beside the loop points `where` wherever
+    nothing is drawn between the edge and `past` m beyond the wall (no more than `reach` m from the
+    edge), out to the last bare probe: void_ground looks 13 m out and more, and the void showed in
+    slivers between the side roads and the lots beside them (outside the corner onto side road 04 a
+    wedge past the wall). Not over the course's road (drawn, in meshes too wide for mesh_tris)."""
+    left, _ = frame(centre)
+    up = np.array([0.0, 1.0, 0.0])
+    faces = []
+    for side in (1, -1):
+        run = []
+        for i in list(where) + [None]:
+            if i is not None:
+                out = min(dist.get((side, i), half[i] + WIDE) + past, half[i] + reach)
+                us = np.arange(half[i] + 0.5, out + 1e-6, 1.0)
+                l2 = left[i] * side
+                pts = [centre[i][[0, 2]] + l2 * u for u in us]
+                bare = [u for u, p in zip(us, pts) if not drawn(p[0], p[1], centre[i][1])]
+                if bare and np.all(L.off_course([(p[0], centre[i][1], p[1]) for p in pts], sp, margin=0.0)):
+                    run.append((i, max(bare) + 0.5)); continue
+            if len(run) >= 2:
+                pairs = []
+                for j, w in run:
+                    l3 = np.array([left[j][0], 0, left[j][1]]) * side
+                    a = centre[j] + l3 * (half[j] - 0.3) + (0, -0.03, 0)
+                    b = centre[j] + l3 * w + (0, -0.03, 0)
+                    pairs.append(((a, up, -32000 + 53.0 * (a[0] % 600), -32000 + 51.7 * (a[2] % 600)),
+                                  (b, up, -32000 + 53.0 * (b[0] % 600), -32000 + 51.7 * (b[2] % 600))))
+                a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
+                if np.dot(np.cross(b0 - a0, a1 - a0), up) > 0: pairs = [(q, p) for p, q in pairs]
+                faces.append([v for pr in pairs for v in pr])
+            run = []
+    return faces
+
+
 def frame(centre):
     """Per loop point the unit vectors (x, z) to the left of the way round and along it."""
     t = np.roll(centre, -1, 0) - np.roll(centre, 1, 0)
@@ -1611,6 +1646,12 @@ def build(disc, mods, preview_png=None, reverse=False):
                 kerbs.append(garage.fence_faces(a[[0, 2]] + out * 1.5, b[[0, 2]] + out * 1.5, out, centre[i_mid][1]))
                 mats.append(garage.TIN); fences += 1
     print('ground over the void beside the road: %d pieces of %d stretches; guardrails on it %d, fences %d' % (len(skirts), len(found), masks, fences))
+    # and at the road's very edge, where it is bare short of what is drawn (outside the garage, and
+    # off the concrete walls' stretch)
+    drawn_ = ground_test(res_bytes, hide, centre[:, [0, 2]].min(0) - 20, centre[:, [0, 2]].max(0) + 20)
+    edges_ = edge_ground(drawn_, centre, half, dist, [i for i in sorted({i for r in runs(off) for i in r}) if not (in_gap_strict[i] or by_concrete[i])], sp)
+    kerbs += [[f] for f in edges_]; mats += [ASPHALT] * len(edges_)
+    print('ground at the road\'s bare edges: %d stretches, %d points' % (len(edges_), sum(len(f) // 2 for f in edges_)))
     # each face simplified, then in pieces the size of buffers the scenery keeps loaded (the svb's):
     # larger ones stream in with their own part of the track only, and were never drawn here
     faces, fmats = [], []
