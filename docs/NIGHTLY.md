@@ -21,7 +21,7 @@ In Git Bash:
 export PATH="/c/Program Files/Go/bin:/c/Users/maste/Downloads/w64devkit/bin:$PATH"
 X="/c/Users/maste/Downloads/extract-xiso-win32-release/Forza Motorsport (World) (En,Ja,Fr,De,Es,It,Zh,Ko).xiso/default.xbe"
 rm -f out/*.c                                   # xbrecomp does not delete files it no longer writes
-go run ./cmd/xbrecomp -xbsdb /c/Users/maste/XbSymbolDatabase -o out/ "$X"
+go run ./cmd/xbrecomp -xbsdb /c/Users/maste/XbSymbolDatabase -entries tools/entries.txt -o out/ "$X"
 make -C runtime GEN=../out -j20
 cd run && XBRT_LOG=1 XBRT_HDD=hdd timeout 120 ../runtime/forza.exe "$X" > log.txt 2>&1
 ```
