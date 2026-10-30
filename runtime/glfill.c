@@ -248,6 +248,8 @@ struct GlProg {
     GLint loc[GL_NLOC];
     GLint vc, sxy, fog; /* a vertex program's: constants, sample scale, fog */
     GlProg *var[4];     /* by gl_frag_variant(), linked when first used; [0] is this one */
+    float (*vc_last)[4]; /* the constants last given this program (glvsh.c sends only the rows that changed) */
+    int vc_rows;         /* 1: u_vc's rows have consecutive locations, so a part can be sent; -1: not */
 };
 
 static GlProg gl_main, *gl_using;

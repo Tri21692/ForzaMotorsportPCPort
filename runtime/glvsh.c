@@ -566,7 +566,21 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     for (int i = 0; i < 192; i++)
         for (int j = 0; j < 4; j++) c[i][j] = f32(constants[i][j]);
     gl_shadow_sync(d, s, c);
-    glUniform4fv(p->vc, 192, &c[0][0]);
+    /* Only the rows that changed since this program last got them: a draw changes a few (the
+     * world matrix), and sending all 192 at every draw was the driver's work on the circuit's
+     * busiest stretch. A program keeps its uniforms, so what it was given last still holds. */
+    if (!p->vc_last) {
+        p->vc_last = calloc(192, sizeof *p->vc_last); /* zeros, as a new program's uniforms are */
+        p->vc_rows = p->vc >= 0 && glGetUniformLocation(p->prog, "u_vc[1]") == p->vc + 1 && glGetUniformLocation(p->prog, "u_vc[191]") == p->vc + 191 ? 1 : -1;
+    }
+    int lo = 0, hi = 191;
+    while (lo <= hi && !memcmp(c[lo], p->vc_last[lo], 16)) lo++;
+    while (hi >= lo && !memcmp(c[hi], p->vc_last[hi], 16)) hi--;
+    if (lo <= hi) {
+        if (p->vc_rows < 0) lo = 0, hi = 191;
+        glUniform4fv(p->vc + lo, hi - lo + 1, &c[lo][0]);
+        memcpy(p->vc_last[lo], c[lo], (size_t)(hi - lo + 1) * 16);
+    }
     float sxy[2] = {(float)d->sx, (float)d->sy};
     glUniform2fv(p->sxy, 1, sxy);
     float fog[4] = {K(SET_FOG_ENABLE) ? 1.0f : 0.0f, (float)K(SET_FOG_MODE), f32(K(SET_FOG_PARAMS)), f32(K(SET_FOG_PARAMS + 4))};
