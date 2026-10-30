@@ -1,0 +1,183 @@
+<title>Forza PC Port Roadmap</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a pit-wall timing sheet. One summary strip, then the task sheet grouped by area, then the key card. */
+:root {
+  --bg: #f3f4f6; --panel: #ffffff; --fg: #16191f; --muted: #5b6270; --line: #d9dce3;
+  --accent: #c2410c; --accent-soft: #fde7da;
+  --next: #1d4ed8; --next-bg: #e0e8fb; --wait: #a16207; --wait-bg: #fbf0d4;
+  --later: #4b5563; --later-bg: #e8eaee; --done: #15803d; --done-bg: #dcf2e3;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111318; --panel: #191c23; --fg: #e8eaef; --muted: #9aa1ae; --line: #2c313b;
+  --accent: #fb8a4c; --accent-soft: #3a2418;
+  --next: #8fb0ff; --next-bg: #1c2a4a; --wait: #f0c463; --wait-bg: #3a3017;
+  --later: #b6bcc7; --later-bg: #262a33; --done: #6fd394; --done-bg: #173323; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111318; --panel: #191c23; --fg: #e8eaef; --muted: #9aa1ae; --line: #2c313b;
+  --accent: #fb8a4c; --accent-soft: #3a2418;
+  --next: #8fb0ff; --next-bg: #1c2a4a; --wait: #f0c463; --wait-bg: #3a3017;
+  --later: #b6bcc7; --later-bg: #262a33; --done: #6fd394; --done-bg: #173323; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 32px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 6vw, 48px); line-height: 1; margin: 0; text-wrap: balance; letter-spacing: .01em; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 24px; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 65ch; margin: 0; }
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.strip div { background: var(--panel); padding: 14px 16px; display: grid; gap: 2px; }
+.strip b { font-family: var(--display); font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.strip span { font-size: 13px; color: var(--muted); }
+.sheet { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; min-width: 680px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tr.group td { font-family: var(--display); font-size: 18px; font-weight: 600; letter-spacing: .03em; background: var(--accent-soft); color: var(--fg); padding-block: 6px; }
+td.task b { font-weight: 600; display: block; }
+td.task span { color: var(--muted); font-size: 13.5px; }
+td.est { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.next { color: var(--next); background: var(--next-bg); }
+.wait { color: var(--wait); background: var(--wait-bg); }
+.later { color: var(--later); background: var(--later-bg); }
+.done { color: var(--done); background: var(--done-bg); }
+section { display: grid; gap: 12px; }
+.note { color: var(--muted); font-size: 13.5px; max-width: 70ch; margin: 0; }
+.keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
+.key { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding-block: 5px; }
+.key span:last-child { color: var(--muted); text-align: right; }
+kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; background: var(--bg); white-space: nowrap; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Forza Motorsport · PC port · as of 26 Oct 2026</div>
+    <h1>Forza PC Port Roadmap</h1>
+    <p class="lede">What's left before the port is ready to hand to other people, with rough working-time estimates. Estimates are hours of work, not calendar time. Investigations like the dark cars can land early or run long.</p>
+  </header>
+
+  <div class="strip">
+    <div><b>17</b><span>tasks left</span></div>
+    <div><b>53–107 h</b><span>estimated work in total</span></div>
+    <div><b>9–18</b><span>nights at the nightly task's pace (11 pm–8 am)</span></div>
+    <div><b>7</b><span>waiting on you</span></div>
+  </div>
+
+  <section>
+    <h2>Task sheet</h2>
+    <div class="sheet">
+      <table>
+        <thead><tr><th>Task</th><th>Status</th><th>Estimate</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="3">Speed and smoothness</td></tr>
+          <tr><td class="task"><b>Race frame rate</b><span>A steady 60 fps through the whole recorded race at 4× scale, the busy start included, with no frame over 25 ms. The emulated screen refresh had been late every other frame (frames of 9 and 24 ms); the GPU thread also does far less work per draw.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Even frame pacing (judder)</b><span>Frames are shown in the order they finish, one per screen refresh: 1,761 of 1,762 race frames exactly one refresh apart. You confirmed the judder in the menus is gone.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Freeze one second into a race</b><span>Fixed: the GPU waited for a signal the game never sent. Frame pacing no longer depends on it.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Pause menu slow to open</b><span>Fixed: each sound the pause stops waited up to 21 ms for the sound chip to hand it back. You confirmed pausing and quitting work.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Softlock when quitting a race</b><span>Seen once more after the pause fix. If it happens again, leave the game frozen for 10 s: a hang detector now writes every thread's state to the log.</span></td><td><span class="pill wait">Your check</span></td><td class="est">2–6 h</td></tr>
+          <tr><td class="task"><b>30 fps mode running at double speed</b><span>Fixed: frames now go at the game's own frame interval.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Short hiccups entering menus</b><span>You report the menus are smooth now.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+
+          <tr class="group"><td colspan="3">Graphics</td></tr>
+          <tr><td class="task"><b>Missing scenery on the hill corner</b><span>Fixed: large draws were cut off after 4,096 vertices. You confirmed the cliff shows.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Frame flickers, grey flashes, missing intro videos</b><span>Fixed along the way while moving the window to GPU drawing.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Black square behind the loading icon</b><span>Fixed again: the frame now always reaches memory before the game draws the icon over it, at almost no cost.</span></td><td><span class="pill done">Done 24 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Suggested line</b><span>Fixed: it is drawn now (and lines and points in general). You confirmed it shows.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>White band on the track logos</b><span>A read-back of memory the game had already reused painted over the Event menu's track pictures. Fixed; you confirmed it.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Dark rear and lower body on the cars</b><span>Fixed: the colour-mixing stages read a value in the wrong order.</span></td><td><span class="pill done">Done 20 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Yellow loading screen</b><span>Fixed in a way that doesn't depend on timing; not seen since.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Texture flicker on scenery</b><span>Fixed: the w-buffer the game asks for, now worked out exactly as xemu does. Pacific Shipyards' buildings and bridge are solid too; you confirmed both.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>NSX rear light panel drawn flat grey</b><span>Its taillight panel shows as flat grey with white blocks, in the race and in My Cars. It was the same before the vinyl fix, so it is older than that.</span></td><td><span class="pill next">Next</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Stripes and over-bright cars in shade</b><span>Fixed: the shade map is cleared in one memory layout and drawn in another, and the second copy kept last frame's depth. You confirmed the car shades like xemu.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Car shadows in the pre-race preview</b><span>Shadow fixes since then may have solved it. Needs a look from you.</span></td><td><span class="pill wait">Your check</span></td><td class="est">1–2 h</td></tr>
+          <tr><td class="task"><b>Dotted leaf edges at 2× scale</b><span>Smooth the trees' cut-out edges (alpha to coverage).</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Black My Cars thumbnails</b><span>Fixed: the game read the picture of a bought or repainted car before the GPU had put it in memory. You confirmed a new car and a repainted one. Tiles saved black before the fix stay black until that car is repainted.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Black menu after the vinyl editor</b><span>Fixed with the thumbnails: the Garage menu draws again when you leave the editor. You confirmed it.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Odd texture on the career loading bar</b><span>Seen once on the loading screen before a career race. Not looked into yet.</span></td><td><span class="pill next">Next</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>Loading icon with a see-through background</b><span>Now and then the spinning icon wipes out the pixels behind it instead of drawing over them. The loading screens lock the shown buffer before drawing the icon on the CPU, and since the My Cars fix each lock first brings the GPU's picture into RAM, so the icon should no longer draw over an older frame. Tell me if you see it again.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+
+          <tr><td class="task"><b>Brightness like the Xbox and xemu</b><span>The game's own exposure (its gamma ramp) was ignored, so races looked dark. Applied now, with a Brightness setting (70% by default) since full strength washed out the HUD.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Sharper car reflections</b><span>The reflection cube map is drawn at the render scale instead of the Xbox's 128 pixels a face.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Smoother picture at high scales</b><span>Shrinking the 4× picture to the screen now averages each pixel's area instead of skipping rows.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Scenery popping in on long tracks</b><span>The track now streams three zones ahead instead of one. You saw it work on the Nürburgring; looking behind still shows some.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Signs and cones appear late</b><span>On Pacific Shipyards they pop in a few tens of metres ahead, where xemu shows them from afar. Many causes ruled out (detail bands, culling, depth, alpha, the runtime's own tweaks): the game itself sends them late here. Next: trace the game's object placement.</span></td><td><span class="pill next">Next</span></td><td class="est">4–8 h</td></tr>
+<tr><td class="task"><b>Projected shadows flash as dark slabs</b><span>At night, cars' street-lamp shadows sometimes draw in the wrong place for a frame (over the bridge). Off in the test launcher until fixed.</span></td><td><span class="pill next">Next</span></td><td class="est">3–6 h</td></tr>
+<tr class="group"><td colspan="3">Controls</td></tr>
+          <tr><td class="task"><b>Keyboard controls</b><span>A stopgap layout, listed below. It works alongside a controller.</span></td><td><span class="pill done">Done today</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Key and button remapping</b><span>Choose your own keys, saved in a settings file. Your feedback on the stopgap layout feeds into this.</span></td><td><span class="pill wait">Your feedback</span></td><td class="est">3–5 h</td></tr>
+
+          <tr class="group"><td colspan="3">PC features</td></tr>
+          <tr><td class="task"><b>Fullscreen and resolution options</b><span>Borderless fullscreen and a choice of render scale.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Settings menu</b><span>30/60 fps, scale and volume from the game window instead of two separate launchers.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+
+          <tr><td class="task"><b>V-Sync on by default</b><span>No tearing, at no cost in frame rate.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr><td class="task"><b>Settings menu tidied</b><span>Brightness added; the list scrolls instead of running over the help text.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr class="group"><td colspan="3">Audio</td></tr>
+          <tr><td class="task"><b>Leftover clicks at the race start</b><span>Down from up to 90 a second to 3–7. Polish the rest.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Reverb and 3D sound positioning</b><span>The Xbox's sound effects processor isn't emulated yet, so tunnels and stands sound flat.</span></td><td><span class="pill later">Later</span></td><td class="est">8–15 h</td></tr>
+
+          <tr class="group"><td colspan="3">Coverage</td></tr>
+          <tr><td class="task"><b>Other tracks, cars and modes</b><span>Mostly Maple Valley so far; Silverstone Short loaded and raced fine in a test. Each new track can turn up its own graphics bugs.</span></td><td><span class="pill later">Later</span></td><td class="est">6–12 h</td></tr>
+          <tr><td class="task"><b>Saves and career progress</b><span>Career progress and settings survive restarts as far as you have seen; you will test it more later.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+
+          <tr><td class="task"><b>Pacific Shipyards loads</b><span>It hit a disc error with three zones streamed ahead: the game's resource heap now gets its own development size, 42.9 MB.</span></td><td><span class="pill done">Done 26 Oct</span></td><td class="est">—</td></tr>
+<tr class="group"><td colspan="3">Custom cars</td></tr>
+          <tr><td class="task"><b>Mods folder</b><span>A <code>mods</code> folder beside the game: a file there loads instead of the disc's copy (replace a car to test quickly).</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Decode Forza's car format</b><span>Started 25 Oct: the archives unpack, the model's parts, vertices and triangles are read (the 240SX renders correctly), and handling is plain XML. Materials, livery textures, damage shapes, hinges and the archive name hash are decoded too. Cabs can be repacked (byte-identical to the disc's), and a recoloured Civic loaded from the mods folder showed green in the game. The car list (Cars.ca2) can be modded too: the runtime updates the installer's checksums so a changed archive passes the disc check, and the shop shows the 240SX's own figures (155 hp, 160 lb-ft, 2,756 lb). Left: light flares and a few unknown fields. See docs/research/cars.md.</span></td><td><span class="pill next">In progress</span></td><td class="est">4–8 h</td></tr>
+          <tr><td class="task"><b>Read NFS Underground cars</b><span>Done 25 Oct: tools/nfsu.py reads the parts (vertices, triangles, texture groups) and the JDLZ-compressed textures; the stock 240SX renders whole and textured.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Read NFS Most Wanted cars</b><span>tools/nfsu.py reads Most Wanted cars too (part names, named materials, real window parts, its texture packs), and the converter handles them: the Chevrolet Cobalt SS is converted and added as its own car at the Chevrolet dealer, with its own engine and sound (a Mini Cooper S's supercharged engine at 205 hp), five MW body kits as front bumpers, two MW hoods and four MW wings. You saw it right in the shop but for the lamps, now fixed. Test it with "Play Forza (Cobalt test).bat".</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Converter</b><span>First version 25 Oct: the NFSU 240SX body on Forza's 240SX (and Civic), painted with the livery, its own lights, Forza's handling. The roof draws now (the template's interior stood out of it; it is fitted under the new roof), the window holes are filled with real glass, its own lights, badges, spoiler, mirrors and stock wheels are on it, and the Civic's cabin fits inside it. Since then: no black wedges on the hatch, the side markers sit flush on the bumper corners, and its Garage icon is posed like the other cars'. Left: the raised pop-up headlight housings show, dents, body kits.</span></td><td><span class="pill wait">Your check</span></td><td class="est">6–12 h</td></tr>
+          <tr><td class="task"><b>240SX windshield and a bought tint</b><span>Not a bug: the windshield does take the tint; from the angle first seen it only looked unchanged. Its part matches the stock Civic's (name, material, vertex data).</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>240SX roof turns grey at random</b><span>The top panel sometimes loses its paint colour. Not looked into yet.</span></td><td><span class="pill next">Next</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Vinyls on the car</b><span>Fixed: the editor draws each layer into the car's paint texture, which is laid out swizzled, and those draws were dropped, so the car showed plain paint. They draw on the GPU now, the paint is cleared there each frame (it had kept every frame's vinyl, a smeared trail), and a phantom depth buffer at address 0 no longer makes the editor rebuild the texture on the CPU every frame (about 1 fps). The vinyl shapes' own texture format draws too. You confirmed it on the Civic. The software renderer still shows no vinyls.</span></td><td><span class="pill done">Done 25 Oct</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Add cars as new entries</b><span>tools/addcar.py copies a car (as the mods folder has it) to a new one of its own: the car list, the database rows, its own name strings in every language, physics, model, wheel, liveries and icon, at an unused car number that no event's AI uses. With --restore the car it came from goes back to the disc's files. Built 25 Oct for the S13 (number 56, the Civic SI restored); the game accepts the archives and boots, not yet checked in the dealer, garage or a race. Test it with "Play Forza (added car test).bat" (the test disk, run\mods_addcar). The game holds 300 cars with numbers 0-299 (found in the executable), so 61 more fit; test copies at 244 and 299 ("Miata 244" at Mazda, "Impreza 299" at Subaru) load. Left: a fallback for a save that owns an added car whose mod is gone.</span></td><td><span class="pill wait">Your check</span></td><td class="est">4–8 h</td></tr>
+
+          <tr class="group"><td colspan="3">Hardware and release</td></tr>
+          <tr><td class="task"><b>Intel integrated graphics pass</b><span>Last, as you asked. NVIDIA and other high-end GPUs come first.</span></td><td><span class="pill later">Last</span></td><td class="est">4–8 h</td></tr>
+          <tr><td class="task"><b>Packaging</b><span>A launcher that points at your own disc copy, plus a short readme. It ships no game files.</span></td><td><span class="pill later">Last</span></td><td class="est">3–6 h</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The totals cover the 15 open tasks with an estimate; rows marked done, and checks with no work estimated, aren't counted. The nightly estimate assumes roughly 6 hours of progress a night.</p>
+  </section>
+
+  <section>
+    <h2>Keyboard controls (stopgap)</h2>
+    <div class="keys">
+      <div class="key"><span><kbd>W</kbd></span><span>Throttle (RT)</span></div>
+      <div class="key"><span><kbd>S</kbd></span><span>Brake (LT)</span></div>
+      <div class="key"><span><kbd>A</kbd> <kbd>D</kbd> or <kbd>←</kbd> <kbd>→</kbd></span><span>Steer</span></div>
+      <div class="key"><span><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></span><span>Menus (D-pad)</span></div>
+      <div class="key"><span><kbd>Space</kbd> or <kbd>Z</kbd></span><span>A</span></div>
+      <div class="key"><span><kbd>X</kbd></span><span>B</span></div>
+      <div class="key"><span><kbd>C</kbd></span><span>X</span></div>
+      <div class="key"><span><kbd>V</kbd></span><span>Y</span></div>
+      <div class="key"><span><kbd>Q</kbd></span><span>White (left shoulder)</span></div>
+      <div class="key"><span><kbd>E</kbd></span><span>Black (right shoulder)</span></div>
+      <div class="key"><span><kbd>Enter</kbd></span><span>Start</span></div>
+      <div class="key"><span><kbd>Esc</kbd></span><span>Back</span></div>
+    </div>
+    <p class="note">Keys only register while the game window has focus. Steering eases to full lock over a quarter second and recentres in a tenth.</p>
+  </section>
+
+  <section>
+    <h2>Debug keys</h2>
+    <div class="keys">
+      <div class="key"><span><kbd>F12</kbd></span><span>Screenshot to <code>run\screenshots\</code></span></div>
+      <div class="key"><span><kbd>F5</kbd></span><span>Culling off</span></div>
+      <div class="key"><span><kbd>F6</kbd></span><span>Depth test off</span></div>
+      <div class="key"><span><kbd>F7</kbd></span><span>Alpha test off</span></div>
+      <div class="key"><span><kbd>F8</kbd></span><span>Depth clip off</span></div>
+      <div class="key"><span><kbd>F9</kbd></span><span>Vertex programs on the CPU</span></div>
+    </div>
+    <p class="note">F5–F9 toggle; the window title lists what's off. They're for finding rendering bugs and make the picture look wrong on purpose.</p>
+  </section>
+</div>

@@ -15,10 +15,19 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "xbrt.h"
 
 /* ---- status codes ---- */
+#ifdef _WIN32 /* windows.h has some of these, typed DWORD */
+#undef STATUS_TIMEOUT
+#undef STATUS_PENDING
+#undef STATUS_INVALID_HANDLE
+#undef STATUS_INVALID_PARAMETER
+#undef STATUS_NO_MEMORY
+#undef STATUS_USER_APC
+#endif
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_TIMEOUT 0x00000102u
 #define STATUS_PENDING 0x00000103u
@@ -37,7 +46,54 @@
 
 /* ---- logging ---- */
 extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
+/* Debugging toggles, flipped live with F5-F9 in the window (display.c):
+ * drawing with one of the GPU's features off, to see what hides a thing. */
+#define RT_DBG_NO_CULL 1u
+#define RT_DBG_NO_DEPTH 2u
+#define RT_DBG_NO_ALPHA 4u
+#define RT_DBG_NO_CLIP 8u
+#define RT_DBG_CPU_VSH 16u
+#define RT_DBG_NO_WBUF 32u /* F2: screen z instead of the w-buffer */
+extern volatile uint32_t rt_debug_keys;
+extern volatile int rt_ram_dump_wanted; /* F4 (display.c): nv2a.c saves the RAM */
+extern volatile int rt_gpu_dump_wanted; /* F3 (display.c): nv2a.c writes a frame's GPU methods */
+void rt_save_constants(const char *path); /* with a screenshot: the vertex constants mid-frame (raster.c) */
+
+/* The player's settings (settings.c, forza.ini). */
+typedef struct {
+    const char *name, *env, *def, *help;
+} RtSetting;
+void rt_settings_load(void);                 /* first thing at start: fills the XBRT_* switches */
+int rt_settings_count(void);
+const RtSetting *rt_setting(int i);
+const char *rt_settings_get(const char *name);
+void rt_settings_set(const char *name, const char *value); /* and saves the file */
+void rt_soundtracks_init(void);              /* soundtrack.c: the music folder onto the hard disk */
+
+/* The settings overlay (overlay.c; drawn by glfill.c). */
+enum { RT_OV_UP, RT_OV_DOWN, RT_OV_LEFT, RT_OV_RIGHT, RT_OV_OK, RT_OV_BACK };
+int rt_overlay_open(void);
+void rt_overlay_toggle(void);
+void rt_overlay_key(int key);
+int rt_overlay_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]); /* 1: the game sees nothing */
+/* A career time trial running (hle_career.c): its three target times, the time so far (ms), the lap done. */
+int rt_tt_hud(uint32_t targets[3], uint32_t *elapsed, int *done);
+int rt_overlay_items(void);
+int rt_overlay_selected(void);
+int rt_overlay_needs_restart(void);
+void rt_overlay_item(int i, const char **label, const char **value, int *live);
+const char *rt_overlay_help(int i);
+void rt_apu_set_volume(float v);
+extern volatile uint8_t rt_gamma[256][3]; /* the DAC palette, D3D's gamma ramp (nv2a.c); applied as shown */
+extern volatile uint32_t rt_gamma_seq;     /* counts palette entries written */
+extern volatile float rt_brightness;      /* XBRT_BRIGHTNESS, or as the overlay set it: how much of the ramp; -1 not read yet */
+float rt_brightness_mix(void);
+extern volatile float rt_draw_distance;       /* XBRT_DRAW_DISTANCE (nv2a.c); 0: not read yet */
+extern volatile int rt_display_fxaa;          /* XBRT_AA: edge smoothing on the shown picture */
+void rt_display_set_fullscreen(int on);
+extern uint32_t rt_frame_interval_at; /* where the game keeps its frame interval in vertical blanks, or 0 */
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void rt_backtrace(XbCtx *c); /* registers and likely return addresses, to stderr */
 void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));
 
 /* ---- memory (mem.c) ----
@@ -56,6 +112,10 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(pr
 #define RT_PHYS_WC 0xF0000000u
 #define RT_PHYS_INSTANCE 0x03FE0000u /* GPU instance memory, 64 KB, then 64 KB padding */
 #define RT_NV2A_BASE 0xFD000000u
+#define RT_APU_BASE 0xFE800000u /* the audio processor's registers, 512 KB */
+#define RT_APU_SIZE 0x00080000u
+#define RT_ACI_BASE 0xFEC00000u /* the AC'97 controller, 4 KB */
+#define RT_ACI_SIZE 0x00001000u
 #define RT_POOL_BASE 0xB0000000u
 #define RT_POOL_LIMIT 0xBF000000u
 #define RT_KDATA_BASE 0xC0000000u
@@ -63,6 +123,10 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) __attribute__((noreturn, format(pr
 #define RT_KFUNC_BASE 0xFFFF0000u
 
 void rt_mem_init(void);
+/* Make [addr, addr+size) usable. A no-op on Linux; on Windows guest memory
+ * is committed on first use, and host calls that write guest memory
+ * (ReadFile) need it committed beforehand. */
+void rt_mem_commit(uint32_t addr, uint32_t size);
 uint32_t rt_user_alloc(uint32_t base, uint32_t size, uint32_t protect); /* 0 on failure */
 int rt_user_free(uint32_t base, uint32_t *size);
 int rt_user_query(uint32_t addr, uint32_t *base, uint32_t *size, uint32_t *protect, uint32_t *state);
@@ -70,6 +134,8 @@ int rt_user_query(uint32_t addr, uint32_t *base, uint32_t *size, uint32_t *prote
 uint32_t rt_contig_alloc(uint32_t size, uint32_t lo, uint32_t hi, uint32_t align);
 void rt_contig_free(uint32_t va);
 uint32_t rt_phys_of(uint32_t va);
+#define RT_PHYS_ALIAS 0x40000000u /* stand-in physical pages of memory outside the 64 MB (rt_phys_of) */
+uint8_t *rt_phys_ptr(uint32_t pa); /* a physical address as devices see it, stand-ins included */
 uint32_t rt_pool_alloc(uint32_t size);
 uint32_t rt_kdata_alloc(uint32_t size);
 void rt_mem_reserve_image(uint32_t base, uint32_t size);
@@ -79,7 +145,7 @@ static inline char *rt_str(uint32_t a) { return (char *)(xb_mem + a); }
 
 /* ---- the loaded XBE (main.c) ---- */
 typedef struct {
-    uint32_t base, entry, thunk, tls_dir;
+    uint32_t base, size, entry, thunk, tls_dir;
     uint32_t tls_size; /* per-thread TLS area, as the kernel computes it */
     char path[1024];   /* host path of default.xbe */
     char dir[1024];    /* its directory: the default disc root */
@@ -88,6 +154,11 @@ extern RtImage rt_image;
 
 /* ---- threads and objects (thread.c) ---- */
 extern pthread_mutex_t rt_gil;
+/* Take the big lock. A thread spinning in guest code hands it over at its
+ * next loop back-edge (xb_preempt), so use this rather than locking
+ * rt_gil directly whenever the caller has work to do. */
+void rt_gil_lock(void);
+void rt_list_guard_pause(int pause); /* hle_listcheck.c: XBRT_LIST_GUARD off around a host read */
 extern pthread_cond_t rt_changed; /* broadcast whenever an object is signalled */
 
 typedef struct RtThread {
@@ -97,21 +168,40 @@ typedef struct RtThread {
     uint32_t handle;
     uint32_t start, arg1, arg2; /* StartRoutine(StartContext1, StartContext2) */
     int terminated;
+    int suspend;  /* suspend count; a thread starts running guest code only at 0 */
+    int started;  /* has begun running guest code */
     uint32_t exit_code;
     pthread_t host;
+    struct { uint32_t routine, context, iosb; } apc[1024]; /* user APCs, run at the next alertable wait (streaming queues many) */
+    int napc;
+    uint32_t last_call, last_from; /* its latest kernel call (ordinal) and caller, for thread dumps */
+    struct RtThread *next_all;      /* every thread started, for thread dumps */
 } RtThread;
 
 extern __thread RtThread *rt_self;
+/* Condition variables time out against RT_COND_CLOCK: monotonic on Linux,
+ * the wall clock on Windows, where winpthreads waits on that. */
+#ifdef _WIN32
+#define RT_COND_CLOCK CLOCK_REALTIME
+#else
+#define RT_COND_CLOCK CLOCK_MONOTONIC
+#endif
+void rt_cond_init(pthread_cond_t *cv);
+void rt_abstime(struct timespec *ts, uint64_t ns_from_now); /* for pthread_cond_timedwait */
+void rt_dpc_wake(void);                                       /* dpc.c: an interrupt is pending */
 RtThread *rt_thread_create(uint32_t stack_size, uint32_t tls_size, uint32_t extra_size);
 void rt_thread_start(RtThread *t);
 void rt_thread_run_main(RtThread *t, uint32_t entry);
 uint64_t rt_now_100ns(void); /* monotonic, Xbox system time units */
+void rt_profile_thread(pthread_t t); /* XBRT_PROFILE (main.c) */
+void rt_sleep_precise(uint64_t ns); /* to well under a millisecond, whatever the timer resolution */
 
 /* Handle table. */
 enum { OBJ_FREE, OBJ_EVENT, OBJ_SEMAPHORE, OBJ_MUTANT, OBJ_THREAD, OBJ_FILE, OBJ_SYMLINK, OBJ_TIMER, OBJ_DIR };
 typedef struct {
     int type;
-    int refs;
+    int refs;           /* the handle, plus ObReferenceObjectByHandle's references */
+    int closed;         /* the handle is closed; references keep the object */
     int signaled;       /* event state, semaphore count, mutant free (1) */
     int manual;         /* manual-reset event */
     int limit;          /* semaphore maximum */
@@ -122,6 +212,12 @@ typedef struct {
     char *path;         /* file, directory or symlink target (host or Xbox path) */
     void *dir;          /* directory listing cursor */
     uint64_t pos;       /* file position */
+    uint32_t file_object; /* guest FILE_OBJECT, made when the game asks for it */
+    int raw;              /* a raw hard disk partition: its number + 1 */
+    int delete_on_close;  /* FileDispositionInformation */
+    char *host;           /* file: host path, for share checks */
+    uint8_t access, share; /* file: SHARE_* bits it uses (read 1, write 2, delete 4) and allows */
+    uint8_t unbuffered;    /* file: opened with FILE_NO_INTERMEDIATE_BUFFERING */
 } RtObject;
 uint32_t rt_handle_new(int type);
 RtObject *rt_handle_get(uint32_t h);
@@ -133,8 +229,21 @@ void rt_handle_close(uint32_t h);
 int rt_wait(int (*ready)(void *), void *arg, uint64_t deadline);
 uint64_t rt_deadline(uint32_t timeout_ptr); /* from a guest PLARGE_INTEGER */
 
+/* User APCs: an I/O call given an ApcRoutine queues one on the calling
+ * thread, which runs it, as ApcRoutine(ApcContext, IoStatusBlock, 0), the
+ * next time it waits alertably. That wait then returns STATUS_USER_APC.
+ * rt_run_user_apcs returns how many ran. */
+#define STATUS_USER_APC 0x000000C0u
+void rt_queue_user_apc(uint32_t routine, uint32_t context, uint32_t iosb);
+int rt_run_user_apcs(XbCtx *c);
+
 /* ---- kernel exports (kernel.c) ---- */
 void rt_kernel_init(void);
+void rt_fibers_init(void); /* hle_fiber.c: fiber stacks */
+void rt_crypto_init(void); /* crypto.c: the Xc* exports */
+void rt_sha1(const uint8_t *p, size_t n, uint8_t out[20]);
+/* inflate.c: the zlib stream at in into out; the bytes written or -1, *used its length */
+long rt_inflate(const uint8_t *in, size_t n, uint8_t *out, size_t cap, size_t *used);
 /* Other files add handlers for their part of the kernel. A handler reads
  * its arguments from the guest stack and returns EAX; see kernel.c. */
 typedef uint32_t (*RtHandler)(XbCtx *c);
@@ -160,12 +269,48 @@ void rt_interrupt_ack(uint32_t irq, void (*ack)(void)); /* called after the ISR 
 extern uint32_t rt_display_fb;            /* AvSetDisplayMode: front buffer, physical */
 extern uint32_t rt_display_mode, rt_display_format, rt_display_pitch;
 
+/* ---- the picture (display.c): window and screenshots ---- */
+void rt_display_init(void);
+void rt_display_compose(uint32_t *out); /* 640x480 xRGB, as the TV would show it */
+#define RT_DISPLAY_MAX (640 * 4 * 480 * 4)
+void rt_display_compose_best(uint32_t *out, int *w, int *h); /* at the drawn resolution when the GPU has it (up to RT_DISPLAY_MAX pixels) */
+int rt_gl_frame(uint32_t fb, uint32_t *out, int max_pixels, int *w, int *h);
+void rt_display_new_frame(void); /* a new drawn-resolution picture: the window shows it now */
+int rt_display_focused(void);           /* the game's window has the keyboard */
+void *rt_display_hwnd(void);            /* the game's window (an HWND), or NULL */
+int rt_display_widescreen(void);        /* the picture is 16:9 (XBRT_WIDESCREEN), else 4:3 */
+void rt_display_fit(int W, int H, int *x, int *y, int *w, int *h); /* the picture's rectangle in a W x H window, letterboxed */
+int rt_display_video_on(void);          /* a movie shows through the video overlay */
+int rt_display_wants_pixels(void);      /* screenshots or a recording need the picture in memory */
+extern volatile uint64_t rt_gl_shown;   /* when the GPU last put a picture in the window itself */
+
+/* ---- the audio processor (apu.c) ---- */
+void rt_apu_init(void);
+void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
+void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
+void nv2a_log_stats(void); /* likewise: the GPU stats line every 5 s at log level 1 */
+void nv2a_zone_lead(void); /* XBRT_ZONE_LEAD, at each pass of the DPC thread, with rt_gil held */
+void rt_thread_dump(void); /* every guest thread's state, to stderr; with rt_gil held */
+uint32_t rt_apu_read(uint32_t off, int bytes);
+void rt_apu_write(uint32_t off, int bytes, uint32_t v);
+uint32_t rt_aci_read(uint32_t off, int bytes);
+void rt_aci_write(uint32_t off, int bytes, uint32_t v);
+
 /* ---- files (file.c) ---- */
 void rt_files_init(void);
+void rt_mods_installer_records(void); /* after rt_files_init: modded .ca2/.xb2 archives pass the installer's check */
 uint32_t rt_symlink(const char *link, const char *target);
-uint32_t rt_open(uint32_t *handle, uint32_t obj_attr, uint32_t disposition, uint32_t options, uint32_t *info);
+uint32_t rt_open(uint32_t *handle, uint32_t obj_attr, uint32_t access, uint32_t share, uint32_t disposition,
+                 uint32_t options, uint32_t *info);
+RtObject *rt_handle_slot(int i);
+void rt_object_release(uint32_t h); /* drop a reference to the object behind h, even once h is closed */ /* the handle table, for walking: NULL past the end or for free slots */
 uint32_t rt_read(uint32_t h, uint32_t buf, uint32_t len, uint32_t offset_ptr, uint32_t *done);
 uint32_t rt_write(uint32_t h, uint32_t buf, uint32_t len, uint32_t offset_ptr, uint32_t *done);
 const char *rt_object_name(uint32_t obj_attr, char *out, size_t n);
+/* The guest FILE_OBJECT for a file or directory handle, and back. */
+uint32_t rt_file_object(uint32_t h);
+uint32_t rt_file_handle(uint32_t file_object);
+void rt_file_delete(const char *xbox_path); /* when its last handle closes */
+void rt_listing_free(void *listing);       /* a directory handle's listing cursor */
 
 #endif

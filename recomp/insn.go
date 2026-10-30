@@ -340,6 +340,10 @@ func (g *gen) inst(in analysis.Inst) {
 			return
 		}
 
+	case x86asm.CPUID:
+		// The runtime answers as the Xbox's CPU.
+		g.line("xb_cpuid(c);")
+		return
 	case x86asm.RDTSC:
 		// The runtime decides what time the game sees.
 		g.line("{ uint64_t t = xb_rdtsc(c); c->eax = (uint32_t)t; c->edx = (uint32_t)(t >> 32); }")
@@ -401,6 +405,9 @@ func (g *gen) inst(in analysis.Inst) {
 
 	case x86asm.CDQ:
 		g.line("c->edx = (uint32_t)((int32_t)c->eax >> 31);")
+		return
+	case x86asm.XLATB: // al = [ebx + al]
+		g.line("c->eax = (c->eax & 0xFFFFFF00u) | xb_rd8(c->ebx + (c->eax & 0xFFu));")
 		return
 	case x86asm.CWDE:
 		g.line("c->eax = (uint32_t)(int32_t)(int16_t)c->eax;")
@@ -506,11 +513,11 @@ func (g *gen) inst(in analysis.Inst) {
 			" c->ebx = xb_pop(c); c->edx = xb_pop(c); c->ecx = xb_pop(c); c->eax = xb_pop(c);")
 		return
 	case x86asm.PUSHFD:
-		g.line("xb_push(c, cf | 2u | pf << 2 | af << 4 | zf << 6 | sf << 7 | 1u << 9 | c->df << 10 | of << 11);")
+		g.line("xb_push(c, cf | 2u | pf << 2 | af << 4 | zf << 6 | sf << 7 | 1u << 9 | c->df << 10 | of << 11 | c->eflags_sys);")
 		return
 	case x86asm.POPFD:
 		g.line("{ uint32_t v = xb_pop(c); cf = v & 1; pf = (v >> 2) & 1; af = (v >> 4) & 1; zf = (v >> 6) & 1;" +
-			" sf = (v >> 7) & 1; c->df = (v >> 10) & 1; of = (v >> 11) & 1; }")
+			" sf = (v >> 7) & 1; c->df = (v >> 10) & 1; of = (v >> 11) & 1; c->eflags_sys = v & 0x240000u; }")
 		return
 	case x86asm.LAHF:
 		g.line("c->eax = (c->eax & 0xFFFF00FFu) | ((cf | 2u | pf << 2 | af << 4 | zf << 6 | sf << 7) << 8);")
@@ -555,6 +562,9 @@ func (g *gen) inst(in analysis.Inst) {
 		n := uint32(0)
 		if imm, ok := a0.(x86asm.Imm); ok {
 			n = uint32(imm)
+		}
+		if g.t.Trace[g.body.Start] {
+			g.line("xb_trace_leave(c, 0x%08X);", g.body.Start)
 		}
 		g.line("c->esp += %d; return;", 4+n)
 		return

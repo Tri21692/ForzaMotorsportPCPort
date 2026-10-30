@@ -5,7 +5,9 @@
 dump/
 game/
 
-# Tool output
+# Tool output, and the runtime's hard disk and working folders
+hdd/
+/run/
 *.map
 /out/
 /xbeinfo
@@ -14,3 +16,11 @@ game/
 
 # Python bytecode from the test helpers
 __pycache__/
+
+# Recorded gameplay (game content): never pushed
+clips/
+*.mp4
+
+# The local launcher (has this PC's disc path)
+/Play Forza*.bat
+blender/

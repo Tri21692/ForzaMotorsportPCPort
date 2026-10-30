@@ -1,0 +1,16 @@
+# XBRT_INPUT_SCRIPT for a fast GPU (the race is loaded by ~50-60 s): START
+# and A through the menus (profile "0" must exist; see new-profile.txt),
+# then A alone (it starts the race from the grid, and on the pause menu
+# Resume is selected), then the throttle. race.txt's timings are for
+# ~30 fps; its later START taps open the pause menu here.
+0 auto 44        # START and A: profile, main menu, Arcade Race, class, car, track
+46 A
+48 A
+50 A
+52 A
+54 A
+56 A
+58 A
+60 A
+62 A
+63 RT 120      # throttle

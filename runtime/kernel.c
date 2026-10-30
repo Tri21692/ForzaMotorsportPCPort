@@ -15,6 +15,11 @@
 
 #include "rt.h"
 
+#ifdef _WIN32
+#define gmtime_r(t, tm) gmtime_s(tm, t)
+#define timegm _mkgmtime
+#endif
+
 #define ARG(i) xb_rd32(c->esp + 4 + 4 * (i))
 #define K(name) static uint32_t k_##name(XbCtx *c)
 
@@ -139,8 +144,8 @@ K(RtlEqualString) {
     return (nocase ? strncasecmp(pa, pb, la) : strncmp(pa, pb, la)) == 0;
 }
 
-K(RtlNtStatusToDosError) {
-    switch (ARG(0)) {
+static uint32_t dos_error(uint32_t status) {
+    switch (status) {
     case STATUS_SUCCESS: return 0;
     case STATUS_OBJECT_NAME_NOT_FOUND: return 2;   /* ERROR_FILE_NOT_FOUND */
     case STATUS_OBJECT_PATH_NOT_FOUND: return 3;   /* ERROR_PATH_NOT_FOUND */
@@ -156,6 +161,19 @@ K(RtlNtStatusToDosError) {
     case STATUS_PENDING: return 997;               /* ERROR_IO_PENDING */
     }
     return 317; /* ERROR_MR_MID_NOT_FOUND */
+}
+
+K(RtlNtStatusToDosError) { return dos_error(ARG(0)); }
+
+/* NtUserIoApcDispatcher(ApcContext, IoStatusBlock, Reserved): the APC
+ * routine XAPI's ReadFileEx/WriteFileEx pass. ApcContext is the caller's
+ * completion routine, called as (dwErrorCode, dwNumberOfBytesTransfered,
+ * lpOverlapped); the IO_STATUS_BLOCK is the start of the OVERLAPPED. */
+K(NtUserIoApcDispatcher) {
+    uint32_t iosb = ARG(1), status = xb_rd32(iosb);
+    uint32_t err = (status >> 30) == 3 ? dos_error(status) : 0; /* NT_ERROR */
+    rt_guest_call(c, ARG(0), 3, err, xb_rd32(iosb + 4), iosb);
+    return 0;
 }
 
 /* TIME_FIELDS: Year, Month, Day, Hour, Minute, Second, Milliseconds, Weekday (u16 each). */
@@ -208,7 +226,15 @@ K(KeQuerySystemTime) {
 
 static int never(void *p) { (void)p; return 0; }
 
+/* An alertable wait runs the thread's queued user APCs first and returns
+ * STATUS_USER_APC if there were any, as the Xbox kernel does. */
+#define ALERTABLE_WAIT(alertable) \
+    do { \
+        if (((alertable) & 0xFF) && rt_run_user_apcs(c)) return STATUS_USER_APC; \
+    } while (0)
+
 K(KeDelayExecutionThread) {
+    ALERTABLE_WAIT(ARG(1));
     uint64_t d = rt_deadline(ARG(2));
     rt_wait(never, NULL, d ? d : rt_now_100ns() + 1);
     return STATUS_SUCCESS;
@@ -254,6 +280,7 @@ K(KeSetEvent) {
 }
 
 K(KeWaitForSingleObject) {
+    ALERTABLE_WAIT(ARG(3));
     uint32_t obj = ARG(0);
     if (!rt_wait(header_ready, (void *)(uintptr_t)obj, rt_deadline(ARG(4)))) return STATUS_TIMEOUT;
     header_consume(obj);
@@ -407,7 +434,10 @@ static uint32_t wait_one(uint32_t h, uint32_t timeout) {
 }
 
 K(NtWaitForSingleObject) { return wait_one(ARG(0), ARG(2)); }
-K(NtWaitForSingleObjectEx) { return wait_one(ARG(0), ARG(3)); }
+K(NtWaitForSingleObjectEx) {
+    ALERTABLE_WAIT(ARG(2));
+    return wait_one(ARG(0), ARG(3));
+}
 
 typedef struct {
     uint32_t n, handles, all, which;
@@ -430,6 +460,7 @@ static int multi_ready(void *p) {
 }
 
 K(NtWaitForMultipleObjectsEx) {
+    ALERTABLE_WAIT(ARG(4));
     MultiWait w = {ARG(0), ARG(1), ARG(2) == 0, 0};
     if (!rt_wait(multi_ready, &w, rt_deadline(ARG(5)))) return STATUS_TIMEOUT;
     for (uint32_t i = 0; i < w.n; i++) {
@@ -449,7 +480,7 @@ K(NtClose) {
 K(NtYieldExecution) {
     pthread_mutex_unlock(&rt_gil);
     sched_yield();
-    pthread_mutex_lock(&rt_gil);
+    rt_gil_lock();
     return STATUS_SUCCESS;
 }
 
@@ -461,8 +492,38 @@ K(PsCreateSystemThreadEx) {
     t->start = ARG(9), t->arg1 = ARG(5), t->arg2 = ARG(6);
     if (out) xb_wr32(out, t->handle);
     if (tid) xb_wr32(tid, t->handle);
-    if (ARG(7) & 0xFF) rt_log("PsCreateSystemThreadEx: CreateSuspended is not supported yet; starting anyway\n");
+    t->suspend = (ARG(7) & 0xFF) ? 1 : 0; /* CreateSuspended */
     rt_thread_start(t);
+    return STATUS_SUCCESS;
+}
+
+/* Suspend counts. A thread created suspended starts once its count drops
+ * to 0. Suspending a thread that is already running guest code is not
+ * supported (it would have to stop at its next kernel call or loop
+ * back-edge); that is logged and only the count is kept. */
+static RtThread *thread_of(uint32_t h) {
+    if (h == 0xFFFFFFFEu) return rt_self; /* NtCurrentThread() */
+    RtObject *o = rt_handle_get(h);
+    return o && o->type == OBJ_THREAD ? o->thread : NULL;
+}
+
+/* NtResumeThread(ThreadHandle, PreviousSuspendCount*) */
+K(NtResumeThread) {
+    RtThread *t = thread_of(ARG(0));
+    if (!t) return STATUS_INVALID_HANDLE;
+    if (ARG(1)) xb_wr32(ARG(1), (uint32_t)t->suspend);
+    if (t->suspend > 0) t->suspend--;
+    pthread_cond_broadcast(&rt_changed);
+    return STATUS_SUCCESS;
+}
+
+/* NtSuspendThread(ThreadHandle, PreviousSuspendCount*) */
+K(NtSuspendThread) {
+    RtThread *t = thread_of(ARG(0));
+    if (!t) return STATUS_INVALID_HANDLE;
+    if (ARG(1)) xb_wr32(ARG(1), (uint32_t)t->suspend);
+    t->suspend++;
+    if (t->started) rt_log("NtSuspendThread: thread %08x is already running; not stopped\n", t->handle);
     return STATUS_SUCCESS;
 }
 
@@ -481,15 +542,50 @@ K(ObReferenceObjectByHandle) {
         return STATUS_SUCCESS;
     }
     RtObject *o = rt_handle_get(ARG(0));
-    if (!o) return STATUS_INVALID_HANDLE;
+    if (!o) {
+        if (getenv("XBRT_DEBUG_BADHANDLE")) rt_backtrace(c);
+        return STATUS_INVALID_HANDLE;
+    }
     o->refs++;
-    /* Threads give their guest ETHREAD; other objects are host-side and
-     * only their handle means anything to the game. */
-    xb_wr32(ARG(2), o->type == OBJ_THREAD ? o->thread->kthread : ARG(0));
+    /* Threads give their guest ETHREAD and files a guest FILE_OBJECT;
+     * other objects are host-side and only their handle means anything
+     * to the game. */
+    uint32_t obj = ARG(0);
+    if (o->type == OBJ_THREAD) obj = o->thread->kthread;
+    else if (o->type == OBJ_FILE || o->type == OBJ_DIR) obj = rt_file_object(ARG(0));
+    xb_wr32(ARG(2), obj);
     return STATUS_SUCCESS;
 }
 
-K(ObfDereferenceObject) { return 0; }
+/* ObfDereferenceObject(Object), fastcall: the object a reference gave out,
+ * a FILE_OBJECT, a thread's KTHREAD or (for the rest) the handle. */
+K(ObfDereferenceObject) {
+    uint32_t obj = c->ecx, h = rt_file_handle(obj);
+    if (!h) {
+        for (int i = 1; i < 4096 && !h; i++) {
+            RtObject *o = rt_handle_slot(i);
+            if (o && o->type == OBJ_THREAD && o->thread && o->thread->kthread == obj) h = 0x100 + 4 * (uint32_t)i;
+        }
+    }
+    rt_object_release(h ? h : obj);
+    return 0;
+}
+
+/* Locking pages for DMA (DSOUND does it for its buffers): guest memory is
+ * always resident, so there is nothing to lock. */
+K(MmLockUnlockBufferPages) { return 0; }
+K(MmLockUnlockPhysicalPage) { return 0; }
+
+/* The file system cache: the host caches files itself, so only the size
+ * the game asked for is remembered. In 4 KB pages. */
+static uint32_t fsc_pages = 64;
+K(FscGetCacheSize) { return fsc_pages; }
+K(FscSetCacheSize) {
+    fsc_pages = ARG(0);
+    rt_log("  file cache: %u pages\n", fsc_pages);
+    return STATUS_SUCCESS;
+}
+K(FscInvalidateIdleBlocks) { return 0; }
 
 /* ---- memory ---- */
 
@@ -527,7 +623,40 @@ K(NtQueryVirtualMemory) {
 
 K(MmAllocateContiguousMemory) { return rt_contig_alloc(ARG(0), 0, RT_PHYS_SIZE - 1, 0x1000); }
 /* (size, LowestAcceptableAddress, HighestAcceptableAddress, Alignment, Protect) */
-K(MmAllocateContiguousMemoryEx) { return rt_contig_alloc(ARG(0), ARG(1), ARG(2), ARG(3)); }
+/* Forza's resource heap (XRM: track streaming, cars, textures) is one
+ * contiguous block it sizes as a sum of fixed budgets, 30.5 MB, kept at
+ * 0x519320 and allocated through XPhysicalAlloc from its heap's setup
+ * (0x46B30, called from 0x64504). Streaming three zones ahead (zone_lead)
+ * outgrew it on Pacific Shipyards, which the game reports as a disc
+ * error. Its own development mode (config +0x2AE) uses 45,000,000 bytes,
+ * 42.9 MB; that fits here, since the executable and the game's virtual
+ * allocations live outside the 64 MB of RAM (about 41 MB of it in use).
+ * Recognised by the size and the return addresses on the stack, and the
+ * size changed in each place the heap's setup reads it. XBRT_XRM_HEAP=0:
+ * the game's own size. */
+#define XRM_SIZE_AT 0x519320u
+#define XRM_BIG 0x2AEA540u
+static void xrm_heap(XbCtx *c) {
+    static int on = -1;
+    if (on < 0) on = !getenv("XBRT_XRM_HEAP") || atoi(getenv("XBRT_XRM_HEAP"));
+    uint32_t size = ARG(0);
+    if (!on || !rt_frame_interval_at || size >= XRM_BIG || xb_rd32(XRM_SIZE_AT) != size) return;
+    uint32_t sp = c->esp;
+    if (xb_rd32(sp) != 0x00266694u || xb_rd32(sp + 0x20) != 0x00046B5Du || xb_rd32(sp + 0x24) != size || xb_rd32(sp + 0x3C) != 0x00064509u ||
+        xb_rd32(sp + 0x40) != size || c->edi != size)
+        return;
+    c->edi = XRM_BIG;            /* the heap's setup keeps it here across the call, then stores it */
+    xb_wr32(sp + 4, XRM_BIG);    /* this call's size */
+    xb_wr32(sp + 0x24, XRM_BIG); /* XPhysicalAlloc's */
+    xb_wr32(sp + 0x40, XRM_BIG); /* the heap setup's */
+    xb_wr32(XRM_SIZE_AT, XRM_BIG);
+    fprintf(stderr, "xbrt: Forza's resource heap %.1f MB, not %.1f\n", XRM_BIG / 1048576.0, size / 1048576.0);
+}
+
+K(MmAllocateContiguousMemoryEx) {
+    xrm_heap(c);
+    return rt_contig_alloc(ARG(0), ARG(1), ARG(2), ARG(3));
+}
 K(MmFreeContiguousMemory) {
     rt_contig_free(ARG(0));
     return 0;
@@ -561,6 +690,13 @@ K(ExQueryPoolBlockSize) { return rt_size_of(ARG(0)); }
 /* ExQueryNonVolatileSetting(index, *type, value, length, *resultLength):
  * the EEPROM settings. Language English, region North America, everything
  * else 0. */
+/* Index 0xFFFF (XC_MAX_ALL) is the whole 256-byte EEPROM. XAPI reads it
+ * when XboxHDKey is all zeros, as here, and keys save signatures with
+ * bytes from it, so it must be the same on every boot: a zeroed EEPROM
+ * with the settings below in their places (factory game region at 0x2C,
+ * video standard at 0x58, language at 0x90). Buffers are always cleared
+ * first; leaving them as they were made signatures differ between boots
+ * ("This profile is damaged"). */
 K(ExQueryNonVolatileSetting) {
     uint32_t index = ARG(0), type = ARG(1), value = ARG(2), len = ARG(3), result = ARG(4);
     uint32_t v = 0;
@@ -568,7 +704,22 @@ K(ExQueryNonVolatileSetting) {
     case 0x07: v = 1; break;     /* XC_LANGUAGE: English */
     case 0x104: v = 1; break;    /* XC_FACTORY_GAME_REGION: North America */
     case 0x10C: v = 0x400100; break; /* XC_FACTORY_AV_REGION: NTSC-M */
+    case 0x08: /* XC_VIDEO_FLAGS: XBRT_WIDESCREEN=1 says the TV is 16:9 (AV_FLAGS_WIDESCREEN) */
+        v = getenv("XBRT_WIDESCREEN") && atoi(getenv("XBRT_WIDESCREEN")) ? 0x00010000u : 0;
+        break;
     }
+    if (index == 0xFFFF) {
+        uint8_t eeprom[256] = {0};
+        uint32_t region = 1, video = 0x400100, language = 1;
+        memcpy(eeprom + 0x2C, &region, 4), memcpy(eeprom + 0x58, &video, 4), memcpy(eeprom + 0x90, &language, 4);
+        uint32_t n = len < 256 ? len : 256;
+        if (value) memcpy(xb_mem + value, eeprom, n);
+        if (type) xb_wr32(type, 3); /* REG_BINARY */
+        if (result) xb_wr32(result, 256);
+        rt_log("  setting %#x: the whole EEPROM\n", index);
+        return len < 256 ? 0xC0000023 /* STATUS_BUFFER_TOO_SMALL */ : STATUS_SUCCESS;
+    }
+    if (value && len) memset(xb_mem + value, 0, len < 256 ? len : 256);
     if (type) xb_wr32(type, 4); /* REG_DWORD */
     if (value && len >= 4) xb_wr32(value, v);
     if (result) xb_wr32(result, 4);
@@ -659,11 +810,17 @@ extern uint32_t k_file_NtQueryVolumeInformationFile(XbCtx *c);
 extern uint32_t k_file_NtQueryFullAttributesFile(XbCtx *c);
 extern uint32_t k_file_NtOpenSymbolicLinkObject(XbCtx *c);
 extern uint32_t k_file_NtQuerySymbolicLinkObject(XbCtx *c);
+extern uint32_t k_file_IoQueryVolumeInformation(XbCtx *c);
+extern uint32_t k_file_NtFsControlFile(XbCtx *c);
+extern uint32_t k_file_NtFlushBuffersFile(XbCtx *c);
+extern uint32_t k_file_NtDeviceIoControlFile(XbCtx *c);
+extern uint32_t k_file_NtQueryDirectoryFile(XbCtx *c);
 
 void xb_kernel(XbCtx *c, uint32_t ordinal) {
     const XbKernelInfo *k = rt_kernel_info(ordinal);
     if (v_tick_count) xb_wr32(v_tick_count, (uint32_t)(rt_now_100ns() / 10000));
     Handler h = ordinal < 400 ? handlers[ordinal] : NULL;
+    if (rt_self) rt_self->last_call = ordinal, rt_self->last_from = xb_rd32(c->esp);
     if (rt_log_level) {
         rt_log("%s(", k ? k->name : "?");
         int n = k ? (k->conv == 1 ? 2 : k->argbytes / 4) : 0;
@@ -709,6 +866,14 @@ static uint32_t data_export(const XbKernelInfo *k) {
         return a;
     }
     if (!strcmp(k->name, "LaunchDataPage")) return rt_kdata_alloc(4); /* NULL: a cold boot */
+    if (!strcmp(k->name, "IdexChannelObject")) {
+        /* The IDE channel's queue of pending requests (a LIST_ENTRY at
+         * +0x28), empty: it points at itself. XAPI's CancelIo walks it at
+         * DISPATCH_LEVEL; zeroed, the walk followed NULL forever. */
+        a = rt_kdata_alloc(0x200);
+        xb_wr32(a + 0x28, a + 0x28), xb_wr32(a + 0x2C, a + 0x28);
+        return a;
+    }
     /* Everything else (object types, keys, hardware info) starts zeroed. */
     return rt_kdata_alloc(0x200);
 }
@@ -775,6 +940,14 @@ void rt_kernel_init(void) {
     H(238, NtYieldExecution);
     H(246, ObReferenceObjectByHandle);
     H(250, ObfDereferenceObject);
+    H(224, NtResumeThread);
+    H(231, NtSuspendThread);
+    H(175, MmLockUnlockBufferPages);
+    H(176, MmLockUnlockPhysicalPage);
+    H(232, NtUserIoApcDispatcher);
+    H(35, FscGetCacheSize);
+    H(36, FscInvalidateIdleBlocks);
+    H(37, FscSetCacheSize);
     H(255, PsCreateSystemThreadEx);
     H(258, PsTerminateSystemThread);
     H(269, RtlCompareMemoryUlong);
@@ -800,6 +973,11 @@ void rt_kernel_init(void) {
     handlers[210] = k_file_NtQueryFullAttributesFile;
     handlers[203] = k_file_NtOpenSymbolicLinkObject;
     handlers[215] = k_file_NtQuerySymbolicLinkObject;
+    handlers[76] = k_file_IoQueryVolumeInformation;
+    handlers[200] = k_file_NtFsControlFile;
+    handlers[198] = k_file_NtFlushBuffersFile;
+    handlers[196] = k_file_NtDeviceIoControlFile;
+    handlers[207] = k_file_NtQueryDirectoryFile;
 
     /* Fill the XBE's kernel thunk table: functions get fake addresses that
      * xb_call_indirect recognises, variables get real storage. */

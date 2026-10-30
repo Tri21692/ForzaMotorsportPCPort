@@ -8,6 +8,8 @@
  */
 #include <string.h>
 
+#include <stdlib.h>
+
 #include "rt.h"
 
 #define ARG(i) xb_rd32(c->esp + 4 + 4 * (i))
@@ -61,8 +63,23 @@ static uint32_t k_KeDisconnectInterrupt(XbCtx *c) {
     return 1;
 }
 
+/* KeSynchronizeExecution(Interrupt, SynchronizeRoutine, SynchronizeContext):
+ * the routine at the interrupt's IRQL, so its ISR cannot run meanwhile.
+ * ISRs run under the same big lock as every guest thread, on the DPC
+ * thread, so raising IRQL is all that is left to do. DSOUND uses it. */
+static uint32_t k_KeSynchronizeExecution(XbCtx *c) {
+    uint32_t in = ARG(0), routine = ARG(1), context = ARG(2);
+    uint32_t kpcr = rt_self->kpcr;
+    uint8_t old = xb_rd8(kpcr + 0x24);
+    xb_wr8(kpcr + 0x24, xb_rd8(in + 0x0C));
+    uint32_t r = rt_guest_call(c, routine, 1, context) & 0xFF;
+    xb_wr8(kpcr + 0x24, old);
+    return r;
+}
+
 void rt_interrupt_raise(uint32_t vector) {
     __atomic_or_fetch(&raised, 1u << (vector - VECTOR_BASE), __ATOMIC_SEQ_CST);
+    rt_dpc_wake();
 }
 
 void rt_interrupts_run(XbCtx *c) {
@@ -129,8 +146,8 @@ static uint32_t k_AvSendTVEncoderOption(XbCtx *c) {
     uint32_t result = ARG(3);
     if (!result) return 0;
     switch (ARG(1)) {
-    case 6: /* AV_QUERY_AV_CAPABILITIES: standard AV pack, NTSC-M */
-        xb_wr32(result, 0x00400101u);
+    case 6: /* AV_QUERY_AV_CAPABILITIES: NTSC-M; the standard AV pack, or with XBRT_WIDESCREEN the HDTV one */
+        xb_wr32(result, getenv("XBRT_WIDESCREEN") && atoi(getenv("XBRT_WIDESCREEN")) ? 0x00410106u : 0x00400101u); /* AV_FLAGS_WIDESCREEN too: the user settings are part of the answer */
         break;
     default:
         xb_wr32(result, 0);
@@ -146,4 +163,5 @@ void rt_hw_init(void) {
     rt_kernel_handler(98, k_KeConnectInterrupt);
     rt_kernel_handler(100, k_KeDisconnectInterrupt);
     rt_kernel_handler(109, k_KeInitializeInterrupt);
+    rt_kernel_handler(153, k_KeSynchronizeExecution);
 }
