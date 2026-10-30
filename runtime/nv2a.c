@@ -369,6 +369,11 @@ uint32_t rt_frame_interval_at;
 int nv2a_depth_dump_at_flip;
 static uint64_t vblank_due; /* when the device loop raises the next vertical blank */
 
+/* A method dump or log running (XBRT_GPU_DUMP, F3, XBRT_RT_LOG, XBRT_LOG=2): every method then
+ * goes through nv2a_method, the pusher's shortcut for index runs off (dump_method, rt_log_method). */
+static int method_dump_on, method_log_on;
+static int nv2a_method_debugging(void) { return method_dump_on || method_log_on || rt_gpu_dump_wanted || rt_log_level >= 2; }
+
 static int run_pushbuf(void) {
     uint32_t put = REG(PFIFO_CACHE1_DMA_PUT), get = REG(PFIFO_CACHE1_DMA_GET);
     if (get == put || nv2a.flip_stall) return 0; /* a flip stall parks like a jump to itself */
@@ -396,6 +401,19 @@ static int run_pushbuf(void) {
         }
         get += 4;
         if (count) { /* a parameter */
+            /* a run of indices (ARRAY_ELEMENT16/32, the method not stepping), as far as written:
+             * to the rasteriser in one go (nv2a_raster_indices) */
+            if (ni && count > 1 && (method == 0x1800 || method == 0x1808) && nv2a.class_[subch] == 0x97 && !tracing && put >= get &&
+                !nv2a_method_debugging()) {
+                uint32_t run = (put - get) / 4 + 1;
+                if (run > count) run = count;
+                const uint32_t *w = (const uint32_t *)phys(base + get - 4);
+                if (run > 1 && nv2a_raster_indices(method, w, run)) {
+                    nv2a.kelvin[method / 4] = w[run - 1], nv2a.kelvin_set[method / 4] = 1;
+                    get += 4 * (run - 1), count -= run;
+                    continue;
+                }
+            }
             nv2a_method(subch, method, word);
             if (!ni) method += 4;
             count--;
@@ -537,6 +555,7 @@ static void dump_method(uint32_t subch, uint32_t method, uint32_t arg) {
         snprintf(path, sizeof path, "screenshots/gpu_%06.1fs.txt", rt_now_100ns() / 1e7);
         if ((f = fopen(path, "w"))) state = 1, first = nv2a.flips + 1, count = 1, fprintf(stderr, "xbrt: GPU frame to %s\n", path);
     }
+    method_dump_on = state == 1 || state == 3;
     if (state != 1 && state != 3) return;
     if (first == ~1u) {
         if (!(nv2a.class_[subch] == 0x97 && method == 0x0210 && arg == on)) return; /* SET_SURFACE_COLOR_OFFSET */
@@ -563,6 +582,7 @@ static void rt_log_method(uint32_t subch, uint32_t method, uint32_t arg) {
     static int on = -1;
     static uint32_t want, st[0x800];
     if (on < 0) on = getenv("XBRT_RT_LOG") && sscanf(getenv("XBRT_RT_LOG"), "%x", &want) == 1;
+    method_log_on = on;
     if (!on || nv2a.class_[subch] != 0x97 || method >= 0x2000) return;
     st[method >> 2] = arg;
     if (st[0x0210 >> 2] != want) return;
@@ -1026,6 +1046,14 @@ void nv2a_log_stats(void) {
         memcpy(lt, prof_t, sizeof lt), ln = prof_n, lv = prof_verts, lf = raster_t_fetch;
     }
     fprintf(stderr, "[%10.3f] nv2a: waiting for the driver after %u traps: %.1f s\n", rt_now_100ns() / 1e7, nv2a.traps, trap_t_wait / 1e7);
+    {
+        extern uint64_t vc_hits, vc_fills, vc_skips, vc_far, vc_first, vc_bytes;
+        static uint64_t lh, lf, ls, lr, l1;
+        fprintf(stderr, "[%10.3f] nv2a: vertex cache: %llu hits, %llu filled, %llu left out (changing), %llu too far to check, %llu seen once; %llu MB\n",
+                rt_now_100ns() / 1e7, (unsigned long long)(vc_hits - lh), (unsigned long long)(vc_fills - lf), (unsigned long long)(vc_skips - ls),
+                (unsigned long long)(vc_far - lr), (unsigned long long)(vc_first - l1), (unsigned long long)(vc_bytes >> 20));
+        lh = vc_hits, lf = vc_fills, ls = vc_skips, lr = vc_far, l1 = vc_first;
+    }
     fprintf(stderr, "[%10.3f] nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
             "PATT_COLOR0 %08x, intr %08x, scanout %08x\n", rt_now_100ns() / 1e7, nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped,
             nv2a.clears, nv2a.traps, REG(PFIFO_CACHE1_DMA_GET), REG(PFIFO_CACHE1_DMA_PUT), REG(0x400B10), REG(PGRAPH_INTR),

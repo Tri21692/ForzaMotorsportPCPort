@@ -194,6 +194,7 @@ void rt_thread_start(RtThread *t);
 void rt_thread_run_main(RtThread *t, uint32_t entry);
 uint64_t rt_now_100ns(void); /* monotonic, Xbox system time units */
 void rt_profile_thread(pthread_t t); /* XBRT_PROFILE (main.c) */
+void rt_profile_game_thread(pthread_t t); /* XBRT_PROFILE_GAME (main.c) */
 void rt_sleep_precise(uint64_t ns); /* to well under a millisecond, whatever the timer resolution */
 
 /* Handle table. */
@@ -289,6 +290,7 @@ void rt_apu_init(void);
 void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
 void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
 void nv2a_log_stats(void); /* likewise: the GPU stats line every 5 s at log level 1 */
+int nv2a_raster_indices(uint32_t method, const uint32_t *w, uint32_t n); /* raster.c: a run of ARRAY_ELEMENT16/32 at once */
 void nv2a_zone_lead(void); /* XBRT_ZONE_LEAD, at each pass of the DPC thread, with rt_gil held */
 void rt_thread_dump(void); /* every guest thread's state, to stderr; with rt_gil held */
 uint32_t rt_apu_read(uint32_t off, int bytes);

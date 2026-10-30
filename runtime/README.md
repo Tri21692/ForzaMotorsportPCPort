@@ -53,7 +53,9 @@ first build takes a while.
 | `XBRT_GL_SURF_LOG` | `1`: each GPU framebuffer as it is made (address, size, swizzled or not, depth) | off |
 | `XBRT_RT_LOG` | `<hex offset>`: each draw (program, textures) and clear into that colour offset, all session (`2a29300`: the paint shop's livery); the RAM under the first 8 draws' textures to `screenshots/rt_<draw>_<stage>.bin` | off |
 | `XBRT_F4_AT` | `<seconds>`: presses F4 once at that time (unattended runs) | off |
-| `XBRT_PROFILE` | `<file>`: where the device thread spends its time, sampled every millisecond (the instruction and two callers), rewritten every 5 s; a `base` line first, for addr2line | off |
+| `XBRT_PROFILE` | `<file>`: where the device thread spends its time, sampled every millisecond (the instruction and two callers), rewritten every 5 s; a `base` line first, for addr2line; samples outside the exe name their DLL | off |
+| `XBRT_PROFILE_GAME` | `<file>`: the same for each guest thread, as `<file>.<n>.txt` in the order they start (1: the game's main thread) | off |
+| `XBRT_GL_VCACHE` | `0`: no vertex cache (each draw's vertices fetched and uploaded every frame, as before 30 Oct; the scenery's were a fifth of the device thread) | 1 |
 | `XBRT_GL_SWZ_SCALE` | `0`: swizzled framebuffers (the cars' reflection cube faces, the shade map, the vinyl editor's livery) at the Xbox's size instead of the render scale | 1 |
 | `XBRT_DRAW_DISTANCE` | `1`-`8`: Forza's tree, reflection and trackside-detail distances times this, changed in memory after each track sets them (its .ini files are hash-checked). Objects still appear where the track's visibility sets say | 1 |
 | `XBRT_ZONE_LEAD` | `1`-`8`: how many track zones ahead of the car Forza keeps loaded (tracklist.xml's ZoneWindowLeadCount, 1 on every track), set in the parsed table, which is checked again before every write and found again when the game rebuilds it; against scenery streaming in in view; `zone_lead` in forza.ini. A mods folder can set it in tracklist.xml itself instead (`tools/moddisc.py --zone-lead`) | 3 |
@@ -62,6 +64,7 @@ first build takes a while.
 | `XBRT_LIST_CHECK` | `1`: logs what the fixes to the game's array list and heap catch (hle_listcheck.c), the list out of order, and walks caused by a failed malloc | off |
 | `XBRT_LIST_GUARD` | `1`: keeps the game's array list read-only and logs any write from elsewhere, with the host address and the guest's stack (slow; how the zone lead's writes into freed memory were found) | off |
 | `XBRT_HEAP_WALK` | `<n>`: checks the game's whole heap every n-th malloc or free | off |
+| `XBRT_LIST_FIXES` | `0`: the game's array list and heap without hle_listcheck.c's fixes, to tell whether one changes what the game does | 1 |
 | `XBRT_GL_WBARY` | `0`: the w-buffer's w interpolated with perspective instead of as the NV2A does (linear in screen space over the whole triangle, through GL_NV_fragment_shader_barycentric where the GPU has it) | 1 |
 | `XBRT_GL_WBUFFER` | `0`: screen z in the depth buffer instead of the w-buffer Forza asks for (distant road lines, kerbs and signs flicker) | 1 |
 | `XBRT_FLICKER` | `<from s>:<for s>:<out.ppm>`: counts pixels that jump for one shown frame and come back, logs them a frame, and maps them over the last frame (needs `XBRT_SCREENSHOT`, with `XBRT_SCREENSHOT_FROM` past the end) | off |

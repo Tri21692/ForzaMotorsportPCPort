@@ -295,6 +295,138 @@ static void gl_shadow_sync(const DrawState *d, const GlSurf *s, float c[192][4])
  * vertex upload, constants, gl_frag_state, the draw call). */
 uint64_t prof_t[6], prof_n, prof_verts;
 
+/* The vertex cache: a draw from the arrays (its indices recorded by vert_index) keeps its fetched,
+ * packed vertices and its index list in GPU buffers, found again by the indices, the attributes'
+ * places and formats (and the constant ones' values), and used while the bytes they come from
+ * hash the same. The scenery draws the same each frame: fetching every vertex again (fetch_attr,
+ * vert_index) and uploading it was a fifth of the device thread on the circuit's slow stretches.
+ * A draw whose bytes change three times running (particles, the car's own) is left out for a
+ * while. XBRT_GL_VCACHE=0: off. */
+#define VC_SLOTS 16384
+#define VC_REACH (1u << 20) /* a draw reading more than this much memory is not checked each time */
+typedef struct {
+    uint64_t key, src, sparse, last;
+    GLuint vbo, ibo;
+    int k, misses, skip, uses;
+    size_t bytes;
+} VcEntry;
+static VcEntry vc[VC_SLOTS];
+static uint64_t vc_clock;
+uint64_t vc_bytes, vc_hits, vc_fills, vc_skips, vc_far, vc_first; /* for the stats line (nv2a.c) */
+static uint32_t vc_lo, vc_hi; /* the indices' range, from vc_find for vc_source */
+
+static uint64_t vc_mix(uint64_t h, uint64_t v) {
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    return h * 0xFF51AFD7ED558CCDull;
+}
+
+static void vc_drop(VcEntry *e) {
+    if (e->vbo) glDeleteBuffers(1, &e->vbo), glDeleteBuffers(1, &e->ibo), vc_bytes -= e->bytes;
+    memset(e, 0, sizeof *e);
+}
+
+/* The draw's entry (found, or a free or least recently used one to fill), or NULL: off, or left
+ * out for now. */
+static VcEntry *vc_find(int n, int prim, const int *used, int m) {
+    static int on = -1;
+    if (on < 0) on = !getenv("XBRT_GL_VCACHE") || atoi(getenv("XBRT_GL_VCACHE"));
+    if (!on || n < 16) return NULL;
+    uint64_t key = vc_mix(hash_bytes((const uint8_t *)vidx, (uint32_t)n * 4), (uint64_t)n << 8 | (uint64_t)prim);
+    for (int j = 0; j < m; j++) {
+        int f = fattr_of[used[j]];
+        if (f < 0) {
+            key = vc_mix(key, hash_bytes((const uint8_t *)cur.a[used[j]], 16) ^ (uint64_t)used[j] << 56);
+            continue;
+        }
+        key = vc_mix(key, (uint64_t)fattr[f].base << 32 | fattr[f].stride);
+        key = vc_mix(key, (uint64_t)used[j] << 16 | (uint64_t)fattr[f].type << 8 | fattr[f].size);
+    }
+    vc_clock++;
+    VcEntry *pick = NULL;
+    for (int p = 0; p < 8; p++) {
+        VcEntry *e = &vc[(key + (uint64_t)p) & (VC_SLOTS - 1)];
+        if (e->key == key && e->last) {
+            e->last = vc_clock;
+            if (e->skip) return vc_skips++, e->skip--, NULL;
+            return e;
+        }
+        if (!pick || e->last < pick->last) pick = e;
+    }
+    /* A draw is let in the second time it is seen: some 50 a frame came new each time (geometry
+     * the game writes afresh, at another place each frame) and filled the cache for nothing. */
+    static uint64_t seen[VC_SLOTS];
+    uint64_t *was_seen = &seen[(key ^ key >> 29) & (VC_SLOTS - 1)];
+    if (*was_seen != key) {
+        *was_seen = key, vc_first++;
+        return NULL;
+    }
+    if (vc_bytes > (512u << 20)) { /* too much on the GPU: what was not drawn lately goes */
+        static int said;
+        size_t was = vc_bytes;
+        for (int i = 0; i < VC_SLOTS; i++)
+            if (vc[i].last && vc[i].last + 40000 < vc_clock) vc_drop(&vc[i]); /* some 20 frames */
+        if (vc_bytes > (384u << 20))
+            for (int i = 0; i < VC_SLOTS; i++) vc_drop(&vc[i]);
+        if (said++ < 20) fprintf(stderr, "xbrt: vertex cache: %zu MB on the GPU, %zu MB after dropping the oldest\n", was >> 20, (size_t)vc_bytes >> 20);
+    }
+    vc_drop(pick);
+    pick->key = key, pick->last = vc_clock;
+    uint32_t lo = UINT32_MAX, hi = 0;
+    for (int i = 0; i < n; i++) {
+        if (vidx[i] < lo) lo = vidx[i];
+        if (vidx[i] > hi) hi = vidx[i];
+    }
+    vc_lo = lo, vc_hi = hi;
+    return pick;
+}
+
+/* The hash of the memory the draw's attributes come from (each attribute's span over the indices'
+ * range, overlapping spans once), or 0 when that is more than VC_REACH: all of it, or (sparse) 64
+ * bytes of every 2 KB, as textures are checked. Hashing all of it at every draw was half of what
+ * the cache saved. */
+static uint64_t vc_source(int n, const int *used, int m, int sparse) {
+    if (!vc_hi && !vc_lo) { /* found, not filled now: the range again */
+        uint32_t lo = UINT32_MAX, hi = 0;
+        for (int i = 0; i < n; i++) {
+            if (vidx[i] < lo) lo = vidx[i];
+            if (vidx[i] > hi) hi = vidx[i];
+        }
+        vc_lo = lo, vc_hi = hi;
+    }
+    uint32_t a[16], b[16];
+    int nr = 0;
+    for (int j = 0; j < m; j++) {
+        int f = fattr_of[used[j]];
+        if (f < 0) continue;
+        uint32_t s0 = fattr[f].base + vc_lo * fattr[f].stride, s1 = fattr[f].base + vc_hi * fattr[f].stride + 16;
+        int r = 0;
+        for (; r < nr; r++)
+            if (s0 <= b[r] && s1 >= a[r]) break;
+        if (r < nr) a[r] = s0 < a[r] ? s0 : a[r], b[r] = s1 > b[r] ? s1 : b[r];
+        else a[nr] = s0, b[nr] = s1, nr++;
+    }
+    vc_lo = vc_hi = 0;
+    uint64_t h = 0x84222325CBF29CE4ull;
+    uint32_t total = 0;
+    for (int r = 0; r < nr; r++) {
+        if (b[r] - a[r] > VC_REACH || (total += b[r] - a[r]) > VC_REACH) return 0;
+        h = vc_mix(h, sparse ? hash_sparse(phys(a[r]), b[r] - a[r]) : hash_bytes(phys(a[r]), b[r] - a[r]));
+    }
+    return h | 1;
+}
+
+static void vc_store(VcEntry *e, uint64_t src, uint64_t sparse, const float *packed, size_t bytes, const GLuint *idx, int k) {
+    if (!e->vbo) glGenBuffers(1, &e->vbo), glGenBuffers(1, &e->ibo);
+    else vc_bytes -= e->bytes;
+    glBindBuffer(GL_ARRAY_BUFFER, e->vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)bytes, packed, e->misses ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
+    glBindVertexArray(gl_vsh_vao); /* the element buffer is the vertex array's */
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, e->ibo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)k * (GLsizeiptr)sizeof(GLuint), idx, GL_STATIC_DRAW);
+    e->src = src, e->sparse = sparse, e->uses = 0, e->k = k, e->bytes = bytes + (size_t)k * sizeof(GLuint);
+    vc_bytes += e->bytes;
+}
+
 static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     if (gl_ready < 0) gl_ready = gl_setup();
     if (!gl_ready || n < 1) return gl_ready ? 1 : 0;
@@ -371,7 +503,6 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_vsh_ibo);
     }
     glBindVertexArray(gl_vsh_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, gl_vsh_vbo);
     /* Only the attributes the program reads, packed: all sixteen were
      * 256 bytes a vertex, some 60 MB a frame in a race. */
     static float *packed;
@@ -381,29 +512,54 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     for (int a = 0; a < NATTR; a++)
         if (v->inputs & (1u << a)) used[m++] = a;
     if (!m) used[m++] = 0;
-    if (n * m * 4 > packed_cap) packed_cap = n * m * 4, packed = realloc(packed, (size_t)packed_cap * sizeof *packed);
-    if (deferred) { /* straight from the arrays (raster.c, vert_index) */
-        for (int j = 0; j < m; j++) {
-            int f = fattr_of[used[j]];
-            float *out = packed + j * 4;
-            if (f < 0)
-                for (int i = 0; i < n; i++) memcpy(out + i * m * 4, cur.a[used[j]], 16);
-            else
-                for (int i = 0; i < n; i++) fetch_attr(&fattr[f], phys(fattr[f].base + vidx[i] * fattr[f].stride), out + i * m * 4);
-        }
-    } else
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * m * 16, packed, GL_STREAM_DRAW);
+    /* A draw from the arrays that drew the same last time takes its vertices and indices from the
+     * cache, already on the GPU (vc_find). */
+    VcEntry *ce = deferred ? vc_find(n, prim, used, m) : NULL;
+    uint64_t src = 0;
+    int hit = 0;
+    uint64_t sparse = 0;
+    if (ce) {
+        /* a sample of the bytes at each use, all of them every 16th (and when filling) */
+        int full = !ce->vbo || ++ce->uses % 16 == 0;
+        sparse = vc_source(n, used, m, 1);
+        if (full) src = vc_source(n, used, m, 0);
+        if (!sparse || (full && !src)) ce = NULL, vc_far++; /* too much of memory to check each time */
+        else if (ce->vbo && ce->sparse == sparse && (!full || ce->src == src) && ce->k == k) hit = 1, ce->misses = 0, vc_hits++;
+        else if (ce->vbo && ++ce->misses >= 3) ce->skip = 64, ce = NULL; /* changing every time: drawn as before for a while */
+        else if (!full) src = vc_source(n, used, m, 0);
+    }
+    if (!hit) {
+        if (n * m * 4 > packed_cap) packed_cap = n * m * 4, packed = realloc(packed, (size_t)packed_cap * sizeof *packed);
+        if (deferred) { /* straight from the arrays (raster.c, vert_index) */
+            for (int j = 0; j < m; j++) {
+                int f = fattr_of[used[j]];
+                float *out = packed + j * 4;
+                if (f < 0)
+                    for (int i = 0; i < n; i++) memcpy(out + i * m * 4, cur.a[used[j]], 16);
+                else
+                    for (int i = 0; i < n; i++) fetch_attr(&fattr[f], phys(fattr[f].base + vidx[i] * fattr[f].stride), out + i * m * 4);
+            }
+        } else
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
+    }
+    if (ce) {
+        if (!hit) vc_fills++, vc_store(ce, src, sparse, packed, (size_t)n * m * 16, idx, k);
+        glBindBuffer(GL_ARRAY_BUFFER, ce->vbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ce->ibo);
+    } else {
+        glBindBuffer(GL_ARRAY_BUFFER, gl_vsh_vbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_vsh_ibo);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * m * 16, packed, GL_STREAM_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)k * (GLsizeiptr)sizeof(GLuint), idx, GL_STREAM_DRAW);
+    }
     if (v->inputs != last_inputs) {
         for (int a = 0; a < NATTR; a++) glDisableVertexAttribArray((GLuint)a);
-        for (int j = 0; j < m; j++) {
-            glVertexAttribPointer((GLuint)used[j], 4, GL_FLOAT, GL_FALSE, m * 16, (void *)(uintptr_t)(j * 16));
-            glEnableVertexAttribArray((GLuint)used[j]);
-        }
+        for (int j = 0; j < m; j++) glEnableVertexAttribArray((GLuint)used[j]);
         last_inputs = v->inputs;
     }
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)k * (GLsizeiptr)sizeof(GLuint), idx, GL_STREAM_DRAW);
+    /* the attributes in the buffer bound now (the cache's or the stream's) */
+    for (int j = 0; j < m; j++) glVertexAttribPointer((GLuint)used[j], 4, GL_FLOAT, GL_FALSE, m * 16, (void *)(uintptr_t)(j * 16));
     uint64_t p3 = rt_now_100ns();
 
     float c[192][4];

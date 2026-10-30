@@ -238,6 +238,7 @@ void rt_thread_start(RtThread *t) {
     pthread_attr_init(&a);
     pthread_attr_setstacksize(&a, 64u << 20); /* deep guest call chains run on the host stack */
     if (pthread_create(&t->host, &a, thread_main, t) != 0) rt_fatal(NULL, "pthread_create failed");
+    rt_profile_game_thread(t->host);
     pthread_attr_destroy(&a);
 }
 

@@ -47,6 +47,14 @@ static int check_on(void) {
     return on;
 }
 
+/* XBRT_LIST_FIXES=0: the game as it was (each fix below off), to tell whether one changes what the
+ * game does. */
+static int fixes_on(void) {
+    static int on = -1;
+    if (on < 0) on = !getenv("XBRT_LIST_FIXES") || atoi(getenv("XBRT_LIST_FIXES"));
+    return on;
+}
+
 static void guard_open(void);
 static void guard_close(void);
 
@@ -205,7 +213,7 @@ L_002714CE:;
     xb_push(c, 0x002714F0u); f_00271110(c);
     /* Listed already: the game added it again, and one removal then left it listed after the
      * object was gone. Now it is listed once. */
-    if ((int32_t)c->eax >= 0 && (int32_t)c->eax < (int32_t)xb_rd32(0x56F860) && xb_rd32(xb_rd32(0x56F858) + 4 * c->eax) == obj) {
+    if (fixes_on() && (int32_t)c->eax >= 0 && (int32_t)c->eax < (int32_t)xb_rd32(0x56F860) && xb_rd32(xb_rd32(0x56F858) + 4 * c->eax) == obj) {
         listed_twice++;
         { uint32_t v = 0x5E5BC8u; xb_push(c, v); }
         xb_push(c, 0x00271512u); xb_kernel(c, 294); /* RtlLeaveCriticalSection */
@@ -291,6 +299,7 @@ L_00271378:;
     /* Not listed: the game went on to shift the whole list down from place -1 (writing its first
      * entry over the word before the list, the heap's header of the list's block, and dropping
      * that entry from the list) and to count one less. Now nothing is changed. */
+    if (!fixes_on()) { c->eax = 0xFFFFFFFFu; goto L_0027137B; }
     { uint32_t v = xb_pop(c); c->esi = (uint32_t)(v); }
     unlisted_none++;
     goto L_unlist_none;
@@ -622,7 +631,7 @@ void f_00059560(XbCtx *c) {
     uint32_t p = xb_rd32(c->esp + 4);
     uint32_t *at = p ? live_slot(p, 0) : 0, size = at ? live_size[at - live_at] : 0;
     if (at) *at = 1;
-    if (p) unlist_inside(c, p, size ? size : 1);
+    if (p && fixes_on()) unlist_inside(c, p, size ? size : 1);
     game_free(c);
 }
 
@@ -693,7 +702,7 @@ void f_0026A438(XbCtx *c) {
     uint32_t heap = xb_rd32(c->esp + 4), p = xb_rd32(c->esp + 12);
     if (heap == HEAP && p) {
         int on = check_on();
-        if (!(xb_rd8(p - 11) & 1)) {  /* its header: the 16 bytes before it, flags at +5 (1: in use) */
+        if (fixes_on() && !(xb_rd8(p - 11) & 1)) {  /* its header: the 16 bytes before it, flags at +5 (1: in use) */
             static int said;
             if (on && said++ < 20) {
                 fprintf(stderr, "xbrt: list check: block %08x freed again (header %08x %08x); stack:", p, xb_rd32(p - 16), xb_rd32(p - 12));

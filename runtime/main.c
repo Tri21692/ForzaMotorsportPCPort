@@ -241,22 +241,34 @@ void rt_sleep_precise(uint64_t ns) {
  * debugger attaching to sample stopped the game long enough to skew it. */
 #ifdef _WIN32
 #define PROF_SLOTS 65536
-static struct { uint64_t pc[3]; uint32_t n; } prof_tab[PROF_SLOTS];
+typedef struct { uint64_t pc[3]; uint32_t n; } ProfSlot;
+typedef struct { HANDLE th; char path[1024]; ProfSlot *tab; } Prof;
 
-static void prof_write(const char *path) {
-    FILE *f = fopen(path, "w");
+static void prof_write(Prof *p) {
+    FILE *f = fopen(p->path, "w");
     if (!f) return;
     fprintf(f, "base %llx\n", (unsigned long long)(uintptr_t)GetModuleHandleW(NULL));
     for (int i = 0; i < PROF_SLOTS; i++)
-        if (prof_tab[i].n)
-            fprintf(f, "%u %llx %llx %llx\n", prof_tab[i].n, (unsigned long long)prof_tab[i].pc[0], (unsigned long long)prof_tab[i].pc[1],
-                    (unsigned long long)prof_tab[i].pc[2]);
+        if (p->tab[i].n) {
+            /* a sample outside the exe: the module it is in (a wait in ntdll, the GL driver...) */
+            char mod[MAX_PATH] = "";
+            HMODULE m = NULL;
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCSTR)(uintptr_t)p->tab[i].pc[0], &m) && m != GetModuleHandleW(NULL) && GetModuleFileNameA(m, mod, sizeof mod)) {
+                char *b = strrchr(mod, '\\');
+                if (b) memmove(mod, b + 1, strlen(b));
+            } else {
+                mod[0] = 0;
+            }
+            fprintf(f, "%u %llx %llx %llx%s%s\n", p->tab[i].n, (unsigned long long)p->tab[i].pc[0], (unsigned long long)p->tab[i].pc[1],
+                    (unsigned long long)p->tab[i].pc[2], mod[0] ? " " : "", mod);
+        }
     fclose(f);
 }
 
 static void *prof_main(void *arg) {
-    HANDLE th = arg;
-    const char *path = getenv("XBRT_PROFILE");
+    Prof *pr = arg;
+    HANDLE th = pr->th;
     uint64_t last = rt_now_100ns();
     for (;;) {
         rt_sleep_precise(1000000);
@@ -278,21 +290,44 @@ static void *prof_main(void *arg) {
         ResumeThread(th);
         uint64_t h = (pc[0] * 0x9E3779B97F4A7C15ull ^ pc[1] * 0xC2B2AE3D27D4EB4Full ^ pc[2]) >> 48;
         for (int probe = 0; probe < 64; probe++, h = (h + 1) % PROF_SLOTS)
-            if (!prof_tab[h].n || !memcmp(prof_tab[h].pc, pc, sizeof pc)) {
-                memcpy(prof_tab[h].pc, pc, sizeof pc), prof_tab[h].n++;
+            if (!pr->tab[h].n || !memcmp(pr->tab[h].pc, pc, sizeof pc)) {
+                memcpy(pr->tab[h].pc, pc, sizeof pc), pr->tab[h].n++;
                 break;
             }
-        if (rt_now_100ns() - last > 50000000) last = rt_now_100ns(), prof_write(path);
+        if (rt_now_100ns() - last > 50000000) last = rt_now_100ns(), prof_write(pr);
     }
+    prof_write(pr);
     return NULL;
+}
+
+static void prof_start(pthread_t t, const char *path) {
+    Prof *pr = calloc(1, sizeof *pr);
+    pr->tab = calloc(PROF_SLOTS, sizeof *pr->tab);
+    pr->th = pthread_gethandle(t);
+    snprintf(pr->path, sizeof pr->path, "%s", path);
+    pthread_t p;
+    pthread_create(&p, NULL, prof_main, pr);
 }
 #endif
 
 void rt_profile_thread(pthread_t t) {
 #ifdef _WIN32
-    if (!getenv("XBRT_PROFILE")) return;
-    pthread_t p;
-    pthread_create(&p, NULL, prof_main, pthread_gethandle(t));
+    if (getenv("XBRT_PROFILE")) prof_start(t, getenv("XBRT_PROFILE"));
+#else
+    (void)t;
+#endif
+}
+
+/* XBRT_PROFILE_GAME=<file>: the same for each guest thread (thread.c), one file each,
+ * <file>.<n>.txt in the order they start: where the game's own code spends its time. */
+void rt_profile_game_thread(pthread_t t) {
+#ifdef _WIN32
+    static int n;
+    const char *base = getenv("XBRT_PROFILE_GAME");
+    if (!base) return;
+    char path[1024];
+    snprintf(path, sizeof path, "%s.%d.txt", base, n++);
+    prof_start(t, path);
 #else
     (void)t;
 #endif

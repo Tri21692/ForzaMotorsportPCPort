@@ -1731,6 +1731,25 @@ static void vert_index(uint32_t index) {
     vidx[nverts++] = index;
 }
 
+/* A run of n ARRAY_ELEMENT16 or ARRAY_ELEMENT32 parameters at once, from the push buffer (nv2a.c's
+ * pusher): the indices recorded as vert_index would, without a method call for each word (the
+ * method's dispatch and vert_index were a sixth of the device thread on the circuit). 0: not
+ * taken, to go word by word (no primitive begun, or vertices already fetched whole). */
+int nv2a_raster_indices(uint32_t method, const uint32_t *w, uint32_t n) {
+    if (!prim || (nverts && !deferred) || (method != ARRAY_ELEMENT16 && method != ARRAY_ELEMENT32)) return 0;
+    uint32_t add = method == ARRAY_ELEMENT16 ? 2 * n : n;
+    if ((uint32_t)nverts + add > (uint32_t)vidx_cap) {
+        while ((uint32_t)nverts + add > (uint32_t)vidx_cap) vidx_cap = vidx_cap ? vidx_cap * 2 : 4096;
+        vidx = realloc(vidx, (size_t)vidx_cap * sizeof *vidx);
+    }
+    deferred = 1;
+    if (method == ARRAY_ELEMENT16)
+        for (uint32_t i = 0; i < n; i++) vidx[nverts++] = w[i] & 0xFFFF, vidx[nverts++] = w[i] >> 16;
+    else
+        for (uint32_t i = 0; i < n; i++) vidx[nverts++] = w[i];
+    return 1;
+}
+
 /* The recorded vertices as whole Vertex records, for the CPU. */
 static void materialize(void) {
     if (!deferred) return;
