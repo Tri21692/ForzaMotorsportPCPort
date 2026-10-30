@@ -2009,9 +2009,17 @@ def build(disc, mods, preview_png=None, reverse=False):
         streamed[0].update(t for t in (t0_, t1_) if t >= 9)
         if m in parked: streamed[1].add(vb_)
     print('streamed in every cell: %d textures, %d vertex buffers' % (len(streamed[0]), len(streamed[1])))
-    use, per = pick_cells(cells_in, res_bytes, (loop[4] + loop[5]) / 2, hide)
-    print('visibility: each cell draws %d to %d of Pacific Shipyards II\'s cells, and %d to %d meshes more' % (
-        min(len(u) for u in use), max(len(u) for u in use), min(len(p_[0]) for p_ in per), max(len(p_[0]) for p_ in per)))
+    # Every cell draws the same: what Pacific Shipyards II's cells 0 to 7 draw. pick_cells gave each
+    # cell its own, by its stretch of the loop, and the road went black on whole stretches (cells
+    # 8-13 and 18-20 of Circuit II): the cell the game shows at a place is not the one this counts
+    # for it (not found yet how the game picks it), and the frame rate was no better (40 fps by the
+    # garage and before the lap line, as before). CIRCUIT_PICK=1 builds that way, to look into it.
+    if os.environ.get('CIRCUIT_PICK') == '1':
+        use, per = pick_cells(cells_in, res_bytes, (loop[4] + loop[5]) / 2, hide)
+        print('visibility: each cell draws %d to %d of Pacific Shipyards II\'s cells, and %d to %d meshes more' % (
+            min(len(u) for u in use), max(len(u) for u in use), min(len(p_[0]) for p_ in per), max(len(p_[0]) for p_ in per)))
+    else:
+        use, per = [list(range(0, 8))] * n_cells, None
     pvs, sizes = L.loop_pvs(pvs_in, use, per_cell=per, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide,
                             textures=sorted(streamed[0]), buffers=sorted(streamed[1]))
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d to %d meshes a cell' % (len(left), len(hide), min(sizes), max(sizes)))
