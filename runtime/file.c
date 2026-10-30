@@ -29,8 +29,10 @@ static ssize_t pread(int fd, void *buf, size_t n, off_t pos) {
     OVERLAPPED ov = {0};
     ov.Offset = (DWORD)pos, ov.OffsetHigh = (DWORD)((uint64_t)pos >> 32);
     DWORD got = 0;
-    if (!ReadFile((HANDLE)_get_osfhandle(fd), buf, (DWORD)n, &got, &ov))
-        return GetLastError() == ERROR_HANDLE_EOF ? 0 : -1;
+    rt_list_guard_pause(1);
+    BOOL ok = ReadFile((HANDLE)_get_osfhandle(fd), buf, (DWORD)n, &got, &ov);
+    rt_list_guard_pause(0);
+    if (!ok) return GetLastError() == ERROR_HANDLE_EOF ? 0 : -1;
     return got;
 }
 static ssize_t pwrite(int fd, const void *buf, size_t n, off_t pos) {

@@ -767,32 +767,64 @@ static void draw_distance(void) {
  * race). tracklist.xml is hash-checked like the .ini files, so the parsed
  * table is changed in memory: each track's entry has its load screen's
  * path (D:\MEDIA\FrontEnd\Loading...) at +0x870 and the count at +0xBC0.
- * Found once by a scan of the game's memory, every 5 s until it is. */
-static void zone_lead(void) {
-    static uint32_t found[128];
-    static int nfound, want = -1;
+ * Found by a scan of the game's memory, a piece at every pass of the DPC
+ * thread (dpc.c, with the big lock held, so no guest code runs between the
+ * check and the write), again 5 s after each scan until it is. Each entry is checked again before every write: the table is
+ * heap memory, and once the game freed it, the 1 written every 5 s at
+ * the old places went over whatever was there next (the game's list of
+ * arrays: the crashes at 0x271279, the hangs and double frees of DSOUND's
+ * and D3D's releases, after the Gallardo, the decal editor or a race).
+ * An entry that no longer looks like one has the table looked for again. */
+static int zone_entry(uint32_t p) {
+    return xb_rd32(p + 0x870) == 0x4D5C3A44u /* "D:\M" */ && xb_rd32(p + 0x880) == 0x6F4C5C64u /* "d\Lo", FrontEnd\Loading */ &&
+           xb_rd32(p + 0xBC0) >= 1 && xb_rd32(p + 0xBC0) <= 8;
+}
+
+void nv2a_zone_lead(void) {
+    static uint32_t found[1024], seen[1024]; /* old copies of the table, freed but not yet reused, look the same */
+    static int nfound, nseen, want = -1;
+    static uint32_t at = RT_USER_BASE;   /* where the scan goes on, 2 MB a call: all of it in one call held */
+    static uint64_t check_at, scan_at;  /* the game up for 6 ms, a dropped frame every 5 s in a race */
     if (want < 0) want = getenv("XBRT_ZONE_LEAD") ? atoi(getenv("XBRT_ZONE_LEAD")) : 0;
-    if (want < 1 || want > 8 || !rt_frame_interval_at) return;
-    if (nfound < 40) { /* the table: some 50 tracks */
-        nfound = 0;
-        uint32_t a = RT_USER_BASE, b, sz, pr, st;
-        while (a < RT_USER_LIMIT && nfound < 128) {
-            if (!rt_user_query(a, &b, &sz, &pr, &st) || !sz) {
-                a = b + (sz ? sz : 0x1000);
-                continue;
+    if (want < 2 || want > 8 || !rt_frame_interval_at) return; /* 1 is the game's own */
+    uint64_t now = rt_now_100ns();
+    if (nfound) {
+        if (now < check_at) return;
+        check_at = now + 50000000; /* every 5 s */
+        for (int i = 0; i < nfound; i++)
+            if (!zone_entry(found[i])) {
+                fprintf(stderr, "xbrt: XBRT_ZONE_LEAD: the track table moved; looking for it again\n");
+                nfound = 0;
+                return;
             }
-            if (st == 0x1000) /* MEM_COMMIT */
-                for (uint32_t p = b; p + 0xBC4 <= b + sz && nfound < 128; p += 4)
-                    if (xb_rd32(p + 0x870) == 0x4D5C3A44u /* "D:\M" */ && xb_rd32(p + 0x880) == 0x6F4C5C64u /* "d\Lo", FrontEnd\Loading */ &&
-                        xb_rd32(p + 0xBC0) >= 1 && xb_rd32(p + 0xBC0) <= 8)
-                        found[nfound++] = p;
-            a = b + sz;
-        }
-        if (nfound < 40) return;
-        fprintf(stderr, "xbrt: XBRT_ZONE_LEAD=%d: %d tracks\n", want, nfound);
+        for (int i = 0; i < nfound; i++)
+            if (xb_rd32(found[i] + 0xBC0) != (uint32_t)want) xb_wr32(found[i] + 0xBC0, (uint32_t)want);
+        return;
     }
-    for (int i = 0; i < nfound; i++)
-        if (xb_rd32(found[i] + 0xBC0) != (uint32_t)want) xb_wr32(found[i] + 0xBC0, (uint32_t)want);
+    if (now < scan_at) return;
+    uint32_t b, sz, pr, st, budget = 2u << 20;
+    while (at < RT_USER_LIMIT && budget) {
+        if (!rt_user_query(at, &b, &sz, &pr, &st) || !sz) {
+            at = b + (sz ? sz : 0x1000);
+            continue;
+        }
+        if (at < b) at = b;
+        uint32_t end = b + sz, stop = end - at > budget ? at + budget : end;
+        budget -= stop - at;
+        if (st == 0x1000) /* MEM_COMMIT */
+            for (uint32_t p = at; p < stop && p + 0xBC4 <= end && nseen < 1024; p += 4)
+                if (zone_entry(p)) seen[nseen++] = p;
+        at = stop;
+    }
+    if (at < RT_USER_LIMIT) return;
+    at = RT_USER_BASE; /* the scan is done */
+    if (nseen >= 40) { /* the table: some 50 tracks */
+        memcpy(found, seen, nseen * sizeof *seen), nfound = nseen, check_at = 0;
+        fprintf(stderr, "xbrt: XBRT_ZONE_LEAD=%d: %d tracks\n", want, nfound);
+    } else {
+        scan_at = now + 50000000; /* not there (in a race): again in 5 s */
+    }
+    nseen = 0;
 }
 
 /* XBRT_CAREER_TIMETRIAL=1: the career's Online Career category (Race Type,
@@ -863,7 +895,6 @@ static void *device_main(void *arg) {
             if (nv2a.flip_stall && nv2a.queued < 2) nv2a.flip_stall = 0, nv2a_trace('R', 1);
             if (tr_on && nv2a.vblanks % 60 == 0) trace_write();
             if (nv2a.vblanks % 30 == 0) draw_distance();
-            if (nv2a.vblanks % 300 == 0) zone_lead();
             if (nv2a.vblanks % 60 == 0) career_timetrial();
             if (nv2a.vblanks % 30 == 0 && getenv("XBRT_RACER_DUMP")) { /* debugging: the first racer's record */
                 static FILE *f;

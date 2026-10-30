@@ -158,6 +158,7 @@ extern pthread_mutex_t rt_gil;
  * next loop back-edge (xb_preempt), so use this rather than locking
  * rt_gil directly whenever the caller has work to do. */
 void rt_gil_lock(void);
+void rt_list_guard_pause(int pause); /* hle_listcheck.c: XBRT_LIST_GUARD off around a host read */
 extern pthread_cond_t rt_changed; /* broadcast whenever an object is signalled */
 
 typedef struct RtThread {
@@ -288,6 +289,7 @@ void rt_apu_init(void);
 void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
 void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
 void nv2a_log_stats(void); /* likewise: the GPU stats line every 5 s at log level 1 */
+void nv2a_zone_lead(void); /* XBRT_ZONE_LEAD, at each pass of the DPC thread, with rt_gil held */
 void rt_thread_dump(void); /* every guest thread's state, to stderr; with rt_gil held */
 uint32_t rt_apu_read(uint32_t off, int bytes);
 void rt_apu_write(uint32_t off, int bytes, uint32_t v);

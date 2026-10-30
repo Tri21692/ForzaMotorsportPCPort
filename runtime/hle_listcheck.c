@@ -5,9 +5,10 @@
  * calls each one's first virtual function, at every load (from 0xB0058) and
  * when malloc runs out. An entry that is no longer an object crashed it
  * (0x271279), and the heap's free hung. Seen with the Lamborghini Gallardo
- * loaded, the decal editor, and a category of 25 series; but a 24th series
- * shows the same damage (garbage freed by D3D's and DSOUND's releases), so
- * memory is being overwritten from somewhere not yet found, not a limit.
+ * loaded, the decal editor, and a category of 25 series. The cause was the
+ * runtime's own XBRT_ZONE_LEAD (nv2a.c), which went on writing into the
+ * track table after the game had freed it, over the list (found with
+ * XBRT_LIST_GUARD). These fixes stay, for the game's own bug below.
  *
  * Fixed here, always on:
  * - sub_00271310 (take off the list) with an object not listed shifted the
@@ -21,7 +22,9 @@
  *   free walked that list forever.
  *
  * XBRT_LIST_CHECK=1 logs each of those, with the return addresses on the
- * stack (who), and the list's size each time it passes a multiple of 256.
+ * stack (who), the list's size each time it passes a multiple of 256, the
+ * first time it is out of order, and each walk because malloc failed.
+ * XBRT_LIST_GUARD=1 catches a write to the list from anywhere else (slow).
  * XBRT_HEAP_WALK=n checks the whole heap every n-th malloc or free.
  *
  * game_free, game_list, game_unlist and game_malloc are out/code_*.c's
@@ -43,6 +46,9 @@ static int check_on(void) {
     if (on < 0) on = getenv("XBRT_LIST_CHECK") && atoi(getenv("XBRT_LIST_CHECK"));
     return on;
 }
+
+static void guard_open(void);
+static void guard_close(void);
 
 static void log_stack(XbCtx *c) {
     for (int k = 0; k < 48; k++) {
@@ -393,6 +399,13 @@ static void game_malloc(XbCtx *c) {
     /* 000594F6  jnz 0x5950d */
     if (!zf) goto L_0005950D;
     /* 000594F8  call 0x271300 */
+    if (check_on()) {
+        static int said;
+        if (said++ < 200) {
+            fprintf(stderr, "xbrt: list check: malloc(%x) failed, walking the list (%u listed), thread %08x; stack:", c->ebx, xb_rd32(0x56F860), rt_self ? rt_self->kthread : 0);
+            log_stack(c);
+        }
+    }
     xb_push(c, 0x000594FDu); f_00271300(c);
     /* 000594FD  call 0x59360 */
     xb_push(c, 0x00059502u); f_00059360(c);
@@ -596,7 +609,9 @@ static void unlist_inside(XbCtx *c, uint32_t p, uint32_t size) {
         }
         xb_push(c, e);
         xb_push(c, 0);  /* (a return address game_unlist only pops) */
+        guard_open();
         game_unlist(c);
+        guard_close();
         c->esp += 4;
         if (xb_rd32(0x56F860) == n) return;  /* nothing came off: not listed after all */
     }
@@ -609,6 +624,24 @@ void f_00059560(XbCtx *c) {
     if (at) *at = 1;
     if (p) unlist_inside(c, p, size ? size : 1);
     game_free(c);
+}
+
+/* XBRT_LIST_CHECK: the first time 0x56F858's list is found out of order after an add or a
+ * removal (the game's binary search then misses objects that are listed), with what was done. */
+static void check_sorted(XbCtx *c, const char *what, uint32_t obj, uint32_t n_before) {
+    static int said;
+    uint32_t list = xb_rd32(0x56F858), n = xb_rd32(0x56F860);
+    if (said >= 5 || !list || n >= 0x100000) return;
+    for (uint32_t i = 0; i + 1 < n; i++) {
+        if (xb_rd32(list + 4 * i) < xb_rd32(list + 4 * i + 4)) continue;
+        said++;
+        fprintf(stderr, "xbrt: list check: out of order after %s %08x (%u -> %u listed), thread %08x: [%u] %08x [%u] %08x; around:", what, obj, n_before, n,
+                rt_self ? rt_self->kthread : 0, i, xb_rd32(list + 4 * i), i + 1, xb_rd32(list + 4 * i + 4));
+        for (uint32_t k = i > 3 ? i - 3 : 0; k < i + 5 && k < n; k++) fprintf(stderr, " %08x", xb_rd32(list + 4 * k));
+        fprintf(stderr, "; stack:");
+        log_stack(c);
+        return;
+    }
 }
 
 void f_002714A0(XbCtx *c) {
@@ -624,7 +657,11 @@ void f_002714A0(XbCtx *c) {
         fprintf(stderr, "xbrt: list check: 0x56F858's list at %u, adding %08x (first word %08x); stack:", xb_rd32(0x56F860), obj, xb_rd32(obj));
         log_stack(c);
     }
+    uint32_t n = xb_rd32(0x56F860);
+    guard_open();
     game_list(c);
+    guard_close();
+    if (check_on()) check_sorted(c, "adding", obj, n);
 }
 
 void f_00271310(XbCtx *c) {
@@ -638,7 +675,10 @@ void f_00271310(XbCtx *c) {
             log_stack(c);
         }
     }
+    guard_open();
     game_unlist(c);
+    guard_close();
+    if (on) check_sorted(c, "removing", obj, n);
     if (on && n && xb_rd32(0x56F860) == n)
         fprintf(stderr, "xbrt: list check: removing %08x removed nothing (%u listed)\n", obj, n);
 }
@@ -684,3 +724,90 @@ void f_0026A438(XbCtx *c) {
     /* 0026A44C  ret 0xc */
     c->esp += 16;
 }
+
+/* XBRT_LIST_GUARD=1 (Windows): 0x56F858's list kept read-only, so that a write to it from anywhere
+ * but the game's add and removal (with the list's lock) is caught as it happens and logged, with
+ * the guest's return addresses and the host code that wrote. Writes to the rest of a guarded page
+ * (other heap blocks) go ahead, one instruction at a time. */
+#ifdef _WIN32
+#include <windows.h>
+
+static int guard_on = -1, guard_in_op;
+static uint32_t guard_lo, guard_hi;  /* the list, as guarded now */
+static __thread uint32_t guard_step;  /* a page this thread opened for one instruction */
+
+static void guard_protect(DWORD how) {
+    if (guard_hi <= guard_lo) return;
+    uint32_t a = guard_lo & ~0xFFFu, e = (guard_hi + 0xFFFu) & ~0xFFFu;
+    DWORD old;
+    VirtualProtect(xb_mem + a, e - a, how, &old);
+}
+
+static void guard_set(void) {
+    guard_protect(PAGE_READWRITE);
+    uint32_t list = xb_rd32(0x56F858), cap = xb_rd32(0x56F85C) & 0x7FFFFFFFu;
+    guard_lo = list, guard_hi = list && cap < 0x100000 ? list + 4 * cap : list;
+    guard_protect(PAGE_READONLY);
+}
+
+static LONG CALLBACK guard_fault(EXCEPTION_POINTERS *e) {
+    EXCEPTION_RECORD *r = e->ExceptionRecord;
+    if (r->ExceptionCode == EXCEPTION_SINGLE_STEP && guard_step) {
+        uint32_t a = guard_step;
+        guard_step = 0;
+        uint32_t list = xb_rd32(0x56F858);
+        if (list != guard_lo) {  /* the list was made smaller or bigger by its own walk: guard where it is now */
+            guard_set();
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+        if (a >= list && a < list + 4 * xb_rd32(0x56F860)) {
+            static int said;
+            if (said++ < 20) {
+                HMODULE exe = GetModuleHandleA(NULL);
+                fprintf(stderr, "xbrt: list guard: %08x (entry %u) written with %08x, not by the list's code, thread %08x, host forza.exe+%llx; stack:",
+                        a, (a - guard_lo) / 4, xb_rd32(a & ~3u), rt_self ? rt_self->kthread : 0,
+                        (unsigned long long)((uint8_t *)r->ExceptionAddress - (uint8_t *)exe));
+                if (rt_self) log_stack(&rt_self->ctx); else fprintf(stderr, "\n");
+                fflush(stderr);
+            }
+        }
+        guard_protect(PAGE_READONLY);
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (r->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || r->NumberParameters < 2 || r->ExceptionInformation[0] != 1)
+        return EXCEPTION_CONTINUE_SEARCH;
+    uint8_t *p = (uint8_t *)r->ExceptionInformation[1];
+    if (guard_hi <= guard_lo || p < xb_mem + (guard_lo & ~0xFFFu) || p >= xb_mem + ((guard_hi + 0xFFFu) & ~0xFFFu))
+        return EXCEPTION_CONTINUE_SEARCH;
+    guard_step = (uint32_t)(p - xb_mem);
+    guard_protect(PAGE_READWRITE);
+    e->ContextRecord->EFlags |= 0x100;  /* trap after this one instruction */
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static int guard_enabled(void) {
+    if (guard_on < 0) {
+        guard_on = getenv("XBRT_LIST_GUARD") && atoi(getenv("XBRT_LIST_GUARD"));
+        if (guard_on) AddVectoredExceptionHandler(1, guard_fault);
+    }
+    return guard_on;
+}
+
+/* Around the game's own changes to the list. */
+static void guard_open(void) {
+    if (guard_enabled() && !guard_in_op++) guard_protect(PAGE_READWRITE);
+}
+static void guard_close(void) {
+    if (guard_on > 0 && !--guard_in_op) guard_set();
+}
+
+/* A host read (ReadFile) into guest memory on a guarded page fails rather than faulting. */
+void rt_list_guard_pause(int pause) {
+    if (guard_on <= 0) return;
+    if (pause) guard_protect(PAGE_READWRITE); else if (!guard_in_op) guard_protect(PAGE_READONLY);
+}
+#else
+static void guard_open(void) {}
+static void guard_close(void) {}
+void rt_list_guard_pause(int pause) { (void)pause; }
+#endif
