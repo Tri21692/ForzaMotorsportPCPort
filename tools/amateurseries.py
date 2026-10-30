@@ -1,11 +1,10 @@
 """Four more Amateur (Club) series, through addseries.py (run again, each is replaced):
 
-  - Sunday Stroll (any level): tuner and compact cars, the Hatch, Integra and Eclipse families
-    and the other small coupes and saloons by car;
+  - Sunday Stroll (any level): tuner and compact cars, the Hatch, Integra and Eclipse families;
   - Beetle Face Off (level 5): Volkswagen Beetles only (carid 48), upgrades allowed; stock and
     upgraded Beetles against you;
   - Japanese Showdown (level 10): Japanese cars (location, the make's country);
-  - Underdog Challenge (level 30): Class A or below (perfclass D, C, B or A), against the
+  - Underdog Challenge (level 30): Class A or below (perfclass not S and not R), against the
     Class S Championship's field.
 
 Each logo is made from the game's own art: a tile of the large events logo strip
@@ -44,18 +43,18 @@ JAPAN_CARS = [192, 113, 106, 253, 116, 105, 127, 191]    # Skyline R34, Supra, R
 CLASS_S_CARS = [136, 173, 143, 199, 239, 137, 285, 202]  # the Class S Championship's: Enzo, Carrera GT, Zonda, Cerbera, ME412, F50, Tuscan R, S7
 
 # who may enter: a list of alternatives, each a list of (attribute, func, value) that all hold
-TUNER = ([[('family', '=', f)] for f in ('Hatch', 'Integra', 'Eclipse')] +
-         # RSX, Celica GTS, Civic SI, Tiburon, Protege, Del Sol, Jetta, Talon, the 1.8 Celica, APR's Celica
-         [[('carid', '=', o)] for o in (10, 14, 44, 47, 49, 52, 61, 127, 164, 226)])
+# (no more than three alternatives, as the disc's series have at most: with thirteen, ten cars by
+# id besides, the game crashed when the Amateur list was shown)
+TUNER = [[('family', '=', f)] for f in ('Hatch', 'Integra', 'Eclipse')]
 BEETLE = [[('carid', '=', 48)]]
 JAPAN = [[('location', '=', 'Japan')]]
-CLASS_A_OR_BELOW = [[('perfclass', '=', c)] for c in 'DCBA']
+CLASS_A_OR_BELOW = [[('perfclass', '<>', 'S'), ('perfclass', '<>', 'R')]]  # (all to hold, as the Forced Induction Cup's aspiration)
 
 # (name, level, description, logo (its art: an official tile with rows painted out, emblems and
 #  flames, or the flag; its captions [(text, y, size, style)]), the car won (ordinal), who may enter, the AI field, the
 #  drivers (Easy, Medium, Hard), duplicates, 1st place's xp, events (track ordinal, laps))
 SERIES = [
-    ('Sunday Stroll', 0, 'Open to tuner and compact cars: hatchbacks, small coupes and sedans.',
+    ('Sunday Stroll', 0, 'Open to tuner and compact cars: hatchbacks, Integras and Eclipses.',
      (dict(tile=27, clear=[(5, 40)]), [('SUNDAY STROLL', 7, 28, 'category')]), 174, TUNER, TUNER_CARS, (22, 36, 50), False, 3000,
      [(26, 3), (47, 3), (46, 2)]),                      # Tsukuba, Silverstone Club, Road Atlanta Club
     ('Beetle Face Off', 5, 'Open to Volkswagen New Beetle models, upgrades allowed.',
