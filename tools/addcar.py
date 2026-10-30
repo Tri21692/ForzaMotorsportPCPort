@@ -58,8 +58,9 @@ after those, 244-299. The game holds 300 cars, ordinals 0-299 (below).
 The game sizes its car tables from the files (model.dat's reader divides
 the size by 104) and finds rows by ordinal; the rows stay in ordinal order.
 
-The .ca2 archives must keep as many 4 MB streams as the disc's: the
-runtime can only re-sign records the executable already has (file.c).
+The .ca2 archives keep at least as many 4 MB streams as the disc's. More
+work in the port only (file.c makes the installer's table bigger); the
+game on Xemu or an Xbox would say there is a problem with the disc.
 
 --restore: <from> goes back to the disc's files (its carlist entry, rows,
 cars\\<from>\\, wheel, icon tile, name strings), and the mods folder's
@@ -132,17 +133,20 @@ class Archive:
         self.name = name
 
     def check(self):
-        """Packed, and as many streams as the disc's, before anything is written."""
+        """Packed, and at least as many streams as the disc's, before anything is written."""
         self.blob = blob = forzacab.pack(self.files, self.root)
-        if math.ceil(len(blob) / CHUNK) != self.streams:
+        n = math.ceil(len(blob) / CHUNK)
+        if n < self.streams:
             raise SystemExit('%s: %d bytes unpacked, %d streams of 4 MB; the disc has %d, and the game would refuse it; nothing written'
-                             % (self.name, len(blob), math.ceil(len(blob) / CHUNK), self.streams))
+                             % (self.name, len(blob), n, self.streams))
+        if n > self.streams:
+            print('%s: %d streams of 4 MB, the disc has %d: works in the port only, not on Xemu or an Xbox' % (self.name, n, self.streams))
 
     def write(self):
         blob = self.blob
         os.makedirs(os.path.dirname(self.out), exist_ok=True)
         open(self.out, 'wb').write(forzacab.ca2(blob))
-        print('%s: %d files, %.2f of %d MB' % (self.name, len(self.files), len(blob) / 1048576, 4 * self.streams))
+        print('%s: %d files, %.2f of %d MB' % (self.name, len(self.files), len(blob) / 1048576, 4 * max(self.streams, math.ceil(len(blob) / CHUNK))))
 
 
 def under(files, prefix):
@@ -480,7 +484,7 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
     wsrc, wdst = B.join(('tires', 'art', wheel.lower())) + B, B.join(('tires', 'art', new.lower())) + B
     # copied only when the mods folder changed it (the S13's NFSU rim): a stock
     # wheel is shared, as cars share them on the disc, and Mega.ca2 has room
-    # for few copies (its 3 streams of 4 MB)
+    # for few copies within its 3 streams of 4 MB (more work in the port only)
     own_wheel = any(under(a.files, wsrc) != under(a.disc, wsrc) for a in (mega, xpr))
     nw = rename_tree(m, wsrc, wdst) + rename_tree(xpr.files, wsrc, wdst) if own_wheel else 0
 

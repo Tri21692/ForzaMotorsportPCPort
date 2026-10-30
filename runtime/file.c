@@ -177,7 +177,7 @@ static int mod_file(const char *rest, char *out, size_t n) {
  * u32 length, the SHA-1 of what it inflates to) and refuses an archive that
  * differs ("a problem with the disc"). For one in the mods folder, the disc
  * file's records are found in the loaded image and rewritten to describe
- * the mod's, when it has as many streams. */
+ * the mod's; one with more streams than the disc's gets a bigger table. */
 typedef struct {
     uint32_t off, len;
     uint8_t sha[20];
@@ -214,6 +214,21 @@ static int archive_streams(const char *path, Stream *out, int max, uint32_t *las
     return k;
 }
 
+/* The installer's table, the BKGDINST section (as the game sees it: wherever
+ * its section header says it is): five u32 (1, its size, the number of
+ * archives, of stream records, the names' size), an entry of five u32 per
+ * archive (two name offsets, its first record's index, its stream count,
+ * the last stream's unpacked size: the cache file is (count - 1) * 4 MB
+ * plus that), the records, then the names. The installer (0x27EAB0) takes
+ * its address from the section header (XLoadSectionByHandle) and finds
+ * everything else from those counts. */
+static uint32_t bkgdinst_header(void) {
+    uint32_t nsec = xb_rd32(rt_image.base + 0x11C), sec = xb_rd32(rt_image.base + 0x120);
+    for (uint32_t i = 0; i < nsec; i++)
+        if (!strcmp(rt_str(xb_rd32(sec + i * 0x38 + 0x14)), "BKGDINST")) return sec + i * 0x38;
+    return 0;
+}
+
 static void installer_records(const char *rel) {
     char mod[1200], disc[1200];
     if (!mod_file(rel, mod, sizeof mod) || !walk(disc_dir, rel, disc, sizeof disc)) return;
@@ -222,38 +237,51 @@ static void installer_records(const char *rel) {
     uint32_t last_d = 0, last_m = 0;
     int nd = archive_streams(disc, want, 64, &last_d);
     if (nd <= 0) return; /* not one of the installer's archives */
-    uint8_t *img = xb_mem + rt_image.base, *at = NULL;
-    size_t span = nd * sizeof(Stream);
-    for (size_t i = 0; i + span <= rt_image.size && !at; i += 4)
-        if (!memcmp(img + i, want, span)) at = img + i;
-    if (!at) return;
-    /* Each archive also has an entry of five u32 in that section: two name
-     * offsets, its first record's index, the stream count and the last
-     * stream's unpacked size (the cache file's size is (count - 1) * 4 MB
-     * plus that). Found by the last two. */
-    uint32_t va = (uint32_t)(at - xb_mem), sva = 0, sraw = 0, hdr = 0, entry = 0;
-    uint32_t nsec = xb_rd32(rt_image.base + 0x11C), sec = xb_rd32(rt_image.base + 0x120);
-    for (uint32_t i = 0; i < nsec; i++) {
-        uint32_t s = sec + i * 0x38;
-        if (va >= xb_rd32(s + 4) && va < xb_rd32(s + 4) + xb_rd32(s + 16)) hdr = s, sva = xb_rd32(s + 4), sraw = xb_rd32(s + 16);
+    uint32_t hdr = bkgdinst_header(), t = hdr ? xb_rd32(hdr + 4) : 0;
+    uint32_t n = t ? xb_rd32(t + 8) : 0, nrec = t ? xb_rd32(t + 12) : 0, recs = t + 20 + 20 * n, entry = 0;
+    for (uint32_t i = 0; t && i < n && !entry; i++) {
+        uint32_t e = t + 20 + 20 * i, first = xb_rd32(e + 8);
+        if (xb_rd32(e + 12) == (uint32_t)nd && first + nd <= nrec && !memcmp(xb_mem + recs + 28 * first, want, nd * sizeof(Stream))) entry = e;
     }
-    for (uint32_t a = sva; hdr && a + 8 <= sva + sraw; a += 4)
-        if (xb_rd32(a) == (uint32_t)nd && xb_rd32(a + 4) == last_d) entry = entry ? 1 : a + 4;
-    if (entry <= 1) {
+    if (!entry) {
         fprintf(stderr, "xbrt: mods: %s: the installer's entry for it is not where it was expected; left as it is\n", mod);
         return;
     }
     int nm = archive_streams(mod, have, 64, &last_m);
-    if (nm != nd) {
+    if (nm < nd) {
         fprintf(stderr, "xbrt: mods: %s: %d zlib streams of 4 MB (the disc's has %d); the game will refuse it\n", mod, nm, nd);
         return;
     }
-    memcpy(at, have, span);
-    xb_wr32(entry, last_m);
+    if (nm == nd) {
+        memcpy(xb_mem + recs + 28 * xb_rd32(entry + 8), have, nm * sizeof(Stream));
+    } else {
+        /* More streams than the disc's: the table again, in kernel data (not the game's memory),
+         * with this archive's records added after the others, and the section header pointing
+         * at it. The installer sizes what it keeps per record from the table's own counts. */
+        uint32_t size = xb_rd32(t + 4), grown = size + 28 * nm, nt = rt_kdata_alloc(grown);
+        uint32_t names = recs + 28 * nrec, idx = (uint32_t)(entry - t - 20) / 20;
+        if (!nt) {
+            fprintf(stderr, "xbrt: mods: %s: no room for a bigger installer table; left as it is\n", mod);
+            return;
+        }
+        memcpy(xb_mem + nt, xb_mem + t, names - t);
+        memcpy(xb_mem + nt + (names - t), have, nm * sizeof(Stream));
+        memcpy(xb_mem + nt + (names - t) + 28 * nm, xb_mem + names, t + size - names);
+        xb_wr32(nt + 4, grown);
+        xb_wr32(nt + 12, nrec + nm);
+        entry = nt + 20 + 20 * idx;
+        xb_wr32(entry + 8, nrec);
+        xb_wr32(entry + 12, (uint32_t)nm);
+        xb_wr32(hdr + 4, nt), xb_wr32(hdr + 8, grown), xb_wr32(hdr + 16, grown);
+        fprintf(stderr, "xbrt: mods: %s: %d streams of 4 MB, the disc's %d: the installer's table made bigger\n", mod, nm, nd);
+        t = nt;
+    }
+    xb_wr32(entry + 16, last_m);
     /* and the section's digest in the image header, SHA-1 of its size and bytes, made anew */
+    uint32_t sraw = xb_rd32(hdr + 16);
     uint8_t *buf = malloc(sraw + 4);
     memcpy(buf, &sraw, 4);
-    memcpy(buf + 4, xb_mem + sva, sraw);
+    memcpy(buf + 4, xb_mem + t, sraw);
     rt_sha1(buf, sraw + 4, xb_mem + hdr + 0x24);
     free(buf);
     fprintf(stderr, "xbrt: mods: %s passes the installer's check\n", mod);

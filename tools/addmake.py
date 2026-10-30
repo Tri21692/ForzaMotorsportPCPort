@@ -30,7 +30,7 @@ one, else the disc's (26 Oct, from the executable):
                background (0x374076 builds the path from the name).
   media/Loc/*/CarDataStrings.str   IDS_Make_<id>_Name, in every language
 
-The .ca2 archives keep as many 4 MB streams as the disc's (addcar.py).
+The .ca2 archives keep at least as many 4 MB streams as the disc's (addcar.py).
 Writes only into the mods folder, never the saves.
 """
 import os
