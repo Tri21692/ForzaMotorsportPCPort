@@ -154,6 +154,8 @@ static struct { uint32_t ordinal; float frac; } cu[MAX_CU];
 static int ncu;
 static pthread_once_t cu_once = PTHREAD_ONCE_INIT;
 static volatile int cu_active; /* a catch-up race is on: rt_career_tick counts the opponent's lap as begun */
+static uint32_t cu_player_car, cu_grid[12]; /* the player's car and its pose as the grid left it (+0x14: x y z, the 3x3 turn) */
+static volatile int cu_grid_ok;
 
 static void cu_load(void) {
     char path[1200];
@@ -204,6 +206,16 @@ void f_000410E0(XbCtx *c) {
         fprintf(stderr, "\n");
     }
     orig_f_000410E0(c);
+    if (ncu) { /* the player's car as placed: its pose, for rt_career_tick to keep it on a restart */
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+        for (uint32_t i = 0; i < n && n == 2 && arr; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i);
+            if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0 && xb_rd32(r + 0xA0) == car) {
+                for (int k = 0; k < 12; k++) cu_grid[k] = xb_rd32(car + 0x14 + 4 * k);
+                cu_player_car = car, cu_grid_ok = 1;
+            }
+        }
+    }
     if (ncu && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: the car's first floats after placing, to find its position */
         fprintf(stderr, "xbrt: placed car %08x (place %d):", car, place);
         for (uint32_t o = 0; o < 0x600; o += 4) {
@@ -279,6 +291,29 @@ void rt_career_tick(void) {
         lap[i] = xb_rd32(timing[i] + 0x9C);
     }
     int me = type[0] == 0 ? 0 : 1, ai = 1 - me;
+    /* the player's car kept facing as the grid placed it while it stands there: on a restart the game
+     * turned it to the heading of the grid's last placing, the opponent's (the user's car faced away
+     * from the start line). Placing it again (the game's own call) froze the game; its turn is put
+     * back instead, until it moves or its lap begins */
+    uint32_t pcar = xb_rd32(xb_rd32(arr + 4 * me) + 0xA0);
+    if (cu_grid_ok && pcar == cu_player_car && (int32_t)lap[me] == -1) {
+        float p[3], g[3];
+        for (int k = 0; k < 3; k++) { uint32_t v = xb_rd32(pcar + 0x14 + 4 * k); memcpy(&p[k], &v, 4); memcpy(&g[k], &cu_grid[k], 4); }
+        if ((p[0] - g[0]) * (p[0] - g[0]) + (p[2] - g[2]) * (p[2] - g[2]) < 0.25f) {
+            int off = 0;
+            for (int k = 3; k < 12; k++) {
+                float a, b;
+                uint32_t v = xb_rd32(pcar + 0x14 + 4 * k);
+                memcpy(&a, &v, 4); memcpy(&b, &cu_grid[k], 4);
+                if (a - b > 0.05f || b - a > 0.05f) off = 1;
+            }
+            if (off) {
+                for (int k = 3; k < 12; k++) xb_wr32(pcar + 0x14 + 4 * k, cu_grid[k]);
+                static uint64_t said;
+                if (rt_now_100ns() - said > 50000000) said = rt_now_100ns(), fprintf(stderr, "xbrt: catch-up: the player's car turned back to face the grid\n");
+            }
+        }
+    }
     static uint64_t next;
     uint64_t now = rt_now_100ns();
     if (getenv("XBRT_CATCHUP_DUMP") && now >= next) {
@@ -307,7 +342,21 @@ void rt_career_tick(void) {
          * start (a quarter of the lap) is short of the next (the player's first came at half the lap
          * at Laguna Seca). */
         if ((int32_t)xb_rd32(timing[ai] + 0x88) < 0) xb_wr32(timing[ai] + 0x88, 0), xb_wr32(timing[ai] + 0x8C, 0);
+        /* the race's own measure, what it ranks by: +0x70 (and +0x78) a double, laps begun less one plus
+         * the lap's fraction (+0x80), added to as the car goes. The opponent's ran -0.75 to -0.14 (a
+         * lap behind its fraction) and the player, at 0.01 to 0.65, showed 1st: one lap added. */
+        for (uint32_t o = 0x70; o <= 0x78; o += 8) {
+            uint64_t v = (uint64_t)xb_rd32(timing[ai] + o) | (uint64_t)xb_rd32(timing[ai] + o + 4) << 32;
+            double d;
+            memcpy(&d, &v, 8);
+            if (d < 0.0 && d > -1.0) {
+                d += 1.0;
+                memcpy(&v, &d, 8);
+                xb_wr32(timing[ai] + o, (uint32_t)v), xb_wr32(timing[ai] + o + 4, (uint32_t)(v >> 32));
+            }
+        }
         fprintf(stderr, "xbrt: catch-up: the opponent's lap counted as begun, the start line passed\n");
-        if (!getenv("XBRT_CATCHUP_DUMP")) cu_active = 0; /* debugging: the dump goes on */
     }
+    /* done once the opponent's lap is begun and the player's too (off the grid); the dump goes on */
+    if (lap[ai] != 0xFFFFFFFFu && (int32_t)lap[me] >= 0 && !getenv("XBRT_CATCHUP_DUMP")) cu_active = 0;
 }
