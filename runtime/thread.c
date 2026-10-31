@@ -242,15 +242,67 @@ void rt_thread_start(RtThread *t) {
     pthread_attr_destroy(&a);
 }
 
+#ifdef _WIN32
+#include <windows.h>
+/* A guest thread's host stack: where in the generated code (or the runtime) it is, which the guest
+ * registers do not say. A freeze on 31 Oct showed the main thread neither looping nor in a kernel
+ * call the game made (the sampling profiler: waiting in ntdll, three frames deep, not enough to
+ * say for what). The thread is suspended just long enough to unwind 32 frames (x64 unwind data,
+ * as gcc writes it for Windows); printed after it runs on, as offsets in this executable (named
+ * with tools/hangstack.py from nm) or module!offset. */
+static void host_backtrace(RtThread *t) {
+    HANDLE h = pthread_gethandle(t->host);
+    if (!h || GetThreadId(h) == GetCurrentThreadId()) return;
+    DWORD64 pc[32];
+    int n = 0;
+    if (SuspendThread(h) == (DWORD)-1) return;
+    CONTEXT ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.ContextFlags = CONTEXT_FULL;
+    if (GetThreadContext(h, &ctx)) {
+        while (n < 32 && ctx.Rip) {
+            pc[n++] = ctx.Rip;
+            DWORD64 image;
+            PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &image, NULL);
+            if (!f) { /* a leaf: its return address on top of the stack */
+                ctx.Rip = *(DWORD64 *)ctx.Rsp;
+                ctx.Rsp += 8;
+                continue;
+            }
+            PVOID data;
+            DWORD64 frame;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, f, &ctx, &data, &frame, NULL);
+        }
+    }
+    ResumeThread(h);
+    HMODULE self = GetModuleHandleA(NULL);
+    fprintf(stderr, "  host:");
+    for (int i = 0; i < n; i++) {
+        HMODULE m = NULL;
+        char name[MAX_PATH] = "?";
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)pc[i], &m);
+        if (m == self) { fprintf(stderr, " %llx", (unsigned long long)(pc[i] - (DWORD64)self)); continue; }
+        if (m) GetModuleFileNameA(m, name, sizeof name);
+        const char *b = strrchr(name, '\\');
+        fprintf(stderr, " %s!%llx", b ? b + 1 : name, (unsigned long long)(pc[i] - (DWORD64)m));
+    }
+    fprintf(stderr, "\n");
+}
+#endif
+
 /* Debugging (XBRT_THREAD_DUMP): each thread's registers, latest kernel
- * call and stack, which holds its likely return addresses. The caller
- * holds rt_gil, so no guest code is running. */
+ * call and stack, which holds its likely return addresses, and (Windows)
+ * where its host thread is (host_backtrace). The caller holds rt_gil, so
+ * no guest code is running. */
 void rt_thread_dump(void) {
     for (RtThread *t = all_threads; t; t = t->next_all) {
         const XbKernelInfo *k = rt_kernel_info(t->last_call);
         fprintf(stderr, "thread %08x (start %08x)%s%s: last kernel call %s from %08x\n", t->handle, t->start,
                 t->terminated ? " terminated" : "", t->started ? "" : " not started", k ? k->name : "-", t->last_from);
         if (!t->terminated && t->started) rt_backtrace(&t->ctx);
+#ifdef _WIN32
+        if (!t->terminated && t->started) host_backtrace(t);
+#endif
     }
     fflush(stderr);
 }
