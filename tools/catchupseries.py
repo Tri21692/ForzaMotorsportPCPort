@@ -36,7 +36,7 @@ XP = 4000                # a win, each event
 PRIZE = 82               # the Lamborghini Gallardo: no level gives it and no other series has it as its prize
                          # (drawn at random from the nine such Class A cars; the user kept it, listed S4 since)
 CHASER = 11              # the logo's left half: the Class S tile (the player's class), the Class D tile (7) on the right
-HEAD_START = 0.2         # of a lap (a fifth, with Class S cars: the user's; with Class A a sixth was still hard)
+HEAD_START = 1 / 6       # of a lap (a sixth, with Class S cars from level 35: the user's)
 # the field to pick from: Class D cars at their best (D1, D2), as AI car models (100 + ordinal):
 # Civic Type R, Integra Type R, Celica GTS, Audi TT 3.2, VW R32, RX-7, Silvia S14, Delta Integrale
 D_CARS = [107, 109, 114, 118, 120, 233, 315, 213]
@@ -44,7 +44,7 @@ DRIVERS = (24, 35, 49)
 CAPTION = [('Catch Up', 77, 26, 'catchup')]  # a placeholder: a racing script in the halves' colours
 A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(121, 89),  # logo_art's slash
                            left=(195, 150, 255), right=(255, 165, 70))  # each half's lettering in the other's colour: lavender on the S's orange, orange on the D's purple
-DESC = 'Open to Class S cars. Four one-lap races: a Class D car starts a fifth of a lap ahead, catch it.'
+DESC = 'Open to Class S cars. Four one-lap races: a Class D car starts a sixth of a lap ahead, catch it.'
 
 
 def lifted(t, x0=64, x1=147, y1=78):
