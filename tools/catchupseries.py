@@ -37,7 +37,7 @@ XP = 38000               # a win, each event: as the level-35 Professional serie
 PRIZE = 82               # the Lamborghini Gallardo: no level gives it and no other series has it as its prize
                          # (drawn at random from the nine such Class A cars; the user kept it, listed S4 since)
 CHASER = 11              # the logo's left half: the Class S tile (the player's class), the Class D tile (7) on the right
-HEAD_STARTS = (1 / 6, 1 / 5, 1 / 4, 1 / 3)  # of a lap, a race each, as TRACKS (the user's: Class S from level 35)
+HEAD_STARTS = (1 / 6, 1 / 5, 1 / 4, 1 / 4)  # of a lap, a race each, as TRACKS (the user's: Silverstone 1/3, then 1/4)
 # the field to pick from: Class D cars at their best (D1, D2), as AI car models (100 + ordinal):
 # Civic Type R, Integra Type R, Celica GTS, Audi TT 3.2, VW R32, RX-7, Silvia S14, Delta Integrale
 D_CARS = [107, 109, 114, 118, 120, 233, 315, 213]
