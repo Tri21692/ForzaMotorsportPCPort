@@ -1,0 +1,46 @@
+{
+  "names_from": "D:/PC/NFSMW 1/CARS",
+  "skin": ["SC63_SKIN2", 384],
+  "parts": {
+    "BASE": [
+      {"from": [["KIT00_LEFT_HEADLIGHT_A", "SC63_SKIN2", "BODY"], ["KIT00_RIGHT_HEADLIGHT_A", "SC63_SKIN2", "BODY"],
+                ["KIT00_LEFT_BRAKELIGHT_A", "SC63_SKIN2", "BODY"], ["BASE_A", "SC63_SKIN3", "BODY_BLACK"]], "keep": 0.38},
+      {"from": [["KIT00_LEFT_HEADLIGHT_A", "SC63_SKIN2", "BODY"], ["KIT00_RIGHT_HEADLIGHT_A", "SC63_SKIN2", "BODY"],
+                ["KIT00_LEFT_BRAKELIGHT_A", "SC63_SKIN2", "BODY"], ["BASE_A", "SC63_SKIN3", "BODY_BLACK"]], "keep": 0.12},
+      {"from": [["BASE_E", "SC63_SKIN2", "BODY"], ["BASE_E", "SC63_SKIN3", "BODY_BLACK"]]}
+    ],
+    "KIT00_LEFT_SIDE_MIRROR": [
+      {"from": [["KIT00_RIGHT_BRAKELIGHT_A", "SC63_BADGING", "BADGING", "L"], ["KIT00_RIGHT_BRAKELIGHT_A", "SC63_MISC", "BODY_BLACK", "L"],
+                ["KIT00_REAR_WINDOW_A", 0, "BODY_BLACK", "L"], ["KIT00_REAR_WINDOW_A", 2, "BODY_BLACK", "L"], ["KIT00_REAR_WINDOW_A", 6, "BODY_BLACK", "L"]], "keep": 0.5},
+      {"from": [["KIT00_RIGHT_BRAKELIGHT_A", "SC63_BADGING", "BADGING", "L"], ["KIT00_RIGHT_BRAKELIGHT_A", "SC63_MISC", "BODY_BLACK", "L"],
+                ["KIT00_REAR_WINDOW_A", 0, "BODY_BLACK", "L"], ["KIT00_REAR_WINDOW_A", 6, "BODY_BLACK", "L"]], "keep": 0.15},
+      {"from": [["BASE_E", "SC63_MISC", "BODY_BLACK", "L"]]}
+    ],
+    "KIT00_RIGHT_SIDE_MIRROR": [
+      {"from": [["KIT00_RIGHT_BRAKELIGHT_A", "SC63_BADGING", "BADGING", "R"], ["KIT00_RIGHT_BRAKELIGHT_A", "SC63_MISC", "BODY_BLACK", "R"],
+                ["KIT00_REAR_WINDOW_A", 0, "BODY_BLACK", "R"], ["KIT00_REAR_WINDOW_A", 2, "BODY_BLACK", "R"], ["KIT00_REAR_WINDOW_A", 6, "BODY_BLACK", "R"]], "keep": 0.5},
+      {"from": [["KIT00_RIGHT_BRAKELIGHT_A", "SC63_BADGING", "BADGING", "R"], ["KIT00_RIGHT_BRAKELIGHT_A", "SC63_MISC", "BODY_BLACK", "R"],
+                ["KIT00_REAR_WINDOW_A", 0, "BODY_BLACK", "R"], ["KIT00_REAR_WINDOW_A", 6, "BODY_BLACK", "R"]], "keep": 0.15},
+      {"from": [["BASE_E", "SC63_MISC", "BODY_BLACK", "R"]]}
+    ],
+    "KIT00_FRONT_WINDOW": [
+      {"from": [["KIT00_FRONT_WINDOW_A", "*", "WINDOW_FRONT"]]},
+      {"from": [["KIT00_FRONT_WINDOW_A", "*", "WINDOW_FRONT"]], "keep": 0.3}
+    ],
+    "KIT00_LEFT_HEADLIGHT": [
+      {"from": [["KIT00_REAR_WINDOW_A", 1, "LEFT_HEADLIGHT_BULB", "L"], ["KIT00_REAR_WINDOW_A", 3, "LEFT_HEADLIGHT_BULB", "L"]], "keep": 0.5},
+      {"from": [["KIT00_REAR_WINDOW_A", 1, "LEFT_HEADLIGHT_BULB", "L"], ["KIT00_REAR_WINDOW_A", 3, "LEFT_HEADLIGHT_BULB", "L"]], "keep": 0.15}
+    ],
+    "KIT00_RIGHT_HEADLIGHT": [
+      {"from": [["KIT00_REAR_WINDOW_A", 1, "RIGHT_HEADLIGHT_BULB", "R"], ["KIT00_REAR_WINDOW_A", 3, "RIGHT_HEADLIGHT_BULB", "R"]], "keep": 0.5},
+      {"from": [["KIT00_REAR_WINDOW_A", 1, "RIGHT_HEADLIGHT_BULB", "R"], ["KIT00_REAR_WINDOW_A", 3, "RIGHT_HEADLIGHT_BULB", "R"]], "keep": 0.15}
+    ],
+    "KIT00_LEFT_BRAKELIGHT": [
+      {"from": [["KIT00_REAR_WINDOW_A", 4, "BRAKELIGHT", "L"], ["KIT00_REAR_WINDOW_A", 5, "BRAKELIGHT", "L"]]}
+    ],
+    "KIT00_RIGHT_BRAKELIGHT": [
+      {"from": [["KIT00_REAR_WINDOW_A", 4, "BRAKELIGHT", "R"], ["KIT00_REAR_WINDOW_A", 5, "BRAKELIGHT", "R"]]}
+    ]
+  },
+  "aliases": {"KIT00_BODY": "BASE"}
+}
