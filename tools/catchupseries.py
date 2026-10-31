@@ -1,16 +1,16 @@
-"""A Professional series of one catch-up event: one lap against a single Class D car picked at
-random, which starts part of a lap ahead (the runtime moves its grid place: hle_career.c, from the
+"""A Professional series of four catch-up events: one lap each, on four circuits, against a single
+Class D car picked at random, which starts part of a lap ahead (the runtime moves its grid place: hle_career.c, from the
 mods folder's catchup.txt). Open from level 15 to Class B cars and below.
 
-The opponent: the event's AIField takes one car (NumAICars 1) at random (random="true", as the
+The opponent: each event's AIField takes one car (NumAICars 1) at random (random="true", as the
 disc's R-P1 Championship picks its field) from the series' list. The head start: catchup.txt,
-"<event ordinal> <fraction of a lap>", written here (replacing the event's line).
+"<event ordinal> <fraction of a lap>", written here (replacing the events' lines).
 
 The logo (logo_art): the Class B tile and the Class D tile either side of a slash, their C-L-A-S-S painted out and their letters leaning forward, the B chasing the D with
 fading copies of itself and speed streaks behind it, and Catch Up under them in a racing script, white shading into the other half's colour (a placeholder).
 
-Professional series are added at the end of the list (addseries.py: their results are kept by
-their place), so it shows last although it opens at level 15.
+The Professional list goes up by level, so it shows first (it opens at level 15, the disc's at 20
+and up); its results are kept by its SeriesOrder, after the disc's (addseries.py).
 
   python tools/catchupseries.py <disc> <mods folder> [head start, a fraction of a lap]
 """
@@ -24,10 +24,12 @@ import addseries
 import amateurseries as A
 
 NAME = 'Catch-Up Challenge'
-EVENT_ORDINAL = 385      # after the Amateur series' 371-384
+EVENT_ORDINAL = 385      # after the Amateur series' 371-384: 385-388
 SERIES_ID = 233          # after the Amateur series' 229-232
 LEVEL = 15
-TRACK, LAPS = 9, 1       # Road Atlanta, one lap
+TRACKS = (1, 9, 3, 2)    # Laguna Seca, Road Atlanta, Maple Valley, Silverstone
+LAPS = 1
+XP = 4000                # a win, each event
 PRIZE = 79               # the Lotus Elise (Class B), no other series's prize
 HEAD_START = 0.5         # of a lap
 # the field to pick from: Class D cars at their best (D1, D2), as AI car models (100 + ordinal):
@@ -38,7 +40,7 @@ CLASS_B_OR_BELOW = [[('perfclass', '<>', 'A'), ('perfclass', '<>', 'S'), ('perfc
 CAPTION = [('Catch Up', 77, 26, 'catchup')]  # a placeholder: a racing script in the halves' colours
 A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(121, 89),  # logo_art's slash
                            left=(195, 150, 255), right=(110, 235, 185))  # each half's lettering in the other's colour: lavender on the B's mint, mint on the D's purple
-DESC = 'Open to Class B cars and below. One lap: a Class D car starts half a lap ahead, catch it.'
+DESC = 'Open to Class B cars and below. Four one-lap races: a Class D car starts half a lap ahead, catch it.'
 
 
 def lifted(t, x0=64, x1=147, y1=78):
@@ -109,19 +111,21 @@ def logo_art(disc, mods):
 def series_xml():
     ai = ''.join('\t\t<AIPlayer name="If you see this, it is a bug" aicarmodelid="%d" AIDriverModelID="%d" AppearanceID="0" %s />\r\n'
                  % (car, driver, skill) for driver, skill in zip(DRIVERS, ('Easy', 'Medium', 'Hard')) for car in D_CARS)
-    return ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{SERIES_NAME_ID}" seriesdescid="{SERIES_DESC_ID}" '
-            'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" sequential="true" Level="%d">\r\n'
-            '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n'
-            '\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (NAME, SERIES_ID, LEVEL, PRIZE, PRIZE) +
-            A.restrictions(CLASS_B_OR_BELOW) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n'
-            '\t<event eventid="1" displayname="%s" eventordinal="%d" eventtextid="{EVENT_NAME_ID}" eventdescid="{EVENT_DESC_ID}" '
-            'type="Single" leaderboard="1450">\r\n'
-            '\t\t<track Ordinal="%d" />\r\n\t\t<laps count="%d" />\r\n'
-            '\t\t<AIField NumAICars="1" random="true" byclass="false" duplicates="false" />\r\n'
-            '\t\t<AIModeSettings>\r\n\t\t\t<pitting aipitting tire="0.01" fuel="0.01" engine="0.5" transmission="0.5" suspension="0.5" spreadpercent="0" />\r\n'
-            '\t\t</AIModeSettings>\r\n\t\t<Scoring>\r\n'
-            '\t\t\t<score pos="1" pts="10" xp="12000"></score>\r\n\t\t\t<score pos="2" pts="0" xp="0"></score>\r\n'
-            '\t\t</Scoring>\r\n\t</event>\r\n</series>\r\n' % (NAME, EVENT_ORDINAL, TRACK, LAPS))
+    x = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{SERIES_NAME_ID}" seriesdescid="{SERIES_DESC_ID}" '
+         'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" sequential="true" Level="%d">\r\n'
+         '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n'
+         '\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (NAME, SERIES_ID, LEVEL, PRIZE, PRIZE) +
+         A.restrictions(CLASS_B_OR_BELOW) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
+    for k, track in enumerate(TRACKS):
+        x += ('\t<event eventid="%d" displayname="%s" eventordinal="%d" eventtextid="{EVENT_NAME_ID}" eventdescid="{EVENT_DESC_ID}" '
+              'type="Single" leaderboard="1450">\r\n'
+              '\t\t<track Ordinal="%d" />\r\n\t\t<laps count="%d" />\r\n'
+              '\t\t<AIField NumAICars="1" random="true" byclass="false" duplicates="false" />\r\n'
+              '\t\t<AIModeSettings>\r\n\t\t\t<pitting aipitting tire="0.01" fuel="0.01" engine="0.5" transmission="0.5" suspension="0.5" spreadpercent="0" />\r\n'
+              '\t\t</AIModeSettings>\r\n\t\t<Scoring>\r\n'
+              '\t\t\t<score pos="1" pts="10" xp="%d"></score>\r\n\t\t\t<score pos="2" pts="0" xp="0"></score>\r\n'
+              '\t\t</Scoring>\r\n\t</event>\r\n' % (k + 1, NAME, EVENT_ORDINAL + k, track, LAPS, XP))
+    return x + '</series>\r\n'
 
 
 def install(disc, mods, head_start=HEAD_START):
@@ -132,9 +136,10 @@ def install(disc, mods, head_start=HEAD_START):
         addseries.main(disc, mods, 'proseries', p, NAME, '%s First place receives the %s.' % (DESC, addcar.car_name(disc, mods, PRIZE)),
                        event_name=NAME, logo='%s,%s' % (png, png))
     path = os.path.join(mods, 'catchup.txt')
-    lines = [l for l in (open(path).read().splitlines() if os.path.exists(path) else []) if l.split()[:1] != [str(EVENT_ORDINAL)]]
-    open(path, 'w').write('\n'.join(lines + ['%d %.3f' % (EVENT_ORDINAL, head_start)]) + '\n')
-    print('%s: event %d, head start %.3f of a lap (%s)' % (NAME, EVENT_ORDINAL, head_start, path))
+    ours = ['%d' % (EVENT_ORDINAL + k) for k in range(len(TRACKS))]
+    lines = [l for l in (open(path).read().splitlines() if os.path.exists(path) else []) if l.split()[:1] not in [[o] for o in ours]]
+    open(path, 'w').write('\n'.join(lines + ['%s %.3f' % (o, head_start) for o in ours]) + '\n')
+    print('%s: events %s-%s, head start %.3f of a lap (%s)' % (NAME, ours[0], ours[-1], head_start, path))
 
 
 if __name__ == '__main__':

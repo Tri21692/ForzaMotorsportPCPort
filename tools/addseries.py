@@ -10,8 +10,9 @@ Pro Series, Endurance or Point-to-Point list) to the game.
 A series is events\\<kind>\\Ser<NNNNN>.xml in Mega.ca2: the game reads
 Ser00001 up to the first number missing and lists them in that order, so
 the new one goes after the last series of its Level or below and those
-after it move up a number (their seriesorder with them; the Pro Series,
-which keep their results by seriesorder, only ever gain one at the end).
+after it move up a number (their seriesorder with them, except the Pro
+Series', which keep their results by seriesorder: theirs stay, and a new
+one takes the next free one).
 Its seriesordinal, which numbers the career's series across all the lists,
 is set to the next free one. Run again with the same --name, it replaces
 the series it added before, keeping its strings and logo tile. The
@@ -129,13 +130,17 @@ def set_series_attr(x, attr, value):
 def renumber(mega, kind, order):
     """The kind's series files as Ser00001.. in the order given (their contents), each one's
     seriesorder its place. The list shows the series in file order. A sequential series (the
-    Pro Series) keeps its result in the profile by seriesorder (0x77ae0), so those never move."""
+    Pro Series) keeps its result in the profile by seriesorder (0x77ae0 writes and 0x799d0 reads
+    the byte at profile +0x6a4 + the series' SeriesOrder, +0x554), so theirs never change, wherever
+    the file goes."""
     old = series_files(mega, kind)
     for k in old.values(): del mega.files[k]
+    kept = [series_attr(d, 'seriesorder') for d in order if b'sequential="true"' in d]
+    if len(set(kept)) != len(kept): raise SystemExit('two sequential series with one seriesorder')
     for i, d in enumerate(order):
         s = d.decode('latin-1')
-        if series_attr(s, 'seriesorder') != i and 'sequential="true"' in s: raise SystemExit('a sequential series would move')
-        mega.files[B.join(('events', kind, 'Ser%05u.xml' % (i + 1)))] = set_series_attr(s, 'seriesorder', i).encode('latin-1')
+        if 'sequential="true"' not in s: s = set_series_attr(s, 'seriesorder', i)
+        mega.files[B.join(('events', kind, 'Ser%05u.xml' % (i + 1)))] = s.encode('latin-1')
 
 
 def main(disc, mods, kind, xml_path, name, desc, event_name=None, logo=None):
@@ -180,8 +185,11 @@ def main(disc, mods, kind, xml_path, name, desc, event_name=None, logo=None):
     x = set_series_attr(x, 'seriesordinal', max(series_attr(v, 'seriesordinal', -1) for v in career) + 1)
     # its place: after the last series of its level or below (the list goes up by level)
     level = series_attr(x, 'Level', 0)
-    at = len(order) if kind == 'proseries' else max([i + 1 for i, d in enumerate(order) if series_attr(d, 'Level', 0) <= level] or [0])
-    x = set_series_attr(x, 'seriesorder', at)  # its place from the start (a sequential one's results are kept by it)
+    at = max([i + 1 for i, d in enumerate(order) if series_attr(d, 'Level', 0) <= level] or [0])
+    # a sequential one's results are kept by its seriesorder: the one it had, else the next free
+    seq = 'sequential="true"' in x
+    x = set_series_attr(x, 'seriesorder', (series_attr(old[0], 'seriesorder') if old else
+                                           max([series_attr(d, 'seriesorder', -1) for d in order if b'sequential="true"' in d] or [-1]) + 1) if seq else at)
     order.insert(at, x.replace('\r\n', '\n').replace('\n', '\r\n').encode('latin-1'))
     renumber(mega, kind, order)
     for a in (mega, xpr): a.check()
