@@ -1,6 +1,6 @@
 """A Professional series of four catch-up events: one lap each, on four circuits, against a single
 Class D car picked at random, which starts part of a lap ahead (the runtime moves its grid place: hle_career.c, from the
-mods folder's catchup.txt). Open from level 20 to cars of Class A and below (not S or R).
+mods folder's catchup.txt). Open from level 20 to Class A cars.
 
 The opponent: each event's AIField takes one car (NumAICars 1) at random (random="true", as the
 disc's R-P1 Championship picks its field) from the series' list. The head start: catchup.txt,
@@ -28,7 +28,8 @@ NAME = 'Catch-Up Challenge'
 KIND = 'spec'            # the career's Professional list (proseries is its Championship Series)
 EVENT_ORDINAL = 385      # after the Amateur series' 371-384: 385-388
 SERIES_ID = 233          # after the Amateur series' 229-232
-LEVEL = 20               # (the user's: level 20, Class A and below against Class D)
+LEVEL = 20               # (the user's: level 20, Class A against Class D)
+CLASS_A = [[('perfclass', '=', 'A')]]  # as the disc's Class B Championship has its class
 TRACKS = (1, 9, 3, 2)    # Laguna Seca, Road Atlanta, Maple Valley, Silverstone
 LAPS = 1
 XP = 4000                # a win, each event
@@ -42,7 +43,7 @@ DRIVERS = (24, 35, 49)
 CAPTION = [('Catch Up', 77, 26, 'catchup')]  # a placeholder: a racing script in the halves' colours
 A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(121, 89),  # logo_art's slash
                            left=(195, 150, 255), right=(255, 225, 80))  # each half's lettering in the other's colour: lavender on the A's yellow, yellow on the D's purple
-DESC = 'Open to Class A cars and below (not S or R). Four one-lap races: a Class D car starts a quarter of a lap ahead, catch it.'
+DESC = 'Open to Class A cars. Four one-lap races: a Class D car starts a quarter of a lap ahead, catch it.'
 
 
 def lifted(t, x0=64, x1=147, y1=78):
@@ -117,7 +118,7 @@ def series_xml():
          'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" Level="%d">\r\n'
          '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n'
          '\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (NAME, SERIES_ID, LEVEL, PRIZE, PRIZE) +
-         A.restrictions(A.CLASS_A_OR_BELOW) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
+         A.restrictions(CLASS_A) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
     for k, track in enumerate(TRACKS):
         x += ('\t<event eventid="%d" displayname="%s" eventordinal="%d" eventtextid="{EVENT_NAME_ID}" eventdescid="{EVENT_DESC_ID}" '
               'type="Single" leaderboard="1450">\r\n'

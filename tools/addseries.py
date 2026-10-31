@@ -118,6 +118,26 @@ def add_strings(disc, mods, texts):
     return ids, out
 
 
+def update_strings(disc, mods, ids, texts):
+    """The strings `ids` (added before) given `texts`' text where it changed, in every language's
+    EventStrings.str (run again with a new description, the old one stayed: the Catch-Up's said Class B
+    after it opened to Class A). {path: new contents}, the changed ones."""
+    loc = addcar.disc_file(disc, 'media', 'Loc')
+    out = {}
+    for lang in sorted(os.listdir(loc)):
+        mp = os.path.join(mods, 'media', 'Loc', lang, 'EventStrings.str')
+        if not os.path.exists(mp): continue
+        d = open(mp, 'rb').read()
+        e1, text, _, _ = addcar.read_strings(d)
+        def at(o):  # (to its null: a replaced string's text is at the end, after the next id's)
+            b = text[o * 2:]
+            return b[:next(k for k in range(0, len(b) - 1, 2) if b[k:k + 2] == b'\0\0')].decode('utf-16-le')
+        now = {i: at(o) for i, o in e1[:-1]}
+        changes = {i: t for i, (_, t) in zip(ids, texts) if now.get(i) != t}
+        if changes: out[mp] = addcar.replace_strings(d, changes)
+    return out
+
+
 def series_attr(x, attr, default=None):
     m = re.search(r'<series [^>]*\b%s="(\d+)"' % attr, x if isinstance(x, str) else x.decode('latin-1'))
     return int(m.group(1)) if m else default
@@ -175,7 +195,8 @@ def main(disc, mods, kind, xml_path, name, desc, event_name=None, logo=None):
     mp = os.path.join(mods, 'media', 'Loc', next(f for f in sorted(os.listdir(loc)) if addcar.disc_file(loc, f, 'EventStrings.str')), 'EventStrings.str')
     known = addcar.string_ids(open(mp, 'rb').read()) if os.path.exists(mp) else {}
     if texts[0][0] in known:
-        ids, strings = tuple(known[n] for n, _ in texts), {}
+        ids = tuple(known[n] for n, _ in texts)
+        strings = update_strings(disc, mods, ids, texts)
         old = [d for d in order if series_attr(d, 'seriesnameid') == ids[0]]
         order = [d for d in order if series_attr(d, 'seriesnameid') != ids[0]]
         print('replacing the "%s" added before (strings %s)' % (name, ids))
