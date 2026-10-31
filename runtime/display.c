@@ -368,6 +368,17 @@ static DWORD WINAPI window_main(LPVOID arg) {
     window = CreateWindowA("ForzaPC", "Forza Motorsport (PC port, work in progress)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                            CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
     if (getenv("XBRT_FULLSCREEN") && atoi(getenv("XBRT_FULLSCREEN"))) set_fullscreen(1);
+    /* to the front, with the keyboard: started from a launcher (a batch file, another program) it
+     * opened behind whatever had the focus, and the keys (F12's screenshots) went there. Windows lets
+     * only the foreground's thread move the foreground, so its input is joined for the moment. */
+    HWND fg = GetForegroundWindow();
+    DWORD fg_thread = fg ? GetWindowThreadProcessId(fg, NULL) : 0, me = GetCurrentThreadId();
+    if (fg_thread && fg_thread != me) AttachThreadInput(fg_thread, me, TRUE);
+    ShowWindow(window, SW_SHOW);
+    BringWindowToTop(window);
+    SetForegroundWindow(window);
+    SetFocus(window);
+    if (fg_thread && fg_thread != me) AttachThreadInput(fg_thread, me, FALSE);
     SetTimer(window, 1, 16, NULL); /* the picture from RAM (menus' 1x frames, movies) */
     for (;;) { /* and a new GPU picture as soon as it arrives */
         DWORD r = MsgWaitForMultipleObjects(1, &new_frame, FALSE, INFINITE, QS_ALLINPUT);
