@@ -557,7 +557,7 @@ def quickpreview(src, loop):
 def track_entry(tracklist, name_id, length):
     """tracklist.xml with the circuit's entry added after Pacific Shipyards II's (a copy of it): its
     own data folder and collision, Pacific Shipyards' scenery and Pacific Shipyards II's visibility
-    (both of them replaced while it loads), a circuit for Hot Lap (no start, end or p2pordinal), no AI."""
+    (both of them replaced while it loads), a circuit for Hot Lap and races (no start, end or p2pordinal; AI raced it cleanly, 2026-10-31)."""
     m = re.search(r'<track\s[^>]*name="VancouverReverse".*?/>', tracklist, re.S)
     e = m.group(0)
     recs = re.findall(r'<track\s.*?/>', tracklist, re.S)
@@ -570,7 +570,7 @@ def track_entry(tracklist, name_id, length):
     for k, v in (('RosettaName', NAME), ('name', TAG), ('trackIdentifier', TAG), ('tracknameid', name_id),
                  ('trackSegCamsFile', folder + 'TrackSegCams.xml'), ('pitCamsFile', folder + 'PitCams.xml'),
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
-                 ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'false'),
+                 ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'true'),
                  ('Ordinal', ordinal), ('length', int(round(length))),
                  ('minimap', MAP_TILE), ('icon', LOGO), ('Image', LOAD_IMAGE)) + ((('TimeOfDay', TIME_OF_DAY),) if TIME_OF_DAY else ()):
         e = attr(e, k, v)

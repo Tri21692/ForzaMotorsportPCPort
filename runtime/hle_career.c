@@ -223,6 +223,22 @@ void f_000410E0(XbCtx *c) {
  * the racers' own clocks start at the line), the opponent's lap is counted as begun, so its reaching
  * the line finishes its lap. */
 void rt_career_tick(void) {
+    if (getenv("XBRT_RACE_DUMP")) { /* debugging: every racer's type, lap and car position (+0x14 x, +0x1c z), every 5 s */
+        static uint64_t next;
+        uint64_t now = rt_now_100ns();
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+        if (now >= next && n && arr && xb_rd32(0x592984)) {
+            next = now + 50000000;
+            fprintf(stderr, "xbrt: race:");
+            for (uint32_t i = 0; i < n && i < 8; i++) {
+                uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0, car = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xA0) : 0;
+                float x = 0, z = 0;
+                if (car && car < RT_USER_LIMIT) { uint32_t v = xb_rd32(car + 0x14); memcpy(&x, &v, 4); v = xb_rd32(car + 0x1C); memcpy(&z, &v, 4); }
+                fprintf(stderr, " [%u lap %d %.0f %.0f]", r ? xb_rd32(r + 0x14) : 9, t && t < RT_USER_LIMIT ? (int)xb_rd32(t + 0x9C) : -9, x, z);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
     if (!cu_active) return;
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
     if (n != 2 || !arr) { cu_active = 0; return; }
