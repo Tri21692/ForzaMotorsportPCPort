@@ -117,5 +117,127 @@ void f_000755D0(XbCtx *c) {
     if (count) c->edx = arr + i * 4; /* as the original leaves them */
     c->eax = found;
     if (found && list == 0x58DAA0) tt_place(found);
+    if (list == 0x58DAA0 && count == 2 && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: both racers' laps and times, every 5 s */
+        static uint64_t next;
+        uint64_t now = rt_now_100ns();
+        if (now >= next) {
+            next = now + 50000000;
+            fprintf(stderr, "xbrt: racers:");
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t r = xb_rd32(arr + i * 4), t = r ? xb_rd32(r + 0xC0) : 0;
+                float s = 0;
+                if (t && t < RT_USER_LIMIT) { uint32_t b = xb_rd32(t + 0xA0); memcpy(&s, &b, 4); }
+                fprintf(stderr, " [type %u place %u laps %u time %.1f]", xb_rd32(r + 0x14), xb_rd32(r + 0xBC), t && t < RT_USER_LIMIT ? xb_rd32(t + 0x9C) : 0, s);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
     c->esp += 8; /* ret 4 */
+}
+
+/* Catch-up events (<mods>/catchup.txt, a line per event: "ordinal fraction"): the opponent starts
+ * that fraction of a lap ahead of the pole. CCar::ResetPositionForGrid (0x410E0, thiscall, the
+ * grid place as its argument) puts a car on the track's racing line, when the track has one
+ * ([0x5E1450] the track, +8 set; [+4] the line: +8 its points, +0x30/0x44/0x58 their x, y, z), at
+ * point (10 - place) * 4, round the lap: the pole at 40, each place after it 4 points back. The
+ * opponent's place (0, the pole: one opponent, the player behind it) is changed so that its point
+ * comes the fraction of the line's points further on. The grid is laid before the race has its
+ * event ([0x592984] still 0), so the race is told by its field: the player and one AI car, which
+ * no event of the disc has (seven or none), and the first line's fraction is used. With one
+ * opponent the player is place 1 and the opponent place 2 (moving place 1 put the player half a
+ * lap on). */
+#define MAX_CU 32
+static struct { uint32_t ordinal; float frac; } cu[MAX_CU];
+static int ncu;
+static pthread_once_t cu_once = PTHREAD_ONCE_INIT;
+static volatile int cu_active; /* a catch-up race is on: rt_career_tick counts the opponent's lap as begun */
+
+static void cu_load(void) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s/catchup.txt", getenv("XBRT_MODS") ? getenv("XBRT_MODS") : "mods");
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[256];
+    while (ncu < MAX_CU && fgets(line, sizeof line, f))
+        if (sscanf(line, "%u %f", &cu[ncu].ordinal, &cu[ncu].frac) == 2 && cu[ncu].frac > 0 && cu[ncu].frac < 1) ncu++;
+    fclose(f);
+    fprintf(stderr, "xbrt: catch-up events: %d from %s\n", ncu, path);
+}
+
+void orig_f_000410E0(XbCtx *c); /* the game's own (wraps.txt) */
+void f_000410E0(XbCtx *c) {
+    pthread_once(&cu_once, cu_load);
+    int32_t place = (int32_t)xb_rd32(c->esp + 4);
+    if (ncu && place == 2) {
+        /* a race against one opponent: the racer list holds the player (type 0) and one AI car */
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4), people = 0;
+        for (uint32_t i = 0; i < n && n == 2 && arr; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i);
+            people += r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0;
+        }
+        uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+        int32_t points = line ? (int32_t)xb_rd32(line + 8) : 0;
+        if (n == 2 && people == 1 && points > 0) {
+            cu_active = 1;
+            int32_t moved = place - (int32_t)(cu[0].frac * (float)points / 4.0f + 0.5f);
+            xb_wr32(c->esp + 4, (uint32_t)moved);
+            fprintf(stderr, "xbrt: catch-up: the opponent's grid place 2 -> %d, %.2f of the lap (%d points) ahead\n", moved, cu[0].frac, points);
+        }
+    }
+    uint32_t car = c->ecx;
+    if (ncu && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: which racer this car is (the racer whose record holds the car's address) */
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+        fprintf(stderr, "xbrt: grid: car %08x place %d;", car, place);
+        for (uint32_t i = 0; i < n && i < 8 && arr; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i);
+            int at = -1;
+            for (uint32_t o = 0; r && o < 0x400 && at < 0; o += 4)
+                if (xb_rd32(r + o) == car) at = (int)o;
+            fprintf(stderr, " racer %08x type %u holds it at %d;", r, r ? xb_rd32(r + 0x14) : 0, at);
+        }
+        fprintf(stderr, "\n");
+    }
+    orig_f_000410E0(c);
+    if (ncu && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: the car's first floats after placing, to find its position */
+        fprintf(stderr, "xbrt: placed car %08x (place %d):", car, place);
+        for (uint32_t o = 0; o < 0x600; o += 4) {
+            float f;
+            uint32_t v = xb_rd32(car + o);
+            memcpy(&f, &v, 4);
+            if (f > 50.0f || f < -50.0f) if (f < 5000.0f && f > -5000.0f) fprintf(stderr, " +%x=%.1f", o, f);
+        }
+        fprintf(stderr, "\n");
+    }
+}
+
+/* With rt_gil held, from the DPC thread's every pass. The opponent of a catch-up race starts past
+ * the start line, so its lap count (racer +0xC0 -> +0x9C: -1 on the grid, 0 once the line is
+ * crossed) stays -1 until it reaches the line half a lap on, and it would then have a whole lap
+ * still to drive (seen: -1 to 0 on reaching it). 2 s after the race is under way ([0x592984] set;
+ * the racers' own clocks start at the line), the opponent's lap is counted as begun, so its reaching
+ * the line finishes its lap. */
+void rt_career_tick(void) {
+    if (!cu_active) return;
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+    if (n != 2 || !arr) { cu_active = 0; return; }
+    uint32_t lap[2] = {0, 0}, type[2], timing[2];
+    for (uint32_t i = 0; i < 2; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i);
+        timing[i] = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
+        type[i] = r ? xb_rd32(r + 0x14) : ~0u;
+        if (!timing[i] || timing[i] >= RT_USER_LIMIT) return;
+        lap[i] = xb_rd32(timing[i] + 0x9C);
+    }
+    int me = type[0] == 0 ? 0 : 1, ai = 1 - me;
+    static uint64_t next;
+    uint64_t now = rt_now_100ns();
+    if (getenv("XBRT_CATCHUP_DUMP") && now >= next) next = now + 50000000, fprintf(stderr, "xbrt: catch-up laps: player %d, opponent %d\n", (int)lap[me], (int)lap[ai]);
+    static uint64_t since;
+    if (!xb_rd32(0x592984)) since = 0; /* the race (its event, [0x592984]) not under way yet */
+    else if (!since) since = now;
+    if (since && now - since > 20000000 && lap[ai] == 0xFFFFFFFFu) { /* 2 s into the race */
+        xb_wr32(timing[ai] + 0x9C, 0);
+        fprintf(stderr, "xbrt: catch-up: the opponent's lap counted as begun\n");
+        cu_active = 0;
+    }
 }

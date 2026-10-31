@@ -97,6 +97,7 @@ static void *dpc_main(void *arg) {
         rt_log_tick();
         nv2a_log_stats();
         nv2a_zone_lead();
+        rt_career_tick();
         while (nqueued) {
             Queued q = queue[0];
             memmove(queue, queue + 1, --nqueued * sizeof *queue);

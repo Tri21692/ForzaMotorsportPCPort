@@ -291,6 +291,7 @@ void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
 void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
 void nv2a_log_stats(void); /* likewise: the GPU stats line every 5 s at log level 1 */
 int nv2a_raster_indices(uint32_t method, const uint32_t *w, uint32_t n); /* raster.c: a run of ARRAY_ELEMENT16/32 at once */
+void rt_career_tick(void); /* hle_career.c: the catch-up race, from the DPC thread with rt_gil held */
 void nv2a_zone_lead(void); /* XBRT_ZONE_LEAD, at each pass of the DPC thread, with rt_gil held */
 void rt_thread_dump(void); /* every guest thread's state, to stderr; with rt_gil held */
 uint32_t rt_apu_read(uint32_t off, int bytes);

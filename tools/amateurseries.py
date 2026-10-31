@@ -4,8 +4,8 @@
   - Beetle Face Off (level 5): Volkswagen Beetles only (carid 48), upgrades allowed; stock and
     upgraded Beetles against you;
   - Japanese Showdown (level 10): Japanese cars (location, the make's country);
-  - Underdog Challenge (level 30): Class A or below (perfclass not S and not R), against the
-    Class S Championship's field.
+  - Underdog Challenge (level 30): Class A or below (perfclass not S and not R), against Class S
+    cars at its lower end (S3 and S4).
 
 Each logo is made from the game's own art: a tile of the large events logo strip
 (frontend\\en\\ico_events_lg.xpr, MegaXPR.ca2) with a dark band and its name set in the game's
@@ -40,7 +40,10 @@ SERIES_ID = 229          # after the Forced Induction Cup's 228
 TUNER_CARS = [107, 110, 114, 109, 124, 102, 208, 207]    # Civic Type R, RSX Type S, Celica GTS, Integra Type R, Eclipse GSX, Focus SVT, Mini Cooper S, Mazda 3
 BEETLE_CARS = [148, 1148, 2148, 3148, 148, 1148, 2148, 3148]  # the Beetle at each upgrade stage
 JAPAN_CARS = [192, 113, 106, 253, 116, 105, 127, 191]    # Skyline R34, Supra, RX-7, NSX-R, Evo VIII, WRX STi, 350Z, S2000
-CLASS_S_CARS = [136, 173, 143, 199, 239, 137, 285, 202]  # the Class S Championship's: Enzo, Carrera GT, Zonda, Cerbera, ME412, F50, Tuscan R, S7
+# Class S at its lower end, S3 and S4 stock (gamecars.dat's subclass at byte 100: 17 S4, 18 S3, 19 S2,
+# 20 S1): F50, Zonda, F40, XJ220, GT40 Mk II, Tuscan R, Viper Competition Coupe, SLR McLaren. The Class S
+# Championship's field (Enzo, Carrera GT, Cerbera, ME412, S7: S2 and S1) was out of a Class A car's reach.
+LOWER_S_CARS = [137, 143, 168, 139, 138, 285, 242, 232]
 
 # who may enter: a list of alternatives, each a list of (attribute, func, value) that all hold
 # (no more than three alternatives, as the disc's series have at most: with thirteen, ten cars by
@@ -64,7 +67,7 @@ SERIES = [
      (dict(flag=True), [('JAPANESE', 6, 22, 'faceoff'), ('SHOWDOWN', 88, 22, 'faceoff')]), 194, JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
      [(3, 2), (26, 3), (4, 3), (6, 2)]),                # Fujimi Kaido, Tsukuba, Fujimi Kaido Short, Sunset Peninsula
     ('Underdog Challenge', 30, 'Open to Class A cars and below, against a field of Class S cars.',
-     (dict(tile=10, clear=[(80, 112)], flames=0.5), [('UNDERDOG', 84, 22, 'chrome')]), 40, CLASS_A_OR_BELOW, CLASS_S_CARS, (24, 35, 49), False, 18000,
+     (dict(tile=10, clear=[(80, 112)], flames=0.5), [('UNDERDOG', 84, 22, 'chrome')]), 40, CLASS_A_OR_BELOW, LOWER_S_CARS, (24, 35, 49), False, 18000,
      [(27, 2), (18, 2), (57, 2), (1, 3)]),              # Alpine Ring, New York, Maple Valley Reverse, Laguna Seca
 ]
 PLACES = ((10, 1.0), (8, 0.7), (6, 0.5), (5, 0.4), (4, 0.3), (3, 0.2), (2, 0.1), (1, 0.0))   # points, share of 1st's xp
@@ -142,6 +145,7 @@ def flames(a, reach=0.4, seed=3):
 def art(disc, mods, source):
     """The logo's picture, 210 x 117 RGBA floats: an official tile with rows painted out (clear) and makes'
     emblems (slot, x, y, height), or the flag; flames if it says so."""
+    if 'image' in source: return source['image'].astype(float).copy()  # made elsewhere (catchupseries.py)
     a = flag() if source.get('flag') else tile(disc, mods, source['tile'])
     for r0, r1 in source.get('clear', ()):
         clear(a, r0, r1)
@@ -159,6 +163,8 @@ STYLES = {
     'category': dict(font='impact.ttf', fill='white', slant=-0.2, stretch=1.0),
     'faceoff': dict(font='ariblk.ttf', fill='white', slant=0.0, stretch=1.3),
     'chrome': dict(font='ariblk.ttf', fill='chrome', slant=0.0, stretch=1.2),
+    'vs': dict(font='ariblk.ttf', fill='red', slant=-0.25, stretch=1.15),  # red and leaning, as the face-offs' VS
+    'script': dict(font='MAGNETOB.TTF', fill='red', slant=-0.15, stretch=1.0),  # a racing script in the VS's red (Magneto Bold)
 }
 
 
@@ -217,6 +223,17 @@ def logo(disc, mods, source, texts, tmp):
         if st['fill'] == 'chrome':  # light to grey at the horizon, a bright line, then grey again
             fill = np.where(t < 0.55, 255 - 90 * t / 0.55, np.where(t < 0.62, 240, 215 - 40 * (t - 0.62) / 0.38))
             fill = np.broadcast_to(fill, t.shape[:1] + (1, 3)) * np.array((1.0, 1.0, 1.04))
+        elif st['fill'] == 'split':  # white at the top, then the tile's colours either side of a slash (st['cut']: x at the top, at the foot)
+            x_top, x_foot = st['cut']
+            yy, xx = np.mgrid[0:a.shape[0], 0:a.shape[1]].astype(float)
+            right = np.clip(xx - (x_top + (x_foot - x_top) * yy / a.shape[0]) + 0.5, 0, 1)[..., None]
+            tint = np.array(st['left']) * (1 - right) + np.array(st['right']) * right
+            k = np.clip(t * 1.4, 0, 1)
+            fill = 255 * (1 - k) + tint * k
+        elif st['fill'] == 'red':  # the face-offs' VS: bright red, a hot band across the top, deep red at the foot
+            r = np.where(t < 0.3, 255, 255 - 120 * (t - 0.3) / 0.7)
+            g = np.where(t < 0.3, 90 - 150 * t, 20 * (1 - t))
+            fill = np.concatenate([r, np.clip(g, 0, 255), np.clip(g * 0.8, 0, 255)], 2)
         else:  # white, a touch of grey at the foot
             fill = np.broadcast_to(255 - 45 * t ** 2, t.shape[:1] + (1, 3))
         for m, col in ((shadow, 0), (outer, 0), (inner, fill)):

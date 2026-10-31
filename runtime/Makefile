@@ -28,8 +28,17 @@ RT_OBJ = $(patsubst %.c,build/%.o,$(RT_SRC))
 
 TARGET ?= forza$(EXE)
 
-$(TARGET): $(GEN_OBJ) $(RT_OBJ)
+$(TARGET): $(GEN_OBJ) $(RT_OBJ) build/wraps.o
 	$(CC) -o $@ $^ -lm -lpthread $(OSLIBS)
+
+# The game functions the runtime replaces and still calls (wraps.txt), copied from the generated
+# code at build time as orig_f_<address> (wraps.awk): never committed, as the generated code is not.
+build/wraps.c: wraps.txt wraps.awk $(GEN_SRC)
+	@mkdir -p build
+	awk -f wraps.awk wraps.txt $(GEN_SRC) > $@
+
+build/wraps.o: build/wraps.c $(GEN)/xbrt.h $(GEN)/funcs.h
+	$(CC) $(GENFLAGS) -c $< -o $@
 
 build/gen/%.o: $(GEN)/%.c $(GEN)/xbrt.h $(GEN)/funcs.h
 	@mkdir -p build/gen

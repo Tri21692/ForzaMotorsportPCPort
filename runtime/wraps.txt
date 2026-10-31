@@ -1,0 +1,3 @@
+# Game functions the runtime replaces and still calls, as orig_f_<address> (wraps.awk copies
+# them from the generated code at build time). One hex address a line.
+410E0   # CCar::ResetPositionForGrid: hle_career.c's catch-up start (XBRT_MODS catchup.txt)

@@ -250,6 +250,7 @@ struct GlProg {
     GlProg *var[4];     /* by gl_frag_variant(), linked when first used; [0] is this one */
     float (*vc_last)[4]; /* the constants last given this program (glvsh.c sends only the rows that changed) */
     int vc_rows;         /* 1: u_vc's rows have consecutive locations, so a part can be sent; -1: not */
+    void *fu_last;       /* the fragment uniforms it last got (gl_frag_state's FragUniforms) */
 };
 
 static GlProg gl_main, *gl_using;
@@ -2109,10 +2110,25 @@ static GLuint gl_unalias(int stage, GLuint tex, const GlSurf *s) {
     return scratch[stage].tex;
 }
 
+/* A draw's fragment uniforms together: each program keeps its own, so they are sent only when
+ * they differ from what the program last got (most draws repeat the last one's: ~16 calls a draw
+ * on the GL driver's side). */
+typedef struct {
+    float size[2], zmax, zr[4], zoff[3];
+    GLuint cicw[8], cocw[8], aicw[8], aocw[8];
+    float c0[8][4], c1[8][4];
+    uint32_t fc0, fc1, ctl, f0, f1;
+    GLint mode[4], kind[4];
+    float scale[8], dmax[4];
+    GLint shadow_func, alpha_func;
+    float alpha_ref, fogc[3];
+} FragUniforms;
+
 static void gl_frag_state(const DrawState *d, const GlSurf *s) {
-    float size[2] = {(float)s->w, (float)s->h};
-    glUniform2fv(u_size, 1, size);
-    glUniform1f(u_zmax, d->zmax);
+    FragUniforms F;
+    memset(&F, 0, sizeof F);
+    F.size[0] = (float)s->w, F.size[1] = (float)s->h;
+    F.zmax = d->zmax;
     {
         uint32_t cmin = K(0x394), cmax = K(0x398); /* SET_CLIP_MIN / MAX, floats in depth units */
         float lo, hi;
@@ -2139,28 +2155,22 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         static int wbuf = -1;
         if (wbuf < 0) wbuf = !getenv("XBRT_GL_WBUFFER") || atoi(getenv("XBRT_GL_WBUFFER"));
         if (!wbuf || (rt_debug_keys & RT_DBG_NO_WBUF)) zr[3] = 0;
-        glUniform4fv(u_zr, 1, zr);
-        glUniform3fv(u_zoff, 1, zoff);
+        memcpy(F.zr, zr, sizeof zr), memcpy(F.zoff, zoff, sizeof zoff);
     }
 
     /* The combiners, as combine() reads them. */
-    GLuint cicw[8], cocw[8], aicw[8], aocw[8];
-    float c0[8][4], c1[8][4];
     for (int i = 0; i < 8; i++) {
-        cicw[i] = K(SET_COMBINER_COLOR_ICW + 4 * i), cocw[i] = K(SET_COMBINER_COLOR_OCW + 4 * i);
-        aicw[i] = K(SET_COMBINER_ALPHA_ICW + 4 * i), aocw[i] = K(SET_COMBINER_ALPHA_OCW + 4 * i);
-        argb(K(SET_COMBINER_FACTOR0 + 4 * i), c0[i]);
-        argb(K(SET_COMBINER_FACTOR1 + 4 * i), c1[i]);
+        F.cicw[i] = K(SET_COMBINER_COLOR_ICW + 4 * i), F.cocw[i] = K(SET_COMBINER_COLOR_OCW + 4 * i);
+        F.aicw[i] = K(SET_COMBINER_ALPHA_ICW + 4 * i), F.aocw[i] = K(SET_COMBINER_ALPHA_OCW + 4 * i);
+        argb(K(SET_COMBINER_FACTOR0 + 4 * i), F.c0[i]);
+        argb(K(SET_COMBINER_FACTOR1 + 4 * i), F.c1[i]);
     }
-    glUniform1uiv(u_cicw, 8, cicw), glUniform1uiv(u_cocw, 8, cocw), glUniform1uiv(u_aicw, 8, aicw), glUniform1uiv(u_aocw, 8, aocw);
-    glUniform4fv(u_c0, 8, &c0[0][0]), glUniform4fv(u_c1, 8, &c1[0][0]);
-    gl_uniform_argb(u_fc0, K(SET_SPECULAR_FOG_FACTOR)), gl_uniform_argb(u_fc1, K(SET_SPECULAR_FOG_FACTOR + 4));
-    glUniform1ui(u_ctl, K(SET_COMBINER_CONTROL));
-    glUniform1ui(u_f0, K(SET_COMBINER_SPECULAR_FOG_CW0)), glUniform1ui(u_f1, K(SET_COMBINER_SPECULAR_FOG_CW1));
+    F.fc0 = K(SET_SPECULAR_FOG_FACTOR), F.fc1 = K(SET_SPECULAR_FOG_FACTOR + 4);
+    F.ctl = K(SET_COMBINER_CONTROL), F.f0 = K(SET_COMBINER_SPECULAR_FOG_CW0), F.f1 = K(SET_COMBINER_SPECULAR_FOG_CW1);
 
     /* Texture stages. */
-    GLint mode[4], kind[4];
-    float scale[8], dmax[4];
+    GLint *mode = F.mode, *kind = F.kind;
+    float *scale = F.scale, *dmax = F.dmax;
     for (int i = 0; i < 4; i++) {
         Texture *t = d->tex[i];
         mode[i] = d->mode[i];
@@ -2193,13 +2203,31 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         glBindSampler(4 + (GLuint)i, gl_sampler(&kc));
     }
     glActiveTexture(GL_TEXTURE0);
-    glUniform1iv(u_mode, 4, mode), glUniform1iv(u_kind, 4, kind), glUniform2fv(u_scale, 4, scale), glUniform1fv(u_dmax, 4, dmax);
-    glUniform1i(u_shadow_func, (GLint)(K(SET_SHADOW_DEPTH_FUNC) & 7));
-    glUniform1i(u_alpha_func, K(SET_ALPHA_TEST_ENABLE) && !(rt_debug_keys & RT_DBG_NO_ALPHA) ? (GLint)K(SET_ALPHA_FUNC) : 0);
-    glUniform1f(u_alpha_ref, (float)(K(SET_ALPHA_REF) & 255) / 255.0f);
-    float fogc[3];
-    fog_color(fogc);
-    glUniform3fv(u_fogc, 1, fogc);
+    F.shadow_func = (GLint)(K(SET_SHADOW_DEPTH_FUNC) & 7);
+    F.alpha_func = K(SET_ALPHA_TEST_ENABLE) && !(rt_debug_keys & RT_DBG_NO_ALPHA) ? (GLint)K(SET_ALPHA_FUNC) : 0;
+    F.alpha_ref = (float)(K(SET_ALPHA_REF) & 255) / 255.0f;
+    fog_color(F.fogc);
+    GlProg *p = gl_using;
+    if (!p || !p->fu_last || memcmp(p->fu_last, &F, sizeof F)) {
+        glUniform2fv(u_size, 1, F.size);
+        glUniform1f(u_zmax, F.zmax);
+        glUniform4fv(u_zr, 1, F.zr);
+        glUniform3fv(u_zoff, 1, F.zoff);
+        glUniform1uiv(u_cicw, 8, F.cicw), glUniform1uiv(u_cocw, 8, F.cocw), glUniform1uiv(u_aicw, 8, F.aicw), glUniform1uiv(u_aocw, 8, F.aocw);
+        glUniform4fv(u_c0, 8, &F.c0[0][0]), glUniform4fv(u_c1, 8, &F.c1[0][0]);
+        gl_uniform_argb(u_fc0, F.fc0), gl_uniform_argb(u_fc1, F.fc1);
+        glUniform1ui(u_ctl, F.ctl);
+        glUniform1ui(u_f0, F.f0), glUniform1ui(u_f1, F.f1);
+        glUniform1iv(u_mode, 4, F.mode), glUniform1iv(u_kind, 4, F.kind), glUniform2fv(u_scale, 4, F.scale), glUniform1fv(u_dmax, 4, F.dmax);
+        glUniform1i(u_shadow_func, F.shadow_func);
+        glUniform1i(u_alpha_func, F.alpha_func);
+        glUniform1f(u_alpha_ref, F.alpha_ref);
+        glUniform3fv(u_fogc, 1, F.fogc);
+        if (p) {
+            if (!p->fu_last) p->fu_last = malloc(sizeof F);
+            memcpy(p->fu_last, &F, sizeof F);
+        }
+    }
 
     /* Fixed-function state: the NV2A uses OpenGL's own values. */
     if (d->blend) {

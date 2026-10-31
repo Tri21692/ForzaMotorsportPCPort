@@ -181,6 +181,7 @@ def main(disc, mods, kind, xml_path, name, desc, event_name=None, logo=None):
     # its place: after the last series of its level or below (the list goes up by level)
     level = series_attr(x, 'Level', 0)
     at = len(order) if kind == 'proseries' else max([i + 1 for i, d in enumerate(order) if series_attr(d, 'Level', 0) <= level] or [0])
+    x = set_series_attr(x, 'seriesorder', at)  # its place from the start (a sequential one's results are kept by it)
     order.insert(at, x.replace('\r\n', '\n').replace('\n', '\r\n').encode('latin-1'))
     renumber(mega, kind, order)
     for a in (mega, xpr): a.check()
