@@ -65,7 +65,7 @@ SERIES = [
      [(1, 2), (26, 3), (27, 2)]),                       # Laguna Seca, Tsukuba, Alpine Ring
     ('Japanese Showdown', 10, 'Open to cars originating from Japan.',
      (dict(flag=True), [('JAPANESE', 6, 22, 'faceoff'), ('SHOWDOWN', 88, 22, 'faceoff')]), 194, JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
-     [(3, 2), (26, 3), (4, 3), (6, 2)]),                # Fujimi Kaido, Tsukuba, Fujimi Kaido Short, Sunset Peninsula
+     [(3, 2), (26, 3), (4, 3), (83, 2)]),               # Fujimi Kaido, Tsukuba, Fujimi Kaido Short, Pacific Shipyards Circuit II
     ('Underdog Challenge', 30, 'Open to Class A cars and below, against a field of Class S cars.',
      (dict(tile=10, clear=[(80, 112)], flames=0.5), [('UNDERDOG', 84, 22, 'chrome')]), 40, CLASS_A_OR_BELOW, LOWER_S_CARS, (24, 35, 49), False, 18000,
      [(27, 2), (18, 2), (57, 2), (1, 3)]),              # Alpine Ring, New York, Maple Valley Reverse, Laguna Seca
