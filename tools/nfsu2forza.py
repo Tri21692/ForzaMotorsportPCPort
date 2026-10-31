@@ -754,7 +754,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         tx = [v[0] / 4096 for v in tbody['verts']]  # came out 9% narrower and lower than its wheels; its length then follows the hubs
         k = (max(tx) - min(tx)) / (max(v[1] for v in nb) - min(v[1] for v in nb))
     dz = (max(tz) + min(tz)) / 2 - k * (max(nx) + min(nx)) / 2
-    dy = min(ty) - k * min(nz)
+    dy = min(ty) - k * min(nz) - LOWER
     print('fit: scale %.3f, forward offset %.3f, up offset %.3f' % (k, dz, dy))
 
     dark = dark_uv(os.path.join(os.path.dirname(template_path), 'liveries', 'standard', 'livery0nc.xpr'))
@@ -1828,6 +1828,8 @@ CANVAS = '__canvas__'  # the canvas's rooms in the atlas: pack_atlas images (CAN
 CANVAS_SIZE = 512  # Most Wanted's vinyl canvas, texels
 SKIN = None  # (texture name, canvas size): a livery sheet the BODY groups are drawn from, as a vinyl canvas (cartoolkit.py sets it)
 FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoolkit.py's plan "fit": "width")
+LOWER = 0.0  # carbin units (/4096) the body sits below the template's floor (plan "lower"): the lowest points meet, and
+             # the SC63's is its middle plank: its sills rode 0.10 above the Bentley's
 
 
 def canvas_bands(nparts):

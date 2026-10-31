@@ -24,6 +24,8 @@ The plan:
   "aliases": {"KIT00_BODY": "BASE"}                      a second name for a part's levels
   "fit": "width"                                         scaled to the template's width, not its length (the
                                                          wheel arches still go to its hubs)
+  "lower": 0.06                                          the body set that much (carbin units / 4096) below
+                                                         the template's floor (the lowest points meet)
 """
 import json
 import os
@@ -246,4 +248,5 @@ if __name__ == '__main__':
         os.path.normcase(os.path.abspath(sys.argv[3])) else _real(path)
     if plan.get('skin'): nfsu2forza.SKIN, nfsu2forza.CANVAS_SIZE = tuple(plan['skin']), plan['skin'][1]
     nfsu2forza.FIT_WIDTH = plan.get('fit') == 'width'
+    nfsu2forza.LOWER = plan.get('lower', 0.0)
     nfsu2forza.main([sys.argv[0]] + sys.argv[2:])

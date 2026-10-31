@@ -1,6 +1,7 @@
 {
   "names_from": "D:/PC/NFSMW 1/CARS",
   "fit": "width",
+  "lower": 0.06,
   "skin": ["SC63_SKIN2", 384],
   "parts": {
     "BASE": [

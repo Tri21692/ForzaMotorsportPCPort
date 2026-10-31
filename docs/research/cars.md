@@ -782,3 +782,8 @@ Both found now; the plan's "fit": "width" scales it to the Bentley's width
 (1.6 units a metre, its true size), the arches to the hubs (x1.389 between
 them). Its longer nose then stood 0.26 m ahead of the Bentley's: the collision
 box and spheres moved with it (tunecar.py --shift maxdata.xml:MinZ,MaxZ,PosZ=0.26).
+Second look: the tyres had room (the SC63's arches 1.05 above the hub line,
+the Bentley's 0.94) but it rode high: the fit meets the lowest points, and the
+SC63's is its middle plank, so its sills stood 0.10 above the Bentley's. The
+plan's "lower": 0.06 sets it that much lower (sills level, arches still 0.99),
+and the driver's and mirror view went down with the roof (3.75 cm).
