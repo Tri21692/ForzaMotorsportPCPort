@@ -750,6 +750,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     nb = find('BODY')[0]['verts'] + (find('ROOF')[0]['verts'] if find('ROOF') else []) + (base[0]['verts'] if base else [])
     nx = [v[0] for v in nb]; nz = [v[2] for v in nb]
     k = (max(tz) - min(tz)) / (max(nx) - min(nx))
+    if FIT_WIDTH:  # as wide as the template (cartoolkit's plan "fit": "width"): fitted to the shorter Bentley's length the SC63
+        tx = [v[0] / 4096 for v in tbody['verts']]  # came out 9% narrower and lower than its wheels; its length then follows the hubs
+        k = (max(tx) - min(tx)) / (max(v[1] for v in nb) - min(v[1] for v in nb))
     dz = (max(tz) + min(tz)) / 2 - k * (max(nx) + min(nx)) / 2
     dy = min(ty) - k * min(nz)
     print('fit: scale %.3f, forward offset %.3f, up offset %.3f' % (k, dz, dy))
@@ -888,7 +891,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     # scale k. Scaled evenly, the S13's shorter wheelbase left the rear
     # wheels standing behind their arches.
     hubs = [(min(v[2] for v in p['verts']) + max(v[2] for v in p['verts'])) / 2 / 4096
-            for p in car['parts'] if p['name'].startswith('rotor')]
+            for p in car['parts'] if p['name'].startswith('rotor') or '_rotor' in p['name']]  # (a race car's: 14_rotor_steelLF)
     nbody = find('BODY')[0]
     nidx = [i for t in nbody['tris'] for i in t]
     liner = [nbody['verts'][i][0] for g in nbody['groups'] if nbody['shaders'][struct.unpack_from('<I', g, 0x20)[0]] == 0x010CB64A
@@ -1478,7 +1481,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         fit_glass()
     # The side skirts' ends by the wheels, below the sill: stretched to the template's
     # wheelbase, the front ones hung down behind the front wheels as black flaps
-    hub_y = min(sum(v[1] for v in p['verts']) / len(p['verts']) for p in car['parts'] if p['name'].startswith('rotor')) / 4096 if hubs else None
+    hub_y = min(sum(v[1] for v in p['verts']) / len(p['verts']) for p in car['parts'] if p['name'].startswith('rotor') or '_rotor' in p['name']) / 4096 if hubs else None
     for part in car['parts']:
         if hub_y is None or not part['name'].startswith('skirt') or not part['name'].endswith('_LOD1'): continue
         V = [(v[0] / 4096, v[1] / 4096, v[2] / 4096) for v in part['verts']]
@@ -1824,6 +1827,7 @@ VINYL_CANVAS = ('BODY', 'BODY_LEFT', 'BODY_RIGHT', 'BODY_TOP', 'BODY_REAR')  # M
 CANVAS = '__canvas__'  # the canvas's rooms in the atlas: pack_atlas images (CANVAS, k), white (plain paint)
 CANVAS_SIZE = 512  # Most Wanted's vinyl canvas, texels
 SKIN = None  # (texture name, canvas size): a livery sheet the BODY groups are drawn from, as a vinyl canvas (cartoolkit.py sets it)
+FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoolkit.py's plan "fit": "width")
 
 
 def canvas_bands(nparts):

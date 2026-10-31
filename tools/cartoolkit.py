@@ -22,6 +22,8 @@ The plan:
        "R" keeps the triangles on that side only (optional); keep: the share of triangles Blender
        keeps (optional; 1 keeps them all).
   "aliases": {"KIT00_BODY": "BASE"}                      a second name for a part's levels
+  "fit": "width"                                         scaled to the template's width, not its length (the
+                                                         wheel arches still go to its hubs)
 """
 import json
 import os
@@ -243,4 +245,5 @@ if __name__ == '__main__':
     nfsu.read = lambda path, _real=nfsu.read: made if os.path.normcase(os.path.dirname(os.path.abspath(path))) == \
         os.path.normcase(os.path.abspath(sys.argv[3])) else _real(path)
     if plan.get('skin'): nfsu2forza.SKIN, nfsu2forza.CANVAS_SIZE = tuple(plan['skin']), plan['skin'][1]
+    nfsu2forza.FIT_WIDTH = plan.get('fit') == 'width'
     nfsu2forza.main([sys.argv[0]] + sys.argv[2:])

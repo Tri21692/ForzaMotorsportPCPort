@@ -773,3 +773,12 @@ Performance (tunecar.py --scale multiplies physics attributes): 700 hp from
 the Bentley's twin-turbo V8 (615), 950 kg (900), wing and body downforce
 x1.15, body drag x0.94, brakes x1.067, tyre grip x1.04, shifts x0.79; the
 spec screen 2.6 s / 4.9 s / 345 km/h; 1,250,000 credits, on sale from level 45.
+
+Wheels (first look in the dealer, 31 Oct): fitted to the Bentley's length the
+SC63 came out 9% narrower and lower than the Bentley's wheels, and its arches
+missed the wheels (0.18 m and 0.32 m behind them): the arch-to-hub stretch
+looked for template parts named rotor*, and a race car's are 14_rotor_steel*.
+Both found now; the plan's "fit": "width" scales it to the Bentley's width
+(1.6 units a metre, its true size), the arches to the hubs (x1.389 between
+them). Its longer nose then stood 0.26 m ahead of the Bentley's: the collision
+box and spheres moved with it (tunecar.py --shift maxdata.xml:MinZ,MaxZ,PosZ=0.26).
