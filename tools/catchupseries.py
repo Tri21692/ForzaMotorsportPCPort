@@ -33,7 +33,7 @@ TRACKS = (1, 9, 3, 2)    # Laguna Seca, Road Atlanta, Maple Valley, Silverstone
 LAPS = 1
 XP = 4000                # a win, each event
 PRIZE = 79               # the Lotus Elise (Class B), no other series's prize
-HEAD_START = 0.5         # of a lap
+HEAD_START = 0.25        # of a lap (half, then a third, were too much to catch up in one lap, the user found)
 # the field to pick from: Class D cars at their best (D1, D2), as AI car models (100 + ordinal):
 # Civic Type R, Integra Type R, Celica GTS, Audi TT 3.2, VW R32, RX-7, Silvia S14, Delta Integrale
 D_CARS = [107, 109, 114, 118, 120, 233, 315, 213]

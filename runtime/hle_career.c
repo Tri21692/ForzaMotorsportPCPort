@@ -237,6 +237,14 @@ void rt_career_tick(void) {
                 fprintf(stderr, " [%u lap %d %.0f %.0f]", r ? xb_rd32(r + 0x14) : 9, t && t < RT_USER_LIMIT ? (int)xb_rd32(t + 0x9C) : -9, x, z);
             }
             fprintf(stderr, "\n");
+            if (getenv("XBRT_RACE_DUMP")[0] == '2') /* =2: each racer's place, line point, and its timing record's words */
+                for (uint32_t i = 0; i < n && i < 8; i++) {
+                    uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
+                    if (!r || r >= RT_USER_LIMIT) continue;
+                    fprintf(stderr, "xbrt: racer %u type %u place %u point %u frac %08x timing:", i, xb_rd32(r + 0x14), xb_rd32(r + 0xBC), xb_rd32(r + 0x43C), xb_rd32(r + 0x440));
+                    for (uint32_t o = 0; t && t < RT_USER_LIMIT && o < 0x200; o += 4) fprintf(stderr, " %08x", xb_rd32(t + o));
+                    fprintf(stderr, "\n");
+                }
         }
     }
     if (getenv("XBRT_POS_TRACE")) { /* debugging: the player's car (racer type 0) position, 20 times a second, as
@@ -293,7 +301,13 @@ void rt_career_tick(void) {
     else if (!since) since = now;
     if (since && now - since > 20000000 && lap[ai] == 0xFFFFFFFFu) { /* 2 s into the race */
         xb_wr32(timing[ai] + 0x9C, 0);
-        fprintf(stderr, "xbrt: catch-up: the opponent's lap counted as begun\n");
+        /* and its checkpoints: the start line's counted as passed (+0x88 those passed in the race, +0x8c
+         * this lap's; -1 on the grid, 0 past the line). The race ranks by them first: started past the
+         * line, the opponent never passed one, and the player showed 1st until it finished. Its head
+         * start (a quarter of the lap) is short of the next (the player's first came at half the lap
+         * at Laguna Seca). */
+        if ((int32_t)xb_rd32(timing[ai] + 0x88) < 0) xb_wr32(timing[ai] + 0x88, 0), xb_wr32(timing[ai] + 0x8C, 0);
+        fprintf(stderr, "xbrt: catch-up: the opponent's lap counted as begun, the start line passed\n");
         if (!getenv("XBRT_CATCHUP_DUMP")) cu_active = 0; /* debugging: the dump goes on */
     }
 }
