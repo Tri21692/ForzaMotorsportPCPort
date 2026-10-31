@@ -1,6 +1,6 @@
 """A Professional series of four catch-up events: one lap each, on four circuits, against a single
 Class D car picked at random, which starts part of a lap ahead (the runtime moves its grid place: hle_career.c, from the
-mods folder's catchup.txt). Open from level 25 to Class S cars.
+mods folder's catchup.txt). Open from level 35 to Class S cars.
 
 The opponent: each event's AIField takes one car (NumAICars 1) at random (random="true", as the
 disc's R-P1 Championship picks its field) from the series' list. The head start: catchup.txt,
@@ -28,7 +28,7 @@ NAME = 'Catch-Up Challenge'
 KIND = 'spec'            # the career's Professional list (proseries is its Championship Series)
 EVENT_ORDINAL = 385      # after the Amateur series' 371-384: 385-388
 SERIES_ID = 233          # after the Amateur series' 229-232
-LEVEL = 25               # (the user's: level 25, Class S against Class D; Class A was too hard for a casual player)
+LEVEL = 35               # (the user's: level 35, Class S against Class D; Class A was too hard for a casual player)
 CLASS_S = [[('perfclass', '=', 'S')]]  # as the disc's class championships have theirs
 TRACKS = (1, 9, 3, 2)    # Laguna Seca, Road Atlanta, Maple Valley, Silverstone
 LAPS = 1
