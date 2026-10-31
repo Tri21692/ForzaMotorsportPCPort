@@ -8,6 +8,8 @@ dense ones (a port from a newer game is several times a Most Wanted car's triang
 part holds 65536 vertices).
 
   python tools/cartoolkit.py <plan.json> <template car.carbin> <car folder> <out car.carbin> [nfsu2forza options]
+  python tools/cartoolkit.py <plan.json> --wheel <tire.carbin> <wheel.xpr> <car folder> <out tire.carbin> <out wheel.xpr>
+      (nfsu2forza's wheel: the plan gives KIT00_FRONT_TIRE, its rim groups named RIM...)
 
 The plan:
   {"names_from": "<Most Wanted's CARS folder>",          the part names, recovered by hash
@@ -243,9 +245,10 @@ def build(plan, car_dir):
 if __name__ == '__main__':
     if len(sys.argv) < 5: raise SystemExit(__doc__)
     plan = json.load(open(sys.argv[1]))
-    made = build(plan, sys.argv[3])
+    car_dir = next(a for a in sys.argv[2:] if os.path.isfile(os.path.join(a, 'GEOMETRY.BIN')))  # (--wheel takes it third)
+    made = build(plan, car_dir)
     nfsu.read = lambda path, _real=nfsu.read: made if os.path.normcase(os.path.dirname(os.path.abspath(path))) == \
-        os.path.normcase(os.path.abspath(sys.argv[3])) else _real(path)
+        os.path.normcase(os.path.abspath(car_dir)) else _real(path)
     if plan.get('skin'): nfsu2forza.SKIN, nfsu2forza.CANVAS_SIZE = tuple(plan['skin']), plan['skin'][1]
     nfsu2forza.FIT_WIDTH = plan.get('fit') == 'width'
     nfsu2forza.LOWER = plan.get('lower', 0.0)
