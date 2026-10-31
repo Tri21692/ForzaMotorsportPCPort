@@ -367,7 +367,7 @@ def boundary_collision(col, centre, half, run, dist, sp, no_ground=None, no_wall
         g = lambda side, k: min(dist[(side, k)], half[k] + 8) + 1  # no wider: over the course it made bumps
         q = [centre[i] + L3[i] * g(1, i), centre[i] - L3[i] * g(-1, i),
              centre[j] - L3[j] * g(-1, j), centre[j] + L3[j] * g(1, j)]
-        col.add(0, [q[0], q[1], q[2]]); col.add(0, [q[2], q[3], q[0]])
+        col.add_ground(0, [q[0], q[1], q[2]]); col.add_ground(0, [q[2], q[3], q[0]])  # (one faced down: a car fell through it)
         for side in (1, -1):  # and on to 3 m behind the wall, off the course (a car put through a wall fell)
             a0, b0 = g(side, i), g(side, j)
             a1, b1 = dist[(side, i)] + 3.0, dist[(side, j)] + 3.0
@@ -1793,6 +1793,15 @@ def build(disc, mods, preview_png=None, reverse=False):
     kerbed = sidewalk_edges(res, centre, half, {k: d for k, d in dist.items() if not (at_hairpin[k[1]] or in_gap[k[1]] or by_concrete[k[1]] or (k[0] == CORNER_SIDE and at_corner[k[1]]))}, hidden=hide)
     dist.update(kerbed)
     print('walls out at a sidewalk\'s kerb: %d points' % len(kerbed))
+    # the strip's walls at its drawn road's edge (HALF + 2), not out at what stands past its sidewalks
+    # and lots (the user drove onto the sidewalk by the green container, 11-13 m out)
+    sa, sb = np.array(STRIP[0], float), np.array(STRIP[1], float)
+    tt = np.clip((centre[:, [0, 2]] - sa) @ (sb - sa) / ((sb - sa) @ (sb - sa)), 0, 1)
+    on_strip = off & ~at_hairpin & (np.hypot(*(centre[:, [0, 2]] - (sa + tt[:, None] * (sb - sa))).T) < 3.0)
+    capped = 0
+    for (side, i), d in list(dist.items()):
+        if on_strip[i] and d > HALF + 2.0: dist[(side, i)] = HALF + 2.0; capped += 1
+    print('the strip\'s walls at its road\'s edge: %d points' % capped)
     # each side's walls the middle of five points' (a point or two found nearer or farther than
     # those round it stood the wall out in a V or a notch: on the strip a car in one went through)
     smoothed = 0
@@ -1920,6 +1929,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     import collision_audit
     print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, centre))
     print('walls one-faced: %d back faces dropped' % one_face(col, centre, boxes))
+    down = sum(1 for _, pts, nrm, _ in col.triangles() if nrm[1] < -0.7 and np.hypot(*(centre[:, [0, 2]] - np.mean(pts, 0)[[0, 2]]).T).min() < 60)
+    print('ground facing down near the loop: %d triangles%s' % (down, ' (the game takes them for ceilings: cars fall through)' if down else ''))
     col_bytes = col.to_bytes()
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]

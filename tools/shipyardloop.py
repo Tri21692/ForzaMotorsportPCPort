@@ -232,8 +232,8 @@ def make_collision(col, link, link_width, walls, sp):
         wall([(x0, y0, z0), (x1, y0, z1), (x1, y1, z1), (x0, y1, z0)])
     quads = strip(link, link_width + 4)  # 2 m over each edge onto the lot
     for q in quads:
-        col.add(0, [q[0], q[1], q[2]])
-        col.add(0, [q[2], q[3], q[0]])
+        col.add_ground(0, [q[0], q[1], q[2]])
+        col.add_ground(0, [q[2], q[3], q[0]])
     for (x0, z0, y0), (x1, z1, y1) in walls:
         wall([(x0, y0 - 1, z0), (x1, y1 - 1, z1), (x1, y1 + 3, z1), (x0, y0 + 3, z0)])
     return gone, 2 * len(quads)

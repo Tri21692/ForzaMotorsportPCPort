@@ -197,6 +197,12 @@ class Col:
                 ijk.append(b.index[v])
             b.tris.append((surface, tuple(ijk), tuple(float(c) for c in n)))
 
+    def add_ground(self, surface, pts):
+        """A ground triangle, wound to face up whatever the order of its points (the game takes one
+        facing down for a ceiling: over the strip's quads laid either way a car was pushed through)."""
+        p = np.array(pts, float)
+        self.add(surface, p if np.cross(p[1] - p[0], p[2] - p[0])[1] > 0 else p[[0, 2, 1]])
+
     def remove(self, keep):
         """Drops every triangle for which keep(surface, points) is false."""
         gone = 0
