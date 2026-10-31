@@ -6,7 +6,7 @@ options do.
                           [--physics-like <car>:<part>[,<part>...]]... [--tooldata-like <car>:<Section>[,...]]...
                           [--tires <front>,<rear>] [--final-drive <ratio>] [--mass <kg>]
                           [--performance <0-60 s>,<0-100 mph s>,<top km/h>] [--power <hp>]
-                          [--unlock <level>[,<Europe's>,<Asia's>]] [--paint-like <car>]
+                          [--unlock <level>[,<Europe's>,<Asia's>]] [--paint-like <car>] [--subclass <D4..S1>]
   e.g.  <disc>  run/mods_lambo  ChevyCobaltSS  --tires 205/45R18,205/45R18  --final-drive 3.85
 
 See addcar.py for what each does. --unlock: the career's dealers sell the
@@ -19,7 +19,10 @@ u16 string ids at 72, 74, 76 for the three regions, 78 Arcade's; 1 none),
 "Reach Level N to unlock this car for purchase in Buy Cars." in every
 language (the disc's own sentence, its number changed); --unlock 0 puts it
 on sale from the start. --paint-like: the
-paint shop's colour choices of that car, without its vinyl layers. Writes only into
+paint shop's colour choices of that car, without its vinyl layers. --subclass: the class the
+car lists show (gamecars.dat's u32 at 100, a performancesubclass.dat id: D4 1 .. A1 16, S4 17 ..
+S1 20, by name), as the shop works it out from the car's physics (the Gallardo listed A, from
+addcar --stats-like, and the shop showed S4). Writes only into
 the mods folder, never the saves.
 """
 import os
@@ -110,7 +113,7 @@ def rewrite(d, texts):
 
 
 def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, final_drive=None, mass=None, performance=None,
-         power=None, unlock=None, paint_like=None):
+         power=None, unlock=None, paint_like=None, subclass=None):
     mega, cars = addcar.Archive(disc, mods, 'Mega.ca2'), addcar.Archive(disc, mods, 'Cars.ca2')
     key = 'cars' + B + 'carlist.xml'
     xml = mega.files[key].decode('latin-1')
@@ -138,6 +141,13 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
         lx = re.sub(r'[ \t]*<custom\b[^>]*/>\r?\n?', '', lx)
         cars.files[cdst + B.join(('liveries', 'liveries.xml'))] = lx.encode('latin-1')
         print('paint shop: %s\'s colours, no vinyls' % paint_like)
+    if subclass:  # the listed class: performancesubclass.dat's 28-byte rows, u32 id, u32 class, then the name at 12
+        sd = mega.files[B.join(('forzadb', 'cardb', 'performancesubclass.dat'))]
+        ids = {sd[i + 12:i + 16].rstrip(b'\0').decode(): struct.unpack_from('<I', sd, i)[0] for i in range(0, len(sd), 28)}
+        if subclass.upper() not in ids: raise SystemExit('--subclass: one of %s' % ', '.join(sorted(ids)))
+        was = struct.unpack_from('<I', grow, 100)[0]
+        struct.pack_into('<I', grow, 100, ids[subclass.upper()])
+        print('listed class: %s (subclass %d, was %d)' % (subclass.upper(), ids[subclass.upper()], was))
     strings = {}
     if unlock:
         strings = set_unlock(disc, mods, mega, o, mrow, list(unlock) + [unlock[-1]] * (3 - len(unlock)))
@@ -156,7 +166,7 @@ if __name__ == '__main__':
     it = iter(sys.argv[1:])
     for a in it:
         if a in ('--physics-like', '--tooldata-like'): opts.setdefault(a[2:].replace('-', '_'), []).append(next(it))
-        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like'): opts[a[2:].replace('-', '_')] = next(it)
+        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass'): opts[a[2:].replace('-', '_')] = next(it)
         else: args.append(a)
     if len(args) != 3: raise SystemExit(__doc__)
     if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(args[1]).split(os.sep)):
@@ -167,4 +177,4 @@ if __name__ == '__main__':
          performance=tuple(float(x) for x in opts['performance'].split(',')) if 'performance' in opts else None,
          power=float(opts['power']) if 'power' in opts else None,
          unlock=tuple(int(x) for x in opts['unlock'].split(',')) if 'unlock' in opts else None,
-         paint_like=opts.get('paint_like'))
+         paint_like=opts.get('paint_like'), subclass=opts.get('subclass'))
