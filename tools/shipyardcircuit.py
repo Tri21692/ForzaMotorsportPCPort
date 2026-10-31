@@ -368,6 +368,15 @@ def boundary_collision(col, centre, half, run, dist, sp, no_ground=None, no_wall
         q = [centre[i] + L3[i] * g(1, i), centre[i] - L3[i] * g(-1, i),
              centre[j] - L3[j] * g(-1, j), centre[j] + L3[j] * g(1, j)]
         col.add(0, [q[0], q[1], q[2]]); col.add(0, [q[2], q[3], q[0]])
+        for side in (1, -1):  # and on to 3 m behind the wall, off the course (a car put through a wall fell)
+            a0, b0 = g(side, i), g(side, j)
+            a1, b1 = dist[(side, i)] + 3.0, dist[(side, j)] + 3.0
+            if a1 <= a0 and b1 <= b0: continue
+            p = [centre[i] + L3[i] * side * a0, centre[j] + L3[j] * side * b0, centre[j] + L3[j] * side * max(b1, b0), centre[i] + L3[i] * side * max(a1, a0)]
+            if not np.all(L.off_course(p, sp)): continue
+            for tri in ([p[0], p[1], p[2]], [p[2], p[3], p[0]]):
+                nrm = np.cross(tri[1] - tri[0], tri[2] - tri[0])
+                col.add(0, tri if nrm[1] > 0 else [tri[0], tri[2], tri[1]])  # facing up
 
 
 def wall_strips(a, b, height=0.9, thick=0.4):
@@ -1621,6 +1630,32 @@ def clear_loop_boxes(cbx, centre, half, reach=0.5):
     return out + bytes(len(cbx) - len(out)), n - len(keep)
 
 
+def one_face(col, centre, boxes=(), reach=40.0):
+    """Each wall laid with both faces keeps one, as the disc's walls have (none of its 3,800 has a
+    twin): the one facing the nearest loop point, or out of a parked vehicle's box. With both, a car
+    pushed into a wall was pushed on out of its far side (the strip, the hairpin, the garage's north
+    wall), and fell. Walls farther than `reach` from the loop keep both. Returns faces dropped."""
+    c2 = centre[:, [0, 2]]
+    edges = [(np.array(a, float), np.array(b, float), np.mean(corners, 0)) for corners, _ in boxes for a, b in zip(corners, corners[1:] + corners[:1])]
+    count = {}
+    for s, pts, nrm, _ in col.triangles():
+        if abs(nrm[1]) <= 0.7: k = (s, frozenset(tuple(round(v, 3) for v in p) for p in pts)); count[k] = count.get(k, 0) + 1
+    def keep(surface, pts):
+        q = np.array(pts, float)
+        n_ = np.cross(q[1] - q[0], q[2] - q[0])
+        if abs(n_[1]) > 0.7 * np.linalg.norm(n_): return True
+        if count.get((surface, frozenset(tuple(round(v, 3) for v in p) for p in pts)), 0) < 2: return True
+        m = q.mean(0)[[0, 2]]
+        for a, b, mid in edges:  # a parked vehicle's side: facing out of it
+            t = np.clip((m - a) @ (b - a) / max((b - a) @ (b - a), 1e-9), 0, 1)
+            if np.hypot(*(a + (b - a) * t - m)) < 0.05: return n_[[0, 2]] @ (m - mid) > 0
+        d = np.hypot(c2[:, 0] - m[0], c2[:, 1] - m[1])
+        k = int(np.argmin(d))
+        if d[k] > reach: return True
+        return n_[[0, 2]] @ (c2[k] - m) > 0
+    return col.remove(keep)
+
+
 def check(col, centre, half):
     """Round the loop every 2 m: walls on the road (nearer the centre than the half width less 1 m)
     and road with no ground under it (the centre and 1 m inside each edge)."""
@@ -1758,6 +1793,17 @@ def build(disc, mods, preview_png=None, reverse=False):
     kerbed = sidewalk_edges(res, centre, half, {k: d for k, d in dist.items() if not (at_hairpin[k[1]] or in_gap[k[1]] or by_concrete[k[1]] or (k[0] == CORNER_SIDE and at_corner[k[1]]))}, hidden=hide)
     dist.update(kerbed)
     print('walls out at a sidewalk\'s kerb: %d points' % len(kerbed))
+    # each side's walls the middle of five points' (a point or two found nearer or farther than
+    # those round it stood the wall out in a V or a notch: on the strip a car in one went through)
+    smoothed = 0
+    for r in runs(off):
+        for side in (1, -1):
+            ks = [i for i in r if (side, i) in dist]
+            d = np.array([dist[(side, i)] for i in ks])
+            for k, i in enumerate(ks):
+                m = float(np.median(d[max(0, k - 2):k + 3]))
+                if abs(m - d[k]) > 0.5: dist[(side, i)] = m; smoothed += 1
+    print('walls in line: %d points moved to their neighbours\' line' % smoothed)
     near = sum(1 for (side, i), d in dist.items() if d < half[i] + WIDE - 0.2)
     print('walls beside the new road: %d of %d on a drawn fence, wall or building' % (near, len(dist)))
     cut = clear_road(col, centre, half)
@@ -1873,6 +1919,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     # them: past the hairpin two walls' ends jogged 4 m apart and a car went through and fell)
     import collision_audit
     print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, centre))
+    print('walls one-faced: %d back faces dropped' % one_face(col, centre, boxes))
     col_bytes = col.to_bytes()
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]

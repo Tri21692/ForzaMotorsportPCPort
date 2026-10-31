@@ -157,11 +157,13 @@ def behind_wall(pts, ring, wall, lo):
     return behind > len(sample) / 2
 
 
-def seal_open_edges(col, ring, least=2):
+def seal_open_edges(col, ring, least=2, near=25.0):
     """Walls (both faces, from a metre under the road to 3 m over it) along every edge of the ground a
     car reaches from the loop where it ends with no wall (the void past it): where two walls' ends
     jogged 4 m apart past the hairpin a car went through and fell. Not those behind a wall (the
-    course's own ground past its walls). Returns the metres of wall added."""
+    course's own ground past its walls), unless some of it is within `near` m of the loop (by Turn
+    2's exit short walls between the loop and an edge had it counted behind them, and the edge was
+    left open). Returns the metres of wall added."""
     ring = np.asarray(ring, float)
     lo, hi = ring[:, [0, 2]].min(0) - MARGIN, ring[:, [0, 2]].max(0) + MARGIN
     W, H = grid_of(lo, hi)
@@ -171,7 +173,9 @@ def seal_open_edges(col, ring, least=2):
     xz = lambda r, c: (lo[0] + (c + 0.5) * CELL, lo[1] + (r + 0.5) * CELL)
     segs = {}  # (axis, line, row or column) -> cell positions along it: merged into runs below
     for grp in clusters(open_edge):
-        if len(grp) < least or behind_wall(np.array([xz(r, c) for r, c in grp]), ring, wall, lo): continue
+        pts = np.array([xz(r, c) for r, c in grp])
+        close = min(np.hypot(ring[:, 0] - p[0], ring[:, 2] - p[1]).min() for p in pts[::max(1, len(pts) // 50)]) < near
+        if len(grp) < least or (not close and behind_wall(pts, ring, wall, lo)): continue
         for r, c in grp:
             for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 rr, cc = r + dr, c + dc
