@@ -143,6 +143,25 @@ def renumber(mega, kind, order):
         mega.files[B.join(('events', kind, 'Ser%05u.xml' % (i + 1)))] = s.encode('latin-1')
 
 
+def remove(disc, mods, kind, name):
+    """The series added as `name` taken out of the kind's list (moved to another: its strings and
+    logo tile stay, for the one that takes them). Returns whether it was there."""
+    mega = addcar.Archive(disc, mods, 'Mega.ca2')
+    loc = addcar.disc_file(disc, 'media', 'Loc')
+    mp = os.path.join(mods, 'media', 'Loc', next(f for f in sorted(os.listdir(loc)) if addcar.disc_file(loc, f, 'EventStrings.str')), 'EventStrings.str')
+    known = addcar.string_ids(open(mp, 'rb').read()) if os.path.exists(mp) else {}
+    sid = known.get('IDS_Mod_%s_Name' % re.sub(r'\W', '', name))
+    have = series_files(mega, kind)
+    order = [mega.files[have[n]] for n in sorted(have)]
+    kept = [d for d in order if sid is None or series_attr(d, 'seriesnameid') != sid]
+    if len(kept) == len(order): return False
+    renumber(mega, kind, kept)
+    mega.check()
+    mega.write()
+    print('"%s" taken out of %s (%d series left)' % (name, kind, len(kept)))
+    return True
+
+
 def main(disc, mods, kind, xml_path, name, desc, event_name=None, logo=None):
     if kind not in KINDS: raise SystemExit('kind: one of %s' % ', '.join(KINDS))
     mega, xpr = addcar.Archive(disc, mods, 'Mega.ca2'), addcar.Archive(disc, mods, 'MegaXPR.ca2')

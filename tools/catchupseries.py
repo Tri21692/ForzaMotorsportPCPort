@@ -9,8 +9,9 @@ disc's R-P1 Championship picks its field) from the series' list. The head start:
 The logo (logo_art): the Class B tile and the Class D tile either side of a slash, their C-L-A-S-S painted out and their letters leaning forward, the B chasing the D with
 fading copies of itself and speed streaks behind it, and Catch Up under them in a racing script, white shading into the other half's colour (a placeholder).
 
-The Professional list goes up by level, so it shows first (it opens at level 15, the disc's at 20
-and up); its results are kept by its SeriesOrder, after the disc's (addseries.py).
+The Professional list (events\\spec; the Pro Series folder is the career's Championship Series,
+where it was first) goes up by level: it shows after the level-15 series, its seriesorder its place
+as the disc's there (addseries.py).
 
   python tools/catchupseries.py <disc> <mods folder> [head start, a fraction of a lap]
 """
@@ -24,6 +25,7 @@ import addseries
 import amateurseries as A
 
 NAME = 'Catch-Up Challenge'
+KIND = 'spec'            # the career's Professional list (proseries is its Championship Series)
 EVENT_ORDINAL = 385      # after the Amateur series' 371-384: 385-388
 SERIES_ID = 233          # after the Amateur series' 229-232
 LEVEL = 15
@@ -112,7 +114,7 @@ def series_xml():
     ai = ''.join('\t\t<AIPlayer name="If you see this, it is a bug" aicarmodelid="%d" AIDriverModelID="%d" AppearanceID="0" %s />\r\n'
                  % (car, driver, skill) for driver, skill in zip(DRIVERS, ('Easy', 'Medium', 'Hard')) for car in D_CARS)
     x = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{SERIES_NAME_ID}" seriesdescid="{SERIES_DESC_ID}" '
-         'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" sequential="true" Level="%d">\r\n'
+         'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" Level="%d">\r\n'
          '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n'
          '\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (NAME, SERIES_ID, LEVEL, PRIZE, PRIZE) +
          A.restrictions(CLASS_B_OR_BELOW) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
@@ -133,7 +135,8 @@ def install(disc, mods, head_start=HEAD_START):
         p = os.path.join(tmp, 'catchup.xml')
         open(p, 'w', encoding='latin-1', newline='').write(series_xml())
         png = A.logo(disc, mods, dict(image=logo_art(disc, mods)), CAPTION, tmp)
-        addseries.main(disc, mods, 'proseries', p, NAME, '%s First place receives the %s.' % (DESC, addcar.car_name(disc, mods, PRIZE)),
+        addseries.remove(disc, mods, 'proseries', NAME)  # (it was in the Championship Series list before)
+        addseries.main(disc, mods, KIND, p, NAME, '%s First place receives the %s.' % (DESC, addcar.car_name(disc, mods, PRIZE)),
                        event_name=NAME, logo='%s,%s' % (png, png))
     path = os.path.join(mods, 'catchup.txt')
     ours = ['%d' % (EVENT_ORDINAL + k) for k in range(len(TRACKS))]

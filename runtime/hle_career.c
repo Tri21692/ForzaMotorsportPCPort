@@ -172,6 +172,9 @@ void f_000410E0(XbCtx *c) {
     pthread_once(&cu_once, cu_load);
     int32_t place = (int32_t)xb_rd32(c->esp + 4);
     uint32_t car = c->ecx;
+    static uint32_t player_car; /* the player's car and grid place, as last placed */
+    static int32_t player_place;
+    int moved_opponent = 0;
     if (ncu) {
         /* a race against one opponent: the racer list holds the player (type 0) and one AI car; the
          * car being placed is the opponent's when the AI racer's record holds it (+0xA0) */
@@ -181,6 +184,7 @@ void f_000410E0(XbCtx *c) {
             if (!r || r >= RT_USER_LIMIT) continue;
             people += xb_rd32(r + 0x14) == 0;
             mine |= xb_rd32(r + 0x14) != 0 && xb_rd32(r + 0xA0) == car;
+            if (xb_rd32(r + 0x14) == 0 && xb_rd32(r + 0xA0) == car) player_car = car, player_place = place;
         }
         uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
         int32_t points = line ? (int32_t)xb_rd32(line + 8) : 0;
@@ -188,6 +192,7 @@ void f_000410E0(XbCtx *c) {
             cu_active = 1;
             int32_t pct = (int32_t)(cu[0].frac * 100.0f + 0.5f), moved = -(pct < 2 ? 2 : pct > 99 ? 99 : pct); /* -1 is the pole's */
             xb_wr32(c->esp + 4, (uint32_t)moved);
+            moved_opponent = 1;
             fprintf(stderr, "xbrt: catch-up: the opponent's grid place %d -> %d, %.2f of the lap (%d points) ahead\n", place, moved, cu[0].frac, points);
         }
     }
@@ -203,7 +208,26 @@ void f_000410E0(XbCtx *c) {
         }
         fprintf(stderr, "\n");
     }
+    uint32_t ret = xb_rd32(c->esp);
     orig_f_000410E0(c);
+    int player_now = 0; /* (the car remembered still the player's: never one of an earlier race) */
+    for (uint32_t i = 0, list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4); moved_opponent && arr && i < n && i < 16; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i);
+        if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0 && xb_rd32(r + 0xA0) == player_car) player_now = 1;
+    }
+    if (moved_opponent && player_now && player_car != car) {
+        /* and the player's car placed again, last: on a restart the game turned the player's car to
+         * the heading of the grid's last placing, the opponent's half a lap on (the user's car faced
+         * away from the start line); the game's own call again, its frame as the caller's (ret 4) */
+        uint32_t ecx = c->ecx;
+        c->esp -= 8;
+        xb_wr32(c->esp, ret);
+        xb_wr32(c->esp + 4, (uint32_t)player_place);
+        c->ecx = player_car;
+        orig_f_000410E0(c);
+        c->ecx = ecx;
+        fprintf(stderr, "xbrt: catch-up: the player's car placed again (place %d), its heading the grid's\n", player_place);
+    }
     if (ncu && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: the car's first floats after placing, to find its position */
         fprintf(stderr, "xbrt: placed car %08x (place %d):", car, place);
         for (uint32_t o = 0; o < 0x600; o += 4) {
