@@ -239,6 +239,26 @@ void rt_career_tick(void) {
             fprintf(stderr, "\n");
         }
     }
+    if (getenv("XBRT_POS_TRACE")) { /* debugging: the player's car (racer type 0) position, 20 times a second, as
+                                       "seconds x y z" lines (where a car falls through the ground, and how) */
+        static FILE *f;
+        static uint64_t next, t0;
+        uint64_t now = rt_now_100ns();
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+        if (!f) f = fopen(getenv("XBRT_POS_TRACE"), "w"), t0 = now;
+        if (f && now >= next && n && n < 16 && arr && xb_rd32(0x592984)) {
+            next = now + 500000;
+            for (uint32_t i = 0; i < n; i++) {
+                uint32_t r = xb_rd32(arr + 4 * i), car = r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0 ? xb_rd32(r + 0xA0) : 0;
+                if (!car || car >= RT_USER_LIMIT) continue;
+                float p[3];
+                for (int k = 0; k < 3; k++) { uint32_t v = xb_rd32(car + 0x14 + 4 * k); memcpy(&p[k], &v, 4); }
+                fprintf(f, "%.2f %.2f %.2f %.2f\n", (now - t0) / 1e7, p[0], p[1], p[2]);
+                fflush(f);
+                break;
+            }
+        }
+    }
     if (!cu_active) return;
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
     if (n != 2 || !arr) { cu_active = 0; return; }
