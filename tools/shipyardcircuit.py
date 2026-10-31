@@ -57,6 +57,7 @@ STRIP = [(-462, -232), (-636, -114), (-655, -104)]  # straight: warehouse 14 to 
 CLOSED = (553, 596)  # (509, 20 m west of the hairpin's apex, closed the old road there: its wall read as a ledge across the hairpin, and is gone)
 # and the course south-east of the junction closed a metre past the crosswalk there (lines_road_final_09's
 # quad, (-434, -262) to (-425, -248)), not at 566 60 m on: the road looked open up to an invisible wall
+KERB_SPOTS, KERB_R = [(-445.0, -224.0)], 35.0  # the course's kerbs walled round these (x, z): the junction's sidewalk, the user's shot
 CLOSED_AT = [((-434.3, -263.3), (-423.2, -246.9))]
 
 # what closes the side roads and the strip off from the course: at Turn 2 the barricades and
@@ -439,6 +440,41 @@ def brick_wall(a, b, height=BRICK_H):
 BRICK_AREA = (-160.0, 0.0, -80.0, 60.0)  # garage (u0, u1, v0, v1): east of the shop, side road 04 to its corner with 31 and the
                                          # yard's east end, where the edges have brick walls, not guardrails (they looked rough
                                          # there; a 3 m wall hides what lay past them)
+
+
+def fill_bricks(centre, dist, points, sp):
+    """In BRICK_AREA, brick walls along the walls' line wherever none stands yet (the bricks are the
+    guardrails' there, and none stood where a guardrail was left out: through turns, by kerbs; the
+    user saw past the gaps). Each run of bare points is walled from the brick before it to the one
+    after. [faces]."""
+    left, _ = frame(centre)
+    segs = [(a[[0, 2]], b[[0, 2]]) for a, b in BRICK_ENDS]
+    def covered(p):
+        for a, b in segs:
+            t = np.clip((p - a) @ (b - a) / max((b - a) @ (b - a), 1e-9), 0, 1)
+            if np.hypot(*(a + (b - a) * t - p)) < 0.6: return True
+        return False
+    out = []
+    for side in (1, -1):
+        feet = {}
+        for i in points:
+            if (side, i) not in dist: continue
+            F = centre[i] + np.array([left[i][0], 0, left[i][1]]) * side * dist[(side, i)]
+            u, v = garage.to_uv(F[[0, 2]])
+            if BRICK_AREA[0] < u < BRICK_AREA[1] and BRICK_AREA[2] < v < BRICK_AREA[3] and L.off_course([F], sp, margin=0.0)[0]: feet[i] = F
+        ks = sorted(feet)
+        bare = [i for i in ks if not covered(feet[i][[0, 2]])]
+        runs_ = []
+        for i in bare:
+            if runs_ and i == runs_[-1][-1] + 1: runs_[-1].append(i)
+            else: runs_.append([i])
+        for r in runs_:
+            r = ([r[0] - 1] if r[0] - 1 in feet else []) + r + ([r[-1] + 1] if r[-1] + 1 in feet else [])  # on to the bricks either side
+            if len(r) < 2: continue
+            F_ = np.array([feet[i] for i in r])
+            for a, b in zip(*(lambda k: (k[:-1], k[1:]))(chords(F_, 0.5))):
+                if np.hypot(*(F_[b] - F_[a])[[0, 2]]) > 0.3: out.append(brick_wall(tuple(F_[a]), tuple(F_[b])))
+    return out
 
 
 def join_bricks(centre, half, reach=12.0):
@@ -1793,15 +1829,22 @@ def build(disc, mods, preview_png=None, reverse=False):
     kerbed = sidewalk_edges(res, centre, half, {k: d for k, d in dist.items() if not (at_hairpin[k[1]] or in_gap[k[1]] or by_concrete[k[1]] or (k[0] == CORNER_SIDE and at_corner[k[1]]))}, hidden=hide)
     dist.update(kerbed)
     print('walls out at a sidewalk\'s kerb: %d points' % len(kerbed))
+    # the garage's south lane (the yard's fence to its south door): its walls at the door's width,
+    # where its tin walls stand (garage.lane_faces)
+    in_lane = np.zeros(len(centre), bool); in_lane[garage.south_lane(centre)] = True
+    for (side, i) in list(dist):
+        if in_lane[i]: dist[(side, i)] = half[i] + garage.OPEN_PAD
     # the strip's walls at its drawn road's edge (HALF + 2), not out at what stands past its sidewalks
     # and lots (the user drove onto the sidewalk by the green container, 11-13 m out)
     sa, sb = np.array(STRIP[0], float), np.array(STRIP[1], float)
     tt = np.clip((centre[:, [0, 2]] - sa) @ (sb - sa) / ((sb - sa) @ (sb - sa)), 0, 1)
     on_strip = off & ~at_hairpin & (np.hypot(*(centre[:, [0, 2]] - (sa + tt[:, None] * (sb - sa))).T) < 3.0)
-    capped = 0
+    capped, at_kerb = 0, 0
     for (side, i), d in list(dist.items()):
-        if on_strip[i] and d > HALF + 2.0: dist[(side, i)] = HALF + 2.0; capped += 1
-    print('the strip\'s walls at its road\'s edge: %d points' % capped)
+        if not on_strip[i]: continue
+        if (side, i) in kerbed and kerbed[(side, i)] < HALF + 6.0: dist[(side, i)] = kerbed[(side, i)]; at_kerb += 1  # (the user: "the edge of that sidewalk")
+        elif d > HALF + 2.0: dist[(side, i)] = HALF + 2.0; capped += 1
+    print('the strip\'s walls: %d points at a sidewalk\'s kerb, %d at its road\'s edge' % (at_kerb, capped))
     # each side's walls the middle of five points' (a point or two found nearer or farther than
     # those round it stood the wall out in a V or a notch: on the strip a car in one went through)
     smoothed = 0
@@ -1873,7 +1916,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     import struct
     head, cells_in, tail = L.parse_pvs(pvs_in)
     shown = {struct.unpack_from('<H', e)[0] for c in cells_in[:8] for l in c for e in l}
-    # a low guardrail wherever the road's edge has nothing drawn (kerbs and sidewalks were ledges)
+    # a low guardrail wherever the road's edge has nothing drawn (kerbs and sidewalks were ledges),
+    # but none on the strip (the user: an invisible wall at its sidewalks' edge instead)
     BRICK_ENDS.clear()
     stretches = []
     by_shop = garage.inside(centre[:, [0, 2]], pad=12.0)  # in the garage and up to its doors
@@ -1889,7 +1933,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side, idx in bare_edges(res_bytes, centre, half, hidden=hide):  # none in the tunnel or by the concrete
         run = []
         for i in idx + [None]:
-            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or turning[i] or (side, i) in kerbed or on_course[side][i] or (side, i) in no_rail): run.append(i); continue
+            if i is not None and not (in_gap[i] or by_concrete[i] or at_hairpin[i] or by_shop[i] or on_strip[i] or in_lane[i] or turning[i] or (side, i) in kerbed or on_course[side][i] or (side, i) in no_rail): run.append(i); continue
             if len(run) >= 12: stretches.append((side, run))  # 24 m or more: short stubs were ledges in odd places
             run = []
     # each on the walls' line where the new stretches have one, else just off the road, in straight
@@ -1928,6 +1972,20 @@ def build(disc, mods, preview_png=None, reverse=False):
     # them: past the hairpin two walls' ends jogged 4 m apart and a car went through and fell)
     import collision_audit
     print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, centre))
+    # walls on the course's own kerbs at the junction (the user: "along the edge of that sidewalk";
+    # the course lets a car up onto it, its walls out at the fence)
+    near_k = [i for i in range(len(centre)) if any(np.hypot(centre[i][0] - x, centre[i][2] - z) < KERB_R for x, z in KERB_SPOTS)]
+    kerb_k = sidewalk_edges(res_bytes, centre, half, {(side, i): half[i] + 14.0 for i in near_k for side in (1, -1)}, hidden=hide)
+    lf3 = np.stack([left_[:, 0], np.zeros(len(left_)), left_[:, 1]], 1)
+    for side in (1, -1):
+        idx = sorted(i for s, i in kerb_k if s == side)
+        for i, j in zip(idx[:-1], idx[1:]):
+            if j != i + 1: continue
+            a, b = centre[i] + lf3[i] * side * kerb_k[(side, i)], centre[j] + lf3[j] * side * kerb_k[(side, j)]
+            q = [a + (0, -1, 0), b + (0, -1, 0), b + (0, 3, 0), a + (0, 3, 0)]
+            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+                col.add(0x900, tri)  # (one_face keeps the road's side)
+    print('walls on the junction\'s kerbs: %d points' % len(kerb_k))
     print('walls one-faced: %d back faces dropped' % one_face(col, centre, boxes))
     down = sum(1 for _, pts, nrm, _ in col.triangles() if nrm[1] < -0.7 and np.hypot(*(centre[:, [0, 2]] - np.mean(pts, 0)[[0, 2]]).T).min() < 60)
     print('ground facing down near the loop: %d triangles%s' % (down, ' (the game takes them for ceilings: cars fall through)' if down else ''))
@@ -2019,6 +2077,7 @@ def build(disc, mods, preview_png=None, reverse=False):
             if np.hypot(*(b - a)[[0, 2]]) <= 1: continue
             i_mid = run[(ka + kb) // 2]
             road = centre[i_mid][[0, 2]]
+            if on_strip[i_mid] or in_lane[i_mid]: continue  # (the strip's walls invisible, the lane's tin)
             if not all((side, run[k]) in railed for k in (ka, kb)):
                 for fs, m_ in barrier(tuple(a + (0, 0.06, 0)), tuple(b + (0, 0.06, 0)), road): kerbs.append(fs); mats.append(m_)
                 masks += 1
@@ -2041,7 +2100,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     for side in (1, -1):
         bare = []  # (point, the wall's foot) where it stands unseen
         for i in sorted({i for r in runs(off) for i in r}):
-            if (side, i) not in dist or by_concrete[i] or in_gap_strict[i] or (side, i) in no_rail: continue  # (none in the garage: its walls are the edge)
+            if (side, i) not in dist or by_concrete[i] or in_gap_strict[i] or on_strip[i] or in_lane[i] or (side, i) in no_rail: continue  # (none in the garage: its walls are the edge; none on the strip or the south lane: the user wanted them invisible there, or tin)
             F = centre[i] + np.array([left_[i][0], 0, left_[i][1]]) * side * dist[(side, i)]
             if L.off_course([F], sp, margin=0.0)[0] and not seen(F[0], F[2], centre[i][1]): bare.append((i, F))
         groups = []
@@ -2056,6 +2115,9 @@ def build(disc, mods, preview_png=None, reverse=False):
                 for fs, m_ in barrier(tuple(F_[a]), tuple(F_[b]), centre[run[(a + b) // 2][0]][[0, 2]]): kerbs.append(fs); mats.append(m_)
                 added += 1
     print('guardrails on invisible walls: %d pieces' % added)
+    filled = fill_bricks(centre, dist, sorted({i for r in runs(off) for i in r}), sp)
+    kerbs += filled; mats += [BRICK] * len(filled)
+    print('brick walls where the walls had none in the brick area: %d' % len(filled))
     joins = join_bricks(centre, half)
     kerbs += joins; mats += [BRICK] * len(joins)
     print('brick walls joined across their gaps: %d' % len(joins))

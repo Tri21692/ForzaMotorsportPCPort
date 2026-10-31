@@ -100,6 +100,9 @@ def read_rgba(path):
     return np.frombuffer(raw[:w * h * 4], np.uint8).reshape(h, w, 4)
 
 
+STOCK_GREY = 126.0  # the disc's car-select tiles' background
+
+
 def set_icon(pack_path, out_path, ordinal, image):
     """The car-select thumbnail: media/caricons<n>.xpr holds 64 of them, 128x64
     DXT5 tiles stacked in one 128x4096 texture, car <ordinal> in pack
@@ -113,7 +116,12 @@ def set_icon(pack_path, out_path, ordinal, image):
     d = bytearray(open(pack_path, 'rb').read())
     t = fx.textures(d)[0]
     assert (t['w'], t['h'], t['format']) == (128, 4096, 0x0F), t
-    img = np.ascontiguousarray(image[:64, :128])
+    img = np.asarray(image[:64, :128], float)
+    # as the disc's tiles: the car over their grey (126), alpha 127 throughout (a tile with its own
+    # transparency, the M3 GTR's, drew on black)
+    a = img[..., 3:4] / 255.0 if img.shape[-1] == 4 else np.ones(img.shape[:2] + (1,))
+    rgb = img[..., :3] * a + STOCK_GREY * (1 - a)
+    img = np.ascontiguousarray(np.concatenate([np.round(rgb), np.full(img.shape[:2] + (1,), 127.0)], -1).astype(np.uint8))
     blocks = fx.encode_dxt5(img)
     o = t['start'] + (ordinal % 64) * 16 * (128 // 4) * 16  # 16 block rows a tile, 32 blocks a row, 16 bytes a block
     d[o:o + len(blocks)] = blocks

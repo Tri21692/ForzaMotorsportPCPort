@@ -367,6 +367,44 @@ WAREHOUSES = [  # (u0, u1, v0, v1, height): on the yard's empty lots, clear of t
     (-40.0, -12.0, 20.0, 50.0, 8.0)]                                    # by the shop's east door
 
 
+def south_lane(centre):
+    """The loop points between the yard's south fence and the shop's south door (in the yard, south of
+    the box): walled in tin both sides at the door's width, the fence to the shop (the fence stopped
+    25 m from the road and nothing stood between it and the shop)."""
+    q = to_uv(centre[:, [0, 2]])
+    return [i for i in range(len(centre)) if in_yard(centre[i][[0, 2]]) and q[i, 1] < V0 and U0 < q[i, 0] < U1]
+
+
+def lane_faces(centre, half):
+    """The south lane's tin walls, both faces, each side from the fence's line to the shop's wall."""
+    idx = south_lane(centre)
+    if len(idx) < 2: return []
+    xz = centre[:, [0, 2]]
+    t = np.roll(xz, -1, 0) - np.roll(xz, 1, 0)
+    left = np.stack([-t[:, 1], t[:, 0]], 1) / np.linalg.norm(t, axis=1)[:, None]
+    out = []
+    for side in (1, -1):
+        F = np.array([xz[i] + left[i] * side * (half[i] + OPEN_PAD) for i in idx])
+        uv = to_uv(F)
+        for end, (k0, k1), v_ in ((0, (0, 1), YARD[2]), (-1, (-1, -2), V0)):  # on to the fence's line and the shop's wall
+            a, b = uv[k0], uv[k1]
+            if abs(b[1] - a[1]) > 1e-6: uv[k0] = a + (b - a) * (v_ - a[1]) / (b[1] - a[1])
+        F = to_world(uv, 0.0)[:, [0, 2]]
+        y = floor_y(centre, uv)
+        keep = [0, len(F) // 2, len(F) - 1]  # the lane runs straight
+        for a, b in zip(keep[:-1], keep[1:]):
+            out += fence_faces(F[a], F[b], left[idx[(a + b) // 2]] * side, min(y[a], y[b]))
+    return out
+
+
+def yard_openings(centre, half, walls):
+    """The fence's openings where the loop crosses it: FENCE_OPEN wide, but the south lane's only as
+    wide as the shop's door (its tin walls stand there)."""
+    ops = openings(centre, half, walls, FENCE_OPEN)
+    ops[1] = openings(centre, half, walls, OPEN_PAD)[1]  # the south side (rect_walls: east, south, west, north)
+    return ops
+
+
 def yard_void(centre, drawn):
     """Which YARD_CELL squares of YARD_GROUND have no ground drawn (drawn(x, z, y) as
     shipyardcircuit.ground_test's, at the road's height): a bool array [v row, u column]."""
@@ -387,8 +425,8 @@ def yard_faces(centre, half, drawn=None):
     """The yard's faces: its ground (concrete, a face a run of squares along u) where none is drawn
     (all of it if `drawn` is None), each run's sides dropping SKIRT m where it ends by drawn ground or
     the yard's edge (it lay over the drawn ground, steps and ledges, and the void showed black under
-    its edges); the fence (tin, both faces, open where the loop crosses it) and the warehouses (their
-    outsides). [(faces, material)]."""
+    its edges); the fence (tin, both faces, open where the loop crosses it), the south lane's tin walls
+    on from it to the shop, and the warehouses (their outsides). [(faces, material)]."""
     u0, u1, v0, v1 = YARD_GROUND
     up = np.array([0.0, 1, 0])
     us, vs = np.arange(u0, u1, YARD_CELL), np.arange(v0, v1, YARD_CELL)
@@ -428,7 +466,7 @@ def yard_faces(centre, half, drawn=None):
             c = e
     fence = []
     walls = rect_walls(*YARD)
-    for (a, b, n), runs in zip(walls, openings(centre, half, walls, FENCE_OPEN)):
+    for (a, b, n), runs in zip(walls, yard_openings(centre, half, walls)):
         a, b = np.array(a, float), np.array(b, float)
         L_ = np.linalg.norm(b - a)
         d = (b - a) / L_
@@ -455,6 +493,7 @@ def yard_faces(centre, half, drawn=None):
     road = centre[np.argmin(np.hypot(centre[:, 0] - (a[0] + b[0]) / 2, centre[:, 2] - (a[1] + b[1]) / 2))][[0, 2]]
     if out @ (road - (a + b) / 2) > 0: out = -out
     fence += fence_faces(a, b, out, floor_y(centre, to_uv((a + b) / 2)[None])[0])
+    fence += lane_faces(centre, half)  # the south lane's walls, the fence to the shop
     return [(ground + skirts, None), (fence, TIN), (sheds, WAREHOUSE)]
 
 
@@ -478,7 +517,7 @@ def yard_collision(col, centre, half):
     added = 0
     up = np.array([0.0, 1, 0])
     walls = rect_walls(*YARD)
-    for (a, b, n), runs in zip(walls, openings(centre, half, walls, FENCE_OPEN)):
+    for (a, b, n), runs in zip(walls, yard_openings(centre, half, walls)):
         a, b = np.array(a, float), np.array(b, float)
         L_ = np.linalg.norm(b - a)
         d = (b - a) / L_
