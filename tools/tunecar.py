@@ -7,6 +7,7 @@ options do.
                           [--tires <front>,<rear>] [--final-drive <ratio>] [--mass <kg>]
                           [--performance <0-60 s>,<0-100 mph s>,<top km/h>] [--power <hp>]
                           [--unlock <level>[,<Europe's>,<Asia's>]] [--paint-like <car>] [--subclass <D4..S1>]
+                          [--scale <physics file or folder>:<attribute>[,...]=<factor>]...
   e.g.  <disc>  run/mods_lambo  ChevyCobaltSS  --tires 205/45R18,205/45R18  --final-drive 3.85
 
 See addcar.py for what each does. --unlock: the career's dealers sell the
@@ -22,7 +23,9 @@ on sale from the start. --paint-like: the
 paint shop's colour choices of that car, without its vinyl layers. --subclass: the class the
 car lists show (gamecars.dat's u32 at 100, a performancesubclass.dat id: D4 1 .. A1 16, S4 17 ..
 S1 20, by name), as the shop works it out from the car's physics (the Gallardo listed A, from
-addcar --stats-like, and the shop showed S4). Writes only into
+addcar --stats-like, and the shop showed S4). --scale (any number): those attributes of the car's
+physics file (aero/body.xml) or of every level of a folder (aero/front: l0-l3.xml) multiplied by the
+factor, e.g. aero/front:Downforce0,Downforce1=1.15. Writes only into
 the mods folder, never the saves.
 """
 import os
@@ -113,7 +116,7 @@ def rewrite(d, texts):
 
 
 def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, final_drive=None, mass=None, performance=None,
-         power=None, unlock=None, paint_like=None, subclass=None):
+         power=None, unlock=None, paint_like=None, subclass=None, scale=None):
     mega, cars = addcar.Archive(disc, mods, 'Mega.ca2'), addcar.Archive(disc, mods, 'Cars.ca2')
     key = 'cars' + B + 'carlist.xml'
     xml = mega.files[key].decode('latin-1')
@@ -127,6 +130,20 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
     ctx = {'files': cars.files, 'xml': xml, 'entry': entry, 'model': model, 'mrow': mrow, 'cdst': cdst, 'tool': cars.files[tk].decode('latin-1')}
     addcar.tune(ctx, physics_like, tooldata_like, tires, final_drive, mass)
     cars.files[tk] = ctx['tool'].encode('latin-1')
+    for spec in scale or ():  # <file or folder>:<attr>,<attr>=<factor>
+        where, rest = spec.split(':')
+        attrs, factor = rest.split('=')
+        base = cdst + 'physics' + B + where.replace('/', B).lower()
+        keys = [base] if base.endswith('.xml') else [base + B + 'l%d.xml' % lv for lv in range(4)]
+        keys = [k for k in keys if k in cars.files]
+        if not keys: raise SystemExit('--scale %s: no such physics file' % spec)
+        for k in keys:
+            x = cars.files[k]
+            for a in attrs.split(','):
+                if not re.search(rb'\b%s="[-0-9.]+"' % a.encode(), x): raise SystemExit('--scale %s: %s has no %s' % (spec, k, a))
+                x = re.sub(rb'(\b%s=")([-0-9.]+)"' % a.encode(), lambda g: g.group(1) + b'%.6g"' % (float(g.group(2)) * float(factor)), x)
+            cars.files[k] = x
+        print('%s: %s x%s (%d files)' % (where, attrs, factor, len(keys)))
     if performance:
         t60, t100, vmax = performance
         struct.pack_into('<3f', mrow, 80, t60, t100, vmax / 3.6)
@@ -165,7 +182,7 @@ if __name__ == '__main__':
     args, opts = [], {}
     it = iter(sys.argv[1:])
     for a in it:
-        if a in ('--physics-like', '--tooldata-like'): opts.setdefault(a[2:].replace('-', '_'), []).append(next(it))
+        if a in ('--physics-like', '--tooldata-like', '--scale'): opts.setdefault(a[2:].replace('-', '_'), []).append(next(it))
         elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass'): opts[a[2:].replace('-', '_')] = next(it)
         else: args.append(a)
     if len(args) != 3: raise SystemExit(__doc__)
@@ -177,4 +194,4 @@ if __name__ == '__main__':
          performance=tuple(float(x) for x in opts['performance'].split(',')) if 'performance' in opts else None,
          power=float(opts['power']) if 'power' in opts else None,
          unlock=tuple(int(x) for x in opts['unlock'].split(',')) if 'unlock' in opts else None,
-         paint_like=opts.get('paint_like'), subclass=opts.get('subclass'))
+         paint_like=opts.get('paint_like'), subclass=opts.get('subclass'), scale=opts.get('scale'))

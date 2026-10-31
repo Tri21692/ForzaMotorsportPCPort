@@ -733,3 +733,43 @@ Wheels: convert_wheel scaled each of the rim's groups to the rim's size on
 its own, so Most Wanted's 3 cm centre cap became a flat grey disc over the
 spokes (the M3, the Gallardo and the Cobalt; the 240SX's NFSU rim is one
 group). The rim is now scaled and set in as one piece.
+
+## The Lamborghini SC63 (31 Oct): a NFS-CarToolkit add-on car
+
+A 2024 add-on for Most Wanted (the SC63 from Automobilista 2, by Thunderdrift),
+converted on the Bentley Speed 8 (a closed-cockpit P1 of the same layout) as
+LamborghiniSC63, ordinal 96. Its GEOMETRY.BIN is NFS-CarToolkit's:
+
+- Each part is packed on its own: the header (80134001) lists them in
+  00134004 (24 bytes each: hash, file offset, packed size, unpacked size,
+  flags 0x100, 0), each a JDLZ stream unpacking to the part's 80134010
+  chunk (nfsu.solids). The disc's cars list theirs there too, unpacked.
+- No names: the header has only the name's hash (+0x10 of 00134011), found
+  by hashing every Most Wanted car's part names with the car's prefix; the
+  104-byte groups have no 00134c02 material names.
+- The body is not where Most Wanted keeps it: the front, middle and tail
+  panels are the LEFT/RIGHT_HEADLIGHT and LEFT_BRAKELIGHT parts, painted
+  from a 2048 livery sheet (SKIN2: the Iron Lynx #63, its green the paint),
+  BASE_A the dark panels (SKIN3), RIGHT_BRAKELIGHT the mechanical details
+  (MISC, BADGING), REAR_WINDOW the lamps and more, FRONT_WINDOW the glass.
+  About 95,000 triangles at its finest, five to ten times a disc car's.
+
+tools/cartoolkit.py takes a plan (which groups make which Most Wanted part,
+with what material name, level by level), has Blender thin the dense levels
+(collapse decimation of the welded mesh, one object so the groups keep their
+shared edges) and hands the parts to nfsu2forza.py. A Forza part holds 65536
+vertices and the Bentley's whole car is one body part, so the body took 38%
+and 12% of its triangles at the first two levels, then the far body (BASE_E);
+the details went into the mirror slots (the trunk and wing are hinged).
+
+The livery sheet is a vinyl canvas (nfsu2forza SKIN): the painted triangles
+keep their own coordinates on it, packed into the atlas at 384 (512 found no
+room beside the race car's kept interior; the sheet's panels cover nearly all
+of it, so cutting it into islands left one piece) and baked into livery1.
+A Most Wanted car's black texel (WINDOWS) is now given as the game reads it
+(/32768): found at /65536 it drew from twice as far in, the SC63's green.
+
+Performance (tunecar.py --scale multiplies physics attributes): 700 hp from
+the Bentley's twin-turbo V8 (615), 950 kg (900), wing and body downforce
+x1.15, body drag x0.94, brakes x1.067, tyre grip x1.04, shifts x0.79; the
+spec screen 2.6 s / 4.9 s / 345 km/h; 1,250,000 credits, on sale from level 45.

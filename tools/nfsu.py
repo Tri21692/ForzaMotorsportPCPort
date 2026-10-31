@@ -46,15 +46,31 @@ def unpadded(d, o, size):
     return o, end
 
 
-def read(path):
-    d = open(path, 'rb').read()
-    parts = []
+def solids(d):
+    """(buffer, offset, size) of each part chunk (80134010). A packed geometry (NFS-CarToolkit's,
+    a 2024 car's) keeps them apart: its header (80134001) lists them in 00134004, 24 bytes each
+    (u32 hash, file offset, packed size, unpacked size, flags 0x100, 0), each a JDLZ stream that
+    unpacks to the part's chunk."""
     for cid, o, size in chunks(d, 0, len(d)):
         if cid != 0x80134000:
             continue
         for pid, po, psize in chunks(d, o, o + size):
-            if pid != 0x80134010:
-                continue
+            if pid == 0x80134010:
+                yield d, po, psize
+            elif pid == 0x80134001:
+                for tid, to, tsize in chunks(d, po, po + psize):
+                    if tid != 0x00134004: continue
+                    for k in range(tsize // 24):
+                        _, at, packed, _, _, _ = struct.unpack_from('<6I', d, to + 24 * k)
+                        if d[at:at + 4] != b'JDLZ': continue  # (the disc's cars list theirs too, unpacked, as 80134010 above)
+                        u = jdlz(d[at:at + packed])
+                        for uid, uo, usize in chunks(u, 0, len(u)):
+                            if uid == 0x80134010: yield u, uo, usize
+
+
+def read(path):
+    parts = []
+    for d, po, psize in solids(open(path, 'rb').read()):
             part = {'name': '', 'textures': [], 'shaders': [], 'verts': [], 'tris': [], 'groups': [], 'materials': []}
             head, raw_groups = None, b''
             for sid, so, ssize in chunks(d, po, po + psize):

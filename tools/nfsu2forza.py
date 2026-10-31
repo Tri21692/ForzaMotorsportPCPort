@@ -791,6 +791,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             print('paint: the lightest clear texel of the template body, %s read either way' % best[2])
     print('paint: texel at u, v = %.3f, %.3f' % (paint[0] / 65536, paint[1] / 65536))
     print('windows: black texel at u, v = %.3f, %.3f' % (dark[0] / 65536, dark[1] / 65536))
+    # as the game reads it (see ATLAS_UV): a Most Wanted car's coordinates count 32768 across the atlas,
+    # and the texel found at 65536 a span drew from twice as far in (the SC63's black came out green)
+    dark_read = (dark[0] // 2, dark[1] // 2) if mw else dark
     # The NFSU car's own textures (lights, badges) go into the livery atlas,
     # written beside the output (liveries/standard).
     own = {th for key in ('BODY', 'ROOF', 'HOOD', 'TRUNK', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT', 'HEADLIGHT', 'BRAKELIGHT', 'LEFT_SIDE_MIRRO', 'RIGHT_SIDE_MIRR')
@@ -829,7 +832,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 img[y0:y1 + 1, x0:x1 + 1] = logo
             images[h] = img.astype(np.uint8)
     images.update(extra)
-    bands = canvas_bands(nparts) if vinyl else []
+    bands = canvas_bands(nparts) if vinyl or SKIN else []
     for j, (r0, r1, c0, c1) in enumerate(bands):  # (not k: the fit's scale)
         images[(CANVAS, j)] = np.tile(np.array([255, 255, 255, 0], np.uint8), (r1 - r0, c1 - c0, 1))
     protect = []
@@ -851,7 +854,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     atlas = pack_atlas(images, livery_dir,
                        os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'),
                        keep=[paint, dark] + ([(paint[0] * 2 % 65536, paint[1] * 2 % 65536)] if mw else []),  # (both readings: see the paint texel)
-                       protect=protect, cover=None if vinyl else tcover, clear_rest=clear_livery, protect_mask=keep_mask if mw else None)
+                       protect=protect, cover=None if vinyl or SKIN else tcover, clear_rest=clear_livery, protect_mask=keep_mask if mw else None)
     if liveries:
         paint_shop(liveries, os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries.bin'),
                    os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), [r for h, r in atlas.items() if not (isinstance(h, tuple) and h[0] == CANVAS)],
@@ -859,6 +862,23 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     if vinyl:
         bake_vinyl(os.path.join(nfsu_dir, 'VINYLS.BIN'), prefix, *vinyl, [(atlas[(CANVAS, k)], b) for k, b in enumerate(bands)],
                    os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'))
+    if SKIN:
+        th = next(h for h, t in textures.items() if t['name'] == SKIN[0] and t['data'])
+        img = nfsu_rgba(textures[th])[..., :3].astype(float)
+        while img.shape[0] >= 2 * CANVAS_SIZE:  # halved while it can be, then to the size by its nearest texels' blend
+            img = img.reshape(img.shape[0] // 2, 2, img.shape[1] // 2, 2, 3).mean((1, 3))
+        if img.shape[0] != CANVAS_SIZE:
+            c = (np.arange(CANVAS_SIZE) + 0.5) * img.shape[0] / CANVAS_SIZE - 0.5
+            i0 = np.clip(np.floor(c).astype(int), 0, img.shape[0] - 2); w = np.clip(c - i0, 0, 1)[:, None]
+            img = img[i0] * (1 - w[..., None]) + img[i0 + 1] * w[..., None]
+            img = img[:, i0] * (1 - w[None]) + img[:, i0 + 1] * w[None]
+        # the plain paint elsewhere: the sheet's commonest colour (the SC63's green)
+        q = (img // 16).astype(int)
+        q = q[..., 0] * 256 + q[..., 1] * 16 + q[..., 2]
+        plain = img[q == np.bincount(q.ravel()).argmax()].mean(0)  # (not base: the roof's parts)
+        bake_canvas(img, plain, [(atlas[(CANVAS, k)], b) for k, b in enumerate(bands)],
+                    os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'))
+        print('skin: %s baked into livery1 (%d bands at %d texels; the rest of the paint %s)' % (SKIN[0], len(bands), CANVAS_SIZE, plain.round().astype(int).tolist()))
     print('atlas: %s' % ', '.join('%s at %.3f, %.3f' % (h if isinstance(h, (str, tuple)) else textures[h]['name'], r[0], r[1]) for h, r in atlas.items()))
 
     # Wheels: the template's hubs (its brake rotors) stay where its physics
@@ -1029,7 +1049,12 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     for i in {i for t in tris for i in t}:
                         nv = p['verts'][i - base]
                         u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)
-                        kb = next((j for j, b in enumerate(bands) if b[0] <= v * CANVAS_SIZE <= b[1]), 0)  # (not k: the fit's scale, which pos() reads)
+                        if ISLANDS is not None:  # a livery sheet's island (canvas_islands): the nearest within 4 texels
+                            y_, x_ = min(CANVAS_SIZE - 1, int(v * CANVAS_SIZE)), min(CANVAS_SIZE - 1, int(u * CANVAS_SIZE))
+                            win = ISLANDS[max(0, y_ - 4):y_ + 5, max(0, x_ - 4):x_ + 5]
+                            kb = int(ISLANDS[y_, x_]) if ISLANDS[y_, x_] >= 0 else int(win.max()) if (win >= 0).any() else 0
+                        else:
+                            kb = next((j for j, b in enumerate(bands) if b[0] <= v * CANVAS_SIZE <= b[1]), 0)  # (not k: the fit's scale, which pos() reads)
                         verts[i] = verts[i][:10] + canvas_uv(atlas[(CANVAS, kb)], bands[kb], u, v) + ('atlas',)
                 if tris:
                     subs.append((lod, m, strip(tris)))
@@ -1098,7 +1123,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     d2 = ((Q[q, None, :] - P[None, pi, :]) ** 2).sum(-1)
                     near[q] = pi[d2.argmin(1)]
             def tex(i, j):
-                if Qm[i] == WINDOWS: return tuple(old[j][6:10]) + dark
+                if Qm[i] == WINDOWS: return tuple(old[j][6:10]) + dark_read
                 if Qm[i] == WINDOW and clear_livery:  # a race car's glass is drawn from its livery (a banner), cleared and then free room: a lamp packed there showed on the side windows
                     return tuple(old[j][6:10]) + paint
                 if Qm[i] == BODY and mw:
@@ -1116,7 +1141,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                         verts[i][10:12] if verts[i][12:13] == ('atlas',) else paint)  # (on the vinyl canvas: see bake_vinyl)
                 if Qm[i] == BODY: return (255, 255, 0, 0) + paint  # one known paint texel, full shading: copied, panels near the template's windows came out black or clear
                 if mw and verts[i][12:13] != ('atlas',) and Qm[i] in (CHROME, PLASTIC):  # untextured trim: the template's nearest texel was often its red lamps (a grille in red stripes)
-                    return tuple(old[j][6:10]) + (paint if Qm[i] == CHROME else dark)
+                    return tuple(old[j][6:10]) + (paint if Qm[i] == CHROME else dark_read)
                 if verts[i][12:13] == ('atlas',): return tuple(old[j][6:10]) + verts[i][10:12]  # its own texture, packed into the atlas
                 return tuple(old[j][6:12])
             verts = [v[:6] + tex(i, j) for i, (v, j) in enumerate(zip(verts, near))]
@@ -1410,8 +1435,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             'glassLF': ([find('FRONT_LEFT_WINDOW')], 0, True), 'glassRF': ([find('FRONT_RIGHT_WINDOW')], 0, True),
             'glassLR': ([find('REAR_LEFT_WINDOW')], 0, True), 'glassRR': ([find('REAR_RIGHT_WINDOW')], 0, True),
             'glassF': ([find('FRONT_WINDOW')], 0, True), 'glassR': ([find('REAR_WINDOW')], 0, True),
-            'headlightL': ([find('LEFT_HEADLIGHT'), find('LEFT_HEADLIGHT_GLASS')], 0),
-            'headlightR': ([find('RIGHT_HEADLIGHT'), find('RIGHT_HEADLIGHT_GLASS')], 0),
+            # (the cover only where there is one: the SC63 has none, and its lamps were hidden)
+            'headlightL': ([find('LEFT_HEADLIGHT')] + [g for g in [find('LEFT_HEADLIGHT_GLASS')] if g], 0),
+            'headlightR': ([find('RIGHT_HEADLIGHT')] + [g for g in [find('RIGHT_HEADLIGHT_GLASS')] if g], 0),
             'taillightL': ([find('LEFT_BRAKELIGHT')], 0), 'taillightR': ([find('RIGHT_BRAKELIGHT')], 0),
             'mirrorL': ([find('LEFT_SIDE_MIRROR')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRROR')], 0),
         }
@@ -1797,6 +1823,7 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
 VINYL_CANVAS = ('BODY', 'BODY_LEFT', 'BODY_RIGHT', 'BODY_TOP', 'BODY_REAR')  # Most Wanted's painted groups, laid out on its vinyl canvas
 CANVAS = '__canvas__'  # the canvas's rooms in the atlas: pack_atlas images (CANVAS, k), white (plain paint)
 CANVAS_SIZE = 512  # Most Wanted's vinyl canvas, texels
+SKIN = None  # (texture name, canvas size): a livery sheet the BODY groups are drawn from, as a vinyl canvas (cartoolkit.py sets it)
 
 
 def canvas_bands(nparts):
@@ -1807,7 +1834,7 @@ def canvas_bands(nparts):
     canvas took a 512 square the race car's atlas did not have, and halved
     the stripes came out in steps."""
     import numpy as np
-    spans = []
+    spans, corners = [], []
     for p in nparts:
         idx = [i for t in p['tris'] for i in t]
         for g, name in zip(p['groups'], p['materials']):
@@ -1818,6 +1845,8 @@ def canvas_bands(nparts):
                 if max(t) >= len(p['verts']): continue
                 us = [min(max(p['verts'][i][7], 0.0), 1.0) for i in t]; vs = [min(max(p['verts'][i][8], 0.0), 1.0) for i in t]
                 spans.append((min(vs), max(vs), min(us), max(us)))
+                corners.append(list(zip(us, vs)))
+    if SKIN: return canvas_islands(corners)
     bands = []
     for v0, v1, u0, u1 in sorted(spans):
         if bands and v0 <= bands[-1][1]:
@@ -1832,6 +1861,47 @@ def canvas_bands(nparts):
         r1, c1 = r0 + (r1 - r0 + 3) // 4 * 4, c0 + (c1 - c0 + 3) // 4 * 4  # (whole DXT blocks once halved)
         out.append((r0, r1, c0, c1))
     return out
+
+
+ISLANDS = None  # canvas_islands' map: each canvas texel's island (its index in the list, -1 none)
+
+
+def canvas_islands(corners):
+    """A livery sheet (SKIN) cut into its islands instead of bands: its rows are all used (the
+    SC63's panels stand all over it), and whole it needs a square the race template's atlas does
+    not have. The texels the painted triangles cover (corners: each one's three (u, v)), grown by
+    two, in connected pieces, each its own rectangle (as canvas_bands' (row0, row1, col0, col1));
+    ISLANDS says which texel belongs to which. (By the triangles' boxes, long thin ones bridged
+    the sheet and it came out one piece.)"""
+    import numpy as np
+    global ISLANDS
+    n = CANVAS_SIZE
+    mask = np.zeros((n, n), bool)
+    for c in corners:
+        uv_raster(mask, np.array(c) * n)
+    for _ in range(2):
+        grown = mask.copy()
+        grown[1:] |= mask[:-1]; grown[:-1] |= mask[1:]; grown[:, 1:] |= mask[:, :-1]; grown[:, :-1] |= mask[:, 1:]
+        mask = grown
+    lab = np.where(mask, np.arange(n * n).reshape(n, n), -1)
+    while True:  # each piece takes its highest texel number
+        new = lab.copy()
+        new[1:] = np.maximum(new[1:], lab[:-1]); new[:-1] = np.maximum(new[:-1], lab[1:])
+        new[:, 1:] = np.maximum(new[:, 1:], lab[:, :-1]); new[:, :-1] = np.maximum(new[:, :-1], lab[:, 1:])
+        new[~mask] = -1
+        if (new == lab).all(): break
+        lab = new
+    ids = sorted(set(lab[mask].tolist()))
+    rects, ISLANDS = [], np.full((n, n), -1)
+    for k, i in enumerate(ids):
+        ys, xs = np.nonzero(lab == i)
+        r0, c0 = ys.min(), xs.min()
+        r1, c1 = r0 + (ys.max() + 1 - r0 + 3) // 4 * 4, c0 + (xs.max() + 1 - c0 + 3) // 4 * 4  # (whole DXT blocks)
+        if r1 > n: r0, r1 = r0 - (r1 - n), n
+        if c1 > n: c0, c1 = c0 - (c1 - n), n
+        rects.append((int(r0), int(r1), int(c0), int(c1)))
+        ISLANDS[lab == i] = k
+    return rects
 
 
 def canvas_uv(rect, band, u, v):
@@ -1875,7 +1945,15 @@ def bake_vinyl(vinyls_bin, prefix, name, colours, rooms, livery_dir):
     col = art[..., :3] if other is None else np.broadcast_to(other, art[..., :3].shape)
     if swatch is not None:
         col = np.where((art[..., 0] > 2 * art[..., 1:3].max(-1))[..., None], swatch, col)
-    vinyl = base * (1 - cov) + col * cov  # 512 x 512
+    bake_canvas(base * (1 - cov) + col * cov, base, rooms, livery_dir)  # 512 x 512
+    print('vinyl: %s baked into livery1 (%d bands of its canvas)' % (name, len(rooms)))
+
+
+def bake_canvas(vinyl, base, rooms, livery_dir):
+    """livery1*.xpr: livery0*.xpr with the canvas's bands (vinyl, CANVAS_SIZE square, RGB) in their
+    rooms and the rest of the plain paint (clear white texels) the base colour."""
+    import numpy as np
+    import forzaxpr as fx
     names = ('livery0nc.xpr', 'livery0.xpr', 'livery0hi.xpr')
     files = {n: bytearray(open(os.path.join(livery_dir, n), 'rb').read()) for n in names}
     nc, vol, hi = (fx.textures(files[n])[0] for n in names)
@@ -1924,7 +2002,6 @@ def bake_vinyl(vinyls_bin, prefix, name, colours, rooms, livery_dir):
     files['livery0.xpr'][vol['start']:vol['start'] + vblocks.size] = vblocks.tobytes()
     for n_ in names:
         open(os.path.join(livery_dir, n_.replace('livery0', 'livery1')), 'wb').write(files[n_])
-    print('vinyl: %s baked into livery1 (%d bands of its canvas)' % (name, len(rooms)))
 
 
 def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None):
@@ -1986,11 +2063,11 @@ def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None):
     print('paint shop: detail in 256 colours (mean error %s), %d boxes opaque (%s)' % (err.round(1).tolist(), len(boxes), out_bin))
 
 
-if __name__ == '__main__':
-    if len(sys.argv) == 7 and sys.argv[1] == '--wheel':
-        convert_wheel(*sys.argv[2:])
+def main(argv):
+    if len(argv) == 7 and argv[1] == '--wheel':
+        convert_wheel(*argv[2:])
         raise SystemExit
-    args = [a for a in sys.argv[1:] if a not in ('--keep-glass', '--no-stock-wing', '--clear-livery')]
+    args = [a for a in argv[1:] if a not in ('--keep-glass', '--no-stock-wing', '--clear-livery')]
     badges = None
     if '--badges' in args:
         i = args.index('--badges')
@@ -2009,5 +2086,9 @@ if __name__ == '__main__':
         del args[i:i + 2]
     if len(args) != 3:
         raise SystemExit(__doc__)
-    convert(*args, keep_glass='--keep-glass' in sys.argv, badges=badges, liveries=liveries, stock_wing='--no-stock-wing' not in sys.argv,
-            clear_livery='--clear-livery' in sys.argv, vinyl=vinyl)
+    convert(*args, keep_glass='--keep-glass' in argv, badges=badges, liveries=liveries, stock_wing='--no-stock-wing' not in argv,
+            clear_livery='--clear-livery' in argv, vinyl=vinyl)
+
+
+if __name__ == '__main__':
+    main(sys.argv)
