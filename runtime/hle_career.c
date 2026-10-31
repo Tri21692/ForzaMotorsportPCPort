@@ -136,6 +136,54 @@ void f_000755D0(XbCtx *c) {
     c->esp += 8; /* ret 4 */
 }
 
+/* With rt_gil held, from rt_career_tick: during a career time trial, the player's lap, checkpoints
+ * and progress logged as they change (and every 10 s), and the race ended if the game counted the
+ * lap but not the finish. The race ends a racer's run once its progress (timing +0x70, a double:
+ * laps begun less one plus the lap's fraction, the most it has reached; 0x5C2D0) reaches 1.0
+ * (0xAE616, [0x486E7C]): the racer is marked done (+0x1B8) and the race is over once all are
+ * (0xAE70D-0xAE719). Some time trials ran on past the line (why not yet seen): once the lap count
+ * (+0x9C) has reached the event's laps (+0x24) and the racer is still not done 1 s later, its
+ * progress (+0x70 and +0x78) is set to 1.0. */
+static void tt_watch(void) {
+    static uint32_t racer_was, ordinal_was;
+    static int32_t lap_was, cp_was;
+    static uint32_t done_was;
+    static uint64_t next_log, counted_at;
+    int i = tt_event();
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4), racer = 0;
+    if (i < 0 || !arr || arr >= RT_USER_LIMIT || n > 16) { racer_was = 0; return; }
+    for (uint32_t k = 0; k < n && !racer; k++) {
+        uint32_t r = xb_rd32(arr + 4 * k);
+        if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) racer = r;
+    }
+    uint32_t timing = racer ? xb_rd32(racer + 0xC0) : 0;
+    if (!timing || timing >= RT_USER_LIMIT) return;
+    uint32_t ev = xb_rd32(xb_rd32(0x592984) + 0x318), laps = xb_rd32(ev + 0x24), done = xb_rd32(racer + 0x1B8) & 0xFF;
+    int32_t lap = (int32_t)xb_rd32(timing + 0x9C), cp = (int32_t)xb_rd32(timing + 0x88);
+    uint64_t v = (uint64_t)xb_rd32(timing + 0x70) | (uint64_t)xb_rd32(timing + 0x74) << 32;
+    double progress;
+    memcpy(&progress, &v, 8);
+    uint32_t ms = 0, l;
+    tt_clock(racer, &ms, &l);
+    uint64_t now = rt_now_100ns();
+    if (racer != racer_was || tt[i].ordinal != ordinal_was) /* a new run (a restart makes the racers again) */
+        racer_was = racer, ordinal_was = tt[i].ordinal, lap_was = cp_was = -9, done_was = 9, next_log = 0, counted_at = 0;
+    if (lap != lap_was || cp != cp_was || done != done_was || now >= next_log) {
+        fprintf(stderr, "xbrt: time trial %u: lap %d of %u, checkpoints %d, progress %.3f, clock %u.%03u s, done %u (racers %u)\n",
+                tt[i].ordinal, lap, laps, cp, progress, ms / 1000, ms % 1000, done, n);
+        lap_was = lap, cp_was = cp, done_was = done, next_log = now + 100000000;
+    }
+    if (done || !laps || laps > 99 || lap < (int32_t)laps || progress >= 1.0) { counted_at = 0; return; }
+    if (!counted_at) { counted_at = now; return; }
+    if (now - counted_at < 10000000) return;
+    double one = 1.0;
+    memcpy(&v, &one, 8);
+    for (uint32_t o = 0x70; o <= 0x78; o += 8) xb_wr32(timing + o, (uint32_t)v), xb_wr32(timing + o + 4, (uint32_t)(v >> 32));
+    fprintf(stderr, "xbrt: time trial %u: the lap counted (%d of %u) but the race ran on, at progress %.3f: progress set to 1, to finish\n",
+            tt[i].ordinal, lap, laps, progress);
+    counted_at = 0;
+}
+
 /* Catch-up events (<mods>/catchup.txt, a line per event: "ordinal fraction points", points the
  * event's track's racing line's count, its AI geometry's iLength): the opponent starts
  * that fraction of a lap ahead of the pole. CCar::ResetPositionForGrid (0x410E0, thiscall, the
@@ -318,6 +366,7 @@ void rt_career_tick(void) {
             }
         }
     }
+    if (xb_rd32(0x592984)) tt_watch();
     if (!cu_active) return;
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
     if (n != 2 || !arr) { cu_active = 0; return; }

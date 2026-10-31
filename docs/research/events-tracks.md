@@ -210,7 +210,17 @@ link has collision but nothing drawn: the scenery has no ground there.
   is [0x592984]+0x318 (its EventOrdinal at +0x10, its laps at +0x24; the
   series at +0x314). The replacement 0x755D0 sets the place from the time
   against timetrial.txt's three targets (laptime.py's estimate for the
-  track and class, times 1.04, 1.09 and 1.15), once the lap is done.
+  track and class, scaled to a person's lap, 1st from 6% slower than it in
+  Class D to the lap itself in R-P1, 2nd and 3rd 4% and 8% slower), once
+  the lap is done.
+- A racer's run ends once its progress (timing +0x70, a double: laps begun
+  less one plus the lap's fraction, the most reached; 0x5C2D0) reaches 1.0
+  (0xAE616 against [0x486E7C]): it is marked done (racer +0x1B8) and the
+  race is over once all are (0xAE70D-0xAE719, the race's +0x170). Some time
+  trials ran on past the line (not yet seen why); hle_career.c's tt_watch
+  logs each one's lap, checkpoints and progress, and sets the progress to 1
+  if the lap count reached the event's laps and the run is still not done
+  1 s later.
 - The series' place (0x1A76B0) is the worst of its events' best places
   (each event's medal byte, 9 unplayed; the profile fills them with 9 at
   0x78715), and its rewards come as it improves (0x17E400); so a car on a

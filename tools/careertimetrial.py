@@ -30,8 +30,13 @@ HELP = 141   # UIStrings: IDS_Event_OnlineCareer_Help, the tile's description
 TITLE = 49   # GameStrings: IDS_Event_OnlineCareer, the tile's title
 SERIES_ORDINAL = 85      # after the custom cup's 84
 EVENT_ORDINAL = 355      # after the custom cup's 351-354; the profile keeps 512 medal bytes
-# the target times against laptime.py's estimate: 1st, 2nd, 3rd
-FACTORS = (1.04, 1.09, 1.15)
+# the target times against laptime.py's estimate: a person's clean lap is PACE of it (the user's
+# 1:09.2 at Silverstone Club in Class D, against 1:20.0), and 1st asks for that lap give or take
+# MARGIN, from 6% slower in Class D to the clean lap itself in R-P1, step by step up the ladder;
+# 2nd and 3rd are SPREAD slower than 1st
+PACE = 0.865
+MARGIN = (1.06, 1.00)
+SPREAD = (1.0, 1.04, 1.08)
 
 # (class, restriction, level, icon (the Spec series' class logos), tracks (tracklist ordinals), the
 # car won (its ordinal; none a prize anywhere else in the career), the Spec series of the class
@@ -80,9 +85,10 @@ def build(disc, mods, mega, tracks):
                     ('IDS_Mod_TT%s_Desc' % tag, 'One flying lap each, alone, in a Class %s car: beat the target times for a podium. '
                                                 'First place in both receives the %s.' % (cls, cars[prize]))]
         events = []
+        margin = MARGIN[0] + (MARGIN[1] - MARGIN[0]) * k / (len(LADDER) - 1)
         for i, t in enumerate(ts):
             est, _ = laptime.lap(mega, names[t], SIM_CLASS.get(cls, cls))
-            ms = [int(round(est * f * 10)) * 100 for f in FACTORS]
+            ms = [int(round(est * PACE * margin * f * 10)) * 100 for f in SPREAD]
             targets.append('%d %d %d %d' % (ordinal, *ms))
             desc = 'IDS_Mod_TT%s_Event%d' % (tag, i)
             strings.append((desc, 'Targets: 1st %s, 2nd %s, 3rd %s. First place in both events receives the %s.' % (*(clock(m) for m in ms), cars[prize])))
@@ -99,7 +105,9 @@ def build(disc, mods, mega, tracks):
             ordinal += 1
         # the series' place is the worst of its events' best places (0x1A76B0; an unplayed event
         # counts 9), so its 1st place's rewards, the car, come with a win in every event
-        field = re.search(r'<AIField>.*?</AIField>', mega.files['events' + B + 'spec' + B + 'ser%05d.xml' % spec].decode('latin-1'), re.S).group(0)
+        # (the disc's own: series added since, as the Catch-Up Challenge, renumber the mods folder's)
+        spec_file = next(v for n, v in mega.disc.items() if n.lower() == ('events' + B + 'spec' + B + 'ser%05d.xml' % spec))
+        field = re.search(r'<AIField>.*?</AIField>', spec_file.decode('latin-1'), re.S).group(0)
         head = ('<?xml version="1.0"?>\r\n<series displayname="Class %s Time Trials" seriesnameid="{IDS_Mod_TT%s_Name}" '
                 'seriesdescid="{IDS_Mod_TT%s_Desc}" seriesid="58" seriesordinal="%d" seriesorder="%d" Icon="%d"%s>\r\n'
                 '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n' +
