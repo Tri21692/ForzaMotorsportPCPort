@@ -33,9 +33,10 @@ CLASS_A = [[('perfclass', '=', 'A')]]  # as the disc's Class B Championship has 
 TRACKS = (1, 9, 3, 2)    # Laguna Seca, Road Atlanta, Maple Valley, Silverstone
 LAPS = 1
 XP = 4000                # a win, each event
-PRIZE = 79               # the Lotus Elise (Class B), no other series's prize
+PRIZE_CLASS = (13, 14, 15, 16)  # the prize: a Class A car (gamecars.dat's subclass at 100: A4-A1, performancesubclass.dat),
+                         # picked at random from those no level gives and no series has as its prize
 CHASER = 10              # the logo's left half: the Class A tile (the player's class), the Class D tile (7) on the right
-HEAD_START = 0.25        # of a lap (half, then a third, were too much to catch up in one lap, the user found)
+HEAD_START = 0.2         # of a lap (half, a third and a quarter were too much to catch up in one lap, the user found)
 # the field to pick from: Class D cars at their best (D1, D2), as AI car models (100 + ordinal):
 # Civic Type R, Integra Type R, Celica GTS, Audi TT 3.2, VW R32, RX-7, Silvia S14, Delta Integrale
 D_CARS = [107, 109, 114, 118, 120, 233, 315, 213]
@@ -43,7 +44,7 @@ DRIVERS = (24, 35, 49)
 CAPTION = [('Catch Up', 77, 26, 'catchup')]  # a placeholder: a racing script in the halves' colours
 A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(121, 89),  # logo_art's slash
                            left=(195, 150, 255), right=(255, 225, 80))  # each half's lettering in the other's colour: lavender on the A's yellow, yellow on the D's purple
-DESC = 'Open to Class A cars. Four one-lap races: a Class D car starts a quarter of a lap ahead, catch it.'
+DESC = 'Open to Class A cars. Four one-lap races: a Class D car starts a fifth of a lap ahead, catch it.'
 
 
 def lifted(t, x0=64, x1=147, y1=78):
@@ -111,13 +112,13 @@ def logo_art(disc, mods):
     return a
 
 
-def series_xml():
+def series_xml(prize):
     ai = ''.join('\t\t<AIPlayer name="If you see this, it is a bug" aicarmodelid="%d" AIDriverModelID="%d" AppearanceID="0" %s />\r\n'
                  % (car, driver, skill) for driver, skill in zip(DRIVERS, ('Easy', 'Medium', 'Hard')) for car in D_CARS)
     x = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{SERIES_NAME_ID}" seriesdescid="{SERIES_DESC_ID}" '
          'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" Level="%d">\r\n'
          '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n'
-         '\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (NAME, SERIES_ID, LEVEL, PRIZE, PRIZE) +
+         '\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (NAME, SERIES_ID, LEVEL, prize, prize) +
          A.restrictions(CLASS_A) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
     for k, track in enumerate(TRACKS):
         x += ('\t<event eventid="%d" displayname="%s" eventordinal="%d" eventtextid="{EVENT_NAME_ID}" eventdescid="{EVENT_DESC_ID}" '
@@ -131,13 +132,40 @@ def series_xml():
     return x + '</series>\r\n'
 
 
+def prize_pool(disc, mods):
+    """The Class A cars no level gives (rarity\\<region>\\rarityregiondef.xml's CareerCarGift; its
+    CareerCarUnlock only puts a car on sale, and every car has one) and no series has as its prize
+    (events\\...\\*.xml, arcade\\*.xml), but this one's; and the prize this one has now, if any."""
+    import re
+    import struct
+    mega = addcar.Archive(disc, mods, 'Mega.ca2')
+    f = {k.lower(): v for k, v in mega.files.items()}
+    g = f['forzadb\\cardb\\gamecars.dat']
+    sub = {struct.unpack_from('<I', g, i)[0]: struct.unpack_from('<I', g, i + 100)[0] for i in range(0, len(g) - 175, 176)}
+    priced = {int(o): int(p) for o, p in re.findall(r'<car [^>]*?Ordinal="(\d+)"[^>]*?Price="(\d+)"', f['cars\\carlist.xml'].decode('latin-1'))}
+    taken, ours = set(), None
+    for k, v in f.items():
+        if not k.endswith('.xml') or not k.startswith(('rarity\\', 'events\\', 'arcade\\')): continue
+        s = v.decode('latin-1', 'ignore')
+        if k.startswith('rarity\\'): taken |= {int(o) for o in re.findall(r'CareerCarGift="(\d+)"', s)}
+        elif 'displayname="%s"' % NAME in s[:400]: ours = int(re.search(r'CareerCarUnlock="(\d+)"', s).group(1))
+        else: taken |= {int(o) for o in re.findall(r'CareerCar(?:Unlock|Gift)="(\d+)"', s)}
+    pool = sorted(o for o, c in sub.items() if c in PRIZE_CLASS and o not in taken and priced.get(o, 0) >= 100)
+    return pool, ours
+
+
 def install(disc, mods, head_start=HEAD_START):
+    import random
+    pool, ours = prize_pool(disc, mods)
+    if not pool: raise SystemExit('no Class A car is left that no level gives and no series has as its prize')
+    prize = ours if ours in pool else random.choice(pool)  # (kept when run again)
+    print('prize: %s (%d), of %d free Class A cars' % (addcar.car_name(disc, mods, prize), prize, len(pool)))
     with tempfile.TemporaryDirectory() as tmp:
         p = os.path.join(tmp, 'catchup.xml')
-        open(p, 'w', encoding='latin-1', newline='').write(series_xml())
+        open(p, 'w', encoding='latin-1', newline='').write(series_xml(prize))
         png = A.logo(disc, mods, dict(image=logo_art(disc, mods)), CAPTION, tmp)
         addseries.remove(disc, mods, 'proseries', NAME)  # (it was in the Championship Series list before)
-        addseries.main(disc, mods, KIND, p, NAME, '%s First place receives the %s.' % (DESC, addcar.car_name(disc, mods, PRIZE)),
+        addseries.main(disc, mods, KIND, p, NAME, '%s First place receives the %s.' % (DESC, addcar.car_name(disc, mods, prize)),
                        event_name=NAME, logo='%s,%s' % (png, png))
     path = os.path.join(mods, 'catchup.txt')
     ours = ['%d' % (EVENT_ORDINAL + k) for k in range(len(TRACKS))]
