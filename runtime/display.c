@@ -352,6 +352,12 @@ static DWORD WINAPI window_main(LPVOID arg) {
     const char *ws = getenv("XBRT_WINDOW_SIZE");
     int ww, wh;
     if (ws && sscanf(ws, "%dx%d", &ww, &wh) == 2 && ww >= 320 && wh >= 240) cw = ww, ch = wh;
+    else { /* at the screen's scaling (main.c makes the process aware of it): as large on screen as before */
+        typedef UINT(WINAPI * GetDpi)(void);
+        GetDpi dpi = (GetDpi)(void *)GetProcAddress(GetModuleHandleA("user32.dll"), "GetDpiForSystem");
+        UINT d = dpi ? dpi() : 96;
+        if (d > 96) cw = cw * (int)d / 96, ch = ch * (int)d / 96;
+    }
     RECT work;
     SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0);
     int maxw = (work.right - work.left) * 9 / 10, maxh = (work.bottom - work.top) * 9 / 10;

@@ -349,6 +349,13 @@ int main(int argc, char **argv) {
             PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, 0};
         SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &p, sizeof p);
     }
+    { /* aware of the screen's scaling, so the window is drawn at the screen's own pixels: at 150%
+       * Windows had the game draw a smaller window and stretched it (soft, and Game Bar recorded
+       * the smaller picture). Per monitor (v2) where Windows has it, else the whole system's. */
+        typedef BOOL(WINAPI * SetCtx)(HANDLE);
+        SetCtx set = (SetCtx)(void *)GetProcAddress(GetModuleHandleA("user32.dll"), "SetProcessDpiAwarenessContext");
+        if (!set || !set((HANDLE)(intptr_t)-4)) SetProcessDPIAware(); /* -4: DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */
+    }
 #endif
     const char *path = argc > 1 ? argv[1] : "default.xbe";
 
