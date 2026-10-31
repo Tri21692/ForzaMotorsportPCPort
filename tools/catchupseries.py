@@ -36,7 +36,7 @@ D_CARS = [107, 109, 114, 118, 120, 233, 315, 213]
 DRIVERS = (24, 35, 49)
 CLASS_B_OR_BELOW = [[('perfclass', '<>', 'A'), ('perfclass', '<>', 'S'), ('perfclass', '<>', 'R')]]
 CAPTION = [('Catch Up', 77, 26, 'catchup')]  # a placeholder: a racing script in the halves' colours
-A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(130, 98),  # logo_art's slash
+A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(121, 89),  # logo_art's slash
                            left=(195, 150, 255), right=(110, 235, 185))  # each half's lettering in the other's colour: lavender on the B's mint, mint on the D's purple
 DESC = 'Open to Class B cars and below. One lap: a Class D car starts half a lap ahead, catch it.'
 
@@ -72,7 +72,7 @@ def logo_art(disc, mods):
     th, tw = A.addseries.LG[1], A.addseries.LG[0]
     yy, xx = np.mgrid[0:th, 0:tw].astype(float)
     sides = []
-    for t, dx, k, ghosts in ((A.tile(disc, mods, 9), -42, 0.32, ((-26, 0.35), (-13, 0.6))), (A.tile(disc, mods, 7), 50, 0.18, ())):
+    for t, dx, k, ghosts in ((A.tile(disc, mods, 9), -46, 0.25, ((-26, 0.35), (-13, 0.6))), (A.tile(disc, mods, 7), 46, 0.25, ())):
         bg, letter, mask = lifted(t)
         A.clear(bg, 76, 113)  # the C-L-A-S-S row, from the ground without the letter
         letter, mask = lean(letter, k, 40), lean(mask, k, 40)
@@ -93,7 +93,7 @@ def logo_art(disc, mods):
             if gx: l = l * 0.6 + 255 * 0.4  # a ghost: the letter, paler
             out = out * (1 - m[..., None]) + l * m[..., None]
         sides.append(out)
-    cut = 98 + 32 * (1 - yy / th)  # the slash: (130, 0) at the top to (98, 117) at the foot, leaning as the letters do
+    cut = 89 + 32 * (1 - yy / th)  # the slash: (121, 0) at the top to (89, 117) at the foot, through the middle, leaning as the letters do
     w = np.clip(xx - cut + 0.5, 0, 1)[..., None]  # 0: the B's side, 1: the D's
     a = sides[0] * (1 - w) + sides[1] * w
     # a white line along it, with a glow
