@@ -2187,6 +2187,14 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         if (t && !t->cube) {
             uint32_t addr = KT(SET_TEXTURE_ADDRESS);
             k.ws = gl_wrap(addr & 15), k.wt = gl_wrap((addr >> 8) & 15);
+            /* a colour render target (the frame read back: motion blur) clamped to its edge, not its border:
+             * its last column and row, half a pixel out (Direct3D's pixel centres are OpenGL's less a half),
+             * took the white border in, a pale line along the frame's right and bottom edges (the user's
+             * "white line through the road"). Depth maps keep it: outside the shadow map is lit. */
+            if (t->surface && !t->depth && !getenv("XBRT_RT_BORDER")) {
+                if (k.ws == GL_CLAMP_TO_BORDER) k.ws = GL_CLAMP_TO_EDGE;
+                if (k.wt == GL_CLAMP_TO_BORDER) k.wt = GL_CLAMP_TO_EDGE;
+            }
             if ((addr & 15) == 4 || ((addr >> 8) & 15) == 4) { /* the border colour: ARGB; a depth map's (R32F, Xbox units) scaled up */
                 uint32_t bc = KT(0x1B24);
                 k.border[0] = (float)((bc >> 16) & 255) / 255.0f, k.border[1] = (float)((bc >> 8) & 255) / 255.0f;
