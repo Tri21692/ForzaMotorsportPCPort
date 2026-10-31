@@ -313,6 +313,7 @@ typedef struct {
 static VcEntry vc[VC_SLOTS];
 static uint64_t vc_clock;
 uint64_t vc_bytes, vc_hits, vc_fills, vc_skips, vc_far, vc_first; /* for the stats line (nv2a.c) */
+uint64_t vc_new, vc_refills, vc_moved, vc_moved_bytes; /* fills: new, bytes changed, the same geometry at another place */
 static uint32_t vc_lo, vc_hi; /* the indices' range, from vc_find for vc_source */
 
 static uint64_t vc_mix(uint64_t h, uint64_t v) {
@@ -544,7 +545,17 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
                 for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
     }
     if (ce) {
-        if (!hit) vc_fills++, vc_store(ce, src, sparse, packed, (size_t)n * m * 16, idx, k);
+        if (!hit) { /* (measuring: a new draw, or one whose bytes changed; and a new one whose vertices and
+                     * indices some draw at another place had: the same geometry streamed in elsewhere) */
+            static uint64_t content[1 << 16];
+            uint64_t ck = vc_mix(vc_mix(src, hash_bytes((const uint8_t *)idx, (uint32_t)k * 4)), (uint64_t)n << 8 | (uint64_t)m);
+            uint64_t *slot = &content[(ck ^ ck >> 31) & ((1 << 16) - 1)];
+            if (ce->vbo) vc_refills++;
+            else if (*slot == ck) vc_moved++, vc_moved_bytes += (uint64_t)n * m * 16;
+            else vc_new++;
+            *slot = ck;
+            vc_fills++, vc_store(ce, src, sparse, packed, (size_t)n * m * 16, idx, k);
+        }
         glBindBuffer(GL_ARRAY_BUFFER, ce->vbo);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ce->ibo);
     } else {

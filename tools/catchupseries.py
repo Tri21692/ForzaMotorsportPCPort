@@ -33,7 +33,7 @@ LEVEL = 35               # (the user's: level 35, Class S against Class D; Class
 CLASS_S = [[('perfclass', '=', 'S')]]  # as the disc's class championships have theirs
 TRACKS = (1, 9, 3, 2)    # Laguna Seca, Road Atlanta, Maple Valley, Silverstone
 LAPS = 1
-XP = 4000                # a win, each event
+XP = 38000               # a win, each event: as the level-35 Professional series pay theirs (the user's: credits by the level)
 PRIZE = 82               # the Lamborghini Gallardo: no level gives it and no other series has it as its prize
                          # (drawn at random from the nine such Class A cars; the user kept it, listed S4 since)
 CHASER = 11              # the logo's left half: the Class S tile (the player's class), the Class D tile (7) on the right

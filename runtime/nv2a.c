@@ -1053,6 +1053,12 @@ void nv2a_log_stats(void) {
                 rt_now_100ns() / 1e7, (unsigned long long)(vc_hits - lh), (unsigned long long)(vc_fills - lf), (unsigned long long)(vc_skips - ls),
                 (unsigned long long)(vc_far - lr), (unsigned long long)(vc_first - l1), (unsigned long long)(vc_bytes >> 20));
         lh = vc_hits, lf = vc_fills, ls = vc_skips, lr = vc_far, l1 = vc_first;
+        extern uint64_t vc_new, vc_refills, vc_moved, vc_moved_bytes;
+        static uint64_t ln, lrf, lm, lmb;
+        fprintf(stderr, "[%10.3f] nv2a: vertex cache fills: %llu new, %llu refilled (bytes changed), %llu the same geometry at another place (%.1f MB)\n",
+                rt_now_100ns() / 1e7, (unsigned long long)(vc_new - ln), (unsigned long long)(vc_refills - lrf), (unsigned long long)(vc_moved - lm),
+                (vc_moved_bytes - lmb) / 1048576.0);
+        ln = vc_new, lrf = vc_refills, lm = vc_moved, lmb = vc_moved_bytes;
     }
     fprintf(stderr, "[%10.3f] nv2a: %u vblanks, %u flips, %u draws (%u skipped), %u clears, %u traps; get %08x put %08x, "
             "PATT_COLOR0 %08x, intr %08x, scanout %08x\n", rt_now_100ns() / 1e7, nv2a.vblanks, nv2a.flips, nv2a.draws, nv2a.skipped,
