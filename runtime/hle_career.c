@@ -17,6 +17,7 @@
  * The targets: <mods>/timetrial.txt, a line per event, "ordinal gold silver
  * bronze" in milliseconds (careertimetrial.py writes it).
  */
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -211,6 +212,36 @@ void f_000410E0(XbCtx *c) {
         for (uint32_t i = 0; i < n && n == 2 && arr; i++) {
             uint32_t r = xb_rd32(arr + 4 * i);
             if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0 && xb_rd32(r + 0xA0) == car) {
+                /* facing along the racing line where it stands: on a restart the game turned it as the
+                 * last placing before it, the opponent's a quarter of a lap on (the user faced a wall).
+                 * The car's turn (+0x20, 3x3 by rows): the third row forward, the first the forward
+                 * turned to the right (z, -x), the second up, as the game lays a car on the grid */
+                uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+                uint32_t np = line ? xb_rd32(line + 8) : 0, xs = line ? xb_rd32(line + 0x30) : 0, zs = line ? xb_rd32(line + 0x44) : 0;
+                if (np > 2 && np < 100000 && xs && zs) {
+                    float cx, cz, best = 1e30f, f[2] = {0, 0}, rot[9];
+                    uint32_t v = xb_rd32(car + 0x14), k = 0;
+                    memcpy(&cx, &v, 4); v = xb_rd32(car + 0x1C); memcpy(&cz, &v, 4);
+                    for (uint32_t j = 0; j < np; j++) {
+                        float px, pz;
+                        v = xb_rd32(xs + 4 * j); memcpy(&px, &v, 4); v = xb_rd32(zs + 4 * j); memcpy(&pz, &v, 4);
+                        float d2 = (px - cx) * (px - cx) + (pz - cz) * (pz - cz);
+                        if (d2 < best) best = d2, k = j;
+                    }
+                    float ax, az, bx, bz;
+                    v = xb_rd32(xs + 4 * k); memcpy(&ax, &v, 4); v = xb_rd32(zs + 4 * k); memcpy(&az, &v, 4);
+                    v = xb_rd32(xs + 4 * ((k + 2) % np)); memcpy(&bx, &v, 4); v = xb_rd32(zs + 4 * ((k + 2) % np)); memcpy(&bz, &v, 4);
+                    float len = sqrtf((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+                    for (int j = 0; j < 9; j++) { v = xb_rd32(car + 0x20 + 4 * j); memcpy(&rot[j], &v, 4); }
+                    if (len > 0.1f && best < 25.0f) {
+                        f[0] = (bx - ax) / len, f[1] = (bz - az) / len;
+                        if (rot[6] * f[0] + rot[8] * f[1] < 0.9f) { /* not along the line: turned */
+                            float want[9] = {f[1], 0, -f[0], 0, 1, 0, f[0], 0, f[1]};
+                            for (int j = 0; j < 9; j++) { memcpy(&v, &want[j], 4); xb_wr32(car + 0x20 + 4 * j, v); }
+                            fprintf(stderr, "xbrt: catch-up: the player's car turned along the line (it faced %.2f %.2f, the line %.2f %.2f)\n", rot[6], rot[8], f[0], f[1]);
+                        }
+                    }
+                }
                 for (int k = 0; k < 12; k++) cu_grid[k] = xb_rd32(car + 0x14 + 4 * k);
                 cu_player_car = car, cu_grid_ok = 1;
             }
