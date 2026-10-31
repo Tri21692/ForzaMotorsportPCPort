@@ -1055,7 +1055,7 @@ void nv2a_log_stats(void) {
         lh = vc_hits, lf = vc_fills, ls = vc_skips, lr = vc_far, l1 = vc_first;
         extern uint64_t vc_new, vc_refills, vc_moved, vc_moved_bytes;
         static uint64_t ln, lrf, lm, lmb;
-        fprintf(stderr, "[%10.3f] nv2a: vertex cache fills: %llu new, %llu refilled (bytes changed), %llu the same geometry at another place (%.1f MB)\n",
+        fprintf(stderr, "[%10.3f] nv2a: vertex cache fills: %llu new, %llu refilled (bytes changed); %llu shared, the same geometry at another place (%.1f MB not uploaded)\n",
                 rt_now_100ns() / 1e7, (unsigned long long)(vc_new - ln), (unsigned long long)(vc_refills - lrf), (unsigned long long)(vc_moved - lm),
                 (vc_moved_bytes - lmb) / 1048576.0);
         ln = vc_new, lrf = vc_refills, lm = vc_moved, lmb = vc_moved_bytes;

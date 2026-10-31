@@ -306,15 +306,23 @@ uint64_t prof_t[6], prof_n, prof_verts;
 #define VC_REACH (1u << 20) /* a draw reading more than this much memory is not checked each time */
 typedef struct {
     uint64_t key, src, sparse, last;
+    uint64_t ck; /* its content: vertices' bytes, indices and layout, wherever they are (vc_content) */
     GLuint vbo, ibo;
     int k, misses, skip, uses;
+    int alias; /* no buffers of its own: another entry's (its index + 1) of the same content */
     size_t bytes;
 } VcEntry;
 static VcEntry vc[VC_SLOTS];
 static uint64_t vc_clock;
 uint64_t vc_bytes, vc_hits, vc_fills, vc_skips, vc_far, vc_first; /* for the stats line (nv2a.c) */
-uint64_t vc_new, vc_refills, vc_moved, vc_moved_bytes; /* fills: new, bytes changed, the same geometry at another place */
+uint64_t vc_new, vc_refills, vc_moved, vc_moved_bytes; /* fills: new, bytes changed; shared instead (the same geometry at another place) */
 static uint32_t vc_lo, vc_hi; /* the indices' range, from vc_find for vc_source */
+static uint64_t vc_fmt; /* the draw's layout without its addresses (vc_find), for vc_content */
+static int vc_first_seen; /* vc_find said no: the first time its key is seen */
+/* Content to the entry holding it: Maple Valley's scenery streams in at other places as the car goes,
+ * and the same geometry under a new key (its addresses) was 99% of the fills there (70,000 in 5 s,
+ * 700 MB uploaded again), the device thread busy all the frame on its slowest stretch. */
+static struct { uint64_t ck; int i; } vc_cmap[1 << 15];
 
 static uint64_t vc_mix(uint64_t h, uint64_t v) {
     h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
@@ -326,22 +334,59 @@ static void vc_drop(VcEntry *e) {
     memset(e, 0, sizeof *e);
 }
 
+/* The entry whose buffers e draws from: its own, or the one it shares (still holding that content), or NULL. */
+static VcEntry *vc_buf(VcEntry *e) {
+    if (e->vbo) return e;
+    if (!e->alias) return NULL;
+    VcEntry *b = &vc[e->alias - 1];
+    if (!b->vbo || b->ck != e->ck) return NULL;
+    b->last = vc_clock;
+    return b;
+}
+
+static uint64_t vc_content(uint64_t src, const GLuint *idx, int k) {
+    return vc_mix(vc_mix(vc_mix(vc_fmt, src), hash_bytes((const uint8_t *)idx, (uint32_t)k * 4)), (uint64_t)k) | 1;
+}
+
+/* An entry holding the content ck in its own buffers, or NULL. */
+static VcEntry *vc_holder(uint64_t ck) {
+    int s = (int)((ck ^ ck >> 29) & ((1 << 15) - 1));
+    if (vc_cmap[s].ck != ck) return NULL;
+    VcEntry *b = &vc[vc_cmap[s].i];
+    return b->vbo && b->ck == ck ? b : NULL;
+}
+
+static void vc_hold(VcEntry *e, uint64_t ck) {
+    int s = (int)((ck ^ ck >> 29) & ((1 << 15) - 1));
+    e->ck = ck, vc_cmap[s].ck = ck, vc_cmap[s].i = (int)(e - vc);
+}
+
 /* The draw's entry (found, or a free or least recently used one to fill), or NULL: off, or left
  * out for now. */
 static VcEntry *vc_find(int n, int prim, const int *used, int m) {
     static int on = -1;
     if (on < 0) on = !getenv("XBRT_GL_VCACHE") || atoi(getenv("XBRT_GL_VCACHE"));
+    vc_first_seen = 0;
     if (!on || n < 16) return NULL;
-    uint64_t key = vc_mix(hash_bytes((const uint8_t *)vidx, (uint32_t)n * 4), (uint64_t)n << 8 | (uint64_t)prim);
+    uint64_t hv = hash_bytes((const uint8_t *)vidx, (uint32_t)n * 4); /* which vertex each one is, from the arrays' starts */
+    uint64_t key = vc_mix(hv, (uint64_t)n << 8 | (uint64_t)prim);
+    uint64_t fmt = key; /* the same without the addresses: each attribute's place from the first's */
+    uint32_t base0 = 0;
+    int have0 = 0;
     for (int j = 0; j < m; j++) {
         int f = fattr_of[used[j]];
         if (f < 0) {
-            key = vc_mix(key, hash_bytes((const uint8_t *)cur.a[used[j]], 16) ^ (uint64_t)used[j] << 56);
+            uint64_t h = hash_bytes((const uint8_t *)cur.a[used[j]], 16) ^ (uint64_t)used[j] << 56;
+            key = vc_mix(key, h), fmt = vc_mix(fmt, h);
             continue;
         }
+        if (!have0) base0 = fattr[f].base, have0 = 1;
         key = vc_mix(key, (uint64_t)fattr[f].base << 32 | fattr[f].stride);
         key = vc_mix(key, (uint64_t)used[j] << 16 | (uint64_t)fattr[f].type << 8 | fattr[f].size);
+        fmt = vc_mix(fmt, (uint64_t)(uint32_t)(fattr[f].base - base0) << 32 | fattr[f].stride);
+        fmt = vc_mix(fmt, (uint64_t)used[j] << 16 | (uint64_t)fattr[f].type << 8 | fattr[f].size);
     }
+    vc_fmt = fmt;
     vc_clock++;
     VcEntry *pick = NULL;
     for (int p = 0; p < 8; p++) {
@@ -358,7 +403,7 @@ static VcEntry *vc_find(int n, int prim, const int *used, int m) {
     static uint64_t seen[VC_SLOTS];
     uint64_t *was_seen = &seen[(key ^ key >> 29) & (VC_SLOTS - 1)];
     if (*was_seen != key) {
-        *was_seen = key, vc_first++;
+        *was_seen = key, vc_first++, vc_first_seen = 1;
         return NULL;
     }
     if (vc_bytes > (512u << 20)) { /* too much on the GPU: what was not drawn lately goes */
@@ -424,7 +469,7 @@ static void vc_store(VcEntry *e, uint64_t src, uint64_t sparse, const float *pac
     glBindVertexArray(gl_vsh_vao); /* the element buffer is the vertex array's */
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, e->ibo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)k * (GLsizeiptr)sizeof(GLuint), idx, GL_STATIC_DRAW);
-    e->src = src, e->sparse = sparse, e->uses = 0, e->k = k, e->bytes = bytes + (size_t)k * sizeof(GLuint);
+    e->src = src, e->sparse = sparse, e->uses = 0, e->k = k, e->bytes = bytes + (size_t)k * sizeof(GLuint), e->alias = 0;
     vc_bytes += e->bytes;
 }
 
@@ -519,15 +564,30 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     uint64_t src = 0;
     int hit = 0;
     uint64_t sparse = 0;
+    VcEntry *from = NULL; /* the entry whose buffers the draw takes (its own, or one of the same content) */
     if (ce) {
         /* a sample of the bytes at each use, all of them every 16th (and when filling) */
-        int full = !ce->vbo || ++ce->uses % 16 == 0;
+        int full = !vc_buf(ce) || ++ce->uses % 16 == 0;
         sparse = vc_source(n, used, m, 1);
         if (full) src = vc_source(n, used, m, 0);
         if (!sparse || (full && !src)) ce = NULL, vc_far++; /* too much of memory to check each time */
-        else if (ce->vbo && ce->sparse == sparse && (!full || ce->src == src) && ce->k == k) hit = 1, ce->misses = 0, vc_hits++;
-        else if (ce->vbo && ++ce->misses >= 3) ce->skip = 64, ce = NULL; /* changing every time: drawn as before for a while */
+        else if (vc_buf(ce) && ce->sparse == sparse && (!full || ce->src == src) && ce->k == k) hit = 1, ce->misses = 0, vc_hits++, from = vc_buf(ce);
+        else if (vc_buf(ce) && ++ce->misses >= 3) ce->skip = 64, ce = NULL; /* changing every time: drawn as before for a while */
         else if (!full) src = vc_source(n, used, m, 0);
+        if (ce && !hit) { /* the same geometry another entry holds: shared, not fetched and uploaded again */
+            uint64_t ck = vc_content(src, idx, k);
+            VcEntry *b = vc_holder(ck);
+            if (b && b != ce) {
+                if (ce->vbo) glDeleteBuffers(1, &ce->vbo), glDeleteBuffers(1, &ce->ibo), vc_bytes -= ce->bytes, ce->vbo = ce->ibo = 0, ce->bytes = 0;
+                ce->alias = (int)(b - vc) + 1, ce->ck = ck, ce->src = src, ce->sparse = sparse, ce->k = k, ce->uses = 0;
+                b->last = vc_clock;
+                hit = 1, from = b, vc_moved++, vc_moved_bytes += (uint64_t)n * m * 16;
+            } else ce->ck = ck;
+        }
+    } else if (deferred && vc_first_seen) { /* first seen at its addresses: what another entry holds is drawn from there */
+        uint64_t s = vc_source(n, used, m, 0);
+        VcEntry *b = s ? vc_holder(vc_content(s, idx, k)) : NULL;
+        if (b) b->last = vc_clock, hit = 1, from = b, vc_moved++, vc_moved_bytes += (uint64_t)n * m * 16;
     }
     if (!hit) {
         if (n * m * 4 > packed_cap) packed_cap = n * m * 4, packed = realloc(packed, (size_t)packed_cap * sizeof *packed);
@@ -544,20 +604,17 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
             for (int i = 0; i < n; i++)
                 for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
     }
-    if (ce) {
-        if (!hit) { /* (measuring: a new draw, or one whose bytes changed; and a new one whose vertices and
-                     * indices some draw at another place had: the same geometry streamed in elsewhere) */
-            static uint64_t content[1 << 16];
-            uint64_t ck = vc_mix(vc_mix(src, hash_bytes((const uint8_t *)idx, (uint32_t)k * 4)), (uint64_t)n << 8 | (uint64_t)m);
-            uint64_t *slot = &content[(ck ^ ck >> 31) & ((1 << 16) - 1)];
-            if (ce->vbo) vc_refills++;
-            else if (*slot == ck) vc_moved++, vc_moved_bytes += (uint64_t)n * m * 16;
-            else vc_new++;
-            *slot = ck;
-            vc_fills++, vc_store(ce, src, sparse, packed, (size_t)n * m * 16, idx, k);
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, ce->vbo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ce->ibo);
+    if (ce && !hit) { /* its own buffers: a new draw, or one whose bytes changed */
+        uint64_t ck = ce->ck;
+        if (ce->vbo) vc_refills++;
+        else vc_new++;
+        vc_fills++, vc_store(ce, src, sparse, packed, (size_t)n * m * 16, idx, k);
+        vc_hold(ce, ck);
+        from = ce;
+    }
+    if (from) {
+        glBindBuffer(GL_ARRAY_BUFFER, from->vbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, from->ibo);
     } else {
         glBindBuffer(GL_ARRAY_BUFFER, gl_vsh_vbo);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_vsh_ibo);
