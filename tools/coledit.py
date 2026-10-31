@@ -188,9 +188,14 @@ class Col:
             bx0, bz0, bx1, bz1 = self.cell_bounds(cell)
             if hi[0] < bx0 or lo[0] > bx1 or hi[2] < bz0 or lo[2] > bz1: continue
             b = self.block(cell)
-            base = len(b.verts)
-            b.verts += [(float(q[0]), float(q[1]), float(q[2]), word) for q in p]
-            b.tris.append((surface, (base, base + 1, base + 2), tuple(float(c) for c in n)))
+            if getattr(b, 'index', None) is None or len(b.index) > len(b.verts):  # vertices shared, as the disc's
+                b.index = {v: i for i, v in enumerate(b.verts)}
+            ijk = []
+            for q in p:
+                v = (float(q[0]), float(q[1]), float(q[2]), word)
+                if v not in b.index: b.index[v] = len(b.verts); b.verts.append(v)
+                ijk.append(b.index[v])
+            b.tris.append((surface, tuple(ijk), tuple(float(c) for c in n)))
 
     def remove(self, keep):
         """Drops every triangle for which keep(surface, points) is false."""
@@ -201,6 +206,7 @@ class Col:
             used = sorted({i for t in tris for i in t[1]})
             remap = {o: k for k, o in enumerate(used)}
             b.verts = [b.verts[i] for i in used]
+            b.index = None
             b.tris = [(s, tuple(remap[i] for i in ijk), n) for s, ijk, n in tris]
         return gone
 

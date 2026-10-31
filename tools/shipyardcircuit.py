@@ -1121,6 +1121,70 @@ def concrete_mask(centre):
     return (cu > 0) & (cu < 1) & (np.abs(((centre[:, [0, 2]] - c0) @ np.array([-cd[1], cd[0]])) / np.linalg.norm(cd)) < 10)
 
 
+def lay_squares(col, squares, cell=0.25, tol=0.04, most=8.0, top=True):
+    """Ground squares ((x, z, half width, y)) into the collision as few rectangles: put on a grid
+    `cell` apart (the highest where they overlap, as the car found them laid one by one; the
+    lowest without `top`), merged where within `tol` of a height, at most
+    `most` metres a side, each at the lowest height in it. One triangle pair per square was 6,000
+    triangles and 480 KB in the hairpin's block, where the game let cars fall through (the disc's
+    blocks are under 20 KB). Returns rectangles laid."""
+    if not squares: return 0
+    S = np.array(squares, float)
+    lo = (S[:, :2] - S[:, 2:3]).min(0)
+    nx, nz = (np.ceil(((S[:, :2] + S[:, 2:3]).max(0) - lo) / cell)).astype(int) + 1
+    H = np.full((nz, nx), -np.inf if top else np.inf)
+    pick = np.maximum if top else np.minimum
+    for x, z, w, y in S:  # every cell the square overlaps
+        j0, j1 = int((x - w - lo[0]) / cell), int(np.ceil((x + w - lo[0]) / cell))
+        i0, i1 = int((z - w - lo[1]) / cell), int(np.ceil((z + w - lo[1]) / cell))
+        H[i0:i1, j0:j1] = pick(H[i0:i1, j0:j1], y)
+    free = np.isfinite(H)
+    span = int(most / cell)
+    laid = 0
+    for i in range(nz):
+        for j in range(nx):
+            if not free[i, j]: continue
+            h0 = H[i, j]
+            j1 = j + 1
+            while j1 < nx and j1 - j < span and free[i, j1] and abs(H[i, j1] - h0) <= tol: j1 += 1
+            i1 = i + 1
+            while i1 < nz and i1 - i < span and free[i1, j:j1].all() and (np.abs(H[i1, j:j1] - h0) <= tol).all(): i1 += 1
+            free[i:i1, j:j1] = False
+            y = H[i:i1, j:j1].min()
+            x0, x1, z0, z1 = lo[0] + j * cell, lo[0] + j1 * cell, lo[1] + i * cell, lo[1] + i1 * cell
+            q = [(x1, y, z1), (x0, y, z1), (x0, y, z0), (x1, y, z0)]
+            col.add(0, [q[0], q[2], q[1]]); col.add(0, [q[2], q[0], q[3]])  # facing up, as the disc's ground
+            laid += 1
+    return laid
+
+
+def shop_floor(col, centre, step=0.5):
+    """Floor in the garage wherever its box has no ground within 30 cm of the drawn floor (its north
+    corners, by the parked vehicles, had none: the road's ground stops short of them). Returns the
+    squares laid (lay_squares merges them)."""
+    tris = []
+    for _, pts, nrm, _ in col.triangles():
+        q = np.array(pts, float)
+        if abs(nrm[1]) > 0.7 and garage.inside(q[:, [0, 2]], pad=1.0).any(): tris.append(q)
+    us, vs = np.arange(garage.U0 + step / 2, garage.U1, step), np.arange(garage.V0 + step / 2, garage.V1, step)
+    uv = np.stack(np.meshgrid(us, vs), -1).reshape(-1, 2)
+    fy = garage.floor_y(centre, uv)
+    w = garage.to_world(uv, 0.0)[:, [0, 2]]
+    found = np.zeros(len(uv), bool)
+    for a, b, c in tris:
+        m = np.array([[b[0] - a[0], c[0] - a[0]], [b[2] - a[2], c[2] - a[2]]])
+        if abs(np.linalg.det(m)) < 1e-9: continue
+        k = np.nonzero((w[:, 0] >= min(a[0], b[0], c[0])) & (w[:, 0] <= max(a[0], b[0], c[0])) & (w[:, 1] >= min(a[2], b[2], c[2])) & (w[:, 1] <= max(a[2], b[2], c[2])))[0]
+        if not len(k): continue
+        u, v = np.linalg.solve(m, (w[k] - a[[0, 2]]).T)
+        h = a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1])
+        found[k[(u >= -1e-4) & (v >= -1e-4) & (u + v <= 1 + 1e-4) & (np.abs(h - fy[k]) < 0.3)]] = True
+    # squares in world x/z round each bare point, as wide as the point's spacing on the diagonal
+    squares = [(p[0], p[1], step * 0.75, y) for p, y in zip(w[~found], fy[~found])]
+    lay_squares(col, squares, tol=0.02)
+    return len(squares)
+
+
 def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
     """Ground where the collision has none, out to the walls (`dist`) beside loop points `where`
     and `margin` points either side, at the height of the ground found round it: at the hairpin,
@@ -1129,8 +1193,8 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
     between them), each gap a square half as wide again, and along each road edge a quarter metre
     apart out to 3 m (a strip at the edge narrower than the grid, on the inside of the apex, was
     the hole). Half a metre's grid was 21,000 squares, the collision twice its size: textures were
-    let go. With `under`, a sheet of ground that much under all of it, out to the walls (2 m quads
-    sharing their corners, each corner under the ground found there): a car's wheel that found a
+    let go. With `under`, a sheet of ground that much under all of it, out to the walls (2 m squares,
+    each under the lowest ground found at its corners, merged): a car's wheel that found a
     crack between the course's road and the ground put beside it sank, or the car fell through.
     Returns the squares added."""
     n = len(centre)
@@ -1179,13 +1243,10 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
         dc = np.hypot(c2[:, 0] - p[0], c2[:, 1] - p[1])
         k_ = int(np.argmin(dc))
         if dc[k_] < half[k_] + 1.5: h = min(h, centre[k_][1])  # by the road never over it
-        Q = np.array([p[0], h, p[1]])
-        sq = [Q + (w_, 0, w_), Q + (-w_, 0, w_), Q + (-w_, 0, -w_), Q + (w_, 0, -w_)]
-        col.add(0, [sq[0], sq[2], sq[1]]); col.add(0, [sq[2], sq[0], sq[3]])  # facing up, as the disc's ground
-        squares.append((p[0], p[1], w_))
+        squares.append((p[0], p[1], w_, h))  # laid at the end, merged (lay_squares)
         added += 1
     def filled(p):
-        return any(abs(p[0] - x) <= w and abs(p[1] - z) <= w for x, z, w in squares[-400:])
+        return any(abs(p[0] - x) <= w and abs(p[1] - z) <= w for x, z, w, _ in squares[-400:])
     for i in near:  # the edges first, finely
         for side in (1, -1):
             for u in np.arange(half[i] - 0.25, half[i] + 3.0, 0.25):
@@ -1206,6 +1267,7 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
             y = centre[i][1]
             if height(p[0], p[1], y) is not None: continue
             square(p, y, step * 0.75)
+    lay_squares(col, squares)
     if under:
         run = [i for i in near if (i - 1) % n in near_set]  # consecutive pairs (i - 1, i)
         corner = {}
@@ -1219,15 +1281,17 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
                     h = min(hs) if hs else None
                 corner[(i, u)] = np.array([q[0], (centre[i][1] if h is None else h) - under, q[1]])
             return corner[(i, u)]
+        sheet = []  # each 2 m quad as a square round it at its lowest corner, merged (the quads, laid
+        # as they were, overlapped four deep round the hairpin: 200 triangles in a 10 m square)
         for i in run:
             j = (i - 1) % n
             w = max(dist.get((sd, k), half[k] + 8.0) for k in (i, j) for sd in (1, -1)) + 1.0
             us = np.arange(-np.ceil(w / 2) * 2, np.ceil(w / 2) * 2 + 0.1, 2.0)
             for u0, u1 in zip(us[:-1], us[1:]):
-                q = [at(j, u0), at(j, u1), at(i, u1), at(i, u0)]
-                for tri in ([q[0], q[2], q[1]], [q[2], q[0], q[3]]):
-                    nrm = np.cross(tri[1] - tri[0], tri[2] - tri[0])
-                    col.add(0, tri if nrm[1] > 0 else [tri[0], tri[2], tri[1]])  # facing up
+                q = np.array([at(j, u0), at(j, u1), at(i, u1), at(i, u0)])
+                m = q.mean(0)
+                sheet.append((m[0], m[2], np.abs(q[:, [0, 2]] - m[[0, 2]]).max(), q[:, 1].min()))
+        lay_squares(col, sheet, cell=0.5, tol=0.05, top=False)
     return added
 
 
@@ -1787,6 +1851,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('guardrails at the bare edges: %d pieces over %d stretches' % (len(rails) // 2, len(stretches)))
     kerbs = []
     print('garage: %d collision triangles, its yard fence %d' % (garage.collision(col, centre, half), garage.yard_collision(col, centre, half)))
+    print('garage: floor laid at %d bare points' % shop_floor(col, centre))
     # its parked vehicles solid, each a box round its footprint (they are moved in after: park())
     import xb2
     boxes = garage.parked_boxes(res_bytes, centre, xb2.resources(bytes(res_bytes))[0], L.MODEL, ppw, sphere_at)
