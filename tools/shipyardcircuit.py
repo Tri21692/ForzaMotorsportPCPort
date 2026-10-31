@@ -445,15 +445,15 @@ BRICK_AREA = (-160.0, 0.0, -80.0, 60.0)  # garage (u0, u1, v0, v1): east of the 
 def fill_bricks(centre, dist, points, sp):
     """In BRICK_AREA, brick walls along the walls' line wherever none stands yet (the bricks are the
     guardrails' there, and none stood where a guardrail was left out: through turns, by kerbs; the
-    user saw past the gaps). Each run of bare points is walled from the brick before it to the one
-    after. [faces]."""
+    user saw past the gaps). Each run of bare stretches between neighbouring points is walled. [faces]."""
     left, _ = frame(centre)
     segs = [(a[[0, 2]], b[[0, 2]]) for a, b in BRICK_ENDS]
-    def covered(p):
-        for a, b in segs:
-            t = np.clip((p - a) @ (b - a) / max((b - a) @ (b - a), 1e-9), 0, 1)
-            if np.hypot(*(a + (b - a) * t - p)) < 0.6: return True
-        return False
+    def near(a, b, p):
+        t = np.clip((p - a) @ (b - a) / max((b - a) @ (b - a), 1e-9), 0, 1)
+        return np.hypot(*(a + (b - a) * t - p)) < 0.6
+    def covered(p, q):  # one brick along the stretch p-q: its ends and middle by the same brick (one
+        # across a jog's middle at an angle had the jog counted covered)
+        return any(near(a, b, p) and near(a, b, q) and near(a, b, (p + q) / 2) for a, b in segs)
     out = []
     for side in (1, -1):
         feet = {}
@@ -461,16 +461,15 @@ def fill_bricks(centre, dist, points, sp):
             if (side, i) not in dist: continue
             F = centre[i] + np.array([left[i][0], 0, left[i][1]]) * side * dist[(side, i)]
             u, v = garage.to_uv(F[[0, 2]])
-            if BRICK_AREA[0] < u < BRICK_AREA[1] and BRICK_AREA[2] < v < BRICK_AREA[3] and L.off_course([F], sp, margin=0.0)[0]: feet[i] = F
-        ks = sorted(feet)
-        bare = [i for i in ks if not covered(feet[i][[0, 2]])]
+            if BRICK_AREA[0] < u < BRICK_AREA[1] and BRICK_AREA[2] < v < BRICK_AREA[3]: feet[i] = F  # (on the course's road too: the wall stands there all the same, and was bare where side road 04 meets it)
+        # each stretch between neighbouring points with no brick at its middle (a jog between two
+        # points by bricks was a gap: by points alone it counted covered)
+        bare = [i for i in sorted(feet) if i + 1 in feet and not covered(feet[i][[0, 2]], feet[i + 1][[0, 2]])]
         runs_ = []
         for i in bare:
-            if runs_ and i == runs_[-1][-1] + 1: runs_[-1].append(i)
-            else: runs_.append([i])
+            if runs_ and i == runs_[-1][-1]: runs_[-1].append(i + 1)
+            else: runs_.append([i, i + 1])
         for r in runs_:
-            r = ([r[0] - 1] if r[0] - 1 in feet else []) + r + ([r[-1] + 1] if r[-1] + 1 in feet else [])  # on to the bricks either side
-            if len(r) < 2: continue
             F_ = np.array([feet[i] for i in r])
             for a, b in zip(*(lambda k: (k[:-1], k[1:]))(chords(F_, 0.5))):
                 if np.hypot(*(F_[b] - F_[a])[[0, 2]]) > 0.3: out.append(brick_wall(tuple(F_[a]), tuple(F_[b])))
