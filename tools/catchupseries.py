@@ -4,7 +4,8 @@ mods folder's catchup.txt). Open from level 35 to Class S cars.
 
 The opponent: each event's AIField takes one car (NumAICars 1) at random (random="true", as the
 disc's R-P1 Championship picks its field) from the series' list. The head start: catchup.txt,
-"<event ordinal> <fraction of a lap>", written here (replacing the events' lines).
+"<event ordinal> <fraction of a lap> <the track's racing line's points>", a race each (HEAD_STARTS),
+written here (replacing the events' lines); the runtime picks the line by the loaded track's points.
 
 The logo (logo_art): the Class S tile and the Class D tile either side of a slash, their C-L-A-S-S painted out and their letters leaning forward, the S chasing the D with
 fading copies of itself and speed streaks behind it, and Catch Up under them in a racing script, white shading into the other half's colour (a placeholder).
@@ -13,7 +14,7 @@ The Professional list (events\\spec; the Pro Series folder is the career's Champ
 where it was first) goes up by level: it shows after the level-15 series, its seriesorder its place
 as the disc's there (addseries.py).
 
-  python tools/catchupseries.py <disc> <mods folder> [head start, a fraction of a lap]
+  python tools/catchupseries.py <disc> <mods folder> [one head start for every race, a fraction of a lap]
 """
 import os
 import sys
@@ -36,7 +37,7 @@ XP = 4000                # a win, each event
 PRIZE = 82               # the Lamborghini Gallardo: no level gives it and no other series has it as its prize
                          # (drawn at random from the nine such Class A cars; the user kept it, listed S4 since)
 CHASER = 11              # the logo's left half: the Class S tile (the player's class), the Class D tile (7) on the right
-HEAD_START = 1 / 6       # of a lap (a sixth, with Class S cars from level 35: the user's)
+HEAD_STARTS = (1 / 6, 1 / 5, 1 / 4, 1 / 3)  # of a lap, a race each, as TRACKS (the user's: Class S from level 35)
 # the field to pick from: Class D cars at their best (D1, D2), as AI car models (100 + ordinal):
 # Civic Type R, Integra Type R, Celica GTS, Audi TT 3.2, VW R32, RX-7, Silvia S14, Delta Integrale
 D_CARS = [107, 109, 114, 118, 120, 233, 315, 213]
@@ -44,7 +45,7 @@ DRIVERS = (24, 35, 49)
 CAPTION = [('Catch Up', 77, 26, 'catchup')]  # a placeholder: a racing script in the halves' colours
 A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(121, 89),  # logo_art's slash
                            left=(195, 150, 255), right=(255, 165, 70))  # each half's lettering in the other's colour: lavender on the S's orange, orange on the D's purple
-DESC = 'Open to Class S cars. Four one-lap races: a Class D car starts a sixth of a lap ahead, catch it.'
+DESC = 'Open to Class S cars. Four one-lap races against a Class D car with a head start: catch it.'
 
 
 def lifted(t, x0=64, x1=147, y1=78):
@@ -132,7 +133,20 @@ def series_xml(prize):
     return x + '</series>\r\n'
 
 
-def install(disc, mods, head_start=HEAD_START):
+def track_points(disc, mods, ordinal):
+    """A track's racing line's point count (its AI geometry's iLength, ai\\drivatarv2\\<name>geometry.bin):
+    what the runtime tells the race's track by at the grid (hle_career.c)."""
+    import re
+    import mlp
+    mega = addcar.Archive(disc, mods, 'Mega.ca2')
+    f = {k.lower(): v for k, v in mega.files.items()}
+    tl = f['forzadb\\tracklist.xml'].decode('latin-1')
+    name = next(n for n, o in re.findall(r'<track[^>]*?\sname="([^"]*)"[^>]*?\sOrdinal="(\d+)"', tl, re.S) if int(o) == ordinal)
+    out, _ = mlp.read(f['ai\\drivatarv2\\' + name.lower() + 'geometry.bin'])
+    return int(out['iLength'][0])
+
+
+def install(disc, mods, head_starts=HEAD_STARTS):
     prize = PRIZE
     print('prize: %s (%d)' % (addcar.car_name(disc, mods, prize), prize))
     with tempfile.TemporaryDirectory() as tmp:
@@ -145,10 +159,11 @@ def install(disc, mods, head_start=HEAD_START):
     path = os.path.join(mods, 'catchup.txt')
     ours = ['%d' % (EVENT_ORDINAL + k) for k in range(len(TRACKS))]
     lines = [l for l in (open(path).read().splitlines() if os.path.exists(path) else []) if l.split()[:1] not in [[o] for o in ours]]
-    open(path, 'w').write('\n'.join(lines + ['%s %.3f' % (o, head_start) for o in ours]) + '\n')
-    print('%s: events %s-%s, head start %.3f of a lap (%s)' % (NAME, ours[0], ours[-1], head_start, path))
+    ours_lines = ['%s %.3f %d' % (o, h, track_points(disc, mods, t)) for o, h, t in zip(ours, head_starts, TRACKS)]
+    open(path, 'w').write('\n'.join(lines + ours_lines) + '\n')
+    print('%s: events %s-%s, head starts %s (%s)' % (NAME, ours[0], ours[-1], '; '.join(ours_lines), path))
 
 
 if __name__ == '__main__':
     if len(sys.argv) not in (3, 4): raise SystemExit(__doc__)
-    install(sys.argv[1], sys.argv[2], float(sys.argv[3]) if len(sys.argv) > 3 else HEAD_START)
+    install(sys.argv[1], sys.argv[2], (float(sys.argv[3]),) * len(TRACKS) if len(sys.argv) > 3 else HEAD_STARTS)

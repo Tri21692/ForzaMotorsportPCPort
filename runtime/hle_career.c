@@ -136,7 +136,8 @@ void f_000755D0(XbCtx *c) {
     c->esp += 8; /* ret 4 */
 }
 
-/* Catch-up events (<mods>/catchup.txt, a line per event: "ordinal fraction"): the opponent starts
+/* Catch-up events (<mods>/catchup.txt, a line per event: "ordinal fraction points", points the
+ * event's track's racing line's count, its AI geometry's iLength): the opponent starts
  * that fraction of a lap ahead of the pole. CCar::ResetPositionForGrid (0x410E0, thiscall, the
  * grid place as its argument) puts a car on the track's racing line, when the track has one
  * ([0x5E1450] the track, +8 set; [+4] the line: +8 its points, about 2 m apart from the start
@@ -147,11 +148,12 @@ void f_000755D0(XbCtx *c) {
  * read past the line's end: the car went to near the map's origin and drove on from wherever that
  * met the track, at Laguna Seca 30% of the lap on.) The grid is laid before the race has its
  * event ([0x592984] still 0), so the race is told by its field: the player and one AI car, which
- * no event of the disc has (seven or none), and the first line's fraction is used. The opponent's
+ * no event of the disc has (seven or none), and its track by the line's points: the line of that
+ * many points gives the fraction (else the first line). The opponent's
  * car is told by its racer's record (+0xA0 holds the car), not by its place: the game gives the
  * player place 1 or 2 (moving place 2 put the player half a lap on and left the opponent). */
 #define MAX_CU 32
-static struct { uint32_t ordinal; float frac; } cu[MAX_CU];
+static struct { uint32_t ordinal; float frac; int32_t points; } cu[MAX_CU]; /* points: its track's racing line's (0 any) */
 static int ncu;
 static pthread_once_t cu_once = PTHREAD_ONCE_INIT;
 static volatile int cu_active; /* a catch-up race is on: rt_career_tick counts the opponent's lap as begun */
@@ -164,8 +166,10 @@ static void cu_load(void) {
     FILE *f = fopen(path, "r");
     if (!f) return;
     char line[256];
-    while (ncu < MAX_CU && fgets(line, sizeof line, f))
-        if (sscanf(line, "%u %f", &cu[ncu].ordinal, &cu[ncu].frac) == 2 && cu[ncu].frac > 0 && cu[ncu].frac < 1) ncu++;
+    while (ncu < MAX_CU && fgets(line, sizeof line, f)) { /* "ordinal fraction [points]" */
+        cu[ncu].points = 0;
+        if (sscanf(line, "%u %f %d", &cu[ncu].ordinal, &cu[ncu].frac, &cu[ncu].points) >= 2 && cu[ncu].frac > 0 && cu[ncu].frac < 1) ncu++;
+    }
     fclose(f);
     fprintf(stderr, "xbrt: catch-up events: %d from %s\n", ncu, path);
 }
@@ -189,9 +193,13 @@ void f_000410E0(XbCtx *c) {
         int32_t points = line ? (int32_t)xb_rd32(line + 8) : 0;
         if (n == 2 && people == 1 && mine && points > 0) {
             cu_active = 1;
-            int32_t pct = (int32_t)(cu[0].frac * 100.0f + 0.5f), moved = -(pct < 2 ? 2 : pct > 99 ? 99 : pct); /* -1 is the pole's */
+            /* the event's line by its track's racing line (the grid is laid before the race has its event: the
+             * user's head starts differ by track), else the first */
+            int k = 0;
+            for (int j = 0; j < ncu; j++) if (cu[j].points == points) { k = j; break; }
+            int32_t pct = (int32_t)(cu[k].frac * 100.0f + 0.5f), moved = -(pct < 2 ? 2 : pct > 99 ? 99 : pct); /* -1 is the pole's */
             xb_wr32(c->esp + 4, (uint32_t)moved);
-            fprintf(stderr, "xbrt: catch-up: the opponent's grid place %d -> %d, %.2f of the lap (%d points) ahead\n", place, moved, cu[0].frac, points);
+            fprintf(stderr, "xbrt: catch-up: the opponent's grid place %d -> %d, %.2f of the lap (%d points) ahead\n", place, moved, cu[k].frac, points);
         }
     }
     if (ncu && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: which racer this car is (the racer whose record holds the car's address) */
