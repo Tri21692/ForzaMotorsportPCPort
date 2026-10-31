@@ -1,12 +1,12 @@
 """A Professional series of four catch-up events: one lap each, on four circuits, against a single
 Class D car picked at random, which starts part of a lap ahead (the runtime moves its grid place: hle_career.c, from the
-mods folder's catchup.txt). Open from level 20 to Class A cars.
+mods folder's catchup.txt). Open from level 25 to Class S cars.
 
 The opponent: each event's AIField takes one car (NumAICars 1) at random (random="true", as the
 disc's R-P1 Championship picks its field) from the series' list. The head start: catchup.txt,
 "<event ordinal> <fraction of a lap>", written here (replacing the events' lines).
 
-The logo (logo_art): the Class A tile and the Class D tile either side of a slash, their C-L-A-S-S painted out and their letters leaning forward, the A chasing the D with
+The logo (logo_art): the Class S tile and the Class D tile either side of a slash, their C-L-A-S-S painted out and their letters leaning forward, the S chasing the D with
 fading copies of itself and speed streaks behind it, and Catch Up under them in a racing script, white shading into the other half's colour (a placeholder).
 
 The Professional list (events\\spec; the Pro Series folder is the career's Championship Series,
@@ -28,23 +28,23 @@ NAME = 'Catch-Up Challenge'
 KIND = 'spec'            # the career's Professional list (proseries is its Championship Series)
 EVENT_ORDINAL = 385      # after the Amateur series' 371-384: 385-388
 SERIES_ID = 233          # after the Amateur series' 229-232
-LEVEL = 20               # (the user's: level 20, Class A against Class D)
-CLASS_A = [[('perfclass', '=', 'A')]]  # as the disc's Class B Championship has its class
+LEVEL = 25               # (the user's: level 25, Class S against Class D; Class A was too hard for a casual player)
+CLASS_S = [[('perfclass', '=', 'S')]]  # as the disc's class championships have theirs
 TRACKS = (1, 9, 3, 2)    # Laguna Seca, Road Atlanta, Maple Valley, Silverstone
 LAPS = 1
 XP = 4000                # a win, each event
 PRIZE = 82               # the Lamborghini Gallardo: no level gives it and no other series has it as its prize
                          # (drawn at random from the nine such Class A cars; the user kept it, listed S4 since)
-CHASER = 10              # the logo's left half: the Class A tile (the player's class), the Class D tile (7) on the right
-HEAD_START = 1 / 6       # of a lap (half, a third, a quarter and a fifth were too much to catch up in one lap, the user found)
+CHASER = 11              # the logo's left half: the Class S tile (the player's class), the Class D tile (7) on the right
+HEAD_START = 0.2         # of a lap (a fifth, with Class S cars: the user's; with Class A a sixth was still hard)
 # the field to pick from: Class D cars at their best (D1, D2), as AI car models (100 + ordinal):
 # Civic Type R, Integra Type R, Celica GTS, Audi TT 3.2, VW R32, RX-7, Silvia S14, Delta Integrale
 D_CARS = [107, 109, 114, 118, 120, 233, 315, 213]
 DRIVERS = (24, 35, 49)
 CAPTION = [('Catch Up', 77, 26, 'catchup')]  # a placeholder: a racing script in the halves' colours
 A.STYLES['catchup'] = dict(font='MAGNETOB.TTF', fill='split', slant=-0.15, stretch=1.0, cut=(121, 89),  # logo_art's slash
-                           left=(195, 150, 255), right=(255, 225, 80))  # each half's lettering in the other's colour: lavender on the A's yellow, yellow on the D's purple
-DESC = 'Open to Class A cars. Four one-lap races: a Class D car starts a sixth of a lap ahead, catch it.'
+                           left=(195, 150, 255), right=(255, 165, 70))  # each half's lettering in the other's colour: lavender on the S's orange, orange on the D's purple
+DESC = 'Open to Class S cars. Four one-lap races: a Class D car starts a fifth of a lap ahead, catch it.'
 
 
 def lifted(t, x0=64, x1=147, y1=78):
@@ -71,8 +71,8 @@ def lean(img, k, y0):
 
 
 def logo_art(disc, mods):
-    """The logo's picture: the Class A tile left of a slash, the Class D tile right of it, their
-    C-L-A-S-S rows painted out and their letters leaning forward, the A chasing the D with fading
+    """The logo's picture: the Class S tile left of a slash, the Class D tile right of it, their
+    C-L-A-S-S rows painted out and their letters leaning forward, the S chasing the D with fading
     copies of itself and speed streaks behind it, and a white line along the slash."""
     import numpy as np
     th, tw = A.addseries.LG[1], A.addseries.LG[0]
@@ -83,7 +83,7 @@ def logo_art(disc, mods):
         A.clear(bg, 76, 113)  # the C-L-A-S-S row, from the ground without the letter
         letter, mask = lean(letter, k, 40), lean(mask, k, 40)
         out = bg.copy()
-        if ghosts:  # speed streaks behind the A: light lines from its back, fading out to the left
+        if ghosts:  # speed streaks behind the S: light lines from its back, fading out to the left
             back = {y: np.nonzero(np.roll(mask, dx, 1)[y] > 0.5)[0] for y in range(th)}
             for y in range(3, 76, 4):
                 if not len(back[y]): continue
@@ -119,7 +119,7 @@ def series_xml(prize):
          'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" Level="%d">\r\n'
          '\t<Scoring>\r\n\t\t<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>\r\n'
          '\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (NAME, SERIES_ID, LEVEL, prize, prize) +
-         A.restrictions(CLASS_A) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
+         A.restrictions(CLASS_S) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
     for k, track in enumerate(TRACKS):
         x += ('\t<event eventid="%d" displayname="%s" eventordinal="%d" eventtextid="{EVENT_NAME_ID}" eventdescid="{EVENT_DESC_ID}" '
               'type="Single" leaderboard="1450">\r\n'
