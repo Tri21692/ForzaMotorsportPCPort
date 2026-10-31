@@ -90,10 +90,13 @@ def rect_walls(u0, u1, v0, v1):
     return [((u0, v1), (u0, v0), (-1, 0)), ((u0, v0), (u1, v0), (0, -1)), ((u1, v0), (u1, v1), (1, 0)), ((u1, v1), (u0, v1), (0, 1))]
 
 
-def openings(centre, half, walls=WALLS, pad=None):
+def openings(centre, half, walls=WALLS, pad=None, crossing=None):
     """Per wall, the stretches (from, to: metres along it) where the road crosses it, `pad` (OPEN_PAD)
-    wider each side."""
+    wider each side. With `crossing` (the shop's own walls by default), only stretches the loop's
+    line itself crosses: by the south-east corner the road's edge, leaving by the east door, came
+    within the south wall's reach, and a 4 m opening there showed the sky under its lintel."""
     pad = OPEN_PAD if pad is None else pad
+    crossing = walls is WALLS if crossing is None else crossing
     out = []
     c = to_uv(centre[:, [0, 2]])
     for a, b, _ in walls:
@@ -109,6 +112,9 @@ def openings(centre, half, walls=WALLS, pad=None):
             if h and start is None: start = s[j]
             if not h and start is not None: runs.append((start, s[j - 1])); start = None
         if start is not None: runs.append((start, s[-1]))
+        if crossing:  # (the loop's points are 2 m apart: one within 2.5 m where its line crosses; 6 m at that corner)
+            dm = d[np.arange(len(s)), k]
+            runs = [(r0, r1) for r0, r1 in runs if dm[(s >= r0) & (s <= r1)].min() < 2.5]
         out.append(runs)
     return out
 
@@ -394,6 +400,16 @@ def lane_faces(centre, half):
         keep = [0, len(F) // 2, len(F) - 1]  # the lane runs straight
         for a, b in zip(keep[:-1], keep[1:]):
             out += fence_faces(F[a], F[b], left[idx[(a + b) // 2]] * side, min(y[a], y[b]))
+        # and the fence on along its line from the wall's foot to the opening's nearest edge (the
+        # opening, cut where the road came within the door's width, ended a metre off: a gap)
+        walls = rect_walls(*YARD)
+        edges = [YARD[0] + s for r in yard_openings(centre, half, walls)[1] for s in r]
+        if edges:
+            u_e = min(edges, key=lambda e: abs(e - uv[0, 0]))
+            if abs(u_e - uv[0, 0]) > 0.05:
+                E = to_world(np.array([u_e, YARD[2]]), 0.0)[[0, 2]]
+                g0, u_, v_ = basis()
+                out += fence_faces(F[0], E, -v_, y[0])  # (facing out of the yard, south)
     return out
 
 

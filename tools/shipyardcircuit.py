@@ -331,7 +331,9 @@ def sidewalk_edges(res, centre, half, dist, hidden=(), reach=8.0, rise=(0.06, 0.
         for u in np.arange(max(half[i] - 1.0, 1.0), half[i] + reach if bare else d - 0.3, 0.25):
             p = centre[i][[0, 2]] + left[i] * side * u
             h = height(p[0], p[1], centre[i][1] if prev is None else prev)
-            if h is not None and prev is not None and rise[0] < h - prev < rise[1]:
+            if h is not None and rise[0] < h - (centre[i][1] if prev is None else prev) < rise[1]:  # (with
+                # nothing drawn before it, the first ground a sidewalk's height over the road: by the strip
+                # the void lay between its road and the sidewalk, and the wall went on behind it)
                 out[(side, i)] = float(u) - 0.2
                 break
             if h is not None: prev = h
@@ -437,7 +439,7 @@ def brick_wall(a, b, height=BRICK_H):
     return faces
 
 
-BRICK_AREA = (-160.0, 0.0, -80.0, 60.0)  # garage (u0, u1, v0, v1): east of the shop, side road 04 to its corner with 31 and the
+BRICK_AREA = (-160.0, -4.5, -80.0, 60.0)  # garage (u0, u1, v0, v1): east of the shop (to its east wall: past it bricks stood inside, between the tin), side road 04 to its corner with 31 and the
                                          # yard's east end, where the edges have brick walls, not guardrails (they looked rough
                                          # there; a 3 m wall hides what lay past them)
 
@@ -1542,29 +1544,45 @@ def simplify(face, tol=0.1):
     return [v for i in sorted(keep) for v in pairs[i]]
 
 
-def pack(faces, pool, mats):
+def pack(faces, pool, mats, reach=40.0):
     """Faces gathered by material into the donors (popped from `pool`, as donor_pool, the largest
     left first), as many to each as fit (write_strips joins them), one too long for what is left
-    cut, its pieces overlapping by a pair: [(mesh, sphere offset, [pieces], material)]."""
-    out = []
+    cut, its pieces overlapping by a pair: [(mesh, sphere offset, [pieces], material)]. Each donor
+    takes faces within `reach` m of its first only (nearest first), so its bounding sphere stays on
+    them: one sphere over faces 500 m apart, the game left some out (the garage's tin over its south
+    door, bricks on side road 04, drawn in Blender); with too few donors for that, `reach` doubles."""
+    pool0 = list(pool)
     print('donors: %d, room for %d pairs; needed %s' % (len(pool), sum(r[0] for r in pool), {str(m_): sum(len(f) // 2 for f, mm in zip(faces, mats) if mm == m_) for m_ in set(mats)}))
-    by = {}
-    for f, m in zip(faces, mats): by.setdefault(m, []).append([f[i:i + 2] for i in range(0, len(f), 2)])
-    for m, queue in by.items():
-        while queue:
-            if not pool: raise SystemExit('out of donor meshes: %d faces; left %s' % (len(faces), {str(m_): sum(len(q) for q in qq) for m_, qq in by.items() if qq}))
-            _, mesh, at, nv, nidx = pool.pop(0)
-            pieces, v, ix = [], 0, 0
-            while queue:
-                pr = queue[0]
-                join = 3 if pieces else 0
-                k = min(nv - v, nidx - ix - join) // 2  # the pairs there is room for
-                if k >= len(pr): take = len(pr); queue.pop(0)
-                elif k >= 2 and (not pieces or k >= 8): take = k; queue[0] = pr[k - 1:]
-                else: break
-                pieces.append([q for p_ in pr[:take] for q in p_])
-                v += 2 * take; ix += 2 * take + join
-            out.append((mesh, at, pieces, m))
+    while True:
+        pool = list(pool0)
+        out, short = [], False
+        by = {}
+        for f, m in zip(faces, mats): by.setdefault(m, []).append([f[i:i + 2] for i in range(0, len(f), 2)])
+        mid = lambda pr: np.mean([p_[0][0] for p_ in pr], 0)[[0, 2]]
+        for m, queue in by.items():
+            queue.sort(key=lambda pr: tuple(mid(pr)))  # (west to east: a seed at one end of what is left)
+            while queue and not short:
+                if not pool: short = True; break
+                _, mesh, at, nv, nidx = pool.pop(0)
+                seed = mid(queue[0])
+                queue.sort(key=lambda pr: np.hypot(*(mid(pr) - seed)))
+                pieces, v, ix = [], 0, 0
+                while queue:
+                    pr = queue[0]
+                    if pieces and np.hypot(*(mid(pr) - seed)) > reach: break
+                    join = 3 if pieces else 0
+                    k = min(nv - v, nidx - ix - join) // 2  # the pairs there is room for
+                    if k >= len(pr): take = len(pr); queue.pop(0)
+                    elif k >= 2 and (not pieces or k >= 8): take = k; queue[0] = pr[k - 1:]
+                    else: break
+                    pieces.append([q for p_ in pr[:take] for q in p_])
+                    v += 2 * take; ix += 2 * take + join
+                out.append((mesh, at, pieces, m))
+                queue.sort(key=lambda pr: tuple(mid(pr)))
+        if not short: break
+        if reach > 2000: raise SystemExit('out of donor meshes: %d faces' % len(faces))
+        reach *= 2
+    print('faces packed by place: each donor within %.0f m of its first face, %d donors' % (reach, len(out)))
     return out
 
 
@@ -1838,12 +1856,17 @@ def build(disc, mods, preview_png=None, reverse=False):
     sa, sb = np.array(STRIP[0], float), np.array(STRIP[1], float)
     tt = np.clip((centre[:, [0, 2]] - sa) @ (sb - sa) / ((sb - sa) @ (sb - sa)), 0, 1)
     on_strip = off & ~at_hairpin & (np.hypot(*(centre[:, [0, 2]] - (sa + tt[:, None] * (sb - sa))).T) < 3.0)
-    capped, at_kerb = 0, 0
+    # a sidewalk's kerb looked for on past the boundary found (its kerb face was taken for that boundary
+    # by the hairpin, and the search stopped short of it: the wall stood 3 m out in the lot's asphalt)
+    strip_kerb = sidewalk_edges(res, centre, half, {(side, i): dist0[(side, i)] + 1.0 for (side, i) in dist0 if on_strip[i]}, hidden=hide)
+    capped, at_kerb, kept = 0, 0, 0
     for (side, i), d in list(dist.items()):
         if not on_strip[i]: continue
-        if (side, i) in kerbed and kerbed[(side, i)] < HALF + 6.0: dist[(side, i)] = kerbed[(side, i)]; at_kerb += 1  # (the user: "the edge of that sidewalk")
-        elif d > HALF + 2.0: dist[(side, i)] = HALF + 2.0; capped += 1
-    print('the strip\'s walls: %d points at a sidewalk\'s kerb, %d at its road\'s edge' % (at_kerb, capped))
+        k_ = strip_kerb.get((side, i), kerbed.get((side, i)))
+        if k_ is not None and k_ < HALF + 8.0: dist[(side, i)] = k_; at_kerb += 1  # (the user: "the edge of that sidewalk")
+        elif d <= HALF + 4.0: kept += 1  # a boundary close by: its wall stays there
+        else: dist[(side, i)] = HALF + 2.0; capped += 1
+    print('the strip\'s walls: %d points at a sidewalk\'s kerb, %d at a boundary close by, %d at its road\'s edge' % (at_kerb, kept, capped))
     # each side's walls the middle of five points' (a point or two found nearer or farther than
     # those round it stood the wall out in a V or a notch: on the strip a car in one went through)
     smoothed = 0
