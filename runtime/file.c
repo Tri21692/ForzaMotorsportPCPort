@@ -322,6 +322,8 @@ static int track_file(const char *rest, char *out, size_t n) {
     return 1;
 }
 
+const char *rt_loading_track(void) { return loading_track; }
+
 static void note_track(const char *rest) {
     static const char pre[] = "\\media\\tracks\\";
     if (strncasecmp(rest, pre, sizeof pre - 1)) return;

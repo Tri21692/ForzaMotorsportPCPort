@@ -140,6 +140,9 @@ static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
 volatile uint32_t rt_debug_keys;
 
 volatile int rt_display_fxaa = 1;
+volatile int rt_show_fps = -1;  /* XBRT_SHOW_FPS: the frame rate in a corner */
+volatile float rt_fps_shown;   /* new pictures a second, over half a second (glfill.c) */
+volatile float rt_post_sharpen = 0.5f, rt_post_bloom = 0.3f, rt_post_vibrance = 0.25f;
 
 int rt_display_widescreen(void) {
     static int w = -1;
@@ -215,6 +218,25 @@ static int frame_w = DISP_W, frame_h = DISP_H;
 volatile int rt_ram_dump_wanted; /* F4: nv2a.c saves the RAM at the next vertical blank */
 volatile int rt_gpu_dump_wanted; /* F3: nv2a.c writes the next frame's GPU methods */
 
+/* An F12 screenshot as PNG (screenshot_format in forza.ini, png unless bmp): ffmpeg (XBRT_FFMPEG)
+ * converts the BMP beside it in the background and deletes it once the PNG is written; a
+ * 2560x1920 BMP is 15 MB, its PNG a third of that or less. No ffmpeg: the BMP stays. */
+static void shot_to_png(const char *bmp) {
+    const char *fmt = getenv("XBRT_SCREENSHOT_FORMAT");
+    if (fmt && !strcmp(fmt, "bmp")) return;
+    const char *ff = getenv("XBRT_FFMPEG") && *getenv("XBRT_FFMPEG") ? getenv("XBRT_FFMPEG") : "ffmpeg";
+    char win[256], png[256], cmd[1400];
+    snprintf(win, sizeof win, "%s", bmp);
+    for (char *c = win; *c; c++) if (*c == '/') *c = '\\';
+    snprintf(png, sizeof png, "%.*s.png", (int)strlen(win) - 4, win);
+    snprintf(cmd, sizeof cmd, "cmd /c \"\"%s\" -v error -y -i \"%s\" \"%s\" && del \"%s\"\"", ff, win, png, win);
+    STARTUPINFOA si;
+    memset(&si, 0, sizeof si), si.cb = sizeof si;
+    PROCESS_INFORMATION pi;
+    if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, NULL, NULL, &si, &pi))
+        CloseHandle(pi.hThread), CloseHandle(pi.hProcess);
+}
+
 static void debug_key(WPARAM vk) {
     if (vk == VK_F4) { /* the 64 MB of RAM, with the GPU's drawing in it, to screenshots/ (debugging) */
         rt_ram_dump_wanted = 1;
@@ -235,6 +257,7 @@ static void debug_key(WPARAM vk) {
         snprintf(path, sizeof path, "screenshots/shot_%06.1fs.bmp", rt_now_100ns() / 1e7);
         save_bmp(path, frame, frame_w, frame_h);
         rt_toast("Screenshot saved");
+        shot_to_png(path);
         strcpy(path + strlen(path) - 3, "cst");
         rt_save_constants(path);
         return;

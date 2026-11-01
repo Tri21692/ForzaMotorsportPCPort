@@ -107,7 +107,10 @@ extern volatile uint32_t rt_gamma_seq;     /* counts palette entries written */
 extern volatile float rt_brightness;      /* XBRT_BRIGHTNESS, or as the overlay set it: how much of the ramp; -1 not read yet */
 float rt_brightness_mix(void);
 extern volatile float rt_draw_distance;       /* XBRT_DRAW_DISTANCE (nv2a.c); 0: not read yet */
-extern volatile int rt_display_fxaa;          /* XBRT_AA: edge smoothing on the shown picture */
+extern volatile float rt_post_sharpen, rt_post_bloom, rt_post_vibrance; /* XBRT_SHARPEN, XBRT_BLOOM, XBRT_VIBRANCE: the shown picture's post effects, 0 off */
+extern volatile int rt_display_fxaa;
+extern volatile int rt_show_fps;
+extern volatile float rt_fps_shown;          /* XBRT_AA: edge smoothing on the shown picture */
 void rt_display_set_fullscreen(int on);
 extern uint32_t rt_frame_interval_at; /* where the game keeps its frame interval in vertical blanks, or 0 */
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -156,6 +159,7 @@ uint32_t rt_phys_of(uint32_t va);
 uint8_t *rt_phys_ptr(uint32_t pa); /* a physical address as devices see it, stand-ins included */
 uint32_t rt_pool_alloc(uint32_t size);
 uint32_t rt_kdata_alloc(uint32_t size);
+const char *rt_loading_track(void); /* file.c: the folder of the track loaded last (media\tracks\<track>), or "" */
 void rt_career_cats_init(void); /* hle_career_cats.c: the series logos' small strip, 75 tiles */
 void rt_mem_reserve_image(uint32_t base, uint32_t size);
 uint32_t rt_size_of(uint32_t addr); /* size of a pool/contiguous block, 0 if unknown */

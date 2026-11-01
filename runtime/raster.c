@@ -1568,11 +1568,26 @@ static void draw(void) {
         nv2a.skipped++;
         return;
     }
-    { /* Debugging: XBRT_NO_PROJ_SHADOWS=1 drops Forza's projected shadows (no depth test, a polygon
-       * offset, the stencil test on), to tell whether dark slabs seen for a frame are theirs. */
+    { /* XBRT_NO_PROJ_SHADOWS=1 drops Forza's projected shadows (no depth test, a polygon offset, the
+       * stencil test on): on the Pacific Shipyards Circuit's bridge they flashed as dark slabs. A list of
+       * track folders (VancouverLoop,VancouverLoopReverse) drops them on those tracks only, so the others
+       * keep their cars' lamp shadows. */
         static int skip = -1;
-        if (skip < 0) skip = getenv("XBRT_NO_PROJ_SHADOWS") && atoi(getenv("XBRT_NO_PROJ_SHADOWS"));
-        if (skip && !(K(0x30C) & 1) && (K(0x338) & 1) && (K(0x32C) & 1)) {
+        static const char *only;
+        if (skip < 0) {
+            const char *e = getenv("XBRT_NO_PROJ_SHADOWS");
+            skip = e && *e && strcmp(e, "0") != 0;
+            only = skip && strcmp(e, "1") != 0 ? e : NULL;
+        }
+        int here = skip;
+        if (here && only) { /* the track in the list, as a whole name */
+            const char *t = rt_loading_track(), *p = only;
+            size_t n = strlen(t);
+            here = 0;
+            while (n && (p = strstr(p, t)))
+                if ((p == only || p[-1] == ',') && (p[n] == 0 || p[n] == ',')) { here = 1; break; } else p++;
+        }
+        if (here && !(K(0x30C) & 1) && (K(0x338) & 1) && (K(0x32C) & 1)) {
             nv2a.skipped++;
             return;
         }

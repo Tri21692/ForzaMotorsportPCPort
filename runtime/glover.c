@@ -291,7 +291,9 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     RtDriftHud dh;
     int drift = !tt && !cu && rt_drift_hud(&dh);
     int toast = rt_toast_until && rt_now_100ns() < rt_toast_until;
-    if (!(tt || cu || drift || toast) || !ov_init()) return;
+    if (rt_show_fps < 0) rt_show_fps = getenv("XBRT_SHOW_FPS") && atoi(getenv("XBRT_SHOW_FPS"));
+    int fps = rt_show_fps && rt_fps_shown > 0;
+    if (!(tt || cu || drift || toast || fps) || !ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
     static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
                        gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1},
@@ -358,6 +360,13 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
             ov_rect(W / 2 - w, 330, W / 2 + w, 356, box);
             ov_text(OVF_ITEM, W / 2, 333, dh.msg, dh.msg[0] == '+' ? yellow : behind, 2);
         }
+    }
+    if (fps) { /* the frame rate, small in the top left corner, green at 58 or more, amber, red under 40 */
+        static const float good[4] = {0.45f, 0.95f, 0.45f, 1}, fair[4] = {1.0f, 0.75f, 0.25f, 1}, poor[4] = {1.0f, 0.4f, 0.3f, 1};
+        char t[16];
+        snprintf(t, sizeof t, "%.0f FPS", rt_fps_shown);
+        ov_rect(8, 8, 74, 26, box);
+        ov_text(OVF_ITEM, 14, 8, t, rt_fps_shown >= 58 ? good : rt_fps_shown >= 40 ? fair : poor, 0);
     }
     if (toast) {
         float w = 150;

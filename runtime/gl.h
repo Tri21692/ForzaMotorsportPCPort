@@ -18,6 +18,7 @@
     X(PFNGLVIEWPORTPROC, glViewport)                                                                                        \
     X(PFNGLSCISSORPROC, glScissor)                                                                                          \
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer)                                                                          \
+    X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)                                                                            \
     X(PFNGLSTENCILMASKPROC, glStencilMask)                                                                                  \
     X(PFNGLSTENCILFUNCPROC, glStencilFunc)                                                                                  \
     X(PFNGLSTENCILOPPROC, glStencilOp)                                                                                      \
@@ -128,6 +129,7 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glViewport p_glViewport
 #define glScissor p_glScissor
 #define glBlitFramebuffer p_glBlitFramebuffer
+#define glGenerateMipmap p_glGenerateMipmap
 #define glStencilMask p_glStencilMask
 #define glStencilFunc p_glStencilFunc
 #define glStencilOp p_glStencilOp

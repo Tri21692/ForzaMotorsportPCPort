@@ -703,26 +703,57 @@ static const char *present_fs =
     "    vec3 r = vec3(texture(u_gamma, vec2(u.r, 0.5)).r, texture(u_gamma, vec2(u.g, 0.5)).g, texture(u_gamma, vec2(u.b, 0.5)).b);\n"
     "    return mix(clamp(c, 0.0, 1.0), r, u_ramp_mix);\n"
     "}\n"
-    "void main() {\n"
-    "    if (u_step.x > 1.01 || u_step.y > 1.01) {\n" /* shrinking the supersampled picture: */
-    "        vec2 d = 0.25 * max(u_step, vec2(1.0)) * u_rcp;\n" /* four bilinear taps cover each pixel's area, */
-    "        vec3 s = texture(u_src, v_uv + vec2(-d.x, -d.y)).rgb + texture(u_src, v_uv + vec2(d.x, -d.y)).rgb\n" /* where one */
-    "               + texture(u_src, v_uv + vec2(-d.x, d.y)).rgb + texture(u_src, v_uv + d).rgb;\n" /* skipped rows */
-    "        o = vec4(ramp(0.25 * s), 1.0); return;\n"
-    "    }\n"
-    "    vec3 m = texture(u_src, v_uv).rgb;\n"
-    "    if (u_fxaa == 0) { o = vec4(ramp(m), 1.0); return; }\n"
-    "    vec3 nw = texture(u_src, v_uv + vec2(-1.0, -1.0) * u_rcp).rgb, ne = texture(u_src, v_uv + vec2(1.0, -1.0) * u_rcp).rgb;\n"
-    "    vec3 sw = texture(u_src, v_uv + vec2(-1.0, 1.0) * u_rcp).rgb, se = texture(u_src, v_uv + vec2(1.0, 1.0) * u_rcp).rgb;\n"
+    /* the post effects (rt_post_*: settings sharpen, bloom, vibrance), on the game's own picture only */
+    "uniform int u_post;\n"
+    "uniform vec2 u_px;\n" /* one window pixel, in the picture's coordinates */
+    "uniform sampler2D u_bloom;\n" /* the picture at half size with every mip level (gl_window_show) */
+    "uniform float u_sharpen, u_bloom_amt, u_vibrance;\n"
+    "vec3 shrink(vec2 uv) {\n" /* shrinking the supersampled picture: four bilinear taps cover each pixel's area, where one skipped rows */
+    "    vec2 d = 0.25 * max(u_step, vec2(1.0)) * u_rcp;\n"
+    "    return 0.25 * (texture(u_src, uv + vec2(-d.x, -d.y)).rgb + texture(u_src, uv + vec2(d.x, -d.y)).rgb\n"
+    "                 + texture(u_src, uv + vec2(-d.x, d.y)).rgb + texture(u_src, uv + d).rgb);\n"
+    "}\n"
+    "vec3 fxaa(vec2 uv) {\n"
+    "    vec3 m = texture(u_src, uv).rgb;\n"
+    "    vec3 nw = texture(u_src, uv + vec2(-1.0, -1.0) * u_rcp).rgb, ne = texture(u_src, uv + vec2(1.0, -1.0) * u_rcp).rgb;\n"
+    "    vec3 sw = texture(u_src, uv + vec2(-1.0, 1.0) * u_rcp).rgb, se = texture(u_src, uv + vec2(1.0, 1.0) * u_rcp).rgb;\n"
     "    float lnw = luma(nw), lne = luma(ne), lsw = luma(sw), lse = luma(se), lm = luma(m);\n"
     "    float lmin = min(lm, min(min(lnw, lne), min(lsw, lse))), lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));\n"
     "    vec2 dir = vec2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));\n"
     "    float reduce = max((lnw + lne + lsw + lse) * 0.03125, 1.0 / 128.0);\n"
     "    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), vec2(-8.0), vec2(8.0)) * u_rcp;\n"
-    "    vec3 a = 0.5 * (texture(u_src, v_uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(u_src, v_uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
-    "    vec3 b = a * 0.5 + 0.25 * (texture(u_src, v_uv - dir * 0.5).rgb + texture(u_src, v_uv + dir * 0.5).rgb);\n"
+    "    vec3 a = 0.5 * (texture(u_src, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(u_src, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
+    "    vec3 b = a * 0.5 + 0.25 * (texture(u_src, uv - dir * 0.5).rgb + texture(u_src, uv + dir * 0.5).rgb);\n"
     "    float lb = luma(b);\n"
-    "    o = vec4(ramp(lb < lmin || lb > lmax ? a : b), 1.0);\n"
+    "    return lb < lmin || lb > lmax ? a : b;\n"
+    "}\n"
+    "vec3 pick(vec2 uv) {\n"
+    "    if (u_step.x > 1.01 || u_step.y > 1.01) return shrink(uv);\n"
+    "    return u_fxaa == 0 ? texture(u_src, uv).rgb : fxaa(uv);\n"
+    "}\n"
+    "void main() {\n"
+    "    vec3 c = pick(v_uv);\n"
+    "    if (u_post == 1) {\n"
+    "        if (u_sharpen > 0.0) {\n" /* contrast-adaptive sharpening (after AMD FidelityFX CAS, MIT): less where contrast is high */
+    "            vec3 n = pick(v_uv - vec2(0.0, u_px.y)), s = pick(v_uv + vec2(0.0, u_px.y));\n"
+    "            vec3 e = pick(v_uv + vec2(u_px.x, 0.0)), w = pick(v_uv - vec2(u_px.x, 0.0));\n"
+    "            vec3 mn = min(c, min(min(n, s), min(e, w))), mx = max(c, max(max(n, s), max(e, w)));\n"
+    "            vec3 amp = sqrt(clamp(min(mn, 2.0 - mx) / max(mx, vec3(1.0 / 256.0)), 0.0, 1.0));\n"
+    "            vec3 wt = amp * (-1.0 / mix(8.0, 5.0, u_sharpen));\n"
+    "            c = clamp((c + (n + s + e + w) * wt) / (1.0 + 4.0 * wt), 0.0, 1.0);\n"
+    "        }\n"
+    "        if (u_bloom_amt > 0.0) {\n" /* the bright parts, wide and soft: sky, sun on paint, lamps */
+    "            vec3 b = textureLod(u_bloom, v_uv, 2.0).rgb * 0.35 + textureLod(u_bloom, v_uv, 3.0).rgb * 0.3\n"
+    "                   + textureLod(u_bloom, v_uv, 4.0).rgb * 0.2 + textureLod(u_bloom, v_uv, 5.0).rgb * 0.15;\n"
+    "            vec3 hi = max(b - vec3(0.6), 0.0) / 0.4;\n"
+    "            c = c + (1.0 - c) * hi * u_bloom_amt;\n" /* screen-like: brightens, never past white */
+    "        }\n"
+    "        if (u_vibrance > 0.0) {\n" /* more colour where there is little (asphalt, grass, dull paint), saturated colours alone */
+    "            float l = luma(c), sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));\n"
+    "            c = clamp(mix(vec3(l), c, 1.0 + u_vibrance * (1.0 - sat)), 0.0, 1.0);\n"
+    "        }\n"
+    "    }\n"
+    "    o = vec4(ramp(c), 1.0);\n"
     "}\n";
 
 static void gl_overlay_draw(int vx, int vy, int vw, int vh);
@@ -730,14 +761,20 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh);
 
 static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     static GLuint prog, empty_vao;
-    static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step, u_ramp_mix;
-    static GLuint gamma_tex;
+    static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step, u_ramp_mix, u_post, u_px, u_bloom, u_sharpen, u_bloom_amt, u_vibrance;
+    static GLuint gamma_tex, bloom_tex, bloom_fbo;
+    static int bloom_w, bloom_h;
     static uint32_t gamma_seq = ~0u;
     static int fxaa = -1;
     int W, H;
     if (!rt_gl_window_begin(&W, &H)) return 0;
     if (W <= 0 || H <= 0) return 1; /* minimised */
-    if (fxaa < 0) fxaa = 1, rt_display_fxaa = !getenv("XBRT_AA") || strcmp(getenv("XBRT_AA"), "off") != 0;
+    if (fxaa < 0) {
+        fxaa = 1, rt_display_fxaa = !getenv("XBRT_AA") || strcmp(getenv("XBRT_AA"), "off") != 0;
+        if (getenv("XBRT_SHARPEN")) rt_post_sharpen = (float)atof(getenv("XBRT_SHARPEN"));
+        if (getenv("XBRT_BLOOM")) rt_post_bloom = (float)atof(getenv("XBRT_BLOOM"));
+        if (getenv("XBRT_VIBRANCE")) rt_post_vibrance = (float)atof(getenv("XBRT_VIBRANCE"));
+    }
     if (!prog) {
         GLuint vs = compile(GL_VERTEX_SHADER, present_vs), fs = compile(GL_FRAGMENT_SHADER, present_fs);
         prog = glCreateProgram();
@@ -745,6 +782,16 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         u_src = glGetUniformLocation(prog, "u_src"), u_rcp = glGetUniformLocation(prog, "u_rcp"), u_fxaa = glGetUniformLocation(prog, "u_fxaa");
         u_gamma = glGetUniformLocation(prog, "u_gamma"), u_step = glGetUniformLocation(prog, "u_step");
         u_ramp_mix = glGetUniformLocation(prog, "u_ramp_mix");
+        u_post = glGetUniformLocation(prog, "u_post"), u_px = glGetUniformLocation(prog, "u_px"), u_bloom = glGetUniformLocation(prog, "u_bloom");
+        u_sharpen = glGetUniformLocation(prog, "u_sharpen"), u_bloom_amt = glGetUniformLocation(prog, "u_bloom_amt");
+        u_vibrance = glGetUniformLocation(prog, "u_vibrance");
+        GLint ok = 0;
+        glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[1024] = "";
+            glGetProgramInfoLog(prog, sizeof log, NULL, log);
+            fprintf(stderr, "xbrt: the picture's shader did not link (shown as it is): %s\n", log);
+        }
         glGenTextures(1, &gamma_tex);
         glBindTexture(GL_TEXTURE_2D, gamma_tex);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -764,6 +811,36 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     glClear(GL_COLOR_BUFFER_BIT);
     GLint linked = 0;
     glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+    int post = tex && linked && w > 640; /* (the game's own picture: not the RAM's menus and movies) */
+    float bloom = post ? rt_post_bloom : 0;
+    if (bloom > 0) { /* the bloom's source: the picture at half size, every mip level made by the GPU */
+        int bw = w / 2 > 1 ? w / 2 : 1, bh = h / 2 > 1 ? h / 2 : 1;
+        if (bw != bloom_w || bh != bloom_h) {
+            if (bloom_tex) glDeleteTextures(1, &bloom_tex);
+            if (!bloom_fbo) glGenFramebuffers(1, &bloom_fbo);
+            int levels = 1;
+            while ((bw >> levels) || (bh >> levels)) levels++;
+            glGenTextures(1, &bloom_tex);
+            glBindTexture(GL_TEXTURE_2D, bloom_tex);
+            glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, bw, bh);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindFramebuffer(GL_FRAMEBUFFER, bloom_fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloom_tex, 0);
+            bloom_w = bw, bloom_h = bh;
+        }
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, bloom_fbo);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, bloom_w, bloom_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, bloom_tex);
+        glBindSampler(2, 0);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glActiveTexture(GL_TEXTURE0);
+    }
     if (tex && linked) {
         glViewport(x, H - y - ch, cw, ch);
         glUseProgram(prog);
@@ -789,6 +866,10 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glUniform1i(u_src, 0), glUniform2fv(u_rcp, 1, (float[2]){1.0f / (float)w, 1.0f / (float)h}), glUniform1i(u_fxaa, rt_display_fxaa && w > 640), glUniform1i(u_gamma, 1);
         glUniform2fv(u_step, 1, (float[2]){(float)w / (float)cw, (float)h / (float)ch});
         glUniform1f(u_ramp_mix, rt_brightness_mix());
+        glUniform1i(u_post, post);
+        glUniform2fv(u_px, 1, (float[2]){1.0f / (float)cw, 1.0f / (float)ch});
+        glUniform1i(u_bloom, 2);
+        glUniform1f(u_sharpen, post ? rt_post_sharpen : 0), glUniform1f(u_bloom_amt, bloom), glUniform1f(u_vibrance, post ? rt_post_vibrance : 0);
         glBindVertexArray(empty_vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(gl_vao);
@@ -798,6 +879,25 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     }
     if (rt_overlay_open()) gl_overlay_draw(x, H - y - ch, cw, ch);
     else gl_tt_hud_draw(x, H - y - ch, cw, ch);
+    static const char *pshot = (const char *)1;
+    if (pshot == (const char *)1) pshot = getenv("XBRT_PRESENT_SHOT"); /* the shown picture, after the post effects, as <file>_<n>.ppm every 5 s (testing) */
+    static uint64_t pshot_next;
+    if (pshot && post && rt_now_100ns() >= pshot_next) {
+        static int n;
+        pshot_next = rt_now_100ns() + 50000000;
+        uint8_t *px = malloc((size_t)cw * ch * 3);
+        char path[1100];
+        snprintf(path, sizeof path, "%s_%03d.ppm", pshot, n++);
+        FILE *f = px ? fopen(path, "wb") : NULL;
+        if (f) {
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(x, H - y - ch, cw, ch, GL_RGB, GL_UNSIGNED_BYTE, px);
+            fprintf(f, "P6\n%d %d\n255\n", cw, ch);
+            for (int r = ch - 1; r >= 0; r--) fwrite(px + (size_t)r * cw * 3, 1, (size_t)cw * 3, f);
+            fclose(f);
+        }
+        free(px);
+    }
     rt_gl_window_swap();
     return 1;
 }
@@ -845,6 +945,11 @@ static void gl_present_vblank(uint32_t fb) {
         if (++same > 6) s = NULL; /* loading screens: their text and icon are drawn on the CPU, into RAM */
     } else if (s) {
         last_seq = s->seq, same = 0;
+        static uint64_t fps_from;
+        static int fps_frames;
+        uint64_t now = rt_now_100ns();
+        if (!fps_from || now - fps_from > 30000000) fps_from = now, fps_frames = 0; /* (after a pause: start again) */
+        else if (++fps_frames, now - fps_from >= 5000000) rt_fps_shown = fps_frames * 1e7f / (float)(now - fps_from), fps_from = now, fps_frames = 0;
     }
     if (rt_display_video_on()) s = NULL; /* a movie: the overlay is composited from RAM */
     if (!s) gl_fifo_n = 0, gl_fifo_shown = -1; /* RAM shows the screen: what was queued is old */

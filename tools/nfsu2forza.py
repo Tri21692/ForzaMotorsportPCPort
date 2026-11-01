@@ -175,6 +175,35 @@ def orient_normals(part):
     return int(turn.sum())
 
 
+# A vertex's first two shading bytes (+6, +7) on the disc's cars follow how much the surface faces the sky
+# and how high it is (correlation 0.88 with the normal's up, 0.75 with height; the two 0.95 with each
+# other): baked occlusion, the second the reflection's. Fitted over six cars' painted panels
+# (R^2 0.84 and 0.68): 1, up, max(up, 0), height (0 floor .. 1 roof), height^2, |side|.
+SHADE_FIT = ((91.6, 85.6, -13.4, 93.8, -6.2, 6.4), (80.6, 93.8, -31.4, 81.9, 18.1, 14.2))
+
+
+def shade_vertices(parts):
+    """The shading bytes of converted parts from SHADE_FIT. They were the template's nearest vertex's,
+    patchy on another shape: the MX-5's trunk lid took 255 between panels at 0, and its silver
+    reflected the studio there as a white slab. Returns the vertices set."""
+    import numpy as np
+    ys = [v[1] for p in parts for v in p['verts']]
+    if not ys: return 0
+    y0, y1 = min(ys), max(ys)
+    n = 0
+    for p in parts:
+        out = []
+        for v in p['verts']:
+            ln = max(1.0, (v[3] * v[3] + v[4] * v[4] + v[5] * v[5]) ** 0.5)
+            up, side, h = v[4] / ln, abs(v[3]) / ln, (v[1] - y0) / max(1, y1 - y0)
+            x = (1, up, max(up, 0), h, h * h, side)
+            b = [int(min(255, max(0, round(sum(a * c for a, c in zip(x, f)))))) for f in SHADE_FIT]
+            out.append(tuple(v[:6]) + (b[0], b[1]) + tuple(v[8:]))
+        p['verts'] = out
+        n += len(out)
+    return n
+
+
 def smooth_normals(part, angle=50.0):
     """Each vertex normal made again from the triangles round its position (every
     vertex there, so seams in the texture do not crease the shading), those within
@@ -1667,6 +1696,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     print('normals: %d turned to their faces' % turned)
     if SMOOTH:  # (a part thinned in Blender: see smooth_normals)
         print('normals: %d made again from the surface' % sum(smooth_normals(p) for p in car['parts'] if p['name'] in mine))
+    print('shading: %d vertices from their height and facing' % shade_vertices([p for p in car['parts'] if p['name'] in mine and not p['name'].startswith(CABIN)]))
     if mw:  # long strips (see strip_long): the same triangles, a third of the indices
         before = after = 0
         for p in car['parts']:

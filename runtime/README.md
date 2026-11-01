@@ -72,10 +72,15 @@ first build takes a while.
 | `XBRT_XRM_HEAP` | `0`: Forza's resource heap at its own 30.5 MB instead of its development size, 42.9 MB (room for streaming further ahead) | 1 |
 | `XBRT_HANG_DUMP` | `0`: no thread dump when the game shows no frame for 8 s (otherwise every thread's last kernel call and stack, once a stall, for hangs) | 1 |
 | `XBRT_NO_CULLING` | `1`: keeps the game's EnableCulling off (the track objects' extra visibility test), for debugging | 0 |
-| `XBRT_NO_PROJ_SHADOWS` | `1`: drops the projected shadows (no depth test, a polygon offset, the stencil test on), for debugging | 0 |
+| `XBRT_NO_PROJ_SHADOWS` | `1`: drops the projected shadows (no depth test, a polygon offset, the stencil test on); a comma-separated list of track folders (`VancouverLoop,VancouverLoopReverse`: the Pacific Shipyards Circuit, where they flashed as dark slabs over the bridge) drops them on those only | 0 |
 | `XBRT_WAIT_LOG` | `<ms>`: each guest wait that took at least that long, signalled or timed out, with the guest's stack (stalls where the game stops) | off |
 | `XBRT_LOCK_LOG` | `1`: each D3D LockRect, with the bytes brought back from the GPU first | off |
 | `XBRT_MARK` | software renderer: draws of this many vertices come out magenta; `XBRT_MARK_NOZ=1` also skips their depth test | off |
+| `XBRT_SHARPEN` | `0`-`1`: contrast-adaptive sharpening of the shown picture (after AMD FidelityFX CAS); `sharpen` in forza.ini, F1 | 0.5 |
+| `XBRT_BLOOM` | `0`-`1`: a soft glow round the brightest parts, from a half-size mipmapped copy of the picture, over Forza's own glow; `bloom` | 0.3 |
+| `XBRT_VIBRANCE` | `0`-`1`: more colour in dull tones, saturated ones left alone; `vibrance` | 0.25 |
+| `XBRT_SHOW_FPS` | `1`: new pictures a second in the top left corner; `show_fps` | 0 |
+| `XBRT_PRESENT_SHOT` | `<file>`: the shown picture, after the post effects, as `<file>_NNN.ppm` every 5 s (testing; screenshots are the game's picture before them) | off |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1
 (shoulder buttons are WHITE and BLACK); without one, the keyboard

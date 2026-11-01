@@ -7,6 +7,8 @@ on light or metallic paint. The disc's own parts already agree, so only converte
 
 --smooth: every part's normals made again from its surface too (nfsu2forza.smooth_normals), for a
 car thinned in Blender (the MX-5 RADBUL, the SC63).
+--shade: the outside parts' shading bytes from their height and facing (nfsu2forza.shade_vertices),
+for a converted car (they were the template's nearest vertex's: patchy reflections).
 
 Rewrites only the cab's car.carbin, in place (keep a copy). Prints each changed part.
 """
@@ -23,7 +25,7 @@ import nfsu2forza
 SHARE = 0.05  # a part is changed only when more of its normals than this face away (the disc's: 3% at most)
 
 
-def fix(path, dry=False, smooth=False):
+def fix(path, dry=False, smooth=False, shade=False):
     files, root = addcar.cab_files(open(path, 'rb').read())
     key = next(k for k in files if k.lower().endswith('car.carbin'))
     car = carbin.read(files[key])
@@ -39,13 +41,16 @@ def fix(path, dry=False, smooth=False):
         if n:
             print('  %s: %d of %d' % (p['name'], n, len(p['verts'])))
             total += n
-    print('%s: %d normals changed%s' % (os.path.basename(path), total, ' (dry run)' if dry else ''))
+    if shade:
+        outside = [p for p in car['parts'] if p['name'].endswith('_LOD1') and not p['name'].startswith(nfsu2forza.CABIN)]
+        total += nfsu2forza.shade_vertices(outside)
+    print('%s: %d normals and shades changed%s' % (os.path.basename(path), total, ' (dry run)' if dry else ''))
     if total and not dry:
         files[key] = carbin.write(car)
         open(path, 'wb').write(forzacab.pack(files, root))
 
 
 if __name__ == '__main__':
-    args = [a for a in sys.argv[1:] if a not in ('--dry-run', '--smooth')]
+    args = [a for a in sys.argv[1:] if a not in ('--dry-run', '--smooth', '--shade')]
     if not args: raise SystemExit(__doc__)
-    for a in args: fix(a, '--dry-run' in sys.argv, '--smooth' in sys.argv)
+    for a in args: fix(a, '--dry-run' in sys.argv, '--smooth' in sys.argv, '--shade' in sys.argv)

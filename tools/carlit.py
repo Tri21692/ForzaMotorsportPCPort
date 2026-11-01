@@ -132,7 +132,7 @@ for p in car['parts']:
     for loop in me.loops:
         v = V[loop.vertex_index]
         uv.data[loop.index].uv = (v[10] / 32768 % 1, 1 - v[11] / 32768 % 1)
-        vcl.data[loop.index].color = (v[6] / 255, v[7] / 255, v[8] / 255, 1)
+        vcl.data[loop.index].color = (0.35 + 0.65 * v[6] / 255,) * 3 + (1,)  # the first shading byte: occlusion (the second, the reflection's, is not drawn)
     me.polygons.foreach_set('use_smooth', [True] * len(me.polygons))
     me.use_auto_smooth = True
     me.normals_split_custom_set_from_vertices([(lambda n: (n[2], -n[0], n[1]))([c / 32767 for c in v[3:6]]) for v in V])
