@@ -18,10 +18,12 @@
 #pragma GCC diagnostic ignored "-Wunused-label"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 
+uint32_t cat_base(void); /* the categories' table (hle_career_cats.c: moved when there are more than six) */
+
 static int tt_first_tile(uint32_t index) {
     static int on = -1;
     if (on < 0) on = getenv("XBRT_CAREER_TIMETRIAL") && atoi(getenv("XBRT_CAREER_TIMETRIAL"));
-    return on && index == 0 && xb_rd32(0x52E850) == 0x4D02C0;
+    return on && index == 0 && xb_rd32(cat_base()) == 0x4D02C0;
 }
 
 void f_00184C30(XbCtx *c) {
@@ -42,7 +44,7 @@ void f_00184C30(XbCtx *c) {
     /* 00184C41  imul esi, esi, 0x34 */
     { int64_t p = (int64_t)(int32_t)(c->esi) * (int64_t)(int32_t)(0x34u); uint32_t r = (uint32_t)p & 0xFFFFFFFFu; cf = of = p != (int64_t)(int32_t)(r); c->esi = (uint32_t)(r); }
     /* 00184C44  add esi, 0x52e850 */
-    { uint32_t a = c->esi, b = 0x52E850u, r; r = (a + b) & 0xFFFFFFFFu; cf = r < a; of = ((~(a ^ b) & (a ^ r)) >> 31) & 1; af = ((a ^ b ^ r) >> 4) & 1; zf = r == 0; sf = (r >> 31) & 1; pf = xb_parity(r); c->esi = (uint32_t)(r); }
+    { uint32_t a = c->esi, b = cat_base(), r; r = (a + b) & 0xFFFFFFFFu; cf = r < a; of = ((~(a ^ b) & (a ^ r)) >> 31) & 1; af = ((a ^ b ^ r) >> 4) & 1; zf = r == 0; sf = (r >> 31) & 1; pf = xb_parity(r); c->esi = (uint32_t)(r); }
     /* 00184C4A  lea eax, ptr [esi+0x8] */
     c->eax = (uint32_t)((uint32_t)(c->esi + 0x00000008u));
     /* 00184C4D  push eax */

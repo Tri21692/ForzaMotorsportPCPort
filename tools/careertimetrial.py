@@ -73,6 +73,9 @@ DRIFT = [
     # Tsukuba, Silverstone Short, Laguna Seca, Alpine Ring, Pacific Shipyards Circuit and Circuit II
 ]
 DRIFT_PRIZE = 'MazdaMX5Radbul'
+# its own career category (the user's: a seventh tile, runtime/hle_career_cats.c): folder, title, description, icon tile
+DRIFT_CATEGORY = ('Drift', 'Drift', 'Slide for points, alone on the track: long, at an angle and over 15 mph. '
+                  'Drift-spec cars only. Win the championship for the MX-5 RADBUL.', 8)
 DRIFT_ICON = 50
 
 
@@ -189,8 +192,8 @@ def install(disc, mods, logo_dir=None):
     spec1 = next(v for n, v in mega.disc.items() if n.lower() == 'events' + B + 'spec' + B + 'ser00001.xml')
     field = re.search(r'<AIField>.*?</AIField>', spec1.decode('latin-1'), re.S).group(0)
     dseries, dtargets, dstrings = build_drift(mega, tracks, field)
-    series += dseries
     strings += dstrings
+    cat_ids = {}  # the Drift category's title (GameStrings) and description (UIStrings), the same ids in every language
     loc = addcar.disc_file(disc, 'media', 'Loc')
     ids = None
     for lang in sorted(os.listdir(loc)):
@@ -205,19 +208,44 @@ def install(disc, mods, logo_dir=None):
         os.makedirs(os.path.dirname(mp), exist_ok=True)
         open(mp, 'wb').write(new)
         for name, change in (('UIStrings.str', {HELP: 'Race the clock alone: one flying lap, three target times. '
-                                                                   'Beat them for 1st, 2nd or 3rd; harder classes open as you level up. '
-                                                                   'And drifting, for drift-spec cars.'}),
+                                                                   'Beat them for 1st, 2nd or 3rd; harder classes open as you level up.'}),
                                    ('GameStrings.str', {TITLE: 'Time Trial'})):
             src = addcar.disc_file(disc, 'media', 'Loc', lang, name)
             mp = os.path.join(mods, 'media', 'Loc', lang, name)
             d = addcar.replace_strings(open(mp if os.path.exists(mp) else src, 'rb').read(), change)
+            add = {'GameStrings.str': [('IDS_Mod_Category_Drift', DRIFT_CATEGORY[1])],
+                   'UIStrings.str': [('IDS_Mod_Category_Drift_Help', DRIFT_CATEGORY[2])]}[name]
+            d = put_strings(d, add)
+            got = addcar.string_ids(d)[add[0][0]]
+            if cat_ids.setdefault(name, got) != got: raise SystemExit('%s %s: the string ids differ between languages' % (lang, name))
             open(mp, 'wb').write(d)
     for k in list(mega.files):
-        if k.lower().startswith('events' + B + 'timetrial' + B): del mega.files[k]
+        if k.lower().startswith(('events' + B + 'timetrial' + B, 'events' + B + 'drift' + B)): del mega.files[k]
     for k, x in enumerate(series):
         x = re.sub(r'\{(IDS_\w+)\}', lambda m: str(ids[m.group(1)]), x)
         mega.files['events' + B + 'TimeTrial' + B + 'Ser%05d.xml' % (k + 1)] = x.encode('latin-1')
+    for k, x in enumerate(dseries):  # the Drift category's own folder (runtime/hle_career_cats.c, categories.txt)
+        x = re.sub(r'\{(IDS_\w+)\}', lambda m: str(ids[m.group(1)]), x)
+        x = re.sub(r'seriesorder="\d+"', 'seriesorder="%d"' % k, x)
+        mega.files['events' + B + DRIFT_CATEGORY[0] + B + 'Ser%05d.xml' % (k + 1)] = x.encode('latin-1')
     mega.check(); mega.write()
+    # the category itself: a line of categories.txt, its icon (tools/drifticon.py's) a 9th tile of the icon
+    # strips, and the background video every category plays (a missing one is a disc error)
+    ev = os.path.join(mods, 'media', 'Events')
+    os.makedirs(ev, exist_ok=True)
+    if logo_dir:
+        import addseries
+        for n, art, size in (('Events.xpr', 'drift_cat_sm.png', (108, 60, 1)), ('Events_LG.xpr', 'drift_cat_lg.png', (210, 117, 1))):
+            d = open(addcar.disc_file(disc, 'media', 'Events', n), 'rb').read()
+            while addseries.tiles_in(d, size) <= DRIFT_CATEGORY[3]: d = addseries.grow(d, size)
+            d = addseries.put_tile(d, DRIFT_CATEGORY[3], addseries.image(os.path.join(logo_dir, art), *size[:2]), size)
+            open(os.path.join(ev, n), 'wb').write(d)
+    shutil.copyfile(addcar.disc_file(disc, 'media', 'Events', 'Club.bik'), os.path.join(ev, DRIFT_CATEGORY[0] + '.bik'))
+    open(os.path.join(mods, 'categories.txt'), 'w').write(
+        '# career categories after the six (runtime/hle_career_cats.c): folder, kind (2 club), title id (GameStrings),\n'
+        '# description id (UIStrings), icon (a tile of media/Events/Events.xpr)\n'
+        '%s 2 %d %d %d\n' % (DRIFT_CATEGORY[0], cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3]))
+    print('Drift category: strings %d, %d, icon %d' % (cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3]))
     if logo_dir:  # the drift series' logo on tile DRIFT_ICON of both strips in every language, the small one grown a row for it
         import addseries
         xpr = addcar.Archive(disc, mods, 'MegaXPR.ca2')

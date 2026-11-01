@@ -301,3 +301,25 @@ Trial's, so it runs after careertimetrial.py).
   categories' kinds (0 endurance .. 5 online). The Go Race list (0x184F30)
   makes an item a table entry; the icon widget (vtable 0x49D8F4, cells
   0xD2 x 0x75, frame at +0x220) is built at 0x34A230.
+
+## A Drift category, the seventh (1 Nov)
+
+- runtime/hle_career_cats.c: <mods>/categories.txt adds categories after
+  the six ("folder kind title-id desc-id icon"); the table is copied into
+  kernel data with room for them the first time the list is built, and its
+  three readers (0x184F30 the list, 0x1856B0 the selection, 0x184C30 the
+  panel) are the generated code with the table's address a variable
+  (hle_career_cats_gen.inc, made from out/code_0023.c by a copy script; the
+  panel's in hle_career_panel.c). Without the file nothing changes.
+- The string objects at +8 and +0x18 are {cached text, 0, string table,
+  u16 id} (0x275380); the new entry takes the first's tables (GameStrings
+  for the title, UIStrings for the description) with its own ids.
+- The icon: the list item copies the entry's kind to +0x28, and the icon
+  tiles follow the kinds; the item gets cat_frame() there instead (the Time
+  Trial category the stopwatch, 6; Drift its own, 8), the table keeps kind 2
+  (club) for the game's logic. Events.xpr and Events_LG.xpr grew a tile
+  (addseries.grow) in mods media/Events, beside Drift.bik (Club.bik's copy).
+- careertimetrial.py writes the drift series to events\Drift\, the strings
+  (GameStrings 964 "Drift", UIStrings 2162) and categories.txt.
+- Not yet seen in game (1 Nov 08:10): whether the list shows a seventh
+  tile, scrolls to it, and draws its icon by +0x28.
