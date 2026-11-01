@@ -936,6 +936,7 @@ CONCRETE_H = 2.4
 HEAD, HEAD_GLOW = 2158, 2159   # pole_streetlight154's head (its strip, and its foot's plate) and its glow: the tunnel's lamps
 LAMP_EVERY = 32.0  # m between the tunnel's lamps, each wall in turn
 MARGIN = 2.0       # the track's edges (the suggested line) this far short of any wall
+EDGE_PAD, EDGE_MORE = 0.5, 6.0   # on the new road and round the hairpin: the edges out to the walls, this far short, at most this past the half
 TUNNEL_LEAD = 12   # points (2 m each) the tunnel reaches back along side road 39, round the corner into the gap
 
 
@@ -1597,13 +1598,15 @@ def half_widths(centre, sp):
     return sum(w[j] * np.roll(h, -k[j]) for j in range(len(k))), off
 
 
-def edges(centre, half):
-    """The six edge splines: the even ones on the left of the way round, the odd on the right, as
-    the first layout had them (the course's, run backwards as Pacific Shipyards II runs them)."""
+def edges(centre, half, right=None):
+    """The six edge splines: the even ones on the left of the way round (half out), the odd on the
+    right (right out, else half), as the first layout had them (the course's, run backwards as
+    Pacific Shipyards II runs them)."""
     t = np.roll(centre, -1, 0) - np.roll(centre, 1, 0)
     left = np.stack([-t[:, 2], np.zeros(len(t)), t[:, 0]], 1)
     left /= np.linalg.norm(left, axis=1)[:, None]
-    return [centre + left * (half * (-1 if k % 2 else 1))[:, None] for k in range(6)]
+    right = half if right is None else right
+    return [centre + left * (-right if k % 2 else half)[:, None] for k in range(6)]
 
 
 def runs(off):
@@ -1788,6 +1791,12 @@ def build(disc, mods, preview_png=None, reverse=False):
     cap = np.maximum(cap, 4.0)
     k_ = np.arange(-3, 4); w_ = np.exp(-0.5 * (k_ / 1.5) ** 2); w_ /= w_.sum()
     cap = np.minimum(cap, sum(w_[j] * np.roll(cap, -k_[j]) for j in range(len(k_))))
+    if os.environ.get('CIRCUIT_EDGES'):  # debugging: the widths round the hairpin
+        for i in range(len(centre)):
+            dh = np.hypot(centre[i][0] - HAIRPIN[0], centre[i][2] - HAIRPIN[1])
+            if dh < HAIRPIN_R + 25:
+                print('  edge %4d (%.0f, %.0f) %4.0f m from the hairpin: half %.1f, boundary left %.1f right %.1f, edge %.1f%s'
+                      % (i, centre[i][0], centre[i][2], dh, half[i], bd[(1, i)], bd[(-1, i)], cap[i], ' new road' if off[i] else ''))
     print('track edges kept off what is drawn at %d points' % int(np.sum(cap < half - 0.05)))
     e = edges(centre, cap)
     # L.resample turns the loop round (the first layout was built in the buffers' order): given it
@@ -1914,6 +1923,30 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('walls cut back off the road: %d triangles' % cut)
     for what, items in (('no ground', holes), ('wall on the road', blocked)):
         print('  %s at %d points%s' % (what, len(items), ': ' + ', '.join('(%.0f, %.0f)' % (centre[i][0], centre[i][2]) for i, _ in items[:12]) if items else ''))
+    # the track's edges, each side its own, out to its wall on the new road and round the hairpin
+    # (the user drew a time penalty on the strip's asphalt by the sidewalk: the edges were its 7 m
+    # half, the kerb's wall 12 m out), EDGE_PAD short of the wall and no more than EDGE_MORE past
+    # the half, never nearer than before
+    side_cap = {1: cap.copy(), -1: cap.copy()}
+    for i in range(len(centre)):
+        if not (off[i] or at_hairpin[i]) or in_lane[i] or in_gap_strict[i]: continue
+        for side in (1, -1):
+            if (side, i) in dist: side_cap[side][i] = max(cap[i], min(dist[(side, i)] - EDGE_PAD, half[i] + EDGE_MORE))
+    ks_ = np.arange(-3, 4); ws_ = np.exp(-0.5 * (ks_ / 1.5) ** 2); ws_ /= ws_.sum()  # (k_ and w_ are taken by then)
+    for side in (1, -1):  # no spikes: each point no wider than its neighbours' weighted mean
+        side_cap[side] = np.minimum(side_cap[side], sum(ws_[j] * np.roll(side_cap[side], -ks_[j]) for j in range(len(ks_))))
+        side_cap[side] = np.maximum(side_cap[side], cap)
+    print('track edges out to the walls: %d points on the left, %d on the right' % tuple(int(np.sum(side_cap[s] > cap + 0.05)) for s in (1, -1)))
+    if os.environ.get('CIRCUIT_EDGES'):
+        for i in range(len(centre)):
+            if np.hypot(centre[i][0] - HAIRPIN[0], centre[i][2] - HAIRPIN[1]) < HAIRPIN_R + 25 and i % 3 == 0:
+                print('  edge %4d: left %.1f (wall %s), right %.1f (wall %s)' % (i, side_cap[1][i], '%.1f' % dist[(1, i)] if (1, i) in dist else '-',
+                                                                               side_cap[-1][i], '%.1f' % dist[(-1, i)] if (-1, i) in dist else '-'))
+    e = edges(centre, side_cap[1], side_cap[-1])
+    if reverse:
+        loop, length = L.resample([e[k ^ 1] for k in range(6)], centre, START)
+    else:
+        loop, length = L.resample([x[::-1] for x in e], centre[::-1], START)
     res_bytes = L.write_splines(res, loop)
     print('collision: %d wall triangles removed, %d road triangles added' % (gone, added))
     # the strip has nothing drawn: the donor mesh as its road
