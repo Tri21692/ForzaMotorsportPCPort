@@ -5,7 +5,7 @@ import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-src = open(r'C:\Users\maste\ForzaMotorsportPC\out\code_0023.c', encoding='latin-1').read()
+src = open(os.path.join(ROOT, 'out', 'code_0023.c'), encoding='latin-1').read()
 
 
 def func(name):
@@ -28,5 +28,5 @@ for name in ('f_00184F30', 'f_001856B0'):
         assert 'xb_wr32' in line and 'c->edx' in line, line
         f = f[:b] + '\n    xb_wr32((uint32_t)(c->esi + 0x28u), cat_frame(c->ebp, c->edx)); /* changed: the icon */' + f[b:]
     out.append('/* %s: %d table addresses made cat_base()/cat_end()%s */\n' % (name, n0, ', the item kind its icon' if k else '') + f)
-open(r'C:\Users\maste\ForzaMotorsportPC\runtime\hle_career_cats_gen.inc', 'w', encoding='latin-1', newline='\n').write('\n'.join(out))
+open(os.path.join(ROOT, 'runtime', 'hle_career_cats_gen.inc'), 'w', encoding='latin-1', newline='\n').write('\n'.join(out))
 print([len(o) for o in out])
