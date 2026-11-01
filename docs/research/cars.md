@@ -850,3 +850,20 @@ beside the stock template car):
 Still as before: the windows are dark, not see-through (glass drew clear in
 game), and the lamps take the template's lamp texels where the add-on's lamp
 textures are Underground 2's shared ones (not in the car's pack).
+
+Normals (1 Nov, second pass): the game lights and reflects by the vertex
+normals, and on the disc's cars each points against the strip triangle's
+cross product (Forza's winding), all of them. The converter turned faces
+(outer skins away from the middle, black insides in) but not their normals:
+on the converted cars 14-45% pointed the wrong way (the MX-5's base nearly
+half), dark patches on light and silver paint in game. nfsu2forza.py now
+turns each to its triangles (orient_normals); tools/fixnormals.py does the
+same in an installed cab (a part only when over 5% are off: a disc part has
+a few made so). Fixed in mods_track: the M3 GTR, Cobalt, Gallardo, SC63,
+S13, Silvia, Neon, Celica and MX-5, and their D-Specs.
+
+The stock 1998 240SX had been overridden in the mods folders by an early
+experiment (car_nissan240sx.cab: the S13 model on the S14's atlas, all
+patches), and the 240SX D-Spec was copied from it. Set aside as
+car_nissan240sx.cab.replaced in mods_track; the D-Spec's model is the S14's
+again. The S13 is its own car, Nissan240SXS13.

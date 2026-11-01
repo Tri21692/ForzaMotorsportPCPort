@@ -147,6 +147,34 @@ def strip_tris(ix):
             for k in range(len(ix) - 2) if len({ix[k], ix[k + 1], ix[k + 2]}) == 3]
 
 
+def orient_normals(part):
+    """Each vertex normal turned to the side its triangles face (Forza's: against
+    the usual cross product of the strip's winding); returns how many were turned.
+    The game lights and reflects by these normals, and the converter turns faces
+    (outer skins away from the middle, black insides in) without their normals:
+    on the MX-5's body a quarter of them, on its base nearly half, pointed in,
+    dark patches all over silver paint. A vertex both sides use (two-sided glass)
+    is left as it is. The damage shape's normals follow (a copy of the vertices)."""
+    import numpy as np
+    V = np.array([v[:3] for v in part['verts']], float)
+    if not len(V): return 0
+    acc = np.zeros_like(V)
+    for sp in part['subparts']:
+        t = np.array(strip_tris(sp['indices']), int).reshape(-1, 3)
+        if not len(t): continue
+        f = -np.cross(V[t[:, 1]] - V[t[:, 0]], V[t[:, 2]] - V[t[:, 0]])
+        f /= np.maximum(np.linalg.norm(f, axis=1), 1e-9)[:, None]
+        for j in range(3): np.add.at(acc, t[:, j], f)
+    N = np.array([v[3:6] for v in part['verts']], float)
+    turn = ((acc * N).sum(1) < 0) & (np.linalg.norm(acc, axis=1) > 0.5)
+    if not turn.any(): return 0
+    part['verts'] = [tuple(v[:3]) + tuple(-c for c in v[3:6]) + tuple(v[6:]) if turn[i] else v for i, v in enumerate(part['verts'])]
+    dmg = part['Damage'][1]
+    if len(dmg) >= 4 and struct.unpack_from('<I', dmg)[0] == len(part['verts']):
+        part['Damage'] = (part['Damage'][0], struct.pack('<I', len(part['verts'])) + b''.join(struct.pack('<6h', *v[:6]) for v in part['verts']))
+    return int(turn.sum())
+
+
 def facing(A):
     """The view a triangle (3 x 3 positions) faces: Forza winds triangles
     against the usual cross product. Undersides go to the side or end they
@@ -1594,6 +1622,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         o += size
     car['tail'] = kept + t[o:]
     apply_layout(car, tlayout, paint)
+    mine = {d for d in done if '(' not in d} | {d.split('(')[0] for d in done if 'panes)' in d}
+    turned = sum(orient_normals(p) for p in car['parts'] if p['name'] in mine)
+    print('normals: %d turned to their faces' % turned)
     if mw:  # long strips (see strip_long): the same triangles, a third of the indices
         before = after = 0
         for p in car['parts']:

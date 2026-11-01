@@ -31,9 +31,9 @@ SERIES_ID = 234          # after its 233
 # rear- and mid-engined Class S cars, as AI car models (100 + ordinal): F50, Zonda, F40, XJ220, GT40 Mk II,
 # Carrera GT, Enzo, Saleen S7
 REAR_S_CARS = [137, 143, 168, 139, 138, 173, 136, 202]
-REAR_S = '\t\t<Restriction Attrib="perfclass" Func="=" Value="S" />\r\n\t\t<or>\r\n' \
-         '\t\t\t<Restriction Attrib="engineplacement" Func="=" Value="rear" />\r\n' \
-         '\t\t\t<Restriction Attrib="engineplacement" Func="=" Value="mid" />\r\n\t\t</or>\r\n'
+# (an <or> an alternative, its restrictions all holding: rear and mid in one <or> let no car in)
+REAR_S = ''.join('\t\t<or>\r\n\t\t\t<Restriction Attrib="perfclass" Func="=" Value="S" />\r\n'
+                 '\t\t\t<Restriction Attrib="engineplacement" Func="=" Value="%s" />\r\n\t\t</or>\r\n' % p for p in ('rear', 'mid'))
 
 # (name, level, description, logo (art, captions; or an existing tile's number), who may enter (restrictions' XML), the AI field (a
 #  disc Spec series' to copy, or car models with drivers), AI cars a race, events (track, laps, 1st's xp))

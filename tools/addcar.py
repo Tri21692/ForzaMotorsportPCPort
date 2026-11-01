@@ -253,7 +253,10 @@ def free_ordinal(mega):
     named = set()
     for k, v in mega.items():
         if k.lower().endswith('.xml'):
-            named |= {int(o) for o in re.findall(rb'(?i)(?:aicarmodelid|carmodelid|careercarunlock)="(\d+)"', v)}
+            named |= {int(o) for o in re.findall(rb'(?i)(?:carmodelid|careercarunlock)="(\d+)"', v)}  # (: not aicarmodelid's)
+            # an AI car model is 100 + the ordinal (1000 more a stage of upgrades): taken as ordinals
+            # themselves, AI models 244-299 (ordinals 144-199's) kept 244 on free and the slots ran out
+            named |= {(int(o) - 100) % 1000 for o in re.findall(rb'(?i)aicarmodelid="(\d+)"', v) if int(o) % 1000 >= 100}
     for o in range(MAX_ORDINAL + 1):
         if o not in used and o not in named: return o
     raise SystemExit('no free ordinal up to %d' % MAX_ORDINAL)

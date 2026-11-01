@@ -63,7 +63,8 @@ XP_1ST = 2500      # a Class D win; more up the ladder, like the Spec series' (1
 # length times the laps): first guesses, to tune by the user's drives (<mods>/drift.txt)
 DRIFT_SERIES_ORDINAL = 107   # after the Professional series' 103-106
 DRIFT_EVENT_ORDINAL = 400    # after theirs, 389-399
-DRIFT_CARS = ('NissanSilviaDSpec', 'Nissan240SXDSpec', 'MazdaRX7DSpec', 'ToyotaTruenoDSpec')
+DRIFT_CARS = ('NissanSilviaDSpec', 'Nissan240SXDSpec', 'MazdaRX7DSpec', 'ToyotaTruenoDSpec',
+              'NissanSilviaS15RDSpec', 'DodgeNeonCoupeDSpec', 'ToyotaCelicaGT4DSpec', 'MazdaMX5RadbulDSpec')  # (tools/driftcars.py's)
 DRIFT_PER_M = (6.0, 4.0, 2.0)
 DRIFT = [
     ('Drift Rookie', 0, [(26, 2), (47, 2)]),    # Tsukuba, Silverstone Short
@@ -77,7 +78,9 @@ def build_drift(mega, tracks, field):
     xml = mega.files['cars' + B + 'carlist.xml'].decode('latin-1')
     cars = [addcar.ordinal_of(xml, c) for c in DRIFT_CARS if re.search(r'<car name="%s"' % c, xml)]
     if not cars: return [], [], []
-    allowed = '\t\t<or>\r\n' + ''.join('\t\t\t<Restriction Attrib="carid" Func="=" Value="%d" />\r\n' % c for c in cars) + '\t\t</or>\r\n'
+    # an <or> a car: each <or> is one alternative whose restrictions all hold (as the disc's Superstreet
+    # Face Off, Supra or RX-7); the four in one <or> asked for a car that was all four, and none could enter
+    allowed = ''.join('\t\t<or>\r\n\t\t\t<Restriction Attrib="carid" Func="=" Value="%d" />\r\n\t\t</or>\r\n' % c for c in cars)
     length = {int(r['Ordinal']): float(r.get('length', 3000)) for r in tracks}
     series, targets, strings, ordinal = [], [], [], DRIFT_EVENT_ORDINAL
     for k, (name, level, events) in enumerate(DRIFT):

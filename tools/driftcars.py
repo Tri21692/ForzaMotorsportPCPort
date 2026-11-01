@@ -19,11 +19,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import addcar
 
-# (the disc's car, the new car, its name)
+# (the car, the new car, its name[, a rear-wheel-drive car whose drivetrain it takes]): the disc's, then
+# the add-on cars (1 Nov), the front-driven Neon and the four-wheel-drive Celica made rear-driven as
+# drift builds are (the Silvia's differential, its drive type in the menus)
 CARS = [('NissanSilvia', 'NissanSilviaDSpec', 'Silvia S15 D-Spec'),
         ('Nissan240SX', 'Nissan240SXDSpec', '240SX D-Spec'),
         ('MazdaRX72', 'MazdaRX7DSpec', 'RX-7 D-Spec'),
-        ('ToyotaTrueno', 'ToyotaTruenoDSpec', 'Trueno D-Spec')]
+        ('ToyotaTrueno', 'ToyotaTruenoDSpec', 'Trueno D-Spec'),
+        ('NissanSilviaS15R', 'NissanSilviaS15RDSpec', 'Silvia Spec-R D-Spec'),
+        ('DodgeNeonCoupe', 'DodgeNeonCoupeDSpec', 'Neon Coupe D-Spec', 'NissanSilvia'),
+        ('ToyotaCelicaGT4', 'ToyotaCelicaGT4DSpec', 'Celica GT-Four D-Spec', 'NissanSilvia'),
+        ('MazdaMX5Radbul', 'MazdaMX5RadbulDSpec', 'MX-5 RADBUL D-Spec')]
 TUNE = ['--shift', 'drivetraindiff:LimittedSlipTorqueAccel=600', '--shift', 'drivetraindiff:LimittedSlipTorqueDecel=300',
         '--scale', 'tiremod:RearFrictionScale=0.86', '--scale', 'tiremod:FrontFrictionScale=1.05',
         '--scale', 'nonupgradedata.xml:MaxAngle=1.5714']
@@ -31,18 +37,19 @@ TUNE = ['--shift', 'drivetraindiff:LimittedSlipTorqueAccel=600', '--shift', 'dri
 
 def ordinals(disc, mods):
     xml = addcar.Archive(disc, mods, 'Mega.ca2').files['cars' + chr(92) + 'carlist.xml'].decode('latin-1')
-    return {new: addcar.ordinal_of(xml, new) for _, new, _ in CARS if re.search(r'<car name="%s"' % new, xml)}
+    return {c[1]: addcar.ordinal_of(xml, c[1]) for c in CARS if re.search(r'<car name="%s"' % c[1], xml)}
 
 
 def install(disc, mods):
     here = os.path.dirname(os.path.abspath(__file__))
     have = ordinals(disc, mods)
-    for src, new, name in CARS:
+    for src, new, name, *rwd in CARS:
         if new in have:
             print('%s: there already (%d)' % (new, have[new]))
             continue
         subprocess.run([sys.executable, os.path.join(here, 'addcar.py'), disc, mods, src, new, '--name', name, '--short', name], check=True)
-        subprocess.run([sys.executable, os.path.join(here, 'tunecar.py'), disc, mods, new] + TUNE, check=True)
+        drive = ['--physics-like', '%s:drivetraindiff' % rwd[0]] if rwd else []
+        subprocess.run([sys.executable, os.path.join(here, 'tunecar.py'), disc, mods, new] + drive + TUNE, check=True)
     for new, o in sorted(ordinals(disc, mods).items(), key=lambda kv: kv[1]): print('%s: ordinal %d' % (new, o))
 
 
