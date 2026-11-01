@@ -56,6 +56,59 @@ LADDER = [
 SIM_CLASS = {'R-GT': 'GT', 'R-GTS': 'GTS', 'R-P1': 'P1'}
 XP_1ST = 2500      # a Class D win; more up the ladder, like the Spec series' (11000 for five laps)
 
+# Drift series (the user's drift mode, 2026-11-01: runtime/hle_drift.c scores and places them), here
+# until the career has a Drift tile of its own: after the time trials in this category, open to the
+# drift-spec cars (tools/driftcars.py), one car on the track. (name, level, events (track, laps));
+# each event's least scores for 1st, 2nd and 3rd are DRIFT_PER_M points a metre driven (the track's
+# length times the laps): first guesses, to tune by the user's drives (<mods>/drift.txt)
+DRIFT_SERIES_ORDINAL = 107   # after the Professional series' 103-106
+DRIFT_EVENT_ORDINAL = 400    # after theirs, 389-399
+DRIFT_CARS = ('NissanSilviaDSpec', 'Nissan240SXDSpec', 'MazdaRX7DSpec', 'ToyotaTruenoDSpec')
+DRIFT_PER_M = (6.0, 4.0, 2.0)
+DRIFT = [
+    ('Drift Rookie', 0, [(26, 2), (47, 2)]),    # Tsukuba, Silverstone Short
+    ('Drift Pro', 10, [(1, 2), (27, 1)]),        # Laguna Seca, Alpine Ring
+    ('Shipyard Drift King', 20, [(82, 2), (83, 2)]),  # Pacific Shipyards Circuit and Circuit II
+]
+
+
+def build_drift(mega, tracks, field):
+    """The drift series' XML, drift.txt's lines and their strings (as build's)."""
+    xml = mega.files['cars' + B + 'carlist.xml'].decode('latin-1')
+    cars = [addcar.ordinal_of(xml, c) for c in DRIFT_CARS if re.search(r'<car name="%s"' % c, xml)]
+    if not cars: return [], [], []
+    allowed = '\t\t<or>\r\n' + ''.join('\t\t\t<Restriction Attrib="carid" Func="=" Value="%d" />\r\n' % c for c in cars) + '\t\t</or>\r\n'
+    length = {int(r['Ordinal']): float(r.get('length', 3000)) for r in tracks}
+    series, targets, strings, ordinal = [], [], [], DRIFT_EVENT_ORDINAL
+    for k, (name, level, events) in enumerate(DRIFT):
+        tag = 'Drift%d' % k
+        strings += [('IDS_Mod_%s_Name' % tag, name),
+                    ('IDS_Mod_%s_Desc' % tag, 'Open to drift-spec cars. Alone on the track: score by drifting, long and at an angle. '
+                                              'Leaving the road, a spin or a hit loses the drift.')]
+        out = []
+        for i, (t, laps) in enumerate(events):
+            pts = [int(round(length[t] * laps * f / 100)) * 100 for f in DRIFT_PER_M]
+            targets.append('%d %d %d %d' % (ordinal, *pts))
+            desc = 'IDS_Mod_%s_Event%d' % (tag, i)
+            strings.append((desc, 'Targets: 1st %d, 2nd %d, 3rd %d points.' % tuple(pts)))
+            xp = int(XP_1ST * (1 + level / 10))
+            out.append(
+                '<event eventid="%d" displayname="%s" eventordinal="%d" eventtextid="{IDS_Mod_%s_Name}" eventdescid="{%s}" type="Single" leaderboard="20000">\r\n'
+                '\t\t<track Ordinal="%d" />\r\n\t\t<laps count="%d" />\r\n\t\t<AIField NumAICars="0" />\r\n'
+                '\t\t<AIModeSettings>\r\n\t\t\t<pitting nopitting />\r\n\t\t</AIModeSettings>\r\n'
+                '\t\t<Scoring>\r\n'
+                '\t\t\t<score pos="1" pts="10" xp="%d"></score>\r\n\t\t\t<score pos="2" pts="8" xp="%d"></score>\r\n'
+                '\t\t\t<score pos="3" pts="6" xp="%d"></score>\r\n\t\t\t<score pos="4" pts="0" xp="0"></score>\r\n'
+                '\t\t</Scoring>\r\n\t</event>' % (i, name, ordinal, tag, desc, t, laps, xp, xp * 7 // 10, xp // 2))
+            ordinal += 1
+        head = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{IDS_Mod_%s_Name}" '
+                'seriesdescid="{IDS_Mod_%s_Desc}" seriesid="58" seriesordinal="%d" seriesorder="%d" Icon="%d"%s>\r\n'
+                '\t<Scoring>\r\n' + ''.join('\t\t<score pos="%d"></score>\r\n' % p for p in range(1, 9)) +
+                '\t</Scoring>\r\n\t<Restrictions>\r\n%s\t</Restrictions>\r\n\t%s\r\n') % (
+                    name, tag, tag, DRIFT_SERIES_ORDINAL + k, len(LADDER) + k, 7 + k, ' Level="%d"' % level if level else '', allowed, field)
+        series.append(head + '\r\n'.join('\t' + e for e in out) + '\r\n</series>\r\n')
+    return series, targets, strings
+
 
 def clock(ms):
     return '%d:%02d.%03d' % (ms // 60000, ms // 1000 % 60, ms % 1000)
@@ -124,6 +177,11 @@ def install(disc, mods):
     tl = mega.files['forzadb' + B + 'tracklist.xml'].decode('latin-1')
     tracks = [dict(re.findall(r'(\w+)="([^"]*)"', r)) for r in re.findall(r'<track\s.*?/>', tl, re.S)]
     series, targets, strings = build(disc, mods, mega, tracks)
+    spec1 = next(v for n, v in mega.disc.items() if n.lower() == 'events' + B + 'spec' + B + 'ser00001.xml')
+    field = re.search(r'<AIField>.*?</AIField>', spec1.decode('latin-1'), re.S).group(0)
+    dseries, dtargets, dstrings = build_drift(mega, tracks, field)
+    series += dseries
+    strings += dstrings
     loc = addcar.disc_file(disc, 'media', 'Loc')
     ids = None
     for lang in sorted(os.listdir(loc)):
@@ -138,7 +196,8 @@ def install(disc, mods):
         os.makedirs(os.path.dirname(mp), exist_ok=True)
         open(mp, 'wb').write(new)
         for name, change in (('UIStrings.str', {HELP: 'Race the clock alone: one flying lap, three target times. '
-                                                                   'Beat them for 1st, 2nd or 3rd; harder classes open as you level up.'}),
+                                                                   'Beat them for 1st, 2nd or 3rd; harder classes open as you level up. '
+                                                                   'And drifting, for drift-spec cars.'}),
                                    ('GameStrings.str', {TITLE: 'Time Trial'})):
             src = addcar.disc_file(disc, 'media', 'Loc', lang, name)
             mp = os.path.join(mods, 'media', 'Loc', lang, name)
@@ -154,7 +213,9 @@ def install(disc, mods):
     os.makedirs(ev, exist_ok=True)
     shutil.copyfile(addcar.disc_file(disc, 'media', 'Events', 'OnlineCareer.bik'), os.path.join(ev, 'TimeTrial.bik'))
     open(os.path.join(mods, 'timetrial.txt'), 'w').write('# ordinal, then the target times for 1st, 2nd and 3rd (ms)\n' + '\n'.join(targets) + '\n')
-    print('Time Trial category: %d series, %d events' % (len(series), len(targets)))
+    open(os.path.join(mods, 'drift.txt'), 'w').write('# ordinal, then the least scores for 1st, 2nd and 3rd\n' + '\n'.join(dtargets) + '\n')
+    print('Time Trial category: %d series, %d events; drift: %d series, %d events' % (len(series), len(targets), len(dseries), len(dtargets)))
+    for line in dtargets: print('  drift', line)
     for line in targets: print(' ', line)
 
 
