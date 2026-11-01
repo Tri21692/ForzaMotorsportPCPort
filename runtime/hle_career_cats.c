@@ -6,7 +6,7 @@
  * the list works out (the lowest level, events done, events). Its readers are the list's builder
  * (0x184F30: an item an entry, to 0x52E988), the selection (0x1856B0: [screen+0x2C] * 0x34) and the
  * panel (0x184C30, hle_career_panel.c); here they are the generated code with the table's address
- * a variable (hle_career_cats_gen.inc, made from out/code_0023.c: if the game is recompiled, make
+ * a variable (hle_career_cats_gen.inc, made from out/code_0023.c by tools/careercats_gen.py: if the game is recompiled, make
  * it again). <mods>/categories.txt adds categories after the six, a line each:
  *
  *     <folder name> <kind> <title id> <description id> <icon>
