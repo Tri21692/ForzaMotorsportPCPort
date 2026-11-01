@@ -84,6 +84,7 @@ def bhash(s, h=0xFFFFFFFF):
 # window_panes).
 SHADERS = {bhash('CARSKIN'): BODY, bhash('WINDSHIELD'): WINDOW, 0x12C9453C: WINDOWS, 0x010CB64A: WINDOWS,
            0x52BF4C34: WINDOWS,  # the floor pan: as Black (its texture is not in the car's pack) it drew clear and the cabin's floor was see-through
+           0xA7366AE6: BODY,  # Underground 2's skirts and lower door skins (shader and texture both this hash, in no car's pack): paint; as Black the Silvia's and Neon's sills came out black
            bhash('DULLPLASTIC'): PLASTIC, bhash('CHROME'): CHROME, bhash('HEADLIGHTGLASS'): HEADLIGHTGLASS,
            bhash('BRAKELIGHTGLASS'): REDGLASS, bhash('DECAL'): BADGE, bhash('HEADLIGHT'): HEADLIGHTS,
            bhash('BRAKELIGHT'): TAILLIGHTS, bhash('RUBBER'): BLACK, bhash('ENGINE'): BLACK,
@@ -390,6 +391,21 @@ def mw_material(name):
     if 'DULL_PLASTIC' in n: return PLASTIC
     if n.startswith('BODY') and not any(k in n for k in ('MOLDING', 'PLAINNOTHING', 'BLACK')): return BODY
     return WINDOWS  # mouldings, the underside, untextured bits: black
+
+
+def paint_ready(img):
+    """A see-through decal (RGBA) for Body, which draws paint times the texel
+    where alpha is 0 and the texel where it is 255: the opaque texels as they
+    are, the rest laid over white and made clear, so the paint shows through
+    them darkened by the decal (a door handle's shading, a marker's rim)."""
+    import numpy as np
+    a = img[..., 3:4].astype(float) / 255
+    out = img.copy()
+    out[..., :3] = np.round(img[..., :3] * a + 255 * (1 - a)).astype(np.uint8)
+    solid = img[..., 3] >= 240
+    out[..., :3][solid] = img[..., :3][solid]
+    out[..., 3] = np.where(solid, 255, 0)
+    return out
 
 
 def material_for(texname, shader=0):
@@ -834,6 +850,16 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                                   (x1 - x0 + 1, y1 - y0 + 1))
                 img[y0:y1 + 1, x0:x1 + 1] = logo
             images[h] = img.astype(np.uint8)
+    if UV32:  # an Underground 2 car's decal sheets, drawn as Body (see UV32 and BADGE in the parts)
+        uses = {}
+        for p in nparts:
+            for g in p['groups']:
+                ti, si = struct.unpack_from('<II', g, 0x1C)
+                if ti < len(p['textures']) and si < len(p['shaders']):
+                    th = p['textures'][ti]
+                    uses.setdefault(th, set()).add(material_for(names.get(th, ''), p['shaders'][si]))
+        for h in images:
+            if uses.get(h) == {BADGE}: images[h] = paint_ready(images[h])
     images.update(extra)
     bands = canvas_bands(nparts) if vinyl or SKIN else []
     for j, (r0, r1, c0, c1) in enumerate(bands):  # (not k: the fit's scale)
@@ -936,7 +962,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
 
     def nrm(v):
         x, y, z = -v[4], v[5], v[3]
-        return [max(-32768, min(32767, int(round(c * 32767)))) for c in (x, y, z)]
+        return [max(-32767, min(32767, int(round(c * 32767)))) for c in (x, y, z)]  # (symmetric: the black insides negate them, and the Celica's normals, longer than 1, hit -32768)
 
     arches = []
     CARSKIN_HASH = bhash('CARSKIN')
@@ -965,8 +991,16 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         (copies facing in): drawn from outside only, the far side of the
         body was missing through the windows, and the studio showed
         through the 240SX's empty hatch area."""
-        verts, subs = [], []
+        verts, subs, same = [], [], {}
         for lod, p in [(i + 1, lv) for src in sources for i, lv in enumerate(src[:4])]:
+            # A level the same as a finer one (an Underground 2 car's levels are copies of
+            # its first): its triangles again on the same vertices. Copied, the Celica's
+            # body took four times the vertices, past the 65536 a part holds.
+            key = (len(p['verts']), hash(tuple(p['verts'])), hash(tuple(map(tuple, p['tris']))), tuple(p['groups']))
+            if key in same:
+                subs += [(lod, m, s) for l, m, s in subs if l == same[key]]
+                continue
+            same[key] = lod
             base = len(verts)
             for v in p['verts']:
                 verts.append(tuple(pos(v) + nrm(v) + [0xFF, 0xFF, 0, 0] + list(WHITE_UV)))
@@ -1002,6 +1036,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     arches.extend(tuple(pos(p['verts'][i - base]) for i in t) for t in tris)
                 m = material_for(names.get(th, ''), sh)
                 if m is None: continue  # (mw_material: left out)
+                if UV32 and m == BADGE:
+                    # An Underground 2 car's decals (door handles, side markers, badges) are see-through
+                    # overlays on the paint; Badge drew their clear texels black, as black boxes. As
+                    # Body, on their sheet made ready for it (paint_ready), the paint shows through.
+                    m = BODY
                 if sh == 0x12C9453C and p['name'].startswith(prefix + '_KIT00_TRUNK'):
                     # On the hatch lid this group is the black border round the rear glass and
                     # the tail panel. The border's bottom edge widens into wedges by the
@@ -1353,7 +1392,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     floor = min(ty)
 
     plan = {
-        'body': ([find('BODY'), find('ROOF')], 0, None, True), 'hood': ([find('HOOD')], 0), 'trunk': ([find('TRUNK')], 0, None, True),
+        # (the roof where the car has one of its own: the Celica GT-Four has none, and without it
+        # the slot was skipped and the template's body stayed under the new bumpers)
+        'body': ([find('BODY')] + [r for r in [find('ROOF')] if r], 0, None, True), 'hood': ([find('HOOD')], 0), 'trunk': ([find('TRUNK')], 0, None, True),
         'bumperF': ([find('FRONT_BUMPER')], 0), 'bumperR': ([find('REAR_BUMPER')], 0),
         'skirtL': ([find('SKIRT')], -1), 'skirtR': ([find('SKIRT')], 1),
         'headlightL': ([find('HEADLIGHT')], -1), 'headlightR': ([find('HEADLIGHT')], 1),
@@ -1363,6 +1404,10 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         # as they were, the Civic's floated behind the hatch where its trunk was
         'wing': ([find('SPOILER')], 0),
     }
+    if not mw and find('BRAKELIGHT') and not any(p['name'].startswith('taillight') for p in car['parts']):
+        # A template with its lamps in its body (the S15): the tail lights go in the body,
+        # matched to its lamp texels; with no slot of their own they were left out, as holes
+        plan['body'] = (plan['body'][0] + [find('BRAKELIGHT')],) + plan['body'][1:]
     if mw:
         def find(suffix, _find=find):  # exactly that part's levels: LEFT_HEADLIGHT also began LEFT_HEADLIGHT_GLASS, mixed in as its levels
             return [p for p in _find(suffix) if re.fullmatch(re.escape(prefix + '_KIT00_' + suffix) + '_[A-D]', p['name'])]
@@ -1443,6 +1488,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             'headlightR': ([find('RIGHT_HEADLIGHT')] + [g for g in [find('RIGHT_HEADLIGHT_GLASS')] if g], 0),
             'taillightL': ([find('LEFT_BRAKELIGHT')], 0), 'taillightR': ([find('RIGHT_BRAKELIGHT')], 0),
             'mirrorL': ([find('LEFT_SIDE_MIRROR')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRROR')], 0),
+            **({'interior': ([find('INTERIOR')], 0)} if OWN_INTERIOR else {}),
         }
         write_upgrades(os.path.join(os.path.dirname(os.path.abspath(out_path)), 'upgrades.xml'),
                        [n for n in range(1, 6) if kit(n, 'BODY') and (KITS is None or n in KITS)], hoods, wings, stock_wing)
@@ -1495,7 +1541,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 near = any(abs(sum(V[i][2] for i in (a, b, c)) / 3 - h) < 0.75 for h in hubs)
                 if not (low and near): tris.append((a, b, c))
             sp['indices'] = strip(tris) if tris else [0, 0, 0]
-    if not mw:  # (Most Wanted's badges are in its body, from its own texture)
+    if not mw and not UV32:  # (Most Wanted's badges are in its body, from its own texture; so are Underground 2's, and
+        # the boxes add_badges cuts from an Underground sheet fell on its door handle there, as black squares on the tail)
         add_badges(car, textures, atlas, {k: (v.shape[1], v.shape[0]) for k, v in extra.items()})
     new_shell = shell()
     new_fit = roof(new_shell), sides(new_shell), cover(), plan_heights(arches)
@@ -1504,7 +1551,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         return (min(sw) + max(sw)) / 2 / 4096 if sw else None
     wheel0 = wheel_y()
     for part in car['parts']:
-        if part['name'].startswith(CABIN):
+        if part['name'].startswith(CABIN) and not (OWN_INTERIOR and part['name'].startswith('interior')):  # (the car's own: already its shape)
             fit_cabin(part, old_fit, new_fit, floor)
             done.append(part['name'] + '(fitted)')
     fit_driver(car, (max(v[1] for v in new_shell) - max(v[1] for v in old_shell)) / 4096,
@@ -1832,6 +1879,8 @@ FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoo
 KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
 # rear halves that need bumpers of their own (its kit 1 had no nose, kit 2 came out black)
 HIDE = ()  # template parts hidden by name (cartoolkit.py's plan "hide": ["wing"])
+OWN_INTERIOR = False  # a Most Wanted add-on's KIT00_INTERIOR as the cabin, not the template's fitted in (cartoolkit.py's plan
+                      # "interior": true): under the roadster MX-5's open top the NB's interior was squashed into black spikes
 UV32 = False  # every packed texel and the windows' black at the game's reading (32768 across the atlas), as a Most Wanted
               # car's: an Underground 2 car's (cartoolkit.py) windows came out white and red at 65536 (the 240SX keeps its own)
 LOWER = 0.0  # carbin units (/4096) the body sits below the template's floor (plan "lower"): the lowest points meet, and

@@ -30,12 +30,20 @@
       "front": "LEFT_HEADLIGHT_BULB",
       "rear": "BRAKELIGHT"
     },
-    "7b220ddf": "WINDOW_FRONT",
+    "7b220ddf": {
+      "KIT00_INTERIOR": "DECAL_DUPLICATE",
+      "*": "WINDOW_FRONT"
+    },
     "TT_MISC": "BADGING",
     "TT_BADGING": "BADGING",
     "TT_SKIN4": "BODY_BLACK",
-    "1b049702": "BODY_BLACK",
-    "32283a11": "BODY_BLACK"
+    "1b049702": {
+      "KIT00_INTERIOR": "DECAL_DUPLICATE",
+      "*": "BODY_BLACK"
+    },
+    "32283a11": "BODY_BLACK",
+    "TT_INTERIOR": "BADGING"
   },
-  "kits": []
+  "kits": [],
+  "interior": true
 }

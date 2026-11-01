@@ -818,3 +818,35 @@ shop's kit bodies too. On the MX-5 they sat on the stock body and won the depth
 test in black triangle patches; with them left out it was clean. Before chasing
 patches, preview with the kits skipped. (The windings were fine: its paint and
 the black insides face the way the Neon's do.)
+
+Fixed the same day, after the user found them poor in game; checked with
+tools/carlit.py (Blender, lit, paint and glass as the game draws them,
+beside the stock template car):
+
+- The Celica was still the template's T230 body under the GT-Four's bumpers
+  and hood: the converter's body slot wanted BODY and ROOF, and the Celica
+  has no roof part, so it was skipped. The roof is now optional. Its body
+  then ran past a part's 65536 vertices: an Underground 2 car's detail levels
+  are copies of the first, now drawn on one set of vertices. Its normals are
+  longer than 1 and clamped to -32768, which the black insides negate out of
+  range; the clamp is symmetric now.
+- Underground 2 decals (door handles, side markers, Spec-R badges) drew as
+  black boxes: Badge draws a see-through texel's colour. They are Body now,
+  their sheets laid over white and made clear where not opaque (paint_ready),
+  so the paint shows through, darkened by the decal. add_badges is skipped
+  for these cars (its boxes are cut for an Underground sheet and fell on the
+  Silvia's door handle, as black squares on the tail).
+- Shader and texture a7366ae6 (the skirts and lower door skins, in no car's
+  pack) is paint; as Black the Silvia's and Neon's sills were black.
+- The Silvia had no tail lights: the S15 template keeps its lamps in its body
+  and has no taillight part. Where a template has none, the brake lights go
+  into the body.
+- The MX-5 had the NB's interior squashed under an open top into black
+  spikes. Plan "interior": true puts the add-on's own KIT00_INTERIOR (cage,
+  seats, dash, the tail lamps' insides) in the interior slot, unfitted;
+  "materials" can now be set per part ({"KIT00_INTERIOR": .., "*": ..}),
+  to drop its copy of the windscreen.
+
+Still as before: the windows are dark, not see-through (glass drew clear in
+game), and the lamps take the template's lamp texels where the add-on's lamp
+textures are Underground 2's shared ones (not in the car's pack).

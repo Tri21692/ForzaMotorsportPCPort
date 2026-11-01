@@ -299,8 +299,10 @@ def thin(parts, prefix, plan):
 
 def by_texture(parts, car_dir, plan):
     """Each group's material name from its texture (plan "materials": {texture name or hash: material, or
-    {"front": .., "rear": ..} by the group's middle, NFS x}), where an add-on's names say nothing (the
-    MX-5's are all "Material"); textures not listed keep the group's."""
+    {"front": .., "rear": ..} by the group's middle, NFS x, or {part: .., "*": ..} by the part's name less
+    prefix and level}), where an add-on's names say nothing (the MX-5's are all "Material"); textures not
+    listed keep the group's. (The MX-5's d947f346 is its tail lamps on the body and the dash in its
+    interior: as brake light there the cockpit would glow.)"""
     names = {h: t['name'] for h, t in nfsu.read_textures(os.path.join(car_dir, 'TEXTURES.BIN')).items()}
     prefix = os.path.basename(os.path.normpath(car_dir)).upper()
     names[nfsu.bhash(prefix + '_SKIN1')] = prefix + '_SKIN1'  # (the paint: made at run time, not in the file)
@@ -311,6 +313,8 @@ def by_texture(parts, car_dir, plan):
             ti, _ = struct.unpack_from('<II', g, 0x1C)
             th = p['textures'][ti] if ti < len(p['textures']) else 0
             want = plan.get(names.get(th, '%08x' % th))
+            if isinstance(want, dict) and 'front' not in want:
+                want = want.get(re.sub(r'_[A-D]$', '', p['name'][len(prefix) + 1:]), want.get('*'))
             if isinstance(want, dict):
                 n, = struct.unpack_from('<I', g, 12); first, = struct.unpack_from('<I', g, 0x34)
                 xs = [p['verts'][i][0] for i in idx[first:first + n] if i < len(p['verts'])]
@@ -364,5 +368,6 @@ if __name__ == '__main__':
     nfsu2forza.LOWER = plan.get('lower', 0.0)
     nfsu2forza.KITS = plan.get('kits')
     nfsu2forza.HIDE = tuple(plan.get('hide', ()))
+    nfsu2forza.OWN_INTERIOR = bool(plan.get('interior'))
     nfsu2forza.UV32 = 'merge' in plan  # (an Underground 2 car's texels at the game's reading)
     nfsu2forza.main([sys.argv[0]] + sys.argv[2:])
