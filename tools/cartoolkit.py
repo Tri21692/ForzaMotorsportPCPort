@@ -31,6 +31,7 @@ The plan:
 """
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -219,7 +220,116 @@ def as_part(name, groups):
             'tris': tris, 'groups': gl, 'materials': mats}
 
 
+def join_parts(ps):
+    """Underground-shaped parts as one: vertices and triangles after each other, each group's texture,
+    shader and first index renumbered."""
+    m = {'name': '', 'textures': [], 'shaders': [], 'verts': [], 'tris': [], 'groups': [], 'materials': []}
+    for p in ps:
+        base, first = len(m['verts']), 3 * len(m['tris'])
+        m['verts'] += p['verts']
+        m['tris'] += [tuple(i + base for i in t) for t in p['tris']]
+        for grp in p['groups']:
+            r = bytearray(grp)
+            ti, si = struct.unpack_from('<II', r, 0x1C)
+            th = p['textures'][ti] if ti < len(p['textures']) else 0
+            sh = p['shaders'][si] if si < len(p['shaders']) else 0
+            if th not in m['textures']: m['textures'].append(th)
+            if sh not in m['shaders']: m['shaders'].append(sh)
+            struct.pack_into('<II', r, 0x1C, m['textures'].index(th), m['shaders'].index(sh))
+            struct.pack_into('<I', r, 0x34, struct.unpack_from('<I', r, 0x34)[0] + first)
+            m['groups'].append(bytes(r))
+    return m
+
+
+def merge(parts, prefix, plan):
+    """An Underground 2 car's panels as Underground's parts (plan "merge": {target: [source, ...]}, names
+    less the car's prefix and level): its body is fenders, quarters, doors and sills, its lamps a part a
+    side, where the converter takes one body and one lamp part. Each target's level L is every source's
+    level L (or its last), joined; the sources leave the list. Long names are cut at 27 characters and
+    lose their level letter: those levels go by size."""
+    def levels(src):
+        pairs = src.endswith('*2')  # both sides cut to one name (the Celica's HEADLIGHT_): a level is the next two by size
+        full = prefix + '_' + src.rstrip('*2')
+        hit = [p for p in parts if any((full + s)[:27] == p['name'] for s in ('_A', '_B', '_C', '_D', ''))]
+        lettered = all(re.search(r'_[A-D]$', p['name']) for p in hit)
+        lv = sorted(hit, key=(lambda p: p['name']) if lettered else (lambda p: -len(p['verts'])))
+        if pairs:
+            lv = [join_parts([lv[k], lv[k + 1]]) if k + 1 < len(lv) else lv[k] for k in range(0, len(lv), 2)]
+        return lv, hit
+    gone, out = set(), []
+    for target, sources in plan.items():
+        got = []
+        for s in sources:
+            lv, hit = levels(s)
+            gone |= {id(p) for p in hit}
+            if lv: got.append(lv)
+        if not got: continue
+        for L in range(min(4, max(len(g) for g in got))):
+            m = join_parts([g[min(L, len(g) - 1)] for g in got])
+            m['name'] = '%s_%s_%s' % (prefix, target, 'ABCD'[L])
+            out.append(m)
+        print('%s_%s: %s, %d levels' % (prefix, target, ' + '.join(sources), min(4, max(len(g) for g in got))))
+    return [p for p in parts if id(p) not in gone] + out
+
+
+def thin(parts, prefix, plan):
+    """A Most Wanted car's dense parts thinned (plan "decimate": {part: [share kept at level A, B, ...]}, names
+    less the prefix and level; 1 keeps a level as it is): its groups keep their own material names. The
+    MX-5's body, 20,000 vertices at both A and B, was more than a Forza part holds with its insides."""
+    out = []
+    with tempfile.TemporaryDirectory() as work:
+        for p in parts:
+            m = re.fullmatch(re.escape(prefix) + r'_(.+)_([A-D])', p['name'])
+            keep = plan.get(m.group(1)) if m else None
+            k = keep['ABCD'.index(m.group(2))] if keep and 'ABCD'.index(m.group(2)) < len(keep) else 1
+            if k >= 1 or not p['materials']:
+                out.append(p)
+                continue
+            idx = [i for t in p['tris'] for i in t]
+            groups = []
+            for gi, g in enumerate(p['groups']):
+                n, = struct.unpack_from('<I', g, 12); first, = struct.unpack_from('<I', g, 0x34); ti, _ = struct.unpack_from('<II', g, 0x1C)
+                tris = [[p['verts'][i] for i in idx[j:j + 3]] for j in range(first, first + n - 2, 3) if max(idx[j:j + 3]) < len(p['verts'])]
+                if tris: groups.append((p['materials'][gi], p['textures'][ti] if ti < len(p['textures']) else 0, tris))
+            q = as_part(p['name'], decimate(groups, k, work))
+            print('%s: %d triangles of %d, %d vertices' % (p['name'], len(q['tris']), len(p['tris']), len(q['verts'])))
+            out.append(q)
+    return out
+
+
+def by_texture(parts, car_dir, plan):
+    """Each group's material name from its texture (plan "materials": {texture name or hash: material, or
+    {"front": .., "rear": ..} by the group's middle, NFS x}), where an add-on's names say nothing (the
+    MX-5's are all "Material"); textures not listed keep the group's."""
+    names = {h: t['name'] for h, t in nfsu.read_textures(os.path.join(car_dir, 'TEXTURES.BIN')).items()}
+    prefix = os.path.basename(os.path.normpath(car_dir)).upper()
+    names[nfsu.bhash(prefix + '_SKIN1')] = prefix + '_SKIN1'  # (the paint: made at run time, not in the file)
+    for p in parts:
+        idx = [i for t in p['tris'] for i in t]
+        for gi, g in enumerate(p['groups']):
+            if gi >= len(p['materials']): break
+            ti, _ = struct.unpack_from('<II', g, 0x1C)
+            th = p['textures'][ti] if ti < len(p['textures']) else 0
+            want = plan.get(names.get(th, '%08x' % th))
+            if isinstance(want, dict):
+                n, = struct.unpack_from('<I', g, 12); first, = struct.unpack_from('<I', g, 0x34)
+                xs = [p['verts'][i][0] for i in idx[first:first + n] if i < len(p['verts'])]
+                want = want['front' if xs and sum(xs) / len(xs) > 0 else 'rear']
+            if want:
+                p['materials'][gi] = want
+                p['shaders'][gi] = nfsu.bhash(want)
+    return parts
+
+
 def build(plan, car_dir):
+    if 'merge' in plan:  # an Underground 2 car: its own names and groups, joined as the converter takes them
+        prefix = os.path.basename(os.path.normpath(car_dir)).upper()
+        return merge(nfsu.read(os.path.join(car_dir, 'GEOMETRY.BIN')), prefix, plan['merge'])
+    if 'decimate' in plan:  # a Most Wanted car as it is, its dense parts thinned (after its materials are named)
+        prefix = os.path.basename(os.path.normpath(car_dir)).upper()
+        parts = nfsu.read(os.path.join(car_dir, 'GEOMETRY.BIN'))
+        if plan.get('materials'): parts = by_texture(parts, car_dir, plan['materials'])
+        return thin(parts, prefix, plan['decimate'])
     prefix = os.path.basename(os.path.normpath(car_dir)).upper()
     geo = os.path.join(car_dir, 'GEOMETRY.BIN')
     names = recover_names(geo, prefix, plan['names_from'])
@@ -252,4 +362,7 @@ if __name__ == '__main__':
     if plan.get('skin'): nfsu2forza.SKIN, nfsu2forza.CANVAS_SIZE = tuple(plan['skin']), plan['skin'][1]
     nfsu2forza.FIT_WIDTH = plan.get('fit') == 'width'
     nfsu2forza.LOWER = plan.get('lower', 0.0)
+    nfsu2forza.KITS = plan.get('kits')
+    nfsu2forza.HIDE = tuple(plan.get('hide', ()))
+    nfsu2forza.UV32 = 'merge' in plan  # (an Underground 2 car's texels at the game's reading)
     nfsu2forza.main([sys.argv[0]] + sys.argv[2:])

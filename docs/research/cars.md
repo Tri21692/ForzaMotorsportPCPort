@@ -787,3 +787,34 @@ the Bentley's 0.94) but it rode high: the fit meets the lowest points, and the
 SC63's is its middle plank, so its sills stood 0.10 above the Bentley's. The
 plan's "lower": 0.06 sets it that much lower (sills level, arches still 0.99),
 and the driver's and mirror view went down with the roof (3.75 cm).
+
+## Four add-on cars (1 Nov): Silvia S15, Neon Coupe, Celica GT-Four, MX-5 RADBUL
+
+Converted with tools/cartoolkit.py and the plans in docs/research/carplans,
+packed into the template's cab and installed with addcar.py (mods_track):
+
+| car | source | template | ordinal | engine |
+|---|---|---|---|---|
+| Silvia S15 Spec-R | Underground 2 add-on | NissanSilvia | 272 | the Silvia's |
+| Neon Coupe | Underground 2 add-on | DodgeSRT4 | 274 | SRT-4's at 150 hp, 1150 kg |
+| Celica GT-Four (ST205) | Underground 2 add-on | Toyota_CelicaGTS | 275 | Eclipse GSX's at 255 hp, its AWD, 1380 kg |
+| MX-5 RADBUL | Most Wanted add-on (radbul) | MazdaMX5 | 288 | RX-7's rotary at 450 hp, 1100 kg |
+
+Underground 2 cars (plan "merge"): their panels joined into Underground 1's
+parts; names at 0xA4 (0x94 empty), cut at 27 characters (the `*2` suffix pairs
+a name's two sides by size); texture coordinates at /32768 like Most Wanted's
+(plan sets UV32: at /65536 the windows came out white and red). "hide" hides
+a template part the car has nothing for (the SRT-4's wing on the Neon, the
+Celica's skirts).
+
+The MX-5 (plan "decimate"): a Most Wanted add-on, its body 20,000 vertices a
+level, thinned in Blender; its groups are all named "Material", so "materials"
+names them by texture. Its body kits are rear halves that need bumpers of their
+own (kit 1 had no nose, kit 2 came out black), so the plan's "kits": [] offers
+none in the shop.
+
+Preview trap: the Blender preview (carobj.py) draws every part at once, the
+shop's kit bodies too. On the MX-5 they sat on the stock body and won the depth
+test in black triangle patches; with them left out it was clean. Before chasing
+patches, preview with the kits skipped. (The windings were fine: its paint and
+the black insides face the way the Neon's do.)

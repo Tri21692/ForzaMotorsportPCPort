@@ -1,0 +1,41 @@
+{
+  "decimate": {
+    "KIT00_BODY": [
+      0.55,
+      0.2
+    ],
+    "BASE": [
+      1,
+      0.3
+    ],
+    "KIT00_RIGHT_HEADLIGHT": [
+      1,
+      0.3
+    ],
+    "KIT00_RIGHT_BRAKELIGHT": [
+      1,
+      0.3
+    ],
+    "KIT00_INTERIOR": [
+      1,
+      0.3
+    ]
+  },
+  "materials": {
+    "TT_SKIN1": "BODY",
+    "TT_KIT00_BRAKELIGHT_OFF": "LEFT_HEADLIGHT_BULB",
+    "TT_KIT00_BRAKELIGHT_ON": "BRAKELIGHT",
+    "d947f346": "BRAKELIGHT",
+    "267d188c": {
+      "front": "LEFT_HEADLIGHT_BULB",
+      "rear": "BRAKELIGHT"
+    },
+    "7b220ddf": "WINDOW_FRONT",
+    "TT_MISC": "BADGING",
+    "TT_BADGING": "BADGING",
+    "TT_SKIN4": "BODY_BLACK",
+    "1b049702": "BODY_BLACK",
+    "32283a11": "BODY_BLACK"
+  },
+  "kits": []
+}

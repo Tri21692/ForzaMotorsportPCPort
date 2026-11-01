@@ -796,7 +796,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     print('windows: black texel at u, v = %.3f, %.3f' % (dark[0] / 65536, dark[1] / 65536))
     # as the game reads it (see ATLAS_UV): a Most Wanted car's coordinates count 32768 across the atlas,
     # and the texel found at 65536 a span drew from twice as far in (the SC63's black came out green)
-    dark_read = (dark[0] // 2, dark[1] // 2) if mw else dark
+    dark_read = (dark[0] // 2, dark[1] // 2) if mw or UV32 else dark
     # The NFSU car's own textures (lights, badges) go into the livery atlas,
     # written beside the output (liveries/standard).
     own = {th for key in ('BODY', 'ROOF', 'HOOD', 'TRUNK', 'FRONT_BUMPER', 'REAR_BUMPER', 'SKIRT', 'HEADLIGHT', 'BRAKELIGHT', 'LEFT_SIDE_MIRRO', 'RIGHT_SIDE_MIRR')
@@ -1042,7 +1042,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                         subs.append((lod, WINDOWS, strip(trim)))
                 if tris and th in atlas:  # its texture is in the livery atlas: its own coordinates, moved there
                     u0, v0, u1, v1 = atlas[th]
-                    one = BADGE_UV if m == BADGE or mw else 65536  # (see BADGE_UV and ATLAS_UV)
+                    one = BADGE_UV if m == BADGE or mw or UV32 else 65536  # (see BADGE_UV and ATLAS_UV)
                     for i in {i for t in tris for i in t}:
                         nv = p['verts'][i - base]
                         u = min(max(nv[7], 0.0), 1.0); v = min(max(nv[8], 0.0), 1.0)
@@ -1445,7 +1445,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             'mirrorL': ([find('LEFT_SIDE_MIRROR')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRROR')], 0),
         }
         write_upgrades(os.path.join(os.path.dirname(os.path.abspath(out_path)), 'upgrades.xml'),
-                       [n for n in range(1, 6) if kit(n, 'BODY')], hoods, wings, stock_wing)
+                       [n for n in range(1, 6) if kit(n, 'BODY') and (KITS is None or n in KITS)], hoods, wings, stock_wing)
         # Another template than the Civic (a race car: bumperF, hood, wing, no
         # tail lights of its own): its slots by its names, the tail lights in its
         # rear bumper
@@ -1466,6 +1466,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 or mw and part['name'].startswith(('glassT', 'bumperR', 'bumperFg', 'bumperFrace', 'skirt', 'trunk', 'wingraceB', 'wingraceC', 'lampglass'))  # Most Wanted: in the kits, or none (a race car's lamp covers too)
                 and not part['name'].startswith(filled)  # (unless a shop slot, or the tail lights' place)
                 or part['name'].startswith(empty) and part['name'].endswith('_LOD1')
+                or HIDE and part['name'].startswith(HIDE) and part['name'].endswith('_LOD1')  # (the plan's: a template part the car has nothing for, the SRT-4's wing on the Neon)
                 or part['name'].startswith(('BADGE', 'bands', 'exhaust', 'cagerace'))):  # (the race cage too: not on a stock car, and its bars showed through the glass)  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
@@ -1828,6 +1829,11 @@ CANVAS = '__canvas__'  # the canvas's rooms in the atlas: pack_atlas images (CAN
 CANVAS_SIZE = 512  # Most Wanted's vinyl canvas, texels
 SKIN = None  # (texture name, canvas size): a livery sheet the BODY groups are drawn from, as a vinyl canvas (cartoolkit.py sets it)
 FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoolkit.py's plan "fit": "width")
+KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
+# rear halves that need bumpers of their own (its kit 1 had no nose, kit 2 came out black)
+HIDE = ()  # template parts hidden by name (cartoolkit.py's plan "hide": ["wing"])
+UV32 = False  # every packed texel and the windows' black at the game's reading (32768 across the atlas), as a Most Wanted
+              # car's: an Underground 2 car's (cartoolkit.py) windows came out white and red at 65536 (the 240SX keeps its own)
 LOWER = 0.0  # carbin units (/4096) the body sits below the template's floor (plan "lower"): the lowest points meet, and
              # the SC63's is its middle plank: its sills rode 0.10 above the Bentley's
 

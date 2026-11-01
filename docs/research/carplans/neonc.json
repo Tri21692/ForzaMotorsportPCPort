@@ -1,0 +1,37 @@
+{
+  "merge": {
+    "KIT00_BODY": [
+      "KIT00_BODY",
+      "KIT00_DOOR_LEFT",
+      "KIT00_DOOR_RIGHT",
+      "KIT00_DOOR_SILL_LEFT",
+      "KIT00_DOOR_SILL_RIGHT",
+      "BASE"
+    ],
+    "KIT00_HEADLIGHT": [
+      "KIT00_HEADLIGHT_LEFT",
+      "KIT00_HEADLIGHT_RIGHT"
+    ],
+    "KIT00_HOOD": [
+      "KIT00_HOOD",
+      "KIT00_HOOD_UNDER"
+    ],
+    "KIT00_TRUNK": [
+      "KIT00_TRUNK",
+      "KIT00_TRUNK_UNDER"
+    ],
+    "UNUSED_TRUNK_AUDIO": [
+      "KIT00_TRUNK_AUDIO",
+      "KIT00_TRUNK_AUDIO_UNLIT"
+    ],
+    "KIT00_LEFT_SIDE_MIRROR": [
+      "KIT00_LEFT_SIDE_MIRROR"
+    ],
+    "KIT00_RIGHT_SIDE_MIRROR": [
+      "KIT00_RIGHT_SIDE_MIRROR"
+    ]
+  },
+  "hide": [
+    "wing"
+  ]
+}

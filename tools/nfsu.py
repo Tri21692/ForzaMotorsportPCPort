@@ -51,21 +51,27 @@ def solids(d):
     a 2024 car's) keeps them apart: its header (80134001) lists them in 00134004, 24 bytes each
     (u32 hash, file offset, packed size, unpacked size, flags 0x100, 0), each a JDLZ stream that
     unpacks to the part's chunk."""
+    seen = set()
     for cid, o, size in chunks(d, 0, len(d)):
         if cid != 0x80134000:
             continue
         for pid, po, psize in chunks(d, o, o + size):
             if pid == 0x80134010:
+                seen.add(po)
                 yield d, po, psize
             elif pid == 0x80134001:
                 for tid, to, tsize in chunks(d, po, po + psize):
                     if tid != 0x00134004: continue
                     for k in range(tsize // 24):
                         _, at, packed, _, _, _ = struct.unpack_from('<6I', d, to + 24 * k)
-                        if d[at:at + 4] != b'JDLZ': continue  # (the disc's cars list theirs too, unpacked, as 80134010 above)
-                        u = jdlz(d[at:at + packed])
-                        for uid, uo, usize in chunks(u, 0, len(u)):
-                            if uid == 0x80134010: yield u, uo, usize
+                        if d[at:at + 4] == b'JDLZ':
+                            u = jdlz(d[at:at + packed])
+                            for uid, uo, usize in chunks(u, 0, len(u)):
+                                if uid == 0x80134010: yield u, uo, usize
+                        elif struct.unpack_from('<I', d, at)[0] == 0x80134010 and at + 8 not in seen:
+                            # unpacked but outside the 80134000 chunk (an add-on's: the MX-5's), found only through the list
+                            seen.add(at + 8)
+                            yield d, at + 8, struct.unpack_from('<I', d, at + 4)[0]
 
 
 def read(path):
@@ -99,6 +105,9 @@ def read(path):
             if head is not None:
                 at = head + (0xA0 if mw else 0x94)
                 part['name'] = d[at:d.index(b'\0', at)].decode('latin-1')
+                if not part['name'] and not mw:  # Underground 2: Underground's groups, the name at 0xA4
+                    at = head + 0xA4
+                    part['name'] = d[at:d.index(b'\0', at)].decode('latin-1')
             if not mw:
                 part['groups'] = [raw_groups[k:k + 0x3C] for k in range(0, len(raw_groups) - 0x3B, 0x3C)]
             else:
@@ -257,6 +266,8 @@ def read_textures(path):
         if cid != 0xB3300000:
             continue
         for sid, so, ssize in chunks(d, o, o + size):
+            if sid == 0: continue  # (padding)
+            if not sid & 0x80000000: break  # the packed textures themselves follow the lists, not in chunks (the MX-5's: read as chunks they ran off the file)
             for tid, to, tsize in chunks(d, so, so + ssize):
                 if tid == 0x33310003: packed = d[to:to + tsize]
                 elif tid == 0x33310004: heads = d[to:to + tsize]
