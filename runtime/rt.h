@@ -92,6 +92,16 @@ extern volatile uint64_t rt_toast_until;
  * metres (negative: behind); in a career time trial, the best time driven in it (0 none). */
 int rt_catchup_hud(int *metres);
 uint32_t rt_tt_best(void);
+/* Drift events (hle_drift.c): scoring from the career tick, the place from the racer lookup, the HUD's figures. */
+typedef struct {
+    uint32_t total, drift, target[3]; /* banked, the drift now with its length bonus, the places' least scores */
+    float mult, angle;                /* the drift's length bonus, the car's angle off its way (degrees) */
+    int drifting, done;
+    const char *msg;                  /* a moment's note ("+1234", "OFF ROAD: DRIFT LOST"), or NULL */
+} RtDriftHud;
+void rt_drift_tick(void);
+void rt_drift_place(uint32_t racer);
+int rt_drift_hud(RtDriftHud *h);
 extern volatile uint8_t rt_gamma[256][3]; /* the DAC palette, D3D's gamma ramp (nv2a.c); applied as shown */
 extern volatile uint32_t rt_gamma_seq;     /* counts palette entries written */
 extern volatile float rt_brightness;      /* XBRT_BRIGHTNESS, or as the overlay set it: how much of the ramp; -1 not read yet */

@@ -288,8 +288,10 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     int done, metres;
     int tt = rt_tt_hud(target, &elapsed, &done);
     int cu = !tt && rt_catchup_hud(&metres);
+    RtDriftHud dh;
+    int drift = !tt && !cu && rt_drift_hud(&dh);
     int toast = rt_toast_until && rt_now_100ns() < rt_toast_until;
-    if (!(tt || cu || toast) || !ov_init()) return;
+    if (!(tt || cu || drift || toast) || !ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
     static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
                        gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1},
@@ -325,6 +327,38 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
         ov_rect(R - 150, y - 4, R + 6, y + row + 2, box);
         ov_text(OVF_ITEM, R - 144, y - 3, metres >= 0 ? "AHEAD" : "BEHIND", metres >= 0 ? ahead : behind, 0);
         ov_text(OVF_ITEM, R, y - 3, t, white, 1);
+    }
+    if (drift) { /* the score and the places' targets (lit once reached), the drift now and its angle */
+        static const float yellow[4] = {1.0f, 0.85f, 0.25f, 1}, bar[4] = {1.0f, 0.55f, 0.15f, 0.9f}, track[4] = {1, 1, 1, 0.18f};
+        char t[48];
+        ov_rect(R - 150, y - 4, R + 6, y + 4 * row + 2, box);
+        ov_text(OVF_ITEM, R - 144, y - 3, "DRIFT", white, 0);
+        snprintf(t, sizeof t, "%u", dh.total);
+        ov_text(OVF_ITEM, R, y - 3, t, white, 1);
+        for (int k = 0; k < 3; k++) {
+            int got = dh.total >= dh.target[k];
+            snprintf(t, sizeof t, "%u", dh.target[k]);
+            if (dh.done && got && (k == 0 || dh.total < dh.target[k - 1]))
+                ov_rect(R - 150, y + (k + 1) * row - 2, R + 6, y + (k + 2) * row - 2, (float[4]){medal[k][0], medal[k][1], medal[k][2], 0.35f});
+            ov_text(OVF_ITEM, R - 144, y + (k + 1) * row - 3, place[k], got ? medal[k] : gone, 0);
+            ov_text(OVF_ITEM, R, y + (k + 1) * row - 3, t, got ? medal[k] : gone, 1);
+        }
+        if (dh.drifting) { /* under the box: the drift's points with its length bonus, the angle as a bar (to 90 degrees) */
+            float yd = y + 4 * row + 8;
+            ov_rect(R - 150, yd - 4, R + 6, yd + 2 * row, box);
+            snprintf(t, sizeof t, "+%u", dh.drift);
+            ov_text(OVF_ITEM, R - 144, yd - 3, t, yellow, 0);
+            snprintf(t, sizeof t, "x%.1f", dh.mult);
+            ov_text(OVF_ITEM, R, yd - 3, t, yellow, 1);
+            float a = dh.angle > 90 ? 90 : dh.angle;
+            ov_rect(R - 144, yd + row + 2, R, yd + row + 10, track);
+            ov_rect(R - 144, yd + row + 2, R - 144 + 144 * a / 90, yd + row + 10, bar);
+        }
+        if (dh.msg) {
+            float w = 150;
+            ov_rect(W / 2 - w, 330, W / 2 + w, 356, box);
+            ov_text(OVF_ITEM, W / 2, 333, dh.msg, dh.msg[0] == '+' ? yellow : behind, 2);
+        }
     }
     if (toast) {
         float w = 150;

@@ -163,6 +163,7 @@ void f_000755D0(XbCtx *c) {
     if (count) c->edx = arr + i * 4; /* as the original leaves them */
     c->eax = found;
     if (found && list == 0x58DAA0) tt_place(found);
+    if (found && list == 0x58DAA0) rt_drift_place(found);
     if (list == 0x58DAA0 && count == 2 && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: both racers' laps and times, every 5 s */
         static uint64_t next;
         uint64_t now = rt_now_100ns();
@@ -415,6 +416,7 @@ void rt_career_tick(void) {
         }
     }
     if (xb_rd32(0x592984)) tt_watch();
+    rt_drift_tick();
     if (!cu_active) return;
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
     if (n != 2 || !arr) { cu_active = 0; return; }
