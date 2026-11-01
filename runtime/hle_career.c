@@ -284,12 +284,15 @@ void f_000410E0(XbCtx *c) {
         }
         uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
         int32_t points = line ? (int32_t)xb_rd32(line + 8) : 0;
-        if (n == 2 && people == 1 && mine && points > 0) {
+        /* the event's line by its track's racing line (the grid is laid before the race has its event: the
+         * user's head starts differ by track); no line of the track's length, no head start (the Rivals
+         * duels are two cars too), unless the lines give no lengths (catchup.txt's first form: the first) */
+        int k = -1, any_points = 0;
+        for (int j = 0; j < ncu; j++) any_points |= cu[j].points > 0;
+        for (int j = 0; j < ncu; j++) if (cu[j].points == points) { k = j; break; }
+        if (k < 0 && !any_points && ncu) k = 0;
+        if (n == 2 && people == 1 && mine && points > 0 && k >= 0) {
             cu_active = 1;
-            /* the event's line by its track's racing line (the grid is laid before the race has its event: the
-             * user's head starts differ by track), else the first */
-            int k = 0;
-            for (int j = 0; j < ncu; j++) if (cu[j].points == points) { k = j; break; }
             int32_t pct = (int32_t)(cu[k].frac * 100.0f + 0.5f), moved = -(pct < 2 ? 2 : pct > 99 ? 99 : pct); /* -1 is the pole's */
             xb_wr32(c->esp + 4, (uint32_t)moved);
             fprintf(stderr, "xbrt: catch-up: the opponent's grid place %d -> %d, %.2f of the lap (%d points) ahead\n", place, moved, cu[k].frac, points);
