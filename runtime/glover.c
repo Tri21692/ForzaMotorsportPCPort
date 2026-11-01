@@ -278,31 +278,58 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     ov_submit(vx, vy, vw, vh, W, H);
 }
 
-/* During a career time trial (hle_career.c), its three target times under the game's lap timer
- * (top right): gold, silver and bronze, each struck dim once the clock has passed it, and when the
- * lap is done the place it earned picked out. */
+/* The race HUD's additions, under the game's lap timer (top right). During a career time trial
+ * (hle_career.c): its three target times, gold, silver and bronze, each struck dim once the clock
+ * has passed it, the place earned picked out when the lap is done, and the best time driven in it.
+ * In a Catch-Up race: how far ahead of the opponent (or behind). And for a moment, a note (rt_toast:
+ * "Screenshot saved"), low in the middle. */
 static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     uint32_t target[3], elapsed;
-    int done;
-    if (!rt_tt_hud(target, &elapsed, &done) || !ov_init()) return;
+    int done, metres;
+    int tt = rt_tt_hud(target, &elapsed, &done);
+    int cu = !tt && rt_catchup_hud(&metres);
+    int toast = rt_toast_until && rt_now_100ns() < rt_toast_until;
+    if (!(tt || cu || toast) || !ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
     static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
-                       gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1};
+                       gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1},
+                       ahead[4] = {0.45f, 0.95f, 0.45f, 1}, behind[4] = {1.0f, 0.55f, 0.35f, 1};
     static const char *place[3] = {"1ST", "2ND", "3RD"};
     ov_n = 0;
     float y = 146, row = 19;
-    ov_rect(R - 150, y - 4, R + 6, y + 3 * row + 2, box);
-    int earned = 3;
-    for (int k = 2; k >= 0; k--)
-        if (elapsed <= target[k]) earned = k;
-    for (int k = 0; k < 3; k++) {
+    if (tt) {
+        uint32_t best = rt_tt_best();
+        ov_rect(R - 150, y - 4, R + 6, y + (best ? 4 : 3) * row + 2, box);
+        int earned = 3;
+        for (int k = 2; k >= 0; k--)
+            if (elapsed <= target[k]) earned = k;
+        for (int k = 0; k < 3; k++) {
+            char t[32];
+            snprintf(t, sizeof t, "%02u:%02u.%03u", target[k] / 60000, target[k] / 1000 % 60, target[k] % 1000);
+            int missed = elapsed > target[k];
+            const float *c = missed ? gone : medal[k];
+            if (done && k == earned) ov_rect(R - 150, y + k * row - 2, R + 6, y + (k + 1) * row - 2, (float[4]){medal[k][0], medal[k][1], medal[k][2], 0.35f});
+            ov_text(OVF_ITEM, R - 144, y + k * row - 3, place[k], c, 0);
+            ov_text(OVF_ITEM, R, y + k * row - 3, t, done && k == earned ? white : c, 1);
+        }
+        if (best) {
+            char t[32];
+            snprintf(t, sizeof t, "%02u:%02u.%03u", best / 60000, best / 1000 % 60, best % 1000);
+            ov_text(OVF_ITEM, R - 144, y + 3 * row - 3, "BEST", white, 0);
+            ov_text(OVF_ITEM, R, y + 3 * row - 3, t, white, 1);
+        }
+    }
+    if (cu) {
         char t[32];
-        snprintf(t, sizeof t, "%02u:%02u.%03u", target[k] / 60000, target[k] / 1000 % 60, target[k] % 1000);
-        int missed = elapsed > target[k];
-        const float *c = missed ? gone : medal[k];
-        if (done && k == earned) ov_rect(R - 150, y + k * row - 2, R + 6, y + (k + 1) * row - 2, (float[4]){medal[k][0], medal[k][1], medal[k][2], 0.35f});
-        ov_text(OVF_ITEM, R - 144, y + k * row - 3, place[k], c, 0);
-        ov_text(OVF_ITEM, R, y + k * row - 3, t, done && k == earned ? white : c, 1);
+        snprintf(t, sizeof t, "%d m", metres < 0 ? -metres : metres);
+        ov_rect(R - 150, y - 4, R + 6, y + row + 2, box);
+        ov_text(OVF_ITEM, R - 144, y - 3, metres >= 0 ? "AHEAD" : "BEHIND", metres >= 0 ? ahead : behind, 0);
+        ov_text(OVF_ITEM, R, y - 3, t, white, 1);
+    }
+    if (toast) {
+        float w = 150;
+        ov_rect(W / 2 - w, 400, W / 2 + w, 424, box);
+        ov_text(OVF_ITEM, W / 2, 403, rt_toast_text, white, 2);
     }
     ov_submit(vx, vy, vw, vh, W, H);
 }

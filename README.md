@@ -90,8 +90,10 @@ if errorlevel 1 pause
 ```
 
 The first start makes `run\forza.ini` and `run\hdd`. Frame rate,
-resolution, widescreen, volume and the rest are in `forza.ini`, or press F1
-in the game. The game's saves live in `run\hdd`: back that folder up, and
+resolution, widescreen, volume (and muting while the window is in the
+background) and the rest are in `forza.ini`, or press F1 in the game. F12
+saves a screenshot to `run\screenshots` ("Screenshot saved" shows for a
+moment). The game's saves live in `run\hdd`: back that folder up, and
 never edit the save files (they are signed; the game deletes profiles that
 fail the check). A pad is read through XInput; without one, the keyboard
 (see [runtime/README.md](runtime/README.md)). Every setting and debugging

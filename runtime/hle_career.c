@@ -69,10 +69,55 @@ static int tt_clock(uint32_t racer, uint32_t *ms, uint32_t *laps) {
     return 1;
 }
 
+/* Each time trial's best time (ms), kept in <mods>/timetrial_best.txt ("ordinal ms" lines), not in the
+ * saves: shown under its targets (rt_tt_best). */
+static uint32_t tt_best[MAX_TT];
+
+static void tt_best_path(char *path, size_t n) {
+    snprintf(path, n, "%s/timetrial_best.txt", getenv("XBRT_MODS") ? getenv("XBRT_MODS") : "mods");
+}
+
+static void tt_best_load(void) {
+    static int loaded;
+    if (loaded) return;
+    loaded = 1;
+    char path[1200], line[64];
+    tt_best_path(path, sizeof path);
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    uint32_t o, ms;
+    while (fgets(line, sizeof line, f))
+        if (sscanf(line, "%u %u", &o, &ms) == 2)
+            for (int i = 0; i < ntt; i++)
+                if (tt[i].ordinal == o) tt_best[i] = ms;
+    fclose(f);
+}
+
+static void tt_best_note(int i, uint32_t ms) {
+    tt_best_load();
+    if (tt_best[i] && tt_best[i] <= ms) return;
+    tt_best[i] = ms;
+    char path[1200];
+    tt_best_path(path, sizeof path);
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    for (int k = 0; k < ntt; k++)
+        if (tt_best[k]) fprintf(f, "%u %u\n", tt[k].ordinal, tt_best[k]);
+    fclose(f);
+}
+
+uint32_t rt_tt_best(void) {
+    int i = tt_event();
+    if (i < 0) return 0;
+    tt_best_load();
+    return tt_best[i];
+}
+
 static void tt_place(uint32_t racer) {
     int i = tt_event();
     uint32_t ms, laps;
     if (i < 0 || !tt_clock(racer, &ms, &laps) || laps < 1 || !ms) return;
+    tt_best_note(i, ms);
     uint32_t place = 4;
     for (int k = 2; k >= 0; k--)
         if (ms <= tt[i].ms[k]) place = (uint32_t)k + 1;
@@ -447,4 +492,32 @@ void rt_career_tick(void) {
     }
     /* done once the opponent's lap is begun and the player's too (off the grid); the dump goes on */
     if (lap[ai] != 0xFFFFFFFFu && (int32_t)lap[me] >= 0 && !getenv("XBRT_CATCHUP_DUMP")) cu_active = 0;
+}
+
+/* For the race HUD (glover.c, on the GPU's thread: reads only): in a Catch-Up race, how far the
+ * player leads the opponent, in metres (negative: behind), from both racers' progress (timing
+ * +0x70: laps begun less one plus the lap's fraction) and the lap's length (its racing line's
+ * points, about 2 m apart). */
+int rt_catchup_hud(int *metres) {
+    pthread_once(&cu_once, cu_load);
+    uint32_t g = xb_rd32(0x592984), ev = g ? xb_rd32(g + 0x318) : 0;
+    if (!ncu || !ev || ev >= RT_USER_LIMIT) return 0;
+    uint32_t ordinal = xb_rd32(ev + 0x10);
+    int k = -1;
+    for (int i = 0; i < ncu; i++)
+        if (cu[i].ordinal == ordinal) k = i;
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+    if (k < 0 || n != 2 || !arr || arr >= RT_USER_LIMIT || cu[k].points <= 0) return 0;
+    double prog[2] = {0, 0};
+    int me = -1;
+    for (uint32_t i = 0; i < 2; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
+        if (!t || t >= RT_USER_LIMIT) return 0;
+        uint64_t v = (uint64_t)xb_rd32(t + 0x70) | (uint64_t)xb_rd32(t + 0x74) << 32;
+        memcpy(&prog[i], &v, 8);
+        if (xb_rd32(r + 0x14) == 0) me = (int)i;
+    }
+    if (me < 0 || !(prog[0] > -2 && prog[0] < 50 && prog[1] > -2 && prog[1] < 50)) return 0;
+    *metres = (int)lround((prog[me] - prog[1 - me]) * cu[k].points * 2.0);
+    return 1;
 }

@@ -84,6 +84,14 @@ int rt_overlay_needs_restart(void);
 void rt_overlay_item(int i, const char **label, const char **value, int *live);
 const char *rt_overlay_help(int i);
 void rt_apu_set_volume(float v);
+void rt_apu_set_muted(int on);      /* silent (the window in the background) */
+void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */
+extern char rt_toast_text[64];
+extern volatile uint64_t rt_toast_until;
+/* For the race HUD (hle_career.c): in a Catch-Up race, the player's lead over the opponent in
+ * metres (negative: behind); in a career time trial, the best time driven in it (0 none). */
+int rt_catchup_hud(int *metres);
+uint32_t rt_tt_best(void);
 extern volatile uint8_t rt_gamma[256][3]; /* the DAC palette, D3D's gamma ramp (nv2a.c); applied as shown */
 extern volatile uint32_t rt_gamma_seq;     /* counts palette entries written */
 extern volatile float rt_brightness;      /* XBRT_BRIGHTNESS, or as the overlay set it: how much of the ramp; -1 not read yet */

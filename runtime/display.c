@@ -185,6 +185,14 @@ static void maybe_screenshot(const uint32_t *px, int w, int h) {
     rt_save_constants(path);
 }
 
+/* A short note on the picture for a moment (glover.c draws it): "Screenshot saved". */
+char rt_toast_text[64];
+volatile uint64_t rt_toast_until;
+void rt_toast(const char *msg) {
+    snprintf(rt_toast_text, sizeof rt_toast_text, "%s", msg);
+    rt_toast_until = rt_now_100ns() + 15000000; /* 1.5 s */
+}
+
 /* ---- the window ---- */
 
 #ifdef _WIN32
@@ -226,6 +234,7 @@ static void debug_key(WPARAM vk) {
         char path[256];
         snprintf(path, sizeof path, "screenshots/shot_%06.1fs.bmp", rt_now_100ns() / 1e7);
         save_bmp(path, frame, frame_w, frame_h);
+        rt_toast("Screenshot saved");
         strcpy(path + strlen(path) - 3, "cst");
         rt_save_constants(path);
         return;
@@ -280,6 +289,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP: /* rt_display_set_fullscreen, from another thread */
         set_fullscreen((int)wp);
         return 0;
+    case WM_ACTIVATEAPP: { /* silent in the background (forza.ini background_mute, F1's Mute in Background) */
+        const char *m = rt_settings_get("background_mute");
+        rt_apu_set_muted(!wp && (!m || atoi(m)));
+        break;
+    }
     case WM_KEYDOWN:
         if (wp == VK_F1) {
             rt_overlay_toggle();

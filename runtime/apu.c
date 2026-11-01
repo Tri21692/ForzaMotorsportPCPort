@@ -151,6 +151,8 @@ void rt_apu_tick(void) {
 
 static float volume = 0.7f; /* XBRT_VOLUME; below 1 for headroom: the mix of all bins can exceed full scale */
 void rt_apu_set_volume(float v) { volume = v < 0 ? 0 : v > 1 ? 1 : v; }
+static volatile int muted; /* the window in the background, with "background_mute" on (display.c) */
+void rt_apu_set_muted(int on) { muted = on; }
 static FILE *dump; /* XBRT_AUDIO_DUMP=<file>: the output as raw 48 kHz 16-bit stereo, for checking and for recordings */
 
 /* One buffer's worth of frames, as 16-bit stereo. */
@@ -168,7 +170,8 @@ static void make(int16_t *pcm) {
          * rasp. The soft clip stays only as a last guard. */
         static float env = 0;
         for (int i = 0; i < 32; i++) {
-            float l = s[i][0] * volume, r = s[i][1] * volume, pk = fmaxf(fabsf(l), fabsf(r));
+            float v = muted ? 0.0f : volume;
+            float l = s[i][0] * v, r = s[i][1] * v, pk = fmaxf(fabsf(l), fabsf(r));
             env = pk > env ? env + (pk - env) * 0.01f : env + (pk - env) * 0.00008f; /* attack ~2 ms, release ~250 ms at 48 kHz */
             float g = env > 0.5f ? 0.5f / env : 1.0f;
             float o[2] = {l * g, r * g};

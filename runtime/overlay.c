@@ -35,6 +35,7 @@ static const OvItem items[] = {
     {"vsync", "V-Sync", {"0", "1"}, {"Off", "On"}, 0, "Waits for the monitor's refresh to show a frame. Can add delay."},
     {"volume", "Volume", {"0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1"},
      {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}, 1, "Sound volume."},
+    {"background_mute", "Mute in Background", {"0", "1"}, {"Off", "On"}, 1, "Silent while the game's window is not in front."},
 };
 #define NITEMS (int)(sizeof items / sizeof items[0])
 
@@ -83,6 +84,7 @@ static void apply(const OvItem *it, const char *v) {
     else if (!strcmp(it->setting, "antialiasing")) rt_display_fxaa = strcmp(v, "off") != 0;
     else if (!strcmp(it->setting, "fullscreen")) rt_display_set_fullscreen(atoi(v));
     else if (!strcmp(it->setting, "brightness")) rt_brightness = (float)atof(v);
+    else if (!strcmp(it->setting, "background_mute")) { if (!atoi(v)) rt_apu_set_muted(0); } /* (display.c mutes on the next switch away) */
     else changed_restart = 1;
 }
 
