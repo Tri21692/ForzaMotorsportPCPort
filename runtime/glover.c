@@ -343,9 +343,8 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
             ov_text(OVF_ITEM, R - 144, y + (k + 1) * row - 3, place[k], got ? medal[k] : gone, 0);
             ov_text(OVF_ITEM, R, y + (k + 1) * row - 3, t, got ? medal[k] : gone, 1);
         }
-        if (dh.drifting) { /* under the box: the drift's points with its length bonus, the angle as a bar (to 90 degrees) */
+        if (dh.drifting) { /* under the box, on no background (the user's): the drift's points with its length bonus, the angle as a bar (to 90 degrees) */
             float yd = y + 4 * row + 8;
-            ov_rect(R - 150, yd - 4, R + 6, yd + 2 * row, box);
             snprintf(t, sizeof t, "+%u", dh.drift);
             ov_text(OVF_ITEM, R - 144, yd - 3, t, yellow, 0);
             snprintf(t, sizeof t, "x%.1f", dh.mult);

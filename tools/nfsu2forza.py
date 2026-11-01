@@ -175,6 +175,46 @@ def orient_normals(part):
     return int(turn.sum())
 
 
+def smooth_normals(part, angle=50.0):
+    """Each vertex normal made again from the triangles round its position (every
+    vertex there, so seams in the texture do not crease the shading), those within
+    `angle` degrees of its own triangles' (a sharper edge stays sharp), area-weighted,
+    Forza's winding. For a part thinned in Blender (cartoolkit's plan "decimate"):
+    it kept the dense model's normals over a coarser surface, 34% of the MX-5's body
+    over 20 degrees off (the disc's cars: 1%), and its silver paint reflected in
+    blotches. The damage shape's normals follow. Returns the vertices changed."""
+    import numpy as np
+    from collections import defaultdict
+    V = np.array([v[:3] for v in part['verts']], float)
+    if not len(V): return 0
+    tris = np.array([t for sp in part['subparts'] for t in strip_tris(sp['indices'])], int).reshape(-1, 3)
+    if not len(tris): return 0
+    fn = -np.cross(V[tris[:, 1]] - V[tris[:, 0]], V[tris[:, 2]] - V[tris[:, 0]])
+    fu = fn / np.maximum(np.linalg.norm(fn, axis=1), 1e-9)[:, None]
+    own = defaultdict(set)
+    for f, t in enumerate(tris):
+        for i in t: own[int(i)].add(f)
+    at = defaultdict(set)  # faces round each position
+    for i, fs in own.items(): at[tuple(V[i])] |= fs
+    cos = np.cos(np.radians(angle))
+    out, changed = list(part['verts']), 0
+    for i, fs in own.items():
+        ref = fn[list(fs)].sum(0)
+        if np.linalg.norm(ref) == 0: continue
+        ref /= np.linalg.norm(ref)
+        near = [f for f in at[tuple(V[i])] if fu[f] @ ref > cos]
+        n = fn[near].sum(0)
+        if np.linalg.norm(n) == 0: continue
+        n = tuple(int(round(c)) for c in n / np.linalg.norm(n) * 32767)
+        if n != tuple(out[i][3:6]):
+            out[i] = tuple(out[i][:3]) + n + tuple(out[i][6:]); changed += 1
+    part['verts'] = out
+    dmg = part['Damage'][1]
+    if len(dmg) >= 4 and struct.unpack_from('<I', dmg)[0] == len(out):
+        part['Damage'] = (part['Damage'][0], struct.pack('<I', len(out)) + b''.join(struct.pack('<6h', *v[:6]) for v in out))
+    return changed
+
+
 def facing(A):
     """The view a triangle (3 x 3 positions) faces: Forza winds triangles
     against the usual cross product. Undersides go to the side or end they
@@ -1625,6 +1665,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     mine = {d for d in done if '(' not in d} | {d.split('(')[0] for d in done if 'panes)' in d}
     turned = sum(orient_normals(p) for p in car['parts'] if p['name'] in mine)
     print('normals: %d turned to their faces' % turned)
+    if SMOOTH:  # (a part thinned in Blender: see smooth_normals)
+        print('normals: %d made again from the surface' % sum(smooth_normals(p) for p in car['parts'] if p['name'] in mine))
     if mw:  # long strips (see strip_long): the same triangles, a third of the indices
         before = after = 0
         for p in car['parts']:
@@ -1910,6 +1952,7 @@ FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoo
 KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
 # rear halves that need bumpers of their own (its kit 1 had no nose, kit 2 came out black)
 HIDE = ()  # template parts hidden by name (cartoolkit.py's plan "hide": ["wing"])
+SMOOTH = False  # the converted parts' normals made again from their surface (cartoolkit.py sets it for a plan that decimates)
 OWN_INTERIOR = False  # a Most Wanted add-on's KIT00_INTERIOR as the cabin, not the template's fitted in (cartoolkit.py's plan
                       # "interior": true): under the roadster MX-5's open top the NB's interior was squashed into black spikes
 UV32 = False  # every packed texel and the windows' black at the game's reading (32768 across the atlas), as a Most Wanted

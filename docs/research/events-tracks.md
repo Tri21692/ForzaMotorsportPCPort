@@ -280,3 +280,24 @@ Trial's, so it runs after careertimetrial.py).
   and the MX-5, 162, are Roadsters) and no tuner one.
 - ai\aicarmodellist.xml: an AI car model is 100 + the car's ordinal stock,
   and 1000, 2000 or 3000 more with every part at that upgrade stage.
+
+## Drift Championship (1 Nov)
+
+- One series in the Time Trial category (careertimetrial.py's DRIFT): six
+  events (Tsukuba, Silverstone Short, Laguna Seca, Alpine Ring, Pacific
+  Shipyards I and II), open to the eight D-Spec cars (an `<or>` a car), the
+  MX-5 RADBUL (288) for 1st overall (`<rewards CareerCarUnlock CareerCarGift>`
+  on the series' score pos 1, as the disc's Opens).
+- Its logo is tools/driftlogo.py's (the user's DRIFT art, white on a
+  red-orange panel) on tile 50. ico_events_sm had 50 tiles, all used; it
+  grew a row in every language (addseries.grow: the size word's height bits
+  and the pack's size), now 75 tiles. MegaXPR.ca2 went 45.89 to 46.35 MB.
+- runtime/hle_drift.c: no drift under 15 mph; a slide begun off the road
+  scores nothing on it until the car has run straight on the road for 0.7 s;
+  the drift-now readout has no background.
+- The career's category icons are media/Events/Events.xpr (108 x 60) and
+  Events_LG.xpr (210 x 117), eight tiles: fuel can, lights, steering wheel,
+  clipboard, helmet, two helmets, stopwatch, cones; the first six follow the
+  categories' kinds (0 endurance .. 5 online). The Go Race list (0x184F30)
+  makes an item a table entry; the icon widget (vtable 0x49D8F4, cells
+  0xD2 x 0x75, frame at +0x220) is built at 0x34A230.

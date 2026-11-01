@@ -867,3 +867,12 @@ experiment (car_nissan240sx.cab: the S13 model on the S14's atlas, all
 patches), and the 240SX D-Spec was copied from it. Set aside as
 car_nissan240sx.cab.replaced in mods_track; the D-Spec's model is the S14's
 again. The S13 is its own car, Nissan240SXS13.
+
+Smooth normals (1 Nov, third pass): a car thinned in Blender (plan
+"decimate": the MX-5 RADBUL, the SC63) kept the dense model's normals over
+the coarser surface, 34% of the MX-5's body more than 20 degrees off its
+faces (the disc's MX-5: 1%); in game its silver paint reflected like crumpled
+foil. nfsu2forza.smooth_normals makes them again from the triangles round
+each position (within 50 degrees, area-weighted), which cartoolkit.py turns
+on for a "decimate" plan; tools/fixnormals.py --smooth does it to an
+installed cab (done for the MX-5, its D-Spec and the SC63).

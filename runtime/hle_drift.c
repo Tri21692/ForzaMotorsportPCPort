@@ -13,7 +13,9 @@
  *    near; a wall or another car does),
  *  - leaves the road: the race's own off-track penalty growing (timing +0x98, the seconds of
  *    penalty: found in the race dumps of 2026-10-31, it only steps up, and grows while the car is
- *    off the track's edges).
+ *    off the track's edges). A slide begun off the road scores nothing when it comes back onto it:
+ *    no drift starts until the car has run straight on the road for HOLD seconds.
+ * Under MIN_SPEED (15 mph) there is no drift and no points.
  *
  * The car (racer +0xA0): +0x38 its heading (the turn's third row), +0x44 its velocity (m/s),
  * world x, y up, z. The race: [0x592984]+0x318 the event (+0x10 its ordinal, +0x24 its laps);
@@ -31,7 +33,7 @@
 #define SPIN 110.0f
 #define HOLD 0.7          /* s */
 #define IMPACT 30.0f      /* m/s^2, about 3 g */
-#define MIN_SPEED 4.0f    /* m/s: slower than this, no drift (turning on the spot) */
+#define MIN_SPEED 6.7056f /* m/s, 15 mph: slower than this, no drift and no points (the user's) */
 #define LENGTH_BONUS 150.0
 #define LENGTH_MAX 3.0
 
@@ -77,8 +79,8 @@ static struct {
     uint32_t racer;
     double total, cur, len;   /* banked, the drift now (before its length bonus), its length (m) */
     float angle, v[3], penalty;
-    int drifting, done;
-    uint64_t last, calm_since, v_at;
+    int drifting, done, offroad;  /* offroad: the car left the road and has not yet run straight on it */
+    uint64_t last, calm_since, v_at, straight_since;
     char msg[32];
     uint64_t msg_until;
 } ds;
@@ -151,7 +153,7 @@ void rt_drift_tick(void) {
         memcpy(ds.v, v, sizeof v), ds.v_at = now;
         if (dv / t > IMPACT) { dr_lose("HIT: DRIFT LOST"); return; }
     }
-    if (off) { dr_lose("OFF ROAD: DRIFT LOST"); return; }
+    if (off) { dr_lose("OFF ROAD: DRIFT LOST"); ds.offroad = 1, ds.straight_since = 0; return; }
     float sp = hypotf(v[0], v[2]), fl = hypotf(fx, fz);
     float a = 0;
     if (sp >= MIN_SPEED && fl > 0.1f) {
@@ -159,6 +161,12 @@ void rt_drift_tick(void) {
         a = acosf(c < -1 ? -1 : c > 1 ? 1 : c) * 57.29578f;
     }
     ds.angle = a;
+    if (ds.offroad) { /* a slide begun off the road scores nothing when it comes back on: first HOLD s straight (or slow) on it */
+        if (a >= ANGLE_MIN) ds.straight_since = 0;
+        else if (!ds.straight_since) ds.straight_since = now;
+        else if ((now - ds.straight_since) / 1e7 > HOLD) ds.offroad = 0;
+        if (ds.offroad) return;
+    }
     if (a > SPIN) { dr_lose("SPUN: DRIFT LOST"); return; }
     if (a >= ANGLE_MIN) {
         ds.drifting = 1, ds.calm_since = 0;

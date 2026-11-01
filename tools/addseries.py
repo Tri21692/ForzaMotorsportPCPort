@@ -84,6 +84,22 @@ def put_tile(d, index, img, tile):
     return bytes(d)
 
 
+def grow(d, tile, rows=1):
+    """The strip d with `rows` more rows of clear tiles under it: the texture's height (the size word's
+    bits 12-23, less one) and the pack's size (at 4) grown, the pack padded to 2048 with 0xAD as the
+    disc's. The small strip (50 tiles, all used by 1 Nov) grows a row for the drift series' logo."""
+    hdr, w, h, pitch = linear(d)
+    h2 = h + rows * tile[1]
+    if h2 > 4096: raise SystemExit('logo strip: %d rows high is past the 4096 a texture holds' % h2)
+    body = d[hdr:hdr + pitch * h] + bytes(pitch * (h2 - h))
+    out = bytearray(d[:hdr]) + body
+    out += b'\xad' * (-len(out) % 2048)
+    size = struct.unpack_from('<I', out, 28)[0]
+    struct.pack_into('<I', out, 28, (size & ~(0xFFF << 12)) | ((h2 - 1) << 12))
+    struct.pack_into('<I', out, 4, len(out))
+    return bytes(out)
+
+
 def tiles_in(d, tile):
     hdr, w, h, pitch = linear(d)
     return (w // tile[0]) * (h // tile[1])

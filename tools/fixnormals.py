@@ -3,7 +3,10 @@ in a cab already installed, for cars converted before the converter did it itsel
 The game lights and reflects by the normals: turned in, they showed as dark patches, most
 on light or metallic paint. The disc's own parts already agree, so only converted ones change.
 
-  python tools/fixnormals.py [--dry-run] <car_X.cab> [...]
+  python tools/fixnormals.py [--dry-run] [--smooth] <car_X.cab> [...]
+
+--smooth: every part's normals made again from its surface too (nfsu2forza.smooth_normals), for a
+car thinned in Blender (the MX-5 RADBUL, the SC63).
 
 Rewrites only the cab's car.carbin, in place (keep a copy). Prints each changed part.
 """
@@ -20,7 +23,7 @@ import nfsu2forza
 SHARE = 0.05  # a part is changed only when more of its normals than this face away (the disc's: 3% at most)
 
 
-def fix(path, dry=False):
+def fix(path, dry=False, smooth=False):
     files, root = addcar.cab_files(open(path, 'rb').read())
     key = next(k for k in files if k.lower().endswith('car.carbin'))
     car = carbin.read(files[key])
@@ -31,16 +34,18 @@ def fix(path, dry=False):
         if n and n < SHARE * len(p['verts']):  # a few on a disc part (a crease made so): left as made
             p['verts'], p['Damage'] = keep
             n = 0
+        if smooth and p['name'].endswith('_LOD1') and not p['name'].startswith(('interior', 'steering')):
+            n += nfsu2forza.smooth_normals(p)
         if n:
             print('  %s: %d of %d' % (p['name'], n, len(p['verts'])))
             total += n
-    print('%s: %d normals turned%s' % (os.path.basename(path), total, ' (dry run)' if dry else ''))
+    print('%s: %d normals changed%s' % (os.path.basename(path), total, ' (dry run)' if dry else ''))
     if total and not dry:
         files[key] = carbin.write(car)
         open(path, 'wb').write(forzacab.pack(files, root))
 
 
 if __name__ == '__main__':
-    args = [a for a in sys.argv[1:] if a != '--dry-run']
+    args = [a for a in sys.argv[1:] if a not in ('--dry-run', '--smooth')]
     if not args: raise SystemExit(__doc__)
-    for a in args: fix(a, '--dry-run' in sys.argv)
+    for a in args: fix(a, '--dry-run' in sys.argv, '--smooth' in sys.argv)

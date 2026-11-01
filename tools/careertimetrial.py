@@ -15,7 +15,7 @@ folder:
   - strings: the tile's title (GameStrings.str) and description (UIStrings.str), the series' names
     and each event's description with its targets (EventStrings.str), every language, in English.
 
-  python tools/careertimetrial.py <disc> <mods folder>
+  python tools/careertimetrial.py <disc> <mods folder> [<drift logo folder: tools/driftlogo.py's drift_lg.png, drift_sm.png>]
 """
 import os
 import re
@@ -66,11 +66,14 @@ DRIFT_EVENT_ORDINAL = 400    # after theirs, 389-399
 DRIFT_CARS = ('NissanSilviaDSpec', 'Nissan240SXDSpec', 'MazdaRX7DSpec', 'ToyotaTruenoDSpec',
               'NissanSilviaS15RDSpec', 'DodgeNeonCoupeDSpec', 'ToyotaCelicaGT4DSpec', 'MazdaMX5RadbulDSpec')  # (tools/driftcars.py's)
 DRIFT_PER_M = (6.0, 4.0, 2.0)
+# One big series (the user's, 1 Nov: three were too many), the MX-5 RADBUL its prize, its own logo
+# (tools/driftlogo.py from the user's DRIFT art) on tile DRIFT_ICON, in the row the small strip grew by
 DRIFT = [
-    ('Drift Rookie', 0, [(26, 2), (47, 2)]),    # Tsukuba, Silverstone Short
-    ('Drift Pro', 10, [(1, 2), (27, 1)]),        # Laguna Seca, Alpine Ring
-    ('Shipyard Drift King', 20, [(82, 2), (83, 2)]),  # Pacific Shipyards Circuit and Circuit II
+    ('Drift Championship', 0, [(26, 2), (47, 2), (1, 2), (27, 1), (82, 2), (83, 2)]),
+    # Tsukuba, Silverstone Short, Laguna Seca, Alpine Ring, Pacific Shipyards Circuit and Circuit II
 ]
+DRIFT_PRIZE = 'MazdaMX5Radbul'
+DRIFT_ICON = 50
 
 
 def build_drift(mega, tracks, field):
@@ -85,9 +88,12 @@ def build_drift(mega, tracks, field):
     series, targets, strings, ordinal = [], [], [], DRIFT_EVENT_ORDINAL
     for k, (name, level, events) in enumerate(DRIFT):
         tag = 'Drift%d' % k
+        prize = addcar.ordinal_of(xml, DRIFT_PRIZE) if re.search(r'<car name="%s"' % DRIFT_PRIZE, xml) else None
+        reward = '<rewards CareerCarUnlock="%d" CareerCarGift="%d" />' % (prize, prize) if prize is not None else ''  # (as the disc's Opens: 1st overall)
         strings += [('IDS_Mod_%s_Name' % tag, name),
-                    ('IDS_Mod_%s_Desc' % tag, 'Open to drift-spec cars. Alone on the track: score by drifting, long and at an angle. '
-                                              'Leaving the road, a spin or a hit loses the drift.')]
+                    ('IDS_Mod_%s_Desc' % tag, 'Open to drift-spec cars. Alone on the track: score by drifting, long and at an angle, '
+                                              'over 15 mph. Leaving the road, a spin or a hit loses the drift.'
+                                              + (' Win it for the MX-5 RADBUL.' if prize is not None else ''))]
         out = []
         for i, (t, laps) in enumerate(events):
             pts = [int(round(length[t] * laps * f / 100)) * 100 for f in DRIFT_PER_M]
@@ -106,9 +112,9 @@ def build_drift(mega, tracks, field):
             ordinal += 1
         head = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{IDS_Mod_%s_Name}" '
                 'seriesdescid="{IDS_Mod_%s_Desc}" seriesid="58" seriesordinal="%d" seriesorder="%d" Icon="%d"%s>\r\n'
-                '\t<Scoring>\r\n' + ''.join('\t\t<score pos="%d"></score>\r\n' % p for p in range(1, 9)) +
+                '\t<Scoring>\r\n' + ''.join('\t\t<score pos="%d">%s</score>\r\n' % (p, reward if p == 1 else '') for p in range(1, 9)) +
                 '\t</Scoring>\r\n\t<Restrictions>\r\n%s\t</Restrictions>\r\n\t%s\r\n') % (
-                    name, tag, tag, DRIFT_SERIES_ORDINAL + k, len(LADDER) + k, 7 + k, ' Level="%d"' % level if level else '', allowed, field)
+                    name, tag, tag, DRIFT_SERIES_ORDINAL + k, len(LADDER) + k, DRIFT_ICON, ' Level="%d"' % level if level else '', allowed, field)
         series.append(head + '\r\n'.join('\t' + e for e in out) + '\r\n</series>\r\n')
     return series, targets, strings
 
@@ -175,7 +181,7 @@ def build(disc, mods, mega, tracks):
     return series, targets, strings
 
 
-def install(disc, mods):
+def install(disc, mods, logo_dir=None):
     mega = addcar.Archive(disc, mods, 'Mega.ca2')
     tl = mega.files['forzadb' + B + 'tracklist.xml'].decode('latin-1')
     tracks = [dict(re.findall(r'(\w+)="([^"]*)"', r)) for r in re.findall(r'<track\s.*?/>', tl, re.S)]
@@ -212,6 +218,19 @@ def install(disc, mods):
         x = re.sub(r'\{(IDS_\w+)\}', lambda m: str(ids[m.group(1)]), x)
         mega.files['events' + B + 'TimeTrial' + B + 'Ser%05d.xml' % (k + 1)] = x.encode('latin-1')
     mega.check(); mega.write()
+    if logo_dir:  # the drift series' logo on tile DRIFT_ICON of both strips in every language, the small one grown a row for it
+        import addseries
+        xpr = addcar.Archive(disc, mods, 'MegaXPR.ca2')
+        imgs = {'lg': addseries.image(os.path.join(logo_dir, 'drift_lg.png'), *addseries.LG[:2]),
+                'sm': addseries.image(os.path.join(logo_dir, 'drift_sm.png'), *addseries.SM[:2])}
+        for k in sorted(xpr.files):
+            m = re.match(r'frontend\\[a-z]{2}\\ico_events_(lg|sm)\.xpr$', k, re.I)
+            if not m: continue
+            size = addseries.LG if m.group(1).lower() == 'lg' else addseries.SM
+            while addseries.tiles_in(xpr.files[k], size) <= DRIFT_ICON: xpr.files[k] = addseries.grow(xpr.files[k], size)
+            xpr.files[k] = addseries.put_tile(xpr.files[k], DRIFT_ICON, imgs[m.group(1).lower()], size)
+        xpr.check(); xpr.write()
+        print('drift logo: tile %d of the series logos, from %s' % (DRIFT_ICON, logo_dir))
     ev = os.path.join(mods, 'media', 'Events')
     os.makedirs(ev, exist_ok=True)
     shutil.copyfile(addcar.disc_file(disc, 'media', 'Events', 'OnlineCareer.bik'), os.path.join(ev, 'TimeTrial.bik'))
@@ -223,4 +242,4 @@ def install(disc, mods):
 
 
 if __name__ == '__main__':
-    install(sys.argv[1], sys.argv[2])
+    install(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)  # [the drift logo's folder: tools/driftlogo.py]
