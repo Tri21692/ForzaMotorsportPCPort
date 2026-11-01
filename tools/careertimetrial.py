@@ -32,10 +32,11 @@ SERIES_ORDINAL = 85      # after the custom cup's 84
 EVENT_ORDINAL = 355      # after the custom cup's 351-354; the profile keeps 512 medal bytes
 # the target times against laptime.py's estimate: a person's clean lap is PACE of it (the user's
 # 1:09.2 at Silverstone Club in Class D, against 1:20.0), and 1st asks for that lap give or take
-# MARGIN, from 6% slower in Class D to the clean lap itself in R-P1, step by step up the ladder;
+# MARGIN, from 5% slower in Class D to 2% slower in R-P1 (the user: the first a little harder, the
+# last a little easier than 6% and the lap itself), step by step up the ladder;
 # 2nd and 3rd are SPREAD slower than 1st
 PACE = 0.865
-MARGIN = (1.06, 1.00)
+MARGIN = (1.05, 1.02)
 SPREAD = (1.0, 1.04, 1.08)
 
 # (class, restriction, level, icon (the Spec series' class logos), tracks (tracklist ordinals), the
