@@ -9,8 +9,9 @@
  * a variable (hle_career_cats_gen.inc, made from out/code_0023.c by tools/careercats_gen.py: if the game is recompiled, make
  * it again). <mods>/categories.txt adds categories after the six, a line each:
  *
- *     <folder name> <kind> <title id> <description id> <icon>
+ *     <folder name> <kind> <title id> <description id> <icon> [<place in the list, 0 first>]
  *
+ * (no place: after the six; the user's Drift is 1, beside Time Trial)
  * (the ids in the title's and the description's string tables, as the first category's: GameStrings
  * and UIStrings; the icon a tile of media/Events/Events.xpr and Events_LG.xpr); then the table is
  * copied into kernel data with room for them, the first time the list is built. Without the file
@@ -37,7 +38,7 @@
 #define TT_NAME 0x4D02C0u /* the Time Trial category's folder name (nv2a.c's career_timetrial) */
 
 static uint32_t base = CAT_TABLE, count = CAT_DISC;
-static struct { char name[32]; uint32_t icon; } added[CAT_MAX - CAT_DISC];
+static struct { char name[32]; uint32_t icon, at; } added[CAT_MAX - CAT_DISC]; /* at: its entry's address */
 static unsigned nadded;
 static int ready;
 
@@ -50,16 +51,30 @@ static void setup(void) {
     snprintf(path, sizeof path, "%s/categories.txt", getenv("XBRT_MODS") ? getenv("XBRT_MODS") : "mods");
     FILE *f = fopen(path, "r");
     if (!f) return;
-    struct { char name[32]; uint32_t kind, title, desc, icon; } want[CAT_MAX - CAT_DISC];
+    struct { char name[32]; uint32_t kind, title, desc, icon, pos; } want[CAT_MAX - CAT_DISC];
     unsigned n = 0;
-    while (n < CAT_MAX - CAT_DISC && fgets(line, sizeof line, f))
-        if (line[0] != '#' && sscanf(line, "%31s %u %u %u %u", want[n].name, &want[n].kind, &want[n].title, &want[n].desc, &want[n].icon) == 5) n++;
+    while (n < CAT_MAX - CAT_DISC && fgets(line, sizeof line, f)) {
+        if (line[0] == '#') continue;
+        want[n].pos = 99; /* (no place given: after the six) */
+        if (sscanf(line, "%31s %u %u %u %u %u", want[n].name, &want[n].kind, &want[n].title, &want[n].desc, &want[n].icon, &want[n].pos) >= 5) n++;
+    }
     fclose(f);
     if (!n) return;
     uint32_t t = rt_kdata_alloc((CAT_DISC + n) * CAT_SIZE), names = rt_kdata_alloc(n * 32);
-    for (uint32_t o = 0; o < CAT_DISC * CAT_SIZE; o += 4) xb_wr32(t + o, xb_rd32(CAT_TABLE + o));
+    /* the list's order: an added category at its place (0 first), the disc's in theirs round it */
+    uint32_t at[CAT_MAX - CAT_DISC], slot = 0, d = 0;
+    for (unsigned k = 0; k < n; k++) at[k] = 0xFFFFFFFFu;
+    while (slot < CAT_DISC + n) {
+        unsigned k = 0;
+        while (k < n && !(at[k] == 0xFFFFFFFFu && (want[k].pos <= slot || d == CAT_DISC))) k++;
+        if (k < n) at[k] = slot++;
+        else {
+            for (uint32_t o = 0; o < CAT_SIZE; o += 4) xb_wr32(t + slot * CAT_SIZE + o, xb_rd32(CAT_TABLE + d * CAT_SIZE + o));
+            d++, slot++;
+        }
+    }
     for (unsigned k = 0; k < n; k++) {
-        uint32_t e = t + (CAT_DISC + k) * CAT_SIZE, nm = names + 32 * k;
+        uint32_t e = t + at[k] * CAT_SIZE, nm = names + 32 * k;
         for (unsigned i = 0; i < 32; i++) xb_wr8(nm + i, (uint8_t)(i < strlen(want[k].name) ? want[k].name[i] : 0));
         for (uint32_t o = 0; o < CAT_SIZE; o += 4) xb_wr32(e + o, 0);
         xb_wr32(e + 0x00, nm);
@@ -67,11 +82,20 @@ static void setup(void) {
         xb_wr32(e + 0x10, xb_rd32(CAT_TABLE + 0x10)), xb_wr16(e + 0x14, (uint16_t)want[k].title); /* the first's tables */
         xb_wr32(e + 0x20, xb_rd32(CAT_TABLE + 0x20)), xb_wr16(e + 0x24, (uint16_t)want[k].desc);
         snprintf(added[k].name, sizeof added[k].name, "%s", want[k].name);
-        added[k].icon = want[k].icon;
-        fprintf(stderr, "xbrt: career category %u: %s (kind %u, strings %u, %u, icon %u)\n", CAT_DISC + k, want[k].name, want[k].kind,
+        added[k].icon = want[k].icon, added[k].at = e;
+        fprintf(stderr, "xbrt: career category %u: %s (kind %u, strings %u, %u, icon %u)\n", at[k], want[k].name, want[k].kind,
                 want[k].title, want[k].desc, want[k].icon);
     }
     nadded = n, base = t, count = CAT_DISC + n;
+}
+
+/* At boot: the series logos' small strip (frontend\<language>\ico_Events_sm.xpr, 108 x 60 tiles) is
+ * drawn through a static descriptor at 0x4B4224 (the path's buffer 0x52E0D0, the tile's size, the
+ * tiles: 50). The strip grew a row (tools/addseries.py's grow, 75 tiles) for the Drift Championship's
+ * logo on tile 50, which the list then left blank. A strip the disc's size has no tile past 49 any
+ * series names. */
+void rt_career_cats_init(void) {
+    if (xb_rd32(0x4B4224) == 0x52E0D0u && xb_rd32(0x4B4228) == 108 && xb_rd32(0x4B4230) == 50) xb_wr32(0x4B4230, 75);
 }
 
 uint32_t cat_base(void) { setup(); return base; }
@@ -82,7 +106,7 @@ static uint32_t cat_frame(uint32_t e, uint32_t k) {
     uint32_t nm = xb_rd32(e);
     if (nm == TT_NAME) return 6;
     for (unsigned i = 0; i < nadded; i++)
-        if (e == base + (CAT_DISC + i) * CAT_SIZE) return added[i].icon;
+        if (e == added[i].at) return added[i].icon;
     return k;
 }
 

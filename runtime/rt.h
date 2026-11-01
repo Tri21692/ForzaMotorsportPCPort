@@ -156,6 +156,7 @@ uint32_t rt_phys_of(uint32_t va);
 uint8_t *rt_phys_ptr(uint32_t pa); /* a physical address as devices see it, stand-ins included */
 uint32_t rt_pool_alloc(uint32_t size);
 uint32_t rt_kdata_alloc(uint32_t size);
+void rt_career_cats_init(void); /* hle_career_cats.c: the series logos' small strip, 75 tiles */
 void rt_mem_reserve_image(uint32_t base, uint32_t size);
 uint32_t rt_size_of(uint32_t addr); /* size of a pool/contiguous block, 0 if unknown */
 

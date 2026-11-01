@@ -365,6 +365,7 @@ int main(int argc, char **argv) {
     rt_fibers_init();
     rt_crypto_init();
     rt_files_init();
+    rt_career_cats_init();
     rt_mods_installer_records();
     rt_hw_init();
     rt_nv2a_init();

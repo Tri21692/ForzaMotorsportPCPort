@@ -20,7 +20,7 @@ BAND, DEEP = np.array([214, 40, 32]), np.array([40, 6, 8])  # red: no other cate
 
 def car_masks(path, w, h):
     """(fill, windows) coverage of the car fitted into w x h, from the icon's near-white."""
-    src = addseries.image(path, 4 * w, 4 * h).astype(float)
+    src = addseries.image(path, 2 * w, 2 * h).astype(float)
     lum = src[..., :3].mean(-1)
     yy, xx = np.mgrid[0:src.shape[0], 0:src.shape[1]]
     lum[np.hypot((xx - src.shape[1] / 2) / src.shape[1], (yy - src.shape[0] / 2) / src.shape[0]) > 0.4] = 0  # (not the disc's rim)
@@ -53,7 +53,14 @@ def dilate(m, r):
     return out
 
 
-def tile(icon, w, h):
+def tile(icon, w, h, k=4):
+    """The tile, drawn k times as big and each k x k block averaged: smooth edges (drawn at size, the
+    outline and the speed lines came out ragged, the user's 'scuffed')."""
+    big = draw(icon, w * k, h * k).astype(float)
+    return big.reshape(h, k, w, k, 4).mean((1, 3)).round().astype(np.uint8)
+
+
+def draw(icon, w, h):
     s = w / 210.0
     yy, xx = np.mgrid[0:h, 0:w].astype(float)
     # the dark gradient, lighter low on the left
@@ -76,10 +83,10 @@ def tile(icon, w, h):
     oy, ox = int((h - fill.shape[0]) / 2), int(w * 0.24 + (w * 0.66 - fill.shape[1]) / 2)
     m[oy:oy + fill.shape[0], ox:ox + fill.shape[1]] = fill
     wm[oy:oy + fill.shape[0], ox:ox + fill.shape[1]] = win
-    edge = dilate(np.maximum(m, wm), max(1, int(round(2 * s))))
+    edge = dilate(np.maximum(m, wm), max(1, int(round(2.5 * s))))
     img = img * (1 - edge[..., None])                            # black outline
     img = img * (1 - m[..., None]) + 255 * m[..., None]           # white body
-    img = img * (1 - wm[..., None]) + DEEP * 1.6 * wm[..., None]  # dark windows, as the wheel's centre
+    img = img * (1 - wm[..., None]) + np.array([118, 118, 124]) * wm[..., None]  # grey windows, as the helmets' visors
     return np.dstack([np.clip(img, 0, 255).astype(np.uint8), np.full((h, w), 255, np.uint8)])
 
 

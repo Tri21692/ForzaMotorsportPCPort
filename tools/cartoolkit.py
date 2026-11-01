@@ -325,6 +325,32 @@ def by_texture(parts, car_dir, plan):
     return parts
 
 
+def retexture(parts, car_dir, plan):
+    """Groups drawn from a texture the car's pack lacks given one it has, all at one spot (plan
+    "retexture": {texture name or hash: [texture name, u, v]}): the MX-5 add-on's tail lamps are a
+    shared texture of the game it was made for (d947f346, in no Most Wanted file), and as lamp
+    material on the template's nearest texel they came out dark; on the red of its own brake lamp
+    texture they are red, and glow when braking."""
+    names = {h: t['name'] for h, t in nfsu.read_textures(os.path.join(car_dir, 'TEXTURES.BIN')).items()}
+    by_name = {n: h for h, n in names.items()}
+    for p in parts:
+        idx = [i for t in p['tris'] for i in t]
+        for gi, g in enumerate(p['groups']):
+            ti, _ = struct.unpack_from('<II', g, 0x1C)
+            th = p['textures'][ti] if ti < len(p['textures']) else 0
+            want = plan.get(names.get(th, '%08x' % th))
+            if not want: continue
+            new, u, v = by_name[want[0]], float(want[1]), float(want[2])
+            if new not in p['textures']: p['textures'].append(new)
+            g = bytearray(g)
+            struct.pack_into('<I', g, 0x1C, p['textures'].index(new))
+            p['groups'][gi] = bytes(g)
+            n, = struct.unpack_from('<I', g, 12); first, = struct.unpack_from('<I', g, 0x34)
+            for i in set(idx[first:first + n]):
+                if i < len(p['verts']): p['verts'][i] = tuple(p['verts'][i][:7]) + (u, v) + tuple(p['verts'][i][9:])
+    return parts
+
+
 def build(plan, car_dir):
     if 'merge' in plan:  # an Underground 2 car: its own names and groups, joined as the converter takes them
         prefix = os.path.basename(os.path.normpath(car_dir)).upper()
@@ -332,6 +358,7 @@ def build(plan, car_dir):
     if 'decimate' in plan:  # a Most Wanted car as it is, its dense parts thinned (after its materials are named)
         prefix = os.path.basename(os.path.normpath(car_dir)).upper()
         parts = nfsu.read(os.path.join(car_dir, 'GEOMETRY.BIN'))
+        if plan.get('retexture'): parts = retexture(parts, car_dir, plan['retexture'])
         if plan.get('materials'): parts = by_texture(parts, car_dir, plan['materials'])
         return thin(parts, prefix, plan['decimate'])
     prefix = os.path.basename(os.path.normpath(car_dir)).upper()

@@ -23,12 +23,15 @@
   },
   "materials": {
     "TT_SKIN1": "BODY",
-    "TT_KIT00_BRAKELIGHT_OFF": "LEFT_HEADLIGHT_BULB",
-    "TT_KIT00_BRAKELIGHT_ON": "BRAKELIGHT",
-    "d947f346": "BRAKELIGHT",
-    "267d188c": {
+    "TT_KIT00_BRAKELIGHT_OFF": {
       "front": "LEFT_HEADLIGHT_BULB",
       "rear": "BRAKELIGHT"
+    },
+    "TT_KIT00_BRAKELIGHT_ON": "BRAKELIGHT",
+    "d947f346": "BODY_BLACK",
+    "267d188c": {
+      "front": "LEFT_HEADLIGHT_GLASS",
+      "rear": "DECAL_BRAKELIGHT_LENS"
     },
     "7b220ddf": {
       "KIT00_INTERIOR": "DECAL_DUPLICATE",

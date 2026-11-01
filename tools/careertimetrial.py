@@ -73,9 +73,10 @@ DRIFT = [
     # Tsukuba, Silverstone Short, Laguna Seca, Alpine Ring, Pacific Shipyards Circuit and Circuit II
 ]
 DRIFT_PRIZE = 'MazdaMX5Radbul'
-# its own career category (the user's: a seventh tile, runtime/hle_career_cats.c): folder, title, description, icon tile
+# its own career category (the user's: a seventh tile, runtime/hle_career_cats.c): folder, title, description, icon tile,
+# its place in the list (1: beside Time Trial, the first)
 DRIFT_CATEGORY = ('Drift', 'Drift', 'Slide for points, alone on the track: long, at an angle and over 15 mph. '
-                  'Drift-spec cars only. Win the championship for the MX-5 RADBUL.', 8)
+                  'Drift-spec cars only. Win the championship for the MX-5 RADBUL.', 8, 1)
 DRIFT_ICON = 50
 
 
@@ -243,8 +244,8 @@ def install(disc, mods, logo_dir=None):
     shutil.copyfile(addcar.disc_file(disc, 'media', 'Events', 'Club.bik'), os.path.join(ev, DRIFT_CATEGORY[0] + '.bik'))
     open(os.path.join(mods, 'categories.txt'), 'w').write(
         '# career categories after the six (runtime/hle_career_cats.c): folder, kind (2 club), title id (GameStrings),\n'
-        '# description id (UIStrings), icon (a tile of media/Events/Events.xpr)\n'
-        '%s 2 %d %d %d\n' % (DRIFT_CATEGORY[0], cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3]))
+        '# description id (UIStrings), icon (a tile of media/Events/Events.xpr), place in the list (0 first)\n'
+        '%s 2 %d %d %d %d\n' % (DRIFT_CATEGORY[0], cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3], DRIFT_CATEGORY[4]))
     print('Drift category: strings %d, %d, icon %d' % (cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3]))
     if logo_dir:  # the drift series' logo on tile DRIFT_ICON of both strips in every language, the small one grown a row for it
         import addseries
