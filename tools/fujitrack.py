@@ -528,6 +528,7 @@ def build(disc, runway_dir, out):
     stx = xb2.unpack(stx_p) if open(stx_p, 'rb').read(1) == b'\x78' else open(stx_p, 'rb').read()
     retexture(res, names, stx, os.path.join(runway_dir, 'art'))
     tree_sheet(res, names, stx, os.path.join(runway_dir, 'trees'))
+    kerb_colour(res, names, stx)
 
     # Road Atlanta's buildings, stands and props set round Fuji (ROWS, SCATTER), drawn in every cell with their
     # buffers streamed in
@@ -551,7 +552,7 @@ def build(disc, runway_dir, out):
     col.blocks = []
     for (a, b, c_), k in zip(T, kinds):
         col.add_ground(COLLISION.get(int(k), 0x0200), Vf[[a, b, c_]])
-    walls = outside_walls(Vf, T)
+    walls = outside_walls(Vf, T, F)
     for q in walls:
         col.add(WALL, q[:3]); col.add(WALL, q[[0, 2, 3]])
     col_bytes = col.to_bytes()
@@ -1283,6 +1284,22 @@ def retexture(res, names, stx, art_dir):
         print('texture %d (%s): %s at %d x %d, DXT%d' % (t, names[t - 9][0][-40:], name, w, h, kind))
 
 
+def kerb_colour(res, names, stx, t=497):
+    """Road Atlanta's kerb texture (road_curbing_standard_001: green and white stripes) red and white as Fuji's:
+    its red and green swapped (white stays white), written back with its mips."""
+    w, h, kind = texture_shape(res, names, stx, t)
+    o, n = names[t - 9][3], names[t - 9][4]
+    img = np.asarray(forzaxpr.dxt(bytes(res[o:o + n]), w, h, kind)).copy()
+    img[..., [0, 1]] = img[..., [1, 0]]
+    f = img.astype(np.float32)
+    red = (f[..., 0] - f[..., 1]) > 12  # (the stripes: brighter, redder)
+    f[red, 0] = np.minimum(f[red, 0] * 1.35 + 20, 255); f[red, 1:3] *= 0.7
+    img = f.clip(0, 255)
+    img[..., 3] = 255
+    res[o:o + n] = forzaxpr.encode_with_mips(img.astype(np.uint8), kind, n)
+    print('kerbs: texture %d red and white' % t)
+
+
 def tree_sheet(res, names, stx, folder):
     """GT4's tree pictures (TREE_TEX) side by side over the TREE_SHEET texture, each in its cell, colours doubled
     as GT4's (ART_GAIN), its alpha doubled where GT4's runs to 128."""
@@ -1487,21 +1504,40 @@ def pack_strips(jobs, Vf, pool, reach=REACH):
     return out, 0
 
 
-def outside_walls(Vf, T, h=WALL_H):
-    """Quads standing on the surface's boundary (edges with one triangle), each facing the surface (the
-    game's walls have one face, toward the drivable side: shipyardcircuit's lesson)."""
+def outside_walls(Vf, T, F=None, h=WALL_H):
+    """Quads standing on the surface's outline, each facing the surface (the game's walls have one face, toward
+    the drivable side: shipyardcircuit's lesson): edges with one triangle whose other side is bare ground (the
+    runway rastered at 0.5 m, gaps under a metre closed). GT4's runway repeats vertices along its seams (where
+    tarmac meets kerb or grass) and has T-junctions: by the edges alone, 1,752 walls stood inside the track."""
     from collections import defaultdict
     owner = defaultdict(list)
     for a, b, c in T:
         for u, v, w in ((a, b, c), (b, c, a), (c, a, b)): owner[(min(u, v), max(u, v))].append(w)
-    quads = []
+    cover = None
+    if F is not None:
+        r = Raster(Vf, F, res=0.5)
+        k = r.k >= 0
+        for _ in range(2):  # closed: grown a cell, twice, then shrunk as much
+            k = k | np.roll(k, 1, 0) | np.roll(k, -1, 0) | np.roll(k, 1, 1) | np.roll(k, -1, 1)
+        for _ in range(2):
+            k = k & np.roll(k, 1, 0) & np.roll(k, -1, 0) & np.roll(k, 1, 1) & np.roll(k, -1, 1)
+        cover = lambda xz: k[tuple(np.clip(np.floor((xz - r.lo) / 0.5).astype(int), 0, [k.shape[1] - 1, k.shape[0] - 1])[..., ::-1].T)]
+    quads, inner_seams = [], 0
     for (u, v), ws in owner.items():
         if len(ws) != 1: continue
         p, q, inside = Vf[u], Vf[v], Vf[ws[0]]
+        if cover is not None:
+            e = (q - p)[[0, 2]]; ln = np.linalg.norm(e)
+            if ln < 1e-6: continue
+            nrm = np.array([-e[1], e[0]]) / ln
+            if nrm @ (inside - p)[[0, 2]] > 0: nrm = -nrm  # (away from its triangle)
+            beyond = np.array([p[[0, 2]] + (q - p)[[0, 2]] * f + nrm * dd for f in (0.25, 0.5, 0.75) for dd in (0.6, 1.2)])
+            if cover(beyond).mean() > 0.5: inner_seams += 1; continue
         quad = np.array([p, q, q + (0, h, 0), p + (0, h, 0)])
         nrm = np.cross(quad[1] - quad[0], quad[2] - quad[0])
         if np.dot(nrm, inside - p) < 0: quad = quad[[1, 0, 3, 2]]
         quads.append(quad)
+    if cover is not None: print('walls: %d on the outline, %d edges with ground beyond left open (seams, cracks)' % (len(quads), inner_seams))
     return quads
 
 
