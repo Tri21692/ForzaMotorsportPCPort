@@ -152,6 +152,7 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
                 rest = re.sub(re.escape(eng.lower()), own_engine.lower(), k[len(ea):].lower())
                 if k.lower().endswith('.ini'): v = re.sub(re.escape(eng).encode(), own_engine.encode(), v, flags=re.I)
                 files[B.join(('engines', own_engine.lower(), 'audio')) + B + rest] = v
+                del files[k]  # (moved: nothing else in this car's cab reads the old name)
             cab = (cab_path, files, root)
             print('engine: %s\'s copied as %s (physics, and its sound in car_%s.cab)' % (eng, own_engine, car))
         if power:  # every enginetuning level's full-throttle torque scaled to the power figure: its TorqueScale, since

@@ -696,7 +696,7 @@ curves are all zeros (they take level 0's shape at their own scale), so
 the scale, not the curve, is what reaches the stock level 3. Its gearing
 held it to about 86 m/s at the limiter: final drive 3.87 to 2.65 puts
 242 mph near 7,900 rpm (the power peak is 7,500). Body and wing drag x0.75,
-downforce x1.15, tyre grip x1.06, brakes x1.10, shifts x0.75; listed P1,
+downforce x1.35, tyre grip x1.12 front and x1.16 rear (the user: grippier), brakes x1.10, shifts x0.75; listed GTS (after the P1 listing the first press on the car sometimes said "The car is damaged and cannot be used"; the game works out GTS itself, and the suspect is that mismatch or the engine sound left twice in the cab: unconfirmed),
 ratings 10, spec 3.7 s / 7.3 s / 389 km/h; 1,000,000 credits (was 380,000; tunecar.py --price).
 
 The top speed comes from a fit over the disc cars' spec figures: power =
