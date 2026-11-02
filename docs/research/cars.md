@@ -813,6 +813,11 @@ names them by texture. Its body kits are rear halves that need bumpers of their
 own (kit 1 had no nose, kit 2 came out black), so the plan's "kits": [] offers
 none in the shop.
 
+Taken out on 2 Nov (tools/removecar.py, with its D-Spec, ordinal 165): it
+still looked broken in game. Its cabs, liveries and icon tiles stay in the
+mods folder. Tried first on a copy of the test profile: it loads, and the
+garage and the Drift Championship show without it.
+
 Preview trap: the Blender preview (carobj.py) draws every part at once, the
 shop's kit bodies too. On the MX-5 they sat on the stock body and won the depth
 test in black triangle patches; with them left out it was clean. Before chasing

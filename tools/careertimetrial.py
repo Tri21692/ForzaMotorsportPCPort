@@ -64,19 +64,19 @@ XP_1ST = 2500      # a Class D win; more up the ladder, like the Spec series' (1
 DRIFT_SERIES_ORDINAL = 107   # after the Professional series' 103-106
 DRIFT_EVENT_ORDINAL = 400    # after theirs, 389-399
 DRIFT_CARS = ('NissanSilviaDSpec', 'Nissan240SXDSpec', 'MazdaRX7DSpec', 'ToyotaTruenoDSpec',
-              'NissanSilviaS15RDSpec', 'DodgeNeonCoupeDSpec', 'ToyotaCelicaGT4DSpec', 'MazdaMX5RadbulDSpec')  # (tools/driftcars.py's)
+              'NissanSilviaS15RDSpec', 'DodgeNeonCoupeDSpec', 'ToyotaCelicaGT4DSpec')  # (tools/driftcars.py's)
 DRIFT_PER_M = (6.0, 4.0, 2.0)
-# One big series (the user's, 1 Nov: three were too many), the MX-5 RADBUL its prize, its own logo
+# One big series (the user's, 1 Nov: three were too many), its own logo
 # (tools/driftlogo.py from the user's DRIFT art) on tile DRIFT_ICON, in the row the small strip grew by
 DRIFT = [
     ('Drift Championship', 0, [(26, 2), (47, 2), (1, 2), (27, 1), (82, 2), (83, 2)]),
     # Tsukuba, Silverstone Short, Laguna Seca, Alpine Ring, Pacific Shipyards Circuit and Circuit II
 ]
-DRIFT_PRIZE = 'MazdaMX5Radbul'
+DRIFT_PRIZE = None  # a car for 1st overall; was the MX-5 RADBUL, taken out on 2 Nov (tools/removecar.py) until it is redone
 # its own career category (the user's: a seventh tile, runtime/hle_career_cats.c): folder, title, description, icon tile,
 # its place in the list (1: beside Time Trial, the first)
 DRIFT_CATEGORY = ('Drift', 'Drift', 'Slide for points, alone on the track: long, at an angle and over 15 mph. '
-                  'Drift-spec cars only. Win the championship for the MX-5 RADBUL.', 8, 1)
+                  'Drift-spec cars only.', 8, 1)
 DRIFT_ICON = 50
 
 
@@ -92,12 +92,13 @@ def build_drift(mega, tracks, field):
     series, targets, strings, ordinal = [], [], [], DRIFT_EVENT_ORDINAL
     for k, (name, level, events) in enumerate(DRIFT):
         tag = 'Drift%d' % k
-        prize = addcar.ordinal_of(xml, DRIFT_PRIZE) if re.search(r'<car name="%s"' % DRIFT_PRIZE, xml) else None
+        prize = addcar.ordinal_of(xml, DRIFT_PRIZE) if DRIFT_PRIZE and re.search(r'<car name="%s"' % DRIFT_PRIZE, xml) else None
         reward = '<rewards CareerCarUnlock="%d" CareerCarGift="%d" />' % (prize, prize) if prize is not None else ''  # (as the disc's Opens: 1st overall)
         strings += [('IDS_Mod_%s_Name' % tag, name),
                     ('IDS_Mod_%s_Desc' % tag, 'Open to drift-spec cars. Alone on the track: score by drifting, long and at an angle, '
                                               'over 15 mph. Leaving the road, a spin or a hit loses the drift.'
-                                              + (' Win it for the MX-5 RADBUL.' if prize is not None else ''))]
+                                              + (' Win it for the %s.' % addcar.car_block(xml, DRIFT_PRIZE).group(0).split('displayName="')[1].split('"')[0]
+                                                 if prize is not None else ''))]
         out = []
         for i, (t, laps) in enumerate(events):
             pts = [int(round(length[t] * laps * f / 100)) * 100 for f in DRIFT_PER_M]

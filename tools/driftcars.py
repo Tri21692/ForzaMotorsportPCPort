@@ -28,8 +28,8 @@ CARS = [('NissanSilvia', 'NissanSilviaDSpec', 'Silvia S15 D-Spec'),
         ('ToyotaTrueno', 'ToyotaTruenoDSpec', 'Trueno D-Spec'),
         ('NissanSilviaS15R', 'NissanSilviaS15RDSpec', 'Silvia Spec-R D-Spec'),
         ('DodgeNeonCoupe', 'DodgeNeonCoupeDSpec', 'Neon Coupe D-Spec', 'NissanSilvia'),
-        ('ToyotaCelicaGT4', 'ToyotaCelicaGT4DSpec', 'Celica GT-Four D-Spec', 'NissanSilvia'),
-        ('MazdaMX5Radbul', 'MazdaMX5RadbulDSpec', 'MX-5 RADBUL D-Spec')]
+        ('ToyotaCelicaGT4', 'ToyotaCelicaGT4DSpec', 'Celica GT-Four D-Spec', 'NissanSilvia')]
+# (the MX-5 RADBUL's, MazdaMX5RadbulDSpec, taken out with the MX-5 RADBUL on 2 Nov: tools/removecar.py)
 TUNE = ['--shift', 'drivetraindiff:LimittedSlipTorqueAccel=600', '--shift', 'drivetraindiff:LimittedSlipTorqueDecel=300',
         '--scale', 'tiremod:RearFrictionScale=0.86', '--scale', 'tiremod:FrontFrictionScale=1.05',
         '--scale', 'nonupgradedata.xml:MaxAngle=1.5714']

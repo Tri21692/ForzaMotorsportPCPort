@@ -288,6 +288,10 @@ Trial's, so it runs after careertimetrial.py).
   Shipyards I and II), open to the eight D-Spec cars (an `<or>` a car), the
   MX-5 RADBUL (288) for 1st overall (`<rewards CareerCarUnlock CareerCarGift>`
   on the series' score pos 1, as the disc's Opens).
+- 2 Nov: the MX-5 RADBUL and its D-Spec taken out (the user: still not right,
+  to redo later), so seven D-Spec cars and no prize car (DRIFT_PRIZE None).
+  tools/removecar.py takes a car out of carlist.xml, model.dat and
+  gamecars.dat and leaves its files, so addcar.py can put it back.
 - Its logo is tools/driftlogo.py's (the user's DRIFT art, white on a
   red-orange panel) on tile 50. ico_events_sm had 50 tiles, all used; it
   grew a row in every language (addseries.grow: the size word's height bits
