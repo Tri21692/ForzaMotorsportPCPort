@@ -479,9 +479,9 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
         struct.pack_into('<f', grow, 64, vmax / 3.6)
     if power:  # gamecars.dat's power figure: tenths of a kilowatt
         struct.pack_into('<f', grow, 12, power * 0.745699872 * 10)
-    if price:  # model.dat's two prices (24, 28) and gamecars.dat's (88, 92)
-        struct.pack_into('<II', mrow, 24, price, price)
-        struct.pack_into('<II', grow, 88, price, price)
+    if price:  # model.dat's three prices (20, 24, 28) and gamecars.dat's (84, 88, 92); the store shows 20 / 84
+        struct.pack_into('<III', mrow, 20, price, price, price)
+        struct.pack_into('<III', grow, 84, price, price, price)
     struct.pack_into('<II', grow, 0, ordinal, ordinal)
     # Mega.ca2's wheel model, MegaXPR.ca2's textures, under the new car's name
     wsrc, wdst = B.join(('tires', 'art', wheel.lower())) + B, B.join(('tires', 'art', new.lower())) + B

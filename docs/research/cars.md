@@ -704,6 +704,23 @@ k x drag x v^3, D the body's LongitudinalDrag plus each wing's drag at its
 default slider, k 2.61e-3 (median of 224 drag-limited cars, quartiles
 2.45e-3 and 2.75e-3: about +-2% in speed). Not yet driven in game.
 
+Then (2 Nov, later): buying that M3 and loading the profile again said the
+profile was damaged (and once the user's own profile). Every disc engine's
+base.xml has GraphingMaxTorque 1000 and GraphingMaxPower 1000 or less, and
+the most peak torque on the disc is 1099 N m (Hennessey Viper); the M3 had
+2027, 900 and 1221. Rebuilt at 800 hp (peak torque 1086, the graph values
+left as the disc's) with drag x0.665 for the same 242 mph: bought, saved and
+loaded again without complaint. The cause is not proven, only that this
+build passes.
+
+The store shows model.dat's price at 20 (gamecars.dat 84), not 24/28 or
+88/92 as addcar.py --price wrote: --price now writes all three. Its Speed,
+Accel, Brake and Corner bars are gamecars.dat 124-136; the disc's follow top
+speed (64, r 0.99), an acceleration time (56) and lateral grip (80). For a car
+the player owns, My Cars works the bars out from the physics: the M3's came
+out 9.6, 9.0, 8.7, 7.8 (the speed bar about 109.5 m/s on the disc's scale),
+so tunecar.py --sliders put those in the store too.
+
 ### Second pass (27 Oct): lamps, the Hero livery, the black patches
 
 HUFF: Most Wanted packs some textures (the lamps, nearly all vinyls) with

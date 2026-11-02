@@ -6,6 +6,7 @@ options do.
                           [--physics-like <car>:<part>[,<part>...]]... [--tooldata-like <car>:<Section>[,...]]...
                           [--tires <front>,<rear>] [--final-drive <ratio>] [--mass <kg>]
                           [--performance <0-60 s>,<0-100 mph s>,<top km/h>] [--power <hp>] [--own-engine <name>] [--price <credits>]
+                          [--sliders <speed>,<accel>,<brake>,<corner>] [--figures <offset>=<value>,...]
                           [--unlock <level>[,<Europe's>,<Asia's>]] [--paint-like <car>] [--subclass <D4..S1>]
                           [--ratings <speed>,<acceleration>,<handling>]
                           [--scale <physics file or folder>:<attribute>[,...]=<factor>]... [--shift <same>=<amount>]...
@@ -121,7 +122,7 @@ def rewrite(d, texts):
 
 
 def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, final_drive=None, mass=None, performance=None,
-         power=None, unlock=None, paint_like=None, subclass=None, scale=None, shift=None, ratings=None, own_engine=None, price=None):
+         power=None, unlock=None, paint_like=None, subclass=None, scale=None, shift=None, ratings=None, own_engine=None, price=None, sliders=None, figures=None):
     mega, cars = addcar.Archive(disc, mods, 'Mega.ca2'), addcar.Archive(disc, mods, 'Cars.ca2')
     key = 'cars' + B + 'carlist.xml'
     xml = mega.files[key].decode('latin-1')
@@ -163,9 +164,9 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
                 if t in cars.files:
                     cars.files[t] = re.sub(rb'(<FullThrottle [^>]*?TorqueScale=")([0-9.]+)"',
                                            lambda g: g.group(1) + b'%.6f"' % (float(g.group(2)) * k1), cars.files[t], count=1)
-            bk = B.join(('engines', own_engine.lower(), 'physics', 'base.xml'))  # the upgrade screen's graph, as high
-            cars.files[bk] = re.sub(rb'(Graphing(?:MaxTorque|MaxPower)=")([0-9.]+)"',
-                                    lambda g: g.group(1) + b'%.0f"' % (float(g.group(2)) * k1), cars.files[bk])
+            # (base.xml's GraphingMaxTorque and GraphingMaxPower stay: every disc engine has 1000 and 1000 or less, and with
+            # them at 2027 and 900, and the peak torque 1221 N m (the disc's most 1099), buying the car and loading the
+            # profile again said the profile was damaged, 2 Nov)
             print('engine %s: torque x%.3f = %.0f hp' % (own_engine, k1, power))
     for op, spec in [('x', s) for s in scale or ()] + [('+', s) for s in shift or ()]:  # <file or folder>:<attr>,<attr>=<number>
         where, rest = spec.split(':')
@@ -191,9 +192,9 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
     if power:  # the menus' power figure (gamecars.dat, tenths of a kilowatt); the engine itself as it was but with --own-engine
         struct.pack_into('<f', grow, 12, power * 0.745699872 * 10)
         print('menus: %.0f hp' % power)
-    if price:  # what the dealer asks: model.dat's two prices (24, 28) and gamecars.dat's (88, 92), as addcar.py's --price
-        struct.pack_into('<II', mrow, 24, price, price)
-        struct.pack_into('<II', grow, 88, price, price)
+    if price:  # what the dealer asks: model.dat's three prices (20, 24, 28) and gamecars.dat's (84, 88, 92), as addcar.py's --price
+        struct.pack_into('<III', mrow, 20, price, price, price)  # (the store shows 20 / 84: with only 24 and 28 set it still said the old price)
+        struct.pack_into('<III', grow, 84, price, price, price)
         print('price: %d credits' % price)
     if paint_like:  # the paint shop's base colours as that car's, without its vinyl layers (custom: a race car has no liveries.xml at all, and no paint shop)
         lx = cars.files[B.join(('cars', paint_like.lower(), 'liveries', 'liveries.xml'))].decode('latin-1')
@@ -212,6 +213,12 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
         struct.pack_into('<4f', grow, 140, *r)
         struct.pack_into('<4f', mrow, 36, *r)
         print('ratings: %.1f %.1f %.1f (%.3f)' % tuple(r))
+    if sliders:  # the store's and car select's Speed, Accel, Brake and Corner bars: gamecars.dat 124-136 (0-10)
+        struct.pack_into('<4f', grow, 124, *sliders)
+        print('sliders: speed %.1f, accel %.1f, brake %.1f, corner %.1f' % tuple(sliders))
+    for off, val in figures or ():  # gamecars.dat's measured figures the sliders follow (56 an acceleration time, 68 and
+        struct.pack_into('<f', grow, off, val)  # 72 braking distances, 76 and 80 lateral grip in g; 64 top speed, m/s)
+        print('gamecars.dat %d: %.4g' % (off, val))
     strings = {}
     if unlock:
         strings = set_unlock(disc, mods, mega, o, mrow, list(unlock) + [unlock[-1]] * (3 - len(unlock)))
@@ -234,7 +241,7 @@ if __name__ == '__main__':
     it = iter(sys.argv[1:])
     for a in it:
         if a in ('--physics-like', '--tooldata-like', '--scale', '--shift'): opts.setdefault(a[2:].replace('-', '_'), []).append(next(it))
-        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass', '--ratings', '--own-engine', '--price'): opts[a[2:].replace('-', '_')] = next(it)
+        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass', '--ratings', '--own-engine', '--price', '--sliders', '--figures'): opts[a[2:].replace('-', '_')] = next(it)
         else: args.append(a)
     if len(args) != 3: raise SystemExit(__doc__)
     if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(args[1]).split(os.sep)):
@@ -246,4 +253,6 @@ if __name__ == '__main__':
          power=float(opts['power']) if 'power' in opts else None,
          unlock=tuple(int(x) for x in opts['unlock'].split(',')) if 'unlock' in opts else None,
          paint_like=opts.get('paint_like'), subclass=opts.get('subclass'), scale=opts.get('scale'), shift=opts.get('shift'),
-         ratings=tuple(float(x) for x in opts['ratings'].split(',')) if 'ratings' in opts else None, own_engine=opts.get('own_engine'), price=int(opts['price']) if 'price' in opts else None)
+         ratings=tuple(float(x) for x in opts['ratings'].split(',')) if 'ratings' in opts else None, own_engine=opts.get('own_engine'), price=int(opts['price']) if 'price' in opts else None,
+         sliders=tuple(float(x) for x in opts['sliders'].split(',')) if 'sliders' in opts else None,
+         figures=[(int(a), float(b)) for a, b in (f.split('=') for f in opts['figures'].split(','))] if 'figures' in opts else None)
