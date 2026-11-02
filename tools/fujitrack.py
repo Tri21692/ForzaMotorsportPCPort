@@ -257,7 +257,9 @@ TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest card
 TERRAIN_DROP = 0.3              # m: and this far under it (under the runway at its crests too: the lowest runway near)
 GROUND_FLAT = 0.5               # GT4's world model's triangles taken as ground: |normal y| over this
 GROUND_SLOPE = 0.4              # the ground's steepest rise (m a metre) off the runway
-GROUND_NEAR = 1500.0           # m: and their middles this near the runway's middle (the far hills are its own model)
+FAR_CELL, FAR_REACH, FAR_DROP = 48.0, 1000.0, 1.0   # the far ground: a coarser grid out to FAR_REACH m (the map's
+                                                  # edge showed past the near one), FAR_DROP m under the near grid
+GROUND_NEAR = 3000.0           # m: and their middles this near the runway's middle (the far hills are its own model)
 SPLINES = ('roadinner', 'roadouter', 'drivableinner', 'drivableouter', 'curbinginner', 'curbingouter')
 
 
@@ -371,9 +373,11 @@ def build(disc, runway_dir, out):
     cf = to_forza(E['centre'])
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
     Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON)
-    Vd = np.vstack([Vf, Vt, Va])
-    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + len(Vf) + len(Vt)])
-    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS), np.full(len(Ta), TARMAC)])
+    Vfar, Tfar = far_terrain(Vf, F, cf, read_ground(runway_dir))
+    Vd = np.vstack([Vf, Vt, Va, Vfar])
+    o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
+    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f])
+    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS), np.full(len(Ta), TARMAC), np.full(len(Tfar), GRASS)])
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
     # each vertex's place along the lap (m from the lap line) and across it (m left of the centre line): the
@@ -424,8 +428,8 @@ def build(disc, runway_dir, out):
             jobs.append((k, s))
     # the ground in blocks of 8 x 8 squares (a grid row's strip ran kilometres: past s16's texture coordinates)
     ground = []
-    for k_, tris in ((GRASS, Tt + len(Vf)), (TARMAC, Ta + len(Vf) + len(Vt))):  # (and the pit apron)
-        block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / (8 * TERRAIN_CELL)).astype(int)
+    for k_, tris, bsize in ((GRASS, Tt + len(Vf), 8 * TERRAIN_CELL), (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, Tfar + o_f, 8 * FAR_CELL)):  # (the apron, the far ground)
+        block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / bsize).astype(int)
         for bk in sorted({tuple(b) for b in block}):
             for s in strips_of([tuple(t) for t in tris[(block == bk).all(1)]]):
                 ground.append((k_, s))
@@ -726,8 +730,8 @@ def facing(mid):
 # lap, the two sides in turn). Turned: 'face' (the way it faced Road Atlanta's track, to Fuji's) or 'along' (its long
 # side along the track). Each prop stands just beyond the runway, behind its walls: no collision of its own; one
 # that would reach over the runway anywhere is left out. A sixth field: the longest prop of the rule (MAX_PROP).
-# (Road Atlanta's trees are trunks alone: the canopies are other meshes, many to a buffer, of packed vertices; its
-# forest cards (foliagefacade, tree_wall) stand in for Fuji's woods.)
+# (Road Atlanta's trees are trunks alone: the canopies are other meshes, many to a buffer, of packed vertices. Its
+# forest cards (foliagefacade, tree_wall) ended in hard vertical edges by the track: the user's 'out of place'; none.)
 SCATTER = [
     (r'workerstand\d*$', 14, 'corners', (4.0, 4.0), 'face'),
     (r'tirewall_capa\d+$', 20, 'corners', (0.5, 0.5), 'along'),
@@ -735,9 +739,9 @@ SCATTER = [
     (r'barrierblock\d+$', 24, 'pits', (0.5, 0.5), 'along'),
     (r'pole_streetlight\d+$', 12, 'pits', (13.0, 13.0), 'face'),
     (r'(shack|restroom|tvcart_base|racecart_base)\d*$', 20, 'out', (12.0, 30.0), 'face'),
-    (r'(foliagefacade_?\d+|tree_wall\d*_how\d*|tree_wall\d+)$', 80, 'backdrop', (45.0, 90.0), 'face', 200.0),
 ]
 MAX_PROP = 90.0   # m: props longer than this left out (a fence round a whole bend of Road Atlanta's would cross Fuji's track)
+CARD_SINK = 0.35  # the share of a forest card's height sunk into the ground
 TRIES = 6         # places tried for a prop before it is left out
 
 
@@ -788,7 +792,7 @@ def read_ground(runway_dir):
     cache = os.path.join(runway_dir, 'world_ground.npz')
     if os.path.exists(cache) and (not os.path.exists(src) or os.path.getmtime(cache) >= os.path.getmtime(src)):
         z = np.load(cache)
-        return z['V'], z['T']
+        if 'near' in z and float(z['near']) == GROUND_NEAR: return z['V'], z['T']
     if not os.path.exists(src): return None
     V, T = [], []
     for l in open(src):
@@ -804,7 +808,7 @@ def read_ground(runway_dir):
     used = np.unique(T)
     remap = np.full(len(V), -1); remap[used] = np.arange(len(used))
     V, T = to_forza(V[used]), remap[T]
-    np.savez(cache, V=V, T=T)
+    np.savez(cache, V=V, T=T, near=GROUND_NEAR)
     return V, T
 
 
@@ -856,6 +860,82 @@ def apron(centre, inner, reach_in, s0, s1, width):
     nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
     flip = nrm[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
+    return V, T
+
+
+def spread(y, it=600):
+    """The raster y's NaN cells filled from their filled neighbours, a ring at a time: (y, how many rings away)."""
+    filled = np.isfinite(y)
+    away = np.where(filled, 0, -1)
+    nb = [(dz, dx) for dz in (-1, 0, 1) for dx in (-1, 0, 1) if dz or dx]
+    for k in range(1, it):
+        y0 = np.where(filled, y, 0.0)
+        acc = sum(np.roll(np.roll(y0, dz, 0), dx, 1) for dz, dx in nb)
+        cnt = sum(np.roll(np.roll(filled, dz, 0), dx, 1).astype(int) for dz, dx in nb)
+        new = ~filled & (cnt > 0)
+        if not new.any(): break
+        y[new] = acc[new] / cnt[new]; away[new] = k; filled |= new
+    return y, away
+
+
+def far_terrain(Vf, F, loop, ground, cell=FAR_CELL, reach=FAR_REACH, near=TERRAIN_REACH, drop=TERRAIN_DROP + FAR_DROP):
+    """The ground from the near grid's edge (terrain's) out to `reach` m beyond the runway, outside the loop: a grid of
+    `cell` m squares at GT4's ground's height (its far hills too) where it has some, else the runway's spread
+    outward; no steeper than GROUND_SLOPE; `drop` m down (the near grid draws over it where they overlap).
+    (vertices, triangles wound as the runway's)."""
+    g = 8.0
+    r = Raster(Vf, F, res=g, pad=reach + 2 * cell)
+    y = r.y.astype(float).copy()
+    on = np.isfinite(y)
+    _, away = spread(y.copy())
+    away = away * g
+    if ground is not None:
+        gr = ground_raster(ground[0], ground[1], r.lo, r.shape, g)
+        stack = np.stack([np.roll(np.roll(gr, dz, 0), dx, 1) for dz in range(-2, 3) for dx in range(-2, 3)])
+        with np.errstate(all='ignore'):
+            med = np.nanmedian(stack, 0)
+        gr[np.abs(gr - med) > 6.0] = np.nan
+        use = np.isfinite(gr) & ~on
+        y[use] = gr[use]
+    y, _ = spread(y)
+    nb = [(dz, dx) for dz in (-1, 0, 1) for dx in (-1, 0, 1) if dz or dx]
+    rise = GROUND_SLOPE * g
+    for _ in range(60):
+        lo_n = np.minimum.reduce([np.roll(np.roll(y, dz, 0), dx, 1) for dz, dx in nb])
+        hi_n = np.maximum.reduce([np.roll(np.roll(y, dz, 0), dx, 1) for dz, dx in nb])
+        y2 = np.where(on, y, np.clip(y, hi_n - rise * 1.5, lo_n + rise))
+        if np.allclose(y2, y): break
+        y = y2
+    for _ in range(2):
+        m = sum(np.roll(np.roll(y, dz, 0), dx, 1) for dz, dx in nb + [(0, 0)]) / 9
+        y[~on] = m[~on]
+    lo = r.lo + cell
+    nx = int((r.shape[1] * g - 2 * cell) / cell) + 1
+    nz = int((r.shape[0] * g - 2 * cell) / cell) + 1
+    gx, gz = np.meshgrid(lo[0] + cell * np.arange(nx), lo[1] + cell * np.arange(nz))
+    corner = np.stack([gx, gz], -1)
+    ij = np.clip(np.floor((corner - r.lo) / g).astype(int), 0, [r.shape[1] - 1, r.shape[0] - 1])
+    zi, xi = ij[..., 1], ij[..., 0]
+    a_ = away[zi, xi]
+    keep = (a_ <= reach) & ~inside(corner, loop[:, [0, 2]])
+    deep = a_ < near - 2 * TERRAIN_CELL  # (well inside the near grid)
+    vid = -np.ones(gx.shape, int)
+    V, T = [], []
+    for a in range(nz - 1):
+        for b in range(nx - 1):
+            q4 = ((a, b), (a, b + 1), (a + 1, b + 1), (a + 1, b))
+            if not all(keep[u, v] for u, v in q4) or all(deep[u, v] for u, v in q4): continue
+            q = []
+            for u, v in q4:
+                if vid[u, v] < 0:
+                    vid[u, v] = len(V); V.append((gx[u, v], y[zi[u, v], xi[u, v]] - drop, gz[u, v]))
+                q.append(vid[u, v])
+            T += [(q[0], q[1], q[2]), (q[0], q[2], q[3])]
+    V, T = np.array(V, float), np.array(T, int)
+    nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+    flip = nrm[:, 1] > 0
+    T[flip] = T[flip][:, [0, 2, 1]]
+    print('far ground: %d vertices, %d triangles, %.0f to %.0f m high' % (len(V), len(T), V[:, 1].min(), V[:, 1].max()))
     return V, T
 
 
@@ -930,7 +1010,7 @@ def terrain(Vf, F, drawn, loop, ground=None, cell=TERRAIN_CELL, reach=TERRAIN_RE
     near = (away[zi, xi] <= reach) | inside(corner, loop[:, [0, 2]])  # (and all the loop's middle)
     vid = -np.ones(gx.shape, int)
     V, T = [], []
-    frac = np.linspace(0, 1, 5)
+    frac = np.linspace(0, 1, int(cell) + 1)  # (every metre: a square the runway leaves a sliver of is drawn)
     for a in range(nz - 1):
         for b in range(nx - 1):
             if not (near[a, b] and near[a + 1, b] and near[a, b + 1] and near[a + 1, b + 1]): continue
@@ -1080,6 +1160,7 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
             if used_up: break
             if not ok: crossing += 1; continue
             foot = ground_at(xz @ R.T + target[[0, 2]]).min() if ground_at else centre[i0][1]
+            if where == 'backdrop': foot -= CARD_SINK * np.ptp(allp[:, 1])  # (a forest card 50 m high: a wall)
             m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, foot - allp[:, 1].min())
             if m_: placed += 1
             meshes += m_; texs |= t_; vbs |= v_
