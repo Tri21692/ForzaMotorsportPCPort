@@ -250,6 +250,10 @@ KERB_W = 1.2                    # m across a kerb's texture (its stripes along t
 REACH = 120.0                   # m: a donor's faces within this of its first
 GRASS_REACH = 30.0              # m: grass drawn this near the centre line only (all of it solid): the small buffers ran out
 SLIVER = 0.02                   # m2: thinner triangles not drawn
+STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
+TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
+TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
+TERRAIN_DROP = 0.3              # m: and this far under it (under the runway at its crests too: the lowest runway near)
 SPLINES = ('roadinner', 'roadouter', 'drivableinner', 'drivableouter', 'curbinginner', 'curbingouter')
 
 
@@ -358,6 +362,12 @@ def build(disc, runway_dir, out):
     area = np.linalg.norm(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), axis=1) / 2
     drawn = (area >= SLIVER) & ~((kinds == GRASS) & (dist > GRASS_REACH))
     print('drawn: %d of %d triangles (grass beyond %.0f m and slivers left out)' % (drawn.sum(), len(T), GRASS_REACH))
+    # and the ground beyond, drawn only: Vd and Td the drawn vertices and faces (the runway's first)
+    Vt, Tt = terrain(Vf, F, drawn, to_forza(E['centre']))
+    Vd = np.vstack([Vf, Vt])
+    Td = np.vstack([T[drawn], Tt + len(Vf)])
+    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS)])
+    print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
     # each vertex's place along the lap (m from the lap line) and across it (m left of the centre line): the
     # kerbs' texture follows the track
@@ -375,15 +385,18 @@ def build(disc, runway_dir, out):
         along[i0:i0 + 2000] = arc[j] + (dvec * tang[j]).sum(1)
         side[i0:i0 + 2000] = dvec[:, 0] * -tang[j, 1] + dvec[:, 1] * tang[j, 0]
 
-    # the donors: small stride-6 strips of 24-byte vertices in the svb, with a ppw sphere found
+    # the donors: small stride-6 strips of 24-byte vertices, in the svb or streamed, a buffer each, with a ppw sphere found
     nmesh = struct.unpack_from('<I', res, model)[0]
     pool = []
     import re
     prop = re.compile('vbuff_quickpreview_(%s)(_vb\d+)?$' % '|'.join(['(?:%s)' % p_[0].rstrip('$') for p_ in SCATTER] + [re.escape(o_[0]) for o_ in OBJECTS]))
     props = {k + 9 for k, r in enumerate(names) if prop.match(r[0])}  # (props to place: not donors)
+    from collections import Counter
+    sharing = Counter(record(res, model, i)[1][4] for i in range(nmesh))
     for i in range(nmesh):
         at, (fl, ab, nidx, vbytes, vb, stride, prim, t0, t1, sh) = record(res, model, i)
-        if stride != 6 or prim != 6 or vbytes % 24 or vb not in svb or nidx < 8 or vbytes < 24 * 4: continue
+        if stride != 6 or prim != 6 or vbytes % 24 or nidx < 8 or vbytes < 24 * 4 or sharing[vb] > 1: continue
+        if vb not in svb and vbytes > 24 * STREAMED_DONOR: continue  # (a streamed buffer: loaded from the xb2 in each cell listing it)
         if i in {m for m, _, _ in MATERIALS.values()} or vb in props: continue
         o = names[vb - 9][3]
         v = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, 6)[:, :3].astype(float)
@@ -397,14 +410,26 @@ def build(disc, runway_dir, out):
 
     # strips per surface, then packed by place into donors
     jobs = []
-    for k in sorted(set(kinds.tolist())):
-        tk = T[(kinds == k) & drawn]
+    nrun = int(drawn.sum())
+    for k in sorted(set(kinds_d.tolist())):
+        tk = Td[:nrun][kinds_d[:nrun] == k]
         for s in strips_of([tuple(t) for t in tk]):
             jobs.append((k, s))
-    nstrip_idx = sum(len(s) + 3 for _, s in jobs)
-    print('surface: %d triangles in %d strips (~%d indices with the joins)' % (len(T), len(jobs), nstrip_idx))
-    placed, left = pack_strips(jobs, Vf, pool)
+    # the ground in blocks of 8 x 8 squares (a grid row's strip ran kilometres: past s16's texture coordinates)
+    ground = []
+    block = np.floor(Vd[Tt + len(Vf)].mean(1)[:, [0, 2]] / (8 * TERRAIN_CELL)).astype(int)
+    for bk in sorted({tuple(b) for b in block}):
+        for s in strips_of([tuple(t) for t in (Tt + len(Vf))[(block == bk).all(1)]]):
+            ground.append((GRASS, s))
+    nstrip_idx = sum(len(s) + 3 for _, s in jobs + ground)
+    print('surface: %d triangles in %d strips, the ground %d triangles in %d (~%d indices with the joins)' % (nrun, len(jobs), len(Tt), len(ground), nstrip_idx))
+    # the runway in the svb's small donors (a larger one's kerbs ran past s16's texture coordinates), the ground in what is left
+    placed, left = pack_strips(jobs, Vd, [p_ for p_ in pool if p_[4] in svb])
     if left: raise SystemExit('out of donor meshes: %d strips left over' % left)
+    taken = {p_[0] for p_ in placed}
+    more, left = pack_strips(ground, Vd, [p_ for p_ in pool if p_[2] not in taken])
+    if left: raise SystemExit('out of donor meshes for the ground: %d strips left over' % left)
+    placed += more
 
     # each donor rewritten: its material's texture, lightmap, shader, flags; planar texture coordinates
     tex_used, vbs_used, meshes = set(), set(), []
@@ -416,7 +441,7 @@ def build(disc, runway_dir, out):
         mst = np.frombuffer(bytes(res[mo:mo + 24 * record(res, model, mat)[1][3] // 24]), '<i2').reshape(-1, 12)[:, 8:12]
         mt1, light = LIGHTMAP[0], LIGHTMAP[1:]
         at, (fl, ab, nidx, vbytes, vbr, stride, prim, t0, t1, sh) = record(res, model, mesh)
-        pts = np.vstack([Vf[s] for s in strips])
+        pts = np.vstack([Vd[s] for s in strips])
         org = np.floor(pts.min(0) / metres) * metres  # (texture coordinates from a whole repeat near the faces: s16 holds +-64 repeats)
         if k == KERB:  # along the track (its stripes across it): s across, `metres` a repeat along
             ids_all = sorted({vi for s in strips for vi in s})
@@ -431,7 +456,7 @@ def build(disc, runway_dir, out):
             for vi in s:
                 if vi not in local:
                     local[vi] = len(verts)
-                    p = Vf[vi]
+                    p = Vd[vi]
                     if k == KERB: verts.append((p,) + uv[vi])
                     else: verts.append((p, int((p[0] - org[0]) / metres * 512) - 32768, int((p[2] - org[2]) / metres * 512) - 32768))
                 ids.append(local[vi])
@@ -451,9 +476,10 @@ def build(disc, runway_dir, out):
         o = names[vbr - 9][3]
         data = buf.tobytes() + np.array(order + [order[-1]] * (nidx - len(order)), '<u2').tobytes()
         res[o:o + len(data)] = data
-        so, ssz = svb[vbr]
-        assert ssz >= len(data), (mesh, ssz, len(data))
-        svb_out[so:so + len(data)] = data
+        if vbr in svb:
+            so, ssz = svb[vbr]
+            assert ssz >= len(data), (mesh, ssz, len(data))
+            svb_out[so:so + len(data)] = data
         struct.pack_into('<HHH', res, at + 22, mt0, mt1, msh)
         struct.pack_into('<I', res, at, mfl)
         c = (pts.min(0) + pts.max(0)) / 2
@@ -516,7 +542,7 @@ def build(disc, runway_dir, out):
                        ('QuickPreview1.pvs.ppw', ppw), ('quickpreview1.xbp.svb', zlib_like(files['quickpreview1.xbp.svb'], svb_out))):
         open(os.path.join(out, name), 'wb').write(bytes(data))
     np.savez(os.path.join(out, 'fuji_forza.npz'), centre=cen, inner=inner, outer=outer)
-    build_png(placed, Vf, os.path.join(out, 'build_check.png'))
+    build_png(placed, Vd, os.path.join(out, 'build_check.png'))
 
 
 # Road Atlanta objects set beside Fuji: (its vertex buffers' name stem, where along the lap (a share of it), which
@@ -745,6 +771,72 @@ def runway_reach(V, F, centre, inner):
                     if gap > 6 and last: break
             out[i, side] = offs[last]
     return out
+
+
+def inside(p, poly):
+    """Which of the points p (..., 2) are inside the closed polygon poly (n, 2) (even-odd)."""
+    x, z = p[..., 0][..., None], p[..., 1][..., None]
+    a, b = poly, np.roll(poly, -1, 0)
+    cross = ((a[:, 1] > z) != (b[:, 1] > z)) & (x < a[:, 0] + (z - a[:, 1]) * (b[:, 0] - a[:, 0]) / np.where(b[:, 1] == a[:, 1], 1e-9, b[:, 1] - a[:, 1]))
+    return cross.sum(-1) % 2 == 1
+
+
+def terrain(Vf, F, drawn, loop, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
+    """The ground round the runway (Forza's, V; F all its faces, `drawn` those drawn; loop the centre line): a
+    grid of `cell` m squares out to `reach` m beyond the runway and over all the loop's middle, each corner at the runway's height spread outward (the nearest runway's,
+    smoothed), `drop` m under it, and under the lowest drawn runway within a cell of it; squares the drawn
+    runway covers left out. Returns (vertices, triangles: wound as the runway's) for the grass, visual only (the
+    runway's walls keep the cars off it)."""
+    g = 2.0
+    r = Raster(Vf, F, res=g, pad=reach + 2 * cell)
+    rd = Raster(Vf, F[drawn], res=g, pad=reach + 2 * cell)
+    y = r.y.astype(float).copy()
+    filled = np.isfinite(y)
+    away = np.where(filled, 0.0, np.inf)
+    nb = [(dz, dx) for dz in (-1, 0, 1) for dx in (-1, 0, 1) if dz or dx]
+    for it in range(1, 400):  # spread outward a ring at a time, over the whole raster: each new cell the mean of its filled neighbours
+        y0 = np.where(filled, y, 0.0)
+        acc = sum(np.roll(np.roll(y0, dz, 0), dx, 1) for dz, dx in nb)
+        cnt = sum(np.roll(np.roll(filled, dz, 0), dx, 1).astype(int) for dz, dx in nb)
+        new = ~filled & (cnt > 0)
+        if not new.any(): break
+        y[new] = acc[new] / cnt[new]; away[new] = it * g; filled |= new
+    ydraw = np.where(np.isfinite(rd.y), rd.y, np.inf).astype(float)
+    low = ydraw.copy()
+    for _ in range(int(cell / g)):  # the lowest drawn runway within a cell
+        low = np.minimum.reduce([np.roll(np.roll(low, dz, 0), dx, 1) for dz, dx in nb + [(0, 0)]])
+    hgt = np.minimum(y, low) - drop
+    covered = rd.k >= 0
+
+    def at(xz):
+        ij = np.clip(np.floor((xz - r.lo) / g).astype(int), 0, [r.shape[1] - 1, r.shape[0] - 1])
+        return ij[..., 1], ij[..., 0]
+    lo = r.lo + cell
+    nx = int((r.shape[1] * g - 2 * cell) / cell) + 1
+    nz = int((r.shape[0] * g - 2 * cell) / cell) + 1
+    gx, gz = np.meshgrid(lo[0] + cell * np.arange(nx), lo[1] + cell * np.arange(nz))
+    corner = np.stack([gx, gz], -1)
+    zi, xi = at(corner)
+    near = (away[zi, xi] <= reach) | inside(corner, loop[:, [0, 2]])  # (and all the loop's middle)
+    vid = -np.ones(gx.shape, int)
+    V, T = [], []
+    frac = np.linspace(0, 1, 5)
+    for a in range(nz - 1):
+        for b in range(nx - 1):
+            if not (near[a, b] and near[a + 1, b] and near[a, b + 1] and near[a + 1, b + 1]): continue
+            s = np.stack(np.meshgrid(gx[a, b] + cell * frac, gz[a, b] + cell * frac), -1)
+            if covered[at(s)].all(): continue
+            q = []
+            for (u, v) in ((a, b), (a, b + 1), (a + 1, b + 1), (a + 1, b)):
+                if vid[u, v] < 0:
+                    vid[u, v] = len(V); V.append((gx[u, v], hgt[zi[u, v], xi[u, v]], gz[u, v]))
+                q.append(vid[u, v])
+            T += [(q[0], q[1], q[2]), (q[0], q[2], q[3])]
+    V, T = np.array(V, float), np.array(T, int)
+    n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+    flip = n[:, 1] > 0
+    T[flip] = T[flip][:, [0, 2, 1]]
+    return V, T
 
 
 def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, seed=7):
