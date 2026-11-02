@@ -240,6 +240,10 @@ MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
 # a black, clear texel at the lightmap's edge)
 LIGHT = {101: (-32615, -32406), 137: (-32439, -32451)}
+# ...but Road Atlanta's lightmaps are baked sunlight, warm tan where lit and blue in shade, and both of those tinted the
+# grey asphalt olive in the game: every surface samples instead the most neutral well-lit texel found in any of its
+# lightmaps, innerterrainfs_03's (resource 437, texel (138, 192) of 256 x 256: 112, 112, 112)
+LIGHTMAP = (437, int(138 / 255 * 512) - 32768, int(192 / 255 * 512) - 32768)
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
 KERB_W = 1.2                    # m across a kerb's texture (its stripes along the track)
@@ -381,7 +385,10 @@ def build(disc, runway_dir, out):
         o = names[vb - 9][3]
         v = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, 6)[:, :3].astype(float)
         if not np.all(np.isfinite(v)): continue
-        pool.append([vbytes // 24, nidx, i, sphere_offset(i), vb])
+        c = (v.min(0) + v.max(0)) / 2
+        sp = sphere_offset(ppw, i, c, float(np.max(np.linalg.norm(v - c, axis=1))))
+        if sp is None: continue
+        pool.append([vbytes // 24, nidx, i, sp, vb])
     pool.sort(key=lambda r: -r[0])
     print('donors: %d small meshes, room for %d vertices and %d indices' % (len(pool), sum(r[0] for r in pool), sum(r[1] for r in pool)))
 
@@ -404,7 +411,7 @@ def build(disc, runway_dir, out):
         mt0 = tex or mt0
         mo = names[record(res, model, mat)[1][4] - 9][3]
         mst = np.frombuffer(bytes(res[mo:mo + 24 * record(res, model, mat)[1][3] // 24]), '<i2').reshape(-1, 12)[:, 8:12]
-        light = LIGHT.get(mt1) or tuple(int(x) for x in np.median(mst[:, 2:4], 0))
+        mt1, light = LIGHTMAP[0], LIGHTMAP[1:]
         at, (fl, ab, nidx, vbytes, vbr, stride, prim, t0, t1, sh) = record(res, model, mesh)
         pts = np.vstack([Vf[s] for s in strips])
         org = np.floor(pts.min(0) / metres) * metres  # (texture coordinates from a whole repeat near the faces: s16 holds +-64 repeats)
@@ -518,11 +525,46 @@ BANNERS = [(16, 'fuji_logo_wall.png', 1), (87, 'fuji_banner_wall.png', 2)]
 ART_GAIN = 1.8
 
 
-def sphere_offset(i):
-    """Mesh i's bounding sphere in QuickPreview1.pvs.ppw: after a u32 version and a 16-byte id, a 21-byte record a
-    mesh in model_quickpreview's order (f32 radius, centre x, y, z, u32, a byte). (Searched for by value before,
-    shipyardcircuit.sphere_at; a building's sphere is the mesh's own but not its vertices' box, and was missed.)"""
-    return 20 + 21 * i
+PLAIN_RECORDS = 1346  # Road Atlanta's ppw: records before the first one followed by more (a word of 512)
+
+
+def sphere_offset(ppw, i, centre, radius):
+    """Mesh i's bounding sphere in QuickPreview1.pvs.ppw. After a u32 version and a 16-byte id, a 21-byte record a
+    mesh in model_quickpreview's order (f32 radius, centre x, y, z, u32, a byte), but a record whose word is 512 is
+    followed by more (a count and u16 lists, 32 bytes after mesh 1345, 62,904 after 1929): not walked. Below
+    PLAIN_RECORDS, 20 + 21 i, if that record's centre is near the mesh's (a building's sphere is not its vertices'
+    box: the search by value missed it); else shipyardcircuit.sphere_at's search by value (exact); else None.
+    (Indexing every mesh at 20 + 21 i wrote the donors' spheres over other meshes' and the road vanished.)"""
+    import shipyardcircuit as sc
+    if i < PLAIN_RECORDS:
+        o = 20 + 21 * i
+        r, cx, cy, cz = struct.unpack_from('<4f', ppw, o)
+        if np.isfinite([r, cx, cy, cz]).all() and np.linalg.norm(np.array([cx, cy, cz]) - centre) < 0.5 * radius + 5: return o
+    return sc.sphere_at(ppw, centre, radius)
+
+
+def mesh_info(res, names, model, i):
+    """Mesh i's (vertex buffer, index count, vertex bytes, vertex size, textures): records of 24, 28, 32 or 44 bytes
+    share flags, a u32, the index count, the vertex bytes, the buffer (u16), a u16 (6), a format byte; then u16
+    resource numbers (the textures, lightmap, shader). The vertex size is the one whose count the strip's highest
+    index just fits (the 24-byte records' meshes have 20-byte vertices: their u16 of 6 is not a stride)."""
+    n = struct.unpack_from('<I', res, model)[0]
+    a = struct.unpack_from('<I', res, model + 4 + 4 * i)[0]
+    end = min([struct.unpack_from('<I', res, model + 4 + 4 * j)[0] for j in range(n) if struct.unpack_from('<I', res, model + 4 + 4 * j)[0] > a] or [a + 28])
+    fl, ab, nidx, vbytes, vb = struct.unpack_from('<IIIIH', res, model + a)
+    ids = struct.unpack_from('<%dH' % ((end - a - 22) // 2), res, model + a + 22)
+    texs = {t for t in ids if 9 <= t < len(names) + 9 and names[t - 9][0].startswith('tex_')}
+    if not (9 <= vb < len(names) + 9) or not vbytes: return vb, nidx, vbytes, 0, texs
+    o = names[vb - 9][3]
+    top = int(np.frombuffer(bytes(res[o + vbytes:o + vbytes + 2 * nidx]), '<u2').max()) if nidx else 0
+    known = VERTEX_SIZE.get(res[model + a + 20])  # the format byte first: a padded strip (the donors') does not reach its last vertex
+    if known and vbytes % known == 0: return vb, nidx, vbytes, known, texs
+    fits = [sz for sz in (24, 20, 28, 32, 16, 36) if vbytes % sz == 0 and top < vbytes // sz]
+    exact = [sz for sz in fits if vbytes // sz == top + 1]
+    return vb, nidx, vbytes, (exact or fits or [0])[0], texs
+
+
+VERTEX_SIZE = {6: 24, 14: 24, 1: 20}  # a mesh record's format byte (at 20): its vertices' bytes
 
 
 def object_meshes(res, names, model, stem):
@@ -550,12 +592,14 @@ def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
     for stem, share, side, out in OBJECTS:
         ms = object_meshes(res, names, model, stem)
         if not ms: print('object %s: no meshes' % stem); continue
-        bufs = {}
-        for i, at, f in ms: bufs[f[4]] = f[5]  # vertex buffer: stride (dwords)
+        bufs = {}  # vertex buffer: (vertex size in dwords, vertices): a buffer is its vertices, then the meshes' u16 strip
+        for i, at, f in ms:  # indices (moved as vertices, those scrambled every triangle: smeared stripes in the game)
+            vb_, nidx_, vbytes_, vsize, _ = mesh_info(res, names, model, i)
+            if not vsize: continue
+            bufs[vb_] = (vsize // 4, max(vbytes_ // vsize, bufs.get(vb_, (0, 0))[1]))
         allp = []
-        for vb, stride in bufs.items():
-            o, size = names[vb - 9][3], names[vb - 9][4]
-            n = size // (4 * stride)
+        for vb, (stride, n) in bufs.items():
+            o = names[vb - 9][3]
             v = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<f4').reshape(n, stride)[:, :3].astype(float)
             ok = np.all(np.isfinite(v), 1) & (np.abs(v).max(1) < 5000)
             allp.append(v[ok])
@@ -576,15 +620,14 @@ def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
         near_side = ((allp[:, [0, 2]] - mid[[0, 2]]) @ R.T @ away[[0, 2]]).min()
         target = edge + away * (out - near_side)
         lift = centre[i0][1] - foot
-        for vb, stride in bufs.items():
-            o, size = names[vb - 9][3], names[vb - 9][4]
-            n = size // (4 * stride)
+        for vb, (stride, n) in bufs.items():
+            o = names[vb - 9][3]
             raw = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<u4').reshape(n, stride).copy()
             v = raw[:, :3].view('<f4').astype(float)
             xz = (v[:, [0, 2]] - mid[[0, 2]]) @ R.T + target[[0, 2]]
             v[:, 0], v[:, 2], v[:, 1] = xz[:, 0], xz[:, 1], v[:, 1] + lift
             raw[:, :3] = v.astype('<f4').view('<u4')
-            if stride >= 5:  # its normals turned the same way
+            if stride >= 4:  # its normals (the word after the position) turned the same way
                 for j in range(n):
                     nv_ = sc.unpack_normal(int(raw[j, 3]))
                     nxz = R @ nv_[[0, 2]]
@@ -597,15 +640,17 @@ def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
             vbs.add(vb)
         shown = 0
         for i, at, f in ms:
-            fl, ab, nidx, vbytes, vb, stride, prim, t0, t1, sh = f
-            o = names[vb - 9][3]
-            n = vbytes // (4 * stride) if stride else 0
-            if not n: continue
+            vb, nidx, vbytes, vsize, mtex = mesh_info(res, names, model, i)
+            if not vsize: continue
+            o, n, stride = names[vb - 9][3], vbytes // vsize, vsize // 4
             now = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(n, stride)[:, :3].astype(float)
-            sp = sphere_offset(i)
+            was = np.frombuffer(bytes(ORIG_RES[o:o + vbytes]), '<f4').reshape(n, stride)[:, :3].astype(float)
+            c0 = (was.min(0) + was.max(0)) / 2
+            sp = sphere_offset(ppw, i, c0, float(np.max(np.linalg.norm(was - c0, axis=1))))
+            if sp is None: continue
             c1 = (now.min(0) + now.max(0)) / 2
             struct.pack_into('<4f', ppw, sp, float(np.max(np.linalg.norm(now - c1, axis=1))) + 0.5, *c1)
-            meshes.append(i); texs |= {t0, t1}; shown += 1
+            meshes.append(i); texs |= mtex; shown += 1
         print('object %s: %d meshes (%d shown), %d buffers, at %.0f%% of the lap, %s side, turned %.0f degrees' % (stem, len(ms), shown, len(bufs), 100 * share, side, np.degrees(a)))
     return meshes, texs, vbs
 
