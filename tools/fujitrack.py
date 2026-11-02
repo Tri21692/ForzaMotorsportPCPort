@@ -255,6 +255,9 @@ STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is st
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
 TERRAIN_DROP = 0.3              # m: and this far under it (under the runway at its crests too: the lowest runway near)
+GROUND_FLAT = 0.5               # GT4's world model's triangles taken as ground: |normal y| over this
+GROUND_SLOPE = 0.4              # the ground's steepest rise (m a metre) off the runway
+GROUND_NEAR = 1500.0           # m: and their middles this near the runway's middle (the far hills are its own model)
 SPLINES = ('roadinner', 'roadouter', 'drivableinner', 'drivableouter', 'curbinginner', 'curbingouter')
 
 
@@ -364,7 +367,7 @@ def build(disc, runway_dir, out):
     drawn = (area >= SLIVER) & ~((kinds == GRASS) & (dist > GRASS_REACH))
     print('drawn: %d of %d triangles (grass beyond %.0f m and slivers left out)' % (drawn.sum(), len(T), GRASS_REACH))
     # and the ground beyond, drawn only: Vd and Td the drawn vertices and faces (the runway's first)
-    Vt, Tt = terrain(Vf, F, drawn, to_forza(E['centre']))
+    Vt, Tt, ground_at = terrain(Vf, F, drawn, to_forza(E['centre']), read_ground(runway_dir))
     Vd = np.vstack([Vf, Vt])
     Td = np.vstack([T[drawn], Tt + len(Vf)])
     kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS)])
@@ -500,7 +503,7 @@ def build(disc, runway_dir, out):
     meshes += om; tex_used |= ot; vbs_used |= ov
     cf = to_forza(E['centre'])
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
-    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], {o_[0] for o_ in OBJECTS})
+    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], {o_[0] for o_ in OBJECTS}, ground_at)
     meshes += sm; tex_used |= st_; vbs_used |= sv
 
     # the visibility: every cell the same, Fuji's meshes only
@@ -784,9 +787,61 @@ def inside(p, poly):
     return cross.sum(-1) % 2 == 1
 
 
-def terrain(Vf, F, drawn, loop, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
+def read_ground(runway_dir):
+    """GT4's world model's ground near the track (run/gt4_fuji/world.obj, tools/gt4course.py's, in the runway's
+    frame): its triangles facing up (|normal y| over GROUND_FLAT: walls, cards and fences left out), within
+    GROUND_NEAR m of the runway's middle, in Forza's world. (vertices, triangles), or None without the file.
+    Cached beside it as world_ground.npz."""
+    src = os.path.join(runway_dir, 'world.obj')
+    cache = os.path.join(runway_dir, 'world_ground.npz')
+    if os.path.exists(cache) and (not os.path.exists(src) or os.path.getmtime(cache) >= os.path.getmtime(src)):
+        z = np.load(cache)
+        return z['V'], z['T']
+    if not os.path.exists(src): return None
+    V, T = [], []
+    for l in open(src):
+        if l.startswith('v '): V.append(list(map(float, l.split()[1:4])))
+        elif l.startswith('f '): T.append([int(x.split('/')[0]) - 1 for x in l.split()[1:4]])
+    V, T = np.array(V), np.array(T)
+    n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+    ln = np.linalg.norm(n, axis=1)
+    mid = V[T].mean(1)
+    keep = (ln > 1e-9) & (np.abs(n[:, 1]) > GROUND_FLAT * np.maximum(ln, 1e-9)) & \
+           (np.hypot(mid[:, 0] - GT4_MIDDLE[0], mid[:, 2] - GT4_MIDDLE[1]) < GROUND_NEAR)
+    T = T[keep]
+    used = np.unique(T)
+    remap = np.full(len(V), -1); remap[used] = np.arange(len(used))
+    V, T = to_forza(V[used]), remap[T]
+    np.savez(cache, V=V, T=T)
+    return V, T
+
+
+def ground_raster(Gv, Gt, lo, shape, g):
+    """The lowest of the ground triangles' heights in each cell of a raster (lo, shape, g m cells), NaN where none
+    (the lowest: a roof or a stand over the ground is not the ground)."""
+    out = np.full(shape, np.inf)
+    P = (Gv[:, [0, 2]] - lo) / g
+    for a, b, c in Gt:
+        t = P[[a, b, c]]
+        lo_ = np.maximum(np.floor(t.min(0)).astype(int), 0); hi_ = np.minimum(np.ceil(t.max(0)).astype(int), [shape[1] - 1, shape[0] - 1])
+        if (hi_ < lo_).any(): continue
+        xx, zz = np.meshgrid(np.arange(lo_[0], hi_[0] + 1), np.arange(lo_[1], hi_[1] + 1))
+        v0, v1 = t[1] - t[0], t[2] - t[0]
+        det = v0[0] * v1[1] - v0[1] * v1[0]
+        if abs(det) < 1e-12: continue
+        qx, qz = xx + 0.5 - t[0][0], zz + 0.5 - t[0][1]
+        u = (qx * v1[1] - qz * v1[0]) / det
+        w = (v0[0] * qz - v0[1] * qx) / det
+        m = (u >= -1e-6) & (w >= -1e-6) & (u + w <= 1 + 1e-6)
+        ys = Gv[[a, b, c], 1]
+        np.minimum.at(out, (zz[m], xx[m]), ys[0] + u[m] * (ys[1] - ys[0]) + w[m] * (ys[2] - ys[0]))
+    return np.where(np.isfinite(out), out, np.nan)
+
+
+def terrain(Vf, F, drawn, loop, ground=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
     """The ground round the runway (Forza's, V; F all its faces, `drawn` those drawn; loop the centre line): a
-    grid of `cell` m squares out to `reach` m beyond the runway and over all the loop's middle, each corner at the runway's height spread outward (the nearest runway's,
+    grid of `cell` m squares out to `reach` m beyond the runway and over all the loop's middle, each corner at
+    GT4's ground's height there (read_ground; its hills) where it has some, else at the runway's height spread outward (the nearest runway's,
     smoothed), `drop` m under it, and under the lowest drawn runway within a cell of it; squares the drawn
     runway covers left out. Returns (vertices, triangles: wound as the runway's) for the grass, visual only (the
     runway's walls keep the cars off it)."""
@@ -804,6 +859,37 @@ def terrain(Vf, F, drawn, loop, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TER
         new = ~filled & (cnt > 0)
         if not new.any(): break
         y[new] = acc[new] / cnt[new]; away[new] = it * g; filled |= new
+    if ground is not None:  # GT4's ground off the runway where it has some, the rest spread again from it and the runway
+        gr = ground_raster(ground[0], ground[1], r.lo, r.shape, g)
+        # spikes out (a stand's or a roof's top where no ground is under it): cells 3 m off their 10 m median
+        stack = np.stack([np.roll(np.roll(gr, dz, 0), dx, 1) for dz in range(-2, 3) for dx in range(-2, 3)])
+        with np.errstate(all='ignore'):
+            med = np.nanmedian(stack, 0)
+        gr[np.abs(gr - med) > 3.0] = np.nan
+        use = np.isfinite(gr) & (away > 0)
+        y = r.y.astype(float).copy()
+        y[use] = gr[use]
+        filled = np.isfinite(y)
+        for it in range(1, 400):
+            y0 = np.where(filled, y, 0.0)
+            acc = sum(np.roll(np.roll(y0, dz, 0), dx, 1) for dz, dx in nb)
+            cnt = sum(np.roll(np.roll(filled, dz, 0), dx, 1).astype(int) for dz, dx in nb)
+            new = ~filled & (cnt > 0)
+            if not new.any(): break
+            y[new] = acc[new] / cnt[new]; filled |= new
+        off = away > 0
+        rise = GROUND_SLOPE * g
+        for _ in range(60):  # no steeper than GROUND_SLOPE off the runway: a block (a stand with no ground under it) a hill
+            lo_n = np.minimum.reduce([np.roll(np.roll(y, dz, 0), dx, 1) for dz, dx in nb])
+            hi_n = np.maximum.reduce([np.roll(np.roll(y, dz, 0), dx, 1) for dz, dx in nb])
+            y2 = np.where(off, np.clip(y, hi_n - rise * 1.5, lo_n + rise), y)
+            if np.allclose(y2, y): break
+            y = y2
+        for _ in range(3):  # smoothed off the runway (2 m cells of the lowest triangle: steps)
+            m = sum(np.roll(np.roll(y, dz, 0), dx, 1) for dz, dx in nb + [(0, 0)]) / 9
+            y[off] = m[off]
+        print('terrain: GT4 ground under %.0f%% of the cells off the runway, %.0f to %.0f m high' %
+              (100 * use.sum() / max(1, (away > 0).sum()), np.nanmin(gr), np.nanmax(gr)))
     ydraw = np.where(np.isfinite(rd.y), rd.y, np.inf).astype(float)
     low = ydraw.copy()
     for _ in range(int(cell / g)):  # the lowest drawn runway within a cell
@@ -839,13 +925,22 @@ def terrain(Vf, F, drawn, loop, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TER
     n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
     flip = n[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
-    return V, T
+    H = hgt[zi, xi]
+
+    def height(xz):  # the grid's height at points (..., 2): its corners' blended (the grass drawn between them)
+        f = (np.asarray(xz, float) - lo) / cell
+        i0 = np.clip(np.floor(f).astype(int), 0, [nx - 2, nz - 2])
+        t = np.clip(f - i0, 0, 1)
+        a, b = i0[..., 0], i0[..., 1]
+        return (H[b, a] * (1 - t[..., 0]) + H[b, a + 1] * t[..., 0]) * (1 - t[..., 1]) + \
+               (H[b + 1, a] * (1 - t[..., 0]) + H[b + 1, a + 1] * t[..., 0]) * t[..., 1]
+    return V, T, height
 
 
-def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, seed=7):
+def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, ground_at=None, seed=7):
     """SCATTER's props placed round Fuji (centre: Forza's, a point every STEP m; reach_in/out: how far the runway
     reaches each side of it there, the inside of the loop and the outside: runway_reach). Returns (meshes,
-    textures, vertex buffers)."""
+    textures, vertex buffers). Each stands on the ground (ground_at: terrain's), its lowest point under its foot."""
     import re
     rng = np.random.default_rng(seed)
     n = len(centre)
@@ -921,7 +1016,8 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
                 if clear(xz @ R.T + target[[0, 2]]): ok = True; break
             if used_up: break
             if not ok: crossing += 1; continue
-            m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, centre[i0][1] - allp[:, 1].min())
+            foot = ground_at(xz @ R.T + target[[0, 2]]).min() if ground_at else centre[i0][1]
+            m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, foot - allp[:, 1].min())
             if m_: placed += 1
             meshes += m_; texs |= t_; vbs |= v_
             used.add(stem)
