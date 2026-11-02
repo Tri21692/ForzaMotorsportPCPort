@@ -48,6 +48,7 @@ MAX_HALF = 11.0    # m: a side's edge at most this far from the line (where run-
 GROW = 2           # cells the edge surfaces are thickened by: drawn at RES, the thin edge strips broke into dots and the tarmac leaked through
 TARMAC, KERB, GRASS, GRAVEL, LINE = 0, 1, 2, 3, 0x0A
 TREE = 0x63  # (drawn only: GT4's tree cards)
+FOREST = 0x64  # (drawn only: the woods' canopy)
 
 
 def read_runway_obj(path):
@@ -238,7 +239,7 @@ GT4_MIDDLE = (111.4, 106.7)     # the Fuji runway's (x, z): x -797..1020, z -195
 # shader 13407, a lit diffuse), the texture (None: that mesh's own) and the metres a repeat. Road Atlanta's kerbs
 # and gravel traps have richer vertices (flags 0x2000), so their textures are drawn the tarmac's way.
 MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, None, 8.0),
-             TREE: (5628, None, 1.0)}  # (the trees: foliagefacade01's card material, its texture GT4's trees: TREE_TEX)
+             TREE: (5628, None, 1.0), FOREST: (83, 430, 40.0)}  # (the woods: terrain_hillside_distantbrush_001)  # (the trees: foliagefacade01's card material, its texture GT4's trees: TREE_TEX)
 # a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
 # a black, clear texel at the lightmap's edge)
@@ -247,12 +248,21 @@ LIGHT = {101: (-32615, -32406), 137: (-32439, -32451)}
 # grey asphalt olive in the game: every surface samples instead the most neutral well-lit texel found in any of its
 # lightmaps, innerterrainfs_03's (resource 437, texel (138, 192) of 256 x 256: 112, 112, 112)
 LIGHTMAP = (437, int(138 / 255 * 512) - 32768, int(192 / 255 * 512) - 32768)
+FOREST_LIGHT = (int(83 / 255 * 512) - 32768, int(127 / 255 * 512) - 32768)  # the woods' texel: 0.57 of the grey
+GRASS_LIGHT = (int(127 / 255 * 512) - 32768, int(144 / 255 * 512) - 32768)  # the grass's texel of it: 0.85 of that grey,
+                                                                          # flat round (the user's: grass a little darker)
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
 KERB_W = 1.2                    # m across a kerb's texture (its stripes along the track)
 REACH = 120.0                   # m: a donor's faces within this of its first
 GRASS_REACH = 30.0              # m: grass drawn this near the centre line only (all of it solid): the small buffers ran out
 SLIVER = 0.02                   # m2: thinner triangles not drawn
+# The woods (the user's photo of Fuji: forest beyond a grass belt round the track, a wooded block inside the lap):
+# the ground FOREST_FROM m or more beyond the runway raised into a canopy CANOPY_H m high (a bumpy top), over
+# FOREST_RAMP m, drawn with the woods' material; none in the clearings (the pits, paddock and grandstand: CLEARINGS,
+# (from and to as shares of the lap, side, metres beyond the runway kept clear)). Trees line its edge.
+FOREST_FROM, FOREST_RAMP, CANOPY_H, CANOPY_BUMPS = 50.0, 14.0, 13.0, 3.0
+CLEARINGS = [(0.88, 0.06, 'in', 170.0), (0.88, 0.06, 'out', 70.0)]
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -371,17 +381,18 @@ def build(disc, runway_dir, out):
     drawn = (area >= SLIVER) & ~((kinds == GRASS) & (dist > GRASS_REACH))
     print('drawn: %d of %d triangles (grass beyond %.0f m and slivers left out)' % (drawn.sum(), len(T), GRASS_REACH))
     # and the ground beyond, drawn only: Vd and Td the drawn vertices and faces (the runway's first)
-    Vt, Tt, ground_at = terrain(Vf, F, drawn, to_forza(E['centre']), read_ground(runway_dir))
     cf = to_forza(E['centre'])
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
-    Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON)
-    Vfar, Tfar = far_terrain(Vf, F, cf, read_ground(runway_dir))
-    Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at)
+    clear = clearings(cf, sides(cf)[1], reach[:, 0], reach[:, 1])
+    Vt, Tt, ground_at, Kt = terrain(Vf, F, drawn, cf, read_ground(runway_dir), clear)
+    Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON, ground_at)
+    Vfar, Tfar, Kfar = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
+    Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear)
     Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
     o_t = o_f + len(Vfar)
     Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t])
-    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS), np.full(len(Ta), TARMAC), np.full(len(Tfar), GRASS), np.full(len(Ttr), TREE)])
+    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE)])
     given_uv = {o_t + i: (int(u * 512) - 32768, int(v * 512) - 32768) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet)
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
@@ -433,8 +444,10 @@ def build(disc, runway_dir, out):
             jobs.append((k, s))
     # the ground in blocks of 8 x 8 squares (a grid row's strip ran kilometres: past s16's texture coordinates)
     ground = []
-    for k_, tris, bsize in ((GRASS, Tt + len(Vf), 8 * TERRAIN_CELL), (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, Tfar + o_f, 8 * FAR_CELL),
-                            (TREE, Ttr + o_t, 8 * TERRAIN_CELL)):  # (the apron, the far ground, the trees)
+    for k_, tris, bsize in ((GRASS, (Tt + len(Vf))[Kt == GRASS], 8 * TERRAIN_CELL), (FOREST, (Tt + len(Vf))[Kt == FOREST], 8 * TERRAIN_CELL),
+                            (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, (Tfar + o_f)[Kfar == GRASS], 8 * FAR_CELL),
+                            (FOREST, (Tfar + o_f)[Kfar == FOREST], 8 * FAR_CELL), (TREE, Ttr + o_t, 8 * TERRAIN_CELL)):  # (the woods, the apron, the far ground, the trees)
+        if not len(tris): continue
         block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / bsize).astype(int)
         for bk in sorted({tuple(b) for b in block}):
             for s in strips_of([tuple(t) for t in tris[(block == bk).all(1)]]):
@@ -458,7 +471,7 @@ def build(disc, runway_dir, out):
         mt0 = tex or mt0
         mo = names[record(res, model, mat)[1][4] - 9][3]
         mst = np.frombuffer(bytes(res[mo:mo + 24 * record(res, model, mat)[1][3] // 24]), '<i2').reshape(-1, 12)[:, 8:12]
-        mt1, light = LIGHTMAP[0], LIGHTMAP[1:]
+        mt1, light = LIGHTMAP[0], {GRASS: GRASS_LIGHT, FOREST: FOREST_LIGHT}.get(k, LIGHTMAP[1:])
         at, (fl, ab, nidx, vbytes, vbr, stride, prim, t0, t1, sh) = record(res, model, mesh)
         pts = np.vstack([Vd[s] for s in strips])
         org = np.floor(pts.min(0) / metres) * metres  # (texture coordinates from a whole repeat near the faces: s16 holds +-64 repeats)
@@ -584,8 +597,10 @@ ROWS = [
     (['sunocosign'], 0.075, 0.1, 'out', 10.0, 0.0),
 ]
 ROW_PUSH = (0.0, 3.0, 8.0, 16.0)   # m further out tried when a row's piece would reach over the runway
-PIT_APRON = (0.935, 0.02, 15.0)    # the pit lane's apron (tarmac, drawn only): from and to (shares of the lap), its width
-                                   # beyond the runway's inside edge (GT4's runway has no pit lane), the pit building behind
+PIT_APRON = (0.935, 0.02, [(-0.3, False), (15.0, False), (30.0, True), (55.0, True), (80.0, True), (105.0, True), (130.0, True)])
+                                   # the pit lane's apron and the paddock behind it (tarmac, drawn only; the user's photo:
+                                   # all paved): from and to (shares of the lap), its columns (apron) beyond the runway's
+                                   # inside edge (GT4's runway has no pit lane), the pit building on it
 # GT4's art on Road Atlanta's signs (the user's: GT4's models only for what identifies the track): (texture
 # resource, image in run\gt4_fuji\art, times across). GT4 keeps colours at half (its vertex colours double them):
 # brightened by ART_GAIN. The Sunoco sign (256 x 128) takes Fuji's big logo, the four ad walls (512 x 64) its wall
@@ -600,9 +615,9 @@ TREE_TEX = ['1_53', '1_54', '1_59', '1_60', '1_33']   # cells 0-4; GT4 materials
                                                       # silhouette, and 0_34, a door, are not trees)
 TREE_SHEET = 7564          # tree_cardpage_realforrest_tile: the sheet
 TREE_TALL = [0, 1, 2, 3]  # the cells holding a whole tree (the generated trees')
-TREE_CLUSTERS = 260        # generated clusters, each 3 to 9 trees within 6 to 22 m
-TREE_BAND = (8.0, 130.0)   # m beyond the runway they stand in
-TREE_H = (9.0, 17.0)       # m high
+TREE_CLUSTERS = 520        # generated clusters, each 3 to 9 trees within 6 to 22 m
+TREE_BAND = (FOREST_FROM - 14.0, FOREST_FROM + 6.0)   # m beyond the runway: along the woods' edge (its ramp hidden)
+TREE_H = (12.0, 20.0)      # m high (the canopy 13)
 
 
 
@@ -865,18 +880,24 @@ def box_axes(xz):
     return best[1]
 
 
-def apron(centre, inner, reach_in, s0, s1, width):
-    """A paved strip beyond the runway's inside edge from s0 to s1 (shares of the lap), `width` m wide, at the
-    centre line's height (over the ground, which lies under the runway): (vertices, triangles wound as the
-    runway's)."""
+def apron(centre, inner, reach_in, s0, s1, cols, ground_at=None):
+    """A paved area beyond the runway's inside edge from s0 to s1 (shares of the lap), in columns `cols` (metres
+    beyond the edge, and whether on the ground (ground_at's, a little over it) or at the centre line's height,
+    the pit lane's): (vertices, triangles wound as the runway's)."""
     n = len(centre)
     a, b = int(s0 * n), int(s1 * n) + (n if s1 < s0 else 0)
+    m = len(cols)
     V, T = [], []
     for k, j in enumerate(range(a, b + 1, 2)):
         i = j % n
-        for off in (reach_in[i] - 0.3, reach_in[i] + width):  # (from under the runway's edge)
-            V.append(centre[i] + inner[i] * off + (0, 0.02, 0))
-        if k: T += [(2 * k - 2, 2 * k - 1, 2 * k + 1), (2 * k - 2, 2 * k + 1, 2 * k)]
+        for off, on_ground in cols:
+            q = centre[i] + inner[i] * (reach_in[i] + off)
+            q[1] = float(ground_at(q[None, [0, 2]])[0]) + 0.15 if on_ground and ground_at else centre[i][1] + 0.02
+            V.append(q)
+        if k:
+            for c in range(m - 1):
+                p0, p1 = m * (k - 1) + c, m * k + c
+                T += [(p0, p0 + 1, p1 + 1), (p0, p1 + 1, p1)]
     V, T = np.array(V, float), np.array(T, int)
     nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
     flip = nrm[:, 1] > 0
@@ -899,7 +920,37 @@ def spread(y, it=600):
     return y, away
 
 
-def far_terrain(Vf, F, loop, ground, cell=FAR_CELL, reach=FAR_REACH, near=TERRAIN_REACH, drop=TERRAIN_DROP + FAR_DROP):
+def canopy(xz, away, clear):
+    """The woods' height over the ground at points (..., 2) `away` m beyond the runway: 0 within FOREST_FROM and in
+    the clearings (clear: a function of the points, True where none), rising over FOREST_RAMP m to CANOPY_H, bumpy."""
+    xz = np.asarray(xz, float)
+    bumps = CANOPY_BUMPS * (np.sin(xz[..., 0] * 0.071 + 1.3) * np.cos(xz[..., 1] * 0.053) + 0.6 * np.sin((xz[..., 0] + xz[..., 1]) * 0.11))
+    c = np.clip((away - FOREST_FROM) / FOREST_RAMP, 0, 1) * (CANOPY_H + bumps)
+    return np.where(clear(xz), 0.0, np.maximum(c, 0))
+
+
+def clearings(centre, inner, reach_in, reach_out):
+    """CLEARINGS as a function of points (..., 2): True in them."""
+    n = len(centre)
+    c2 = centre[:, [0, 2]]
+
+    def clear(xz):
+        q = np.asarray(xz, float).reshape(-1, 2)
+        out = np.zeros(len(q), bool)
+        for a in range(0, len(q), 4000):
+            d = np.hypot(q[a:a + 4000, None, 0] - c2[None, :, 0], q[a:a + 4000, None, 1] - c2[None, :, 1])
+            j = d.argmin(1); dist = d[np.arange(len(j)), j]
+            side_in = np.einsum('ij,ij->i', q[a:a + 4000] - c2[j], inner[j][:, [0, 2]]) > 0
+            share = j / n
+            for s0, s1, side, keep in CLEARINGS:
+                on = (share >= s0) | (share <= s1) if s1 < s0 else (share >= s0) & (share <= s1)
+                beyond = dist - np.where(side_in, reach_in[j], reach_out[j])
+                out[a:a + 4000] |= on & (side_in == (side == 'in')) & (beyond < keep)
+        return out.reshape(np.asarray(xz).shape[:-1])
+    return clear
+
+
+def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH, near=TERRAIN_REACH, drop=TERRAIN_DROP + FAR_DROP):
     """The ground from the near grid's edge (terrain's) out to `reach` m beyond the runway, outside the loop: a grid of
     `cell` m squares at GT4's ground's height (its far hills too) where it has some, else the runway's spread
     outward; no steeper than GROUND_SLOPE; `drop` m down (the near grid draws over it where they overlap).
@@ -940,8 +991,9 @@ def far_terrain(Vf, F, loop, ground, cell=FAR_CELL, reach=FAR_REACH, near=TERRAI
     a_ = away[zi, xi]
     keep = (a_ <= reach) & ~inside(corner, loop[:, [0, 2]])
     deep = a_ < near - 2 * TERRAIN_CELL  # (well inside the near grid)
+    can = canopy(corner, a_, clear) if clear else np.zeros(gx.shape)
     vid = -np.ones(gx.shape, int)
-    V, T = [], []
+    V, T, K = [], [], []
     for a in range(nz - 1):
         for b in range(nx - 1):
             q4 = ((a, b), (a, b + 1), (a + 1, b + 1), (a + 1, b))
@@ -949,18 +1001,19 @@ def far_terrain(Vf, F, loop, ground, cell=FAR_CELL, reach=FAR_REACH, near=TERRAI
             q = []
             for u, v in q4:
                 if vid[u, v] < 0:
-                    vid[u, v] = len(V); V.append((gx[u, v], y[zi[u, v], xi[u, v]] - drop, gz[u, v]))
+                    vid[u, v] = len(V); V.append((gx[u, v], y[zi[u, v], xi[u, v]] - drop + can[u, v], gz[u, v]))
                 q.append(vid[u, v])
             T += [(q[0], q[1], q[2]), (q[0], q[2], q[3])]
-    V, T = np.array(V, float), np.array(T, int)
+            K += [FOREST if max(can[u, v] for u, v in q4) > 1.0 else GRASS] * 2
+    V, T, K = np.array(V, float), np.array(T, int), np.array(K, int)
     nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
     flip = nrm[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
-    print('far ground: %d vertices, %d triangles, %.0f to %.0f m high' % (len(V), len(T), V[:, 1].min(), V[:, 1].max()))
-    return V, T
+    print('far ground: %d vertices, %d triangles (%d woods), %.0f to %.0f m high' % (len(V), len(T), (K == FOREST).sum(), V[:, 1].min(), V[:, 1].max()))
+    return V, T, K
 
 
-def terrain(Vf, F, drawn, loop, ground=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
+def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
     """The ground round the runway (Forza's, V; F all its faces, `drawn` those drawn; loop the centre line): a
     grid of `cell` m squares out to `reach` m beyond the runway and over all the loop's middle, each corner at
     GT4's ground's height there (read_ground; its hills) where it has some, else at the runway's height spread outward (the nearest runway's,
@@ -1029,8 +1082,9 @@ def terrain(Vf, F, drawn, loop, ground=None, cell=TERRAIN_CELL, reach=TERRAIN_RE
     corner = np.stack([gx, gz], -1)
     zi, xi = at(corner)
     near = (away[zi, xi] <= reach) | inside(corner, loop[:, [0, 2]])  # (and all the loop's middle)
+    can = canopy(corner, away[zi, xi], clear) if clear else np.zeros(gx.shape)
     vid = -np.ones(gx.shape, int)
-    V, T = [], []
+    V, T, K = [], [], []
     frac = np.linspace(0, 1, int(cell) + 1)  # (every metre: a square the runway leaves a sliver of is drawn)
     for a in range(nz - 1):
         for b in range(nx - 1):
@@ -1040,10 +1094,11 @@ def terrain(Vf, F, drawn, loop, ground=None, cell=TERRAIN_CELL, reach=TERRAIN_RE
             q = []
             for (u, v) in ((a, b), (a, b + 1), (a + 1, b + 1), (a + 1, b)):
                 if vid[u, v] < 0:
-                    vid[u, v] = len(V); V.append((gx[u, v], hgt[zi[u, v], xi[u, v]], gz[u, v]))
+                    vid[u, v] = len(V); V.append((gx[u, v], hgt[zi[u, v], xi[u, v]] + can[u, v], gz[u, v]))
                 q.append(vid[u, v])
             T += [(q[0], q[1], q[2]), (q[0], q[2], q[3])]
-    V, T = np.array(V, float), np.array(T, int)
+            K += [FOREST if max(can[u_, v_] for u_, v_ in ((a, b), (a, b + 1), (a + 1, b + 1), (a + 1, b))) > 1.0 else GRASS] * 2
+    V, T, K = np.array(V, float), np.array(T, int), np.array(K, int)
     n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
     flip = n[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
@@ -1056,7 +1111,8 @@ def terrain(Vf, F, drawn, loop, ground=None, cell=TERRAIN_CELL, reach=TERRAIN_RE
         a, b = i0[..., 0], i0[..., 1]
         return (H[b, a] * (1 - t[..., 0]) + H[b, a + 1] * t[..., 0]) * (1 - t[..., 1]) + \
                (H[b + 1, a] * (1 - t[..., 0]) + H[b + 1, a + 1] * t[..., 0]) * t[..., 1]
-    return V, T, height
+    print('terrain: %d of %d triangles woods' % ((K == FOREST).sum(), len(K)))
+    return V, T, height, K
 
 
 def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, ground_at=None, seed=7):
@@ -1269,7 +1325,7 @@ def read_gt4_trees(runway_dir):
     return P, UV, C
 
 
-def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, seed=11):
+def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, clear=None, seed=11):
     """The trees: GT4's where GT4 has them (each tree's faces joined by shared corners, set on our ground; none
     wider than 25 m), and TREE_CLUSTERS clusters of two crossed cards each, off the runway (TREE_BAND), not in the
     pits and paddock or the main grandstand's strip; every face both ways round. (vertices, triangles, texture
@@ -1299,6 +1355,7 @@ def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, seed=11):
         for g in groups.values():
             pts = P[g].reshape(-1, 3)
             if max(np.ptp(pts[:, 0]), np.ptp(pts[:, 2])) > 25: continue
+            if clear and clear(pts[:, [0, 2]].mean(0)[None])[0]: continue  # (the paved paddock)
             dy = ground_at(pts[:, [0, 2]]).min() - 0.3 - pts[:, 1].min()
             for i in g:
                 b = len(V)
@@ -1324,7 +1381,7 @@ def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, seed=11):
             # the nearest point's side and reach: the tree stays off the runway by 4 m
             j = int(np.argmin(np.hypot(*(centre[:, [0, 2]] - q).T)))
             sd = 'in' if (q - centre[j][[0, 2]]) @ inner[j][[0, 2]] > 0 else 'out'
-            if not clear_of(q, j, sd): continue
+            if not clear_of(q, j, sd) or (clear and clear(q[None])[0]): continue
             h = rng.uniform(*TREE_H); w = h / 2
             cell = TREE_TALL[int(rng.integers(len(TREE_TALL)))]
             y0 = float(ground_at(q[None])[0]) - 0.3
