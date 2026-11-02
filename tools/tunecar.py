@@ -5,8 +5,9 @@ options do.
   python tools/tunecar.py <disc folder> <mods folder> <car>
                           [--physics-like <car>:<part>[,<part>...]]... [--tooldata-like <car>:<Section>[,...]]...
                           [--tires <front>,<rear>] [--final-drive <ratio>] [--mass <kg>]
-                          [--performance <0-60 s>,<0-100 mph s>,<top km/h>] [--power <hp>]
+                          [--performance <0-60 s>,<0-100 mph s>,<top km/h>] [--power <hp>] [--own-engine <name>]
                           [--unlock <level>[,<Europe's>,<Asia's>]] [--paint-like <car>] [--subclass <D4..S1>]
+                          [--ratings <speed>,<acceleration>,<handling>]
                           [--scale <physics file or folder>:<attribute>[,...]=<factor>]... [--shift <same>=<amount>]...
   e.g.  <disc>  run/mods_lambo  ChevyCobaltSS  --tires 205/45R18,205/45R18  --final-drive 3.85
 
@@ -22,12 +23,15 @@ language (the disc's own sentence, its number changed); --unlock 0 puts it
 on sale from the start. --paint-like: the
 paint shop's colour choices of that car, without its vinyl layers. --subclass: the class the
 car lists show (gamecars.dat's u32 at 100, a performancesubclass.dat id: D4 1 .. A1 16, S4 17 ..
-S1 20, by name), as the shop works it out from the car's physics (the Gallardo listed A, from
+S1 20, GT 21, GTS 22, P1 23, by name), as the shop works it out from the car's physics (the Gallardo listed A, from
 addcar --stats-like, and the shop showed S4). --scale (any number): those attributes of the car's
 physics file (aero/body.xml) or of every level of a folder (aero/front: l0-l3.xml) multiplied by the
 factor, e.g. aero/front:Downforce0,Downforce1=1.15; --shift adds the amount instead, e.g.
 maxdata.xml:MinZ,MaxZ,PosZ=0.275 (the collision box and spheres 0.275 m forward). Writes only into
-the mods folder, never the saves.
+the mods folder, never the saves. --own-engine: the car's engine copied under
+that name (its physics in Cars.ca2, its sound in the car's cab), as its only engine, so a car that
+shares one (the M3 GTR MW the disc #42's) can be changed alone; with --power its torque curves are
+scaled to that figure (else --power changes only the menus' figure).
 """
 import os
 import re
@@ -117,7 +121,7 @@ def rewrite(d, texts):
 
 
 def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, final_drive=None, mass=None, performance=None,
-         power=None, unlock=None, paint_like=None, subclass=None, scale=None, shift=None):
+         power=None, unlock=None, paint_like=None, subclass=None, scale=None, shift=None, ratings=None, own_engine=None):
     mega, cars = addcar.Archive(disc, mods, 'Mega.ca2'), addcar.Archive(disc, mods, 'Cars.ca2')
     key = 'cars' + B + 'carlist.xml'
     xml = mega.files[key].decode('latin-1')
@@ -131,6 +135,37 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
     ctx = {'files': cars.files, 'xml': xml, 'entry': entry, 'model': model, 'mrow': mrow, 'cdst': cdst, 'tool': cars.files[tk].decode('latin-1')}
     addcar.tune(ctx, physics_like, tooldata_like, tires, final_drive, mass)
     cars.files[tk] = ctx['tool'].encode('latin-1')
+    cab = None
+    if own_engine:  # the car's engine copied as its own (another car may share it), physics and sound, and its power scaled
+        tool = cars.files[tk].decode('latin-1')
+        eng = re.search(r'<E0 [^>]*File="([^"]*)"', tool).group(1)
+        if eng.lower() != own_engine.lower():
+            ep_f, ep_s = B.join(('engines', eng.lower())) + B, B.join(('engines', own_engine.lower())) + B
+            for k in [k for k in cars.files if k.lower().startswith(ep_f)]:
+                cars.files[ep_s + k[len(ep_f):]] = cars.files[k]
+            cars.files[tk] = re.sub(r'(<E0 [^>]*File=")[^"]*"', lambda g: g.group(1) + own_engine + '"', tool).encode('latin-1')
+            cab_path = os.path.join(mods, 'media', 'cabs', 'car_%s.cab' % car)  # its sound, in the car's own cab (as addcar.py's --engine-like)
+            files, root = addcar.cab_files(open(cab_path, 'rb').read())
+            ea = B.join(('engines', eng.lower(), 'audio')) + B
+            for k, v in list(files.items()):
+                if not k.lower().startswith(ea): continue
+                rest = re.sub(re.escape(eng.lower()), own_engine.lower(), k[len(ea):].lower())
+                if k.lower().endswith('.ini'): v = re.sub(re.escape(eng).encode(), own_engine.encode(), v, flags=re.I)
+                files[B.join(('engines', own_engine.lower(), 'audio')) + B + rest] = v
+            cab = (cab_path, files, root)
+            print('engine: %s\'s copied as %s (physics, and its sound in car_%s.cab)' % (eng, own_engine, car))
+        if power:  # every enginetuning level's full-throttle torque scaled to the power figure: its TorqueScale, since
+            # the upgrade levels' curves are all zeros (they take the stock curve's shape at their own scale)
+            k1 = power / (struct.unpack_from('<f', grow, 12)[0] / 10 / 0.745699872)
+            for lv in range(4):
+                t = B.join(('engines', own_engine.lower(), 'physics', 'enginetuning', 'l%d.xml' % lv))
+                if t in cars.files:
+                    cars.files[t] = re.sub(rb'(<FullThrottle [^>]*?TorqueScale=")([0-9.]+)"',
+                                           lambda g: g.group(1) + b'%.6f"' % (float(g.group(2)) * k1), cars.files[t], count=1)
+            bk = B.join(('engines', own_engine.lower(), 'physics', 'base.xml'))  # the upgrade screen's graph, as high
+            cars.files[bk] = re.sub(rb'(Graphing(?:MaxTorque|MaxPower)=")([0-9.]+)"',
+                                    lambda g: g.group(1) + b'%.0f"' % (float(g.group(2)) * k1), cars.files[bk])
+            print('engine %s: torque x%.3f = %.0f hp' % (own_engine, k1, power))
     for op, spec in [('x', s) for s in scale or ()] + [('+', s) for s in shift or ()]:  # <file or folder>:<attr>,<attr>=<number>
         where, rest = spec.split(':')
         attrs, n = rest.split('=')
@@ -152,7 +187,7 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
         struct.pack_into('<2f', grow, 48, t60, t100)
         struct.pack_into('<f', grow, 64, vmax / 3.6)
         print('spec screen: 0-60 mph %.1f s, 0-100 mph %.1f s, %.0f km/h' % performance)
-    if power:  # the menus' power figure (gamecars.dat, tenths of a kilowatt); the engine itself is as it was
+    if power:  # the menus' power figure (gamecars.dat, tenths of a kilowatt); the engine itself as it was but with --own-engine
         struct.pack_into('<f', grow, 12, power * 0.745699872 * 10)
         print('menus: %.0f hp' % power)
     if paint_like:  # the paint shop's base colours as that car's, without its vinyl layers (custom: a race car has no liveries.xml at all, and no paint shop)
@@ -167,6 +202,11 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
         was = struct.unpack_from('<I', grow, 100)[0]
         struct.pack_into('<I', grow, 100, ids[subclass.upper()])
         print('listed class: %s (subclass %d, was %d)' % (subclass.upper(), ids[subclass.upper()], was))
+    if ratings:  # the car lists' speed, acceleration and handling figures and their mean: gamecars.dat 140-152, model.dat 36-48
+        r = list(ratings) + [sum(ratings) / 3]
+        struct.pack_into('<4f', grow, 140, *r)
+        struct.pack_into('<4f', mrow, 36, *r)
+        print('ratings: %.1f %.1f %.1f (%.3f)' % tuple(r))
     strings = {}
     if unlock:
         strings = set_unlock(disc, mods, mega, o, mrow, list(unlock) + [unlock[-1]] * (3 - len(unlock)))
@@ -175,6 +215,10 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
     mega.files[gk] = addcar.put_row(games, bytes(grow))
     for a in (mega, cars): a.check()
     for a in (mega, cars): a.write()
+    if cab:
+        import forzacab
+        open(cab[0], 'wb').write(forzacab.pack(cab[1], cab[2]))
+        print('%s: %d files' % (cab[0], len(cab[1])))
     for mp, out in strings.items():
         os.makedirs(os.path.dirname(mp), exist_ok=True)
         open(mp, 'wb').write(out)
@@ -185,7 +229,7 @@ if __name__ == '__main__':
     it = iter(sys.argv[1:])
     for a in it:
         if a in ('--physics-like', '--tooldata-like', '--scale', '--shift'): opts.setdefault(a[2:].replace('-', '_'), []).append(next(it))
-        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass'): opts[a[2:].replace('-', '_')] = next(it)
+        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass', '--ratings', '--own-engine'): opts[a[2:].replace('-', '_')] = next(it)
         else: args.append(a)
     if len(args) != 3: raise SystemExit(__doc__)
     if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(args[1]).split(os.sep)):
@@ -196,4 +240,5 @@ if __name__ == '__main__':
          performance=tuple(float(x) for x in opts['performance'].split(',')) if 'performance' in opts else None,
          power=float(opts['power']) if 'power' in opts else None,
          unlock=tuple(int(x) for x in opts['unlock'].split(',')) if 'unlock' in opts else None,
-         paint_like=opts.get('paint_like'), subclass=opts.get('subclass'), scale=opts.get('scale'), shift=opts.get('shift'))
+         paint_like=opts.get('paint_like'), subclass=opts.get('subclass'), scale=opts.get('scale'), shift=opts.get('shift'),
+         ratings=tuple(float(x) for x in opts['ratings'].split(',')) if 'ratings' in opts else None, own_engine=opts.get('own_engine'))

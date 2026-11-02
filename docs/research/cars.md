@@ -686,6 +686,24 @@ it on a Forza wheel with a 128 x 128 quarter for it, updatecar.py --wheel
 gives the car tires\art\<car>. The Gallardo and Cobalt have theirs too.
 Mega.ca2 is at 11.74 of its 12 MB in run/mods_lambo.
 
+### Faster (2 Nov): 900 hp, 242 mph
+
+The user asked for 242 mph and every figure up. It shared the disc #42's
+engine (BMWM3GTR42), so tunecar.py --own-engine copied it as BMWM3GTRMW
+(physics in Cars.ca2, sound in car_BMWM3GTRMW.cab) and --power 900 scaled
+each enginetuning level's FullThrottle TorqueScale x2.03: levels 1-3's
+curves are all zeros (they take level 0's shape at their own scale), so
+the scale, not the curve, is what reaches the stock level 3. Its gearing
+held it to about 86 m/s at the limiter: final drive 3.87 to 2.65 puts
+242 mph near 7,900 rpm (the power peak is 7,500). Body and wing drag x0.75,
+downforce x1.15, tyre grip x1.06, brakes x1.10, shifts x0.75; listed P1,
+ratings 10, spec 3.7 s / 7.3 s / 389 km/h.
+
+The top speed comes from a fit over the disc cars' spec figures: power =
+k x drag x v^3, D the body's LongitudinalDrag plus each wing's drag at its
+default slider, k 2.61e-3 (median of 224 drag-limited cars, quartiles
+2.45e-3 and 2.75e-3: about +-2% in speed). Not yet driven in game.
+
 ### Second pass (27 Oct): lamps, the Hero livery, the black patches
 
 HUFF: Most Wanted packs some textures (the lamps, nearly all vinyls) with
