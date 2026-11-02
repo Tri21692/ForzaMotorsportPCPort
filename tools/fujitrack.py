@@ -47,6 +47,7 @@ SEARCH = 70.0      # m each side the cross-section looks
 MAX_HALF = 11.0    # m: a side's edge at most this far from the line (where run-off tarmac carries on)
 GROW = 2           # cells the edge surfaces are thickened by: drawn at RES, the thin edge strips broke into dots and the tarmac leaked through
 TARMAC, KERB, GRASS, GRAVEL, LINE = 0, 1, 2, 3, 0x0A
+TREE = 0x63  # (drawn only: GT4's tree cards)
 
 
 def read_runway_obj(path):
@@ -236,7 +237,8 @@ GT4_MIDDLE = (111.4, 106.7)     # the Fuji runway's (x, z): x -797..1020, z -195
 # the materials: a Road Atlanta mesh of plain 24-byte vertices whose way of drawing it takes (flags, lightmap,
 # shader 13407, a lit diffuse), the texture (None: that mesh's own) and the metres a repeat. Road Atlanta's kerbs
 # and gravel traps have richer vertices (flags 0x2000), so their textures are drawn the tarmac's way.
-MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, None, 8.0)}
+MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, None, 8.0),
+             TREE: (5628, None, 1.0)}  # (the trees: foliagefacade01's card material, its texture GT4's trees: TREE_TEX)
 # a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
 # a black, clear texel at the lightmap's edge)
@@ -374,10 +376,13 @@ def build(disc, runway_dir, out):
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
     Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON)
     Vfar, Tfar = far_terrain(Vf, F, cf, read_ground(runway_dir))
-    Vd = np.vstack([Vf, Vt, Va, Vfar])
+    Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at)
+    Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
-    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f])
-    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS), np.full(len(Ta), TARMAC), np.full(len(Tfar), GRASS)])
+    o_t = o_f + len(Vfar)
+    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t])
+    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS), np.full(len(Ta), TARMAC), np.full(len(Tfar), GRASS), np.full(len(Ttr), TREE)])
+    given_uv = {o_t + i: (int(u * 512) - 32768, int(v * 512) - 32768) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet)
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
     # each vertex's place along the lap (m from the lap line) and across it (m left of the centre line): the
@@ -428,7 +433,8 @@ def build(disc, runway_dir, out):
             jobs.append((k, s))
     # the ground in blocks of 8 x 8 squares (a grid row's strip ran kilometres: past s16's texture coordinates)
     ground = []
-    for k_, tris, bsize in ((GRASS, Tt + len(Vf), 8 * TERRAIN_CELL), (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, Tfar + o_f, 8 * FAR_CELL)):  # (the apron, the far ground)
+    for k_, tris, bsize in ((GRASS, Tt + len(Vf), 8 * TERRAIN_CELL), (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, Tfar + o_f, 8 * FAR_CELL),
+                            (TREE, Ttr + o_t, 8 * TERRAIN_CELL)):  # (the apron, the far ground, the trees)
         block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / bsize).astype(int)
         for bk in sorted({tuple(b) for b in block}):
             for s in strips_of([tuple(t) for t in tris[(block == bk).all(1)]]):
@@ -447,7 +453,8 @@ def build(disc, runway_dir, out):
     tex_used, vbs_used, meshes = set(), set(), []
     for mesh, sp, vb, k, strips in placed:
         mat, tex, metres = MATERIALS[k]
-        _, (mfl, _, _, _, _, _, _, mt0, mt1, msh) = record(res, model, mat)
+        if k == TREE: tex = TREE_SHEET
+        mat_at, (mfl, _, _, _, _, _, _, mt0, mt1, msh) = record(res, model, mat)
         mt0 = tex or mt0
         mo = names[record(res, model, mat)[1][4] - 9][3]
         mst = np.frombuffer(bytes(res[mo:mo + 24 * record(res, model, mat)[1][3] // 24]), '<i2').reshape(-1, 12)[:, 8:12]
@@ -470,6 +477,7 @@ def build(disc, runway_dir, out):
                     local[vi] = len(verts)
                     p = Vd[vi]
                     if k == KERB: verts.append((p,) + uv[vi])
+                    elif vi in given_uv: verts.append((p,) + given_uv[vi])
                     else: verts.append((p, int((p[0] - org[0]) / metres * 512) - 32768, int((p[2] - org[2]) / metres * 512) - 32768))
                 ids.append(local[vi])
             if order:
@@ -493,6 +501,7 @@ def build(disc, runway_dir, out):
             assert ssz >= len(data), (mesh, ssz, len(data))
             svb_out[so:so + len(data)] = data
         struct.pack_into('<HHH', res, at + 22, mt0, mt1, msh)
+        res[at + 21] = res[mat_at + 21]  # (the format's second byte: 1 for the forest cards, their alpha cut out)
         struct.pack_into('<I', res, at, mfl)
         c = (pts.min(0) + pts.max(0)) / 2
         struct.pack_into('<4f', ppw, sp, float(np.max(np.linalg.norm(pts - c, axis=1))) + 0.5, *c)
@@ -505,6 +514,7 @@ def build(disc, runway_dir, out):
     stx_p = files['quickpreview1.pvs.stx']
     stx = xb2.unpack(stx_p) if open(stx_p, 'rb').read(1) == b'\x78' else open(stx_p, 'rb').read()
     retexture(res, names, stx, os.path.join(runway_dir, 'art'))
+    tree_sheet(res, names, stx, os.path.join(runway_dir, 'trees'))
 
     # Road Atlanta's buildings, stands and props set round Fuji (ROWS, SCATTER), drawn in every cell with their
     # buffers streamed in
@@ -582,6 +592,17 @@ PIT_APRON = (0.935, 0.02, 15.0)    # the pit lane's apron (tarmac, drawn only): 
 # banner twice.
 BANNERS = [(16, 'fuji_logo_wall.png', 1), (87, 'fuji_banner_wall.png', 2)]
 ART_GAIN = 1.8
+# GT4 Fuji's trees (the user's: "Try GT4's trees"): its world model's tree cards (169 trees by the track, crossed
+# cards of its tree pictures) where GT4 has them, and more of its trees in clusters off the track, each two crossed
+# cards. The pictures (run/gt4_fuji/trees, GT4's texture names) side by side in Road Atlanta's forest card texture
+# (1024 x 256 DXT5, eight 128 x 256 cells), drawn with the forest cards' material.
+TREE_TEX = ['1_53', '1_54', '1_59', '1_60', '1_33']   # cells 0-4; GT4 materials t<name> (its 7_13, a black
+                                                      # silhouette, and 0_34, a door, are not trees)
+TREE_SHEET = 7564          # tree_cardpage_realforrest_tile: the sheet
+TREE_TALL = [0, 1, 2, 3]  # the cells holding a whole tree (the generated trees')
+TREE_CLUSTERS = 260        # generated clusters, each 3 to 9 trees within 6 to 22 m
+TREE_BAND = (8.0, 130.0)   # m beyond the runway they stand in
+TREE_H = (9.0, 17.0)       # m high
 
 
 
@@ -1204,6 +1225,117 @@ def retexture(res, names, stx, art_dir):
         o, n = names[t - 9][3], names[t - 9][4]
         res[o:o + n] = forzaxpr.encode_with_mips(img.astype(np.uint8), kind, n)
         print('texture %d (%s): %s at %d x %d, DXT%d' % (t, names[t - 9][0][-40:], name, w, h, kind))
+
+
+def tree_sheet(res, names, stx, folder):
+    """GT4's tree pictures (TREE_TEX) side by side over the TREE_SHEET texture, each in its cell, colours doubled
+    as GT4's (ART_GAIN), its alpha doubled where GT4's runs to 128."""
+    w, h, kind = texture_shape(res, names, stx, TREE_SHEET)
+    cw = w // 8
+    sheet = np.zeros((h, w, 4), np.float32)
+    for i, t in enumerate(TREE_TEX):
+        img = read_png(os.path.join(folder, t + '.png')).astype(np.float32)
+        if img.shape[2] == 3: img = np.concatenate([img, np.full(img.shape[:2] + (1,), 255, np.float32)], 2)
+        if img[..., 3].max() <= 128: img[..., 3] = np.minimum(img[..., 3] * 2, 255)
+        ys = (np.arange(h) * img.shape[0] / h).astype(int); xs = (np.arange(cw) * img.shape[1] / cw).astype(int)
+        cell = img[ys][:, xs]
+        cell[..., :3] = np.clip(cell[..., :3] * ART_GAIN, 0, 255)
+        sheet[:, i * cw:(i + 1) * cw] = cell
+    o, n = names[TREE_SHEET - 9][3], names[TREE_SHEET - 9][4]
+    res[o:o + n] = forzaxpr.encode_with_mips(np.clip(sheet, 0, 255).astype(np.uint8), kind, n)
+    print('trees: %d pictures on texture %d (%d x %d)' % (len(TREE_TEX), TREE_SHEET, w, h))
+
+
+def read_gt4_trees(runway_dir):
+    """GT4's tree faces from world.obj (materials t<TREE_TEX>): (positions (n, 3, 3) in Forza's frame, texture
+    coordinates (n, 3, 2) GT4's (v down), the cell of each). Cached as world_trees.npz."""
+    src, cache = os.path.join(runway_dir, 'world.obj'), os.path.join(runway_dir, 'world_trees.npz')
+    if os.path.exists(cache) and (not os.path.exists(src) or os.path.getmtime(cache) >= os.path.getmtime(src)):
+        z = np.load(cache)
+        return z['P'], z['UV'], z['C']
+    if not os.path.exists(src): return np.zeros((0, 3, 3)), np.zeros((0, 3, 2)), np.zeros(0, int)
+    mats = {'t' + t: i for i, t in enumerate(TREE_TEX)}
+    V, VT, P, UV, C, cur = [], [], [], [], [], None
+    for l in open(src):
+        if l.startswith('v '): V.append(list(map(float, l.split()[1:4])))
+        elif l.startswith('vt '): VT.append(list(map(float, l.split()[1:3])))
+        elif l.startswith('usemtl '): cur = mats.get(l.split()[1])
+        elif l.startswith('f ') and cur is not None:
+            ps = [x.split('/') for x in l.split()[1:4]]
+            P.append([V[int(a) - 1] for a, b in ps]); UV.append([VT[int(b) - 1] for a, b in ps]); C.append(cur)
+    P, UV, C = to_forza(np.array(P, float)), np.array(UV, float), np.array(C, int)
+    UV[..., 1] = 1 - UV[..., 1]  # (the OBJ's v up)
+    np.savez(cache, P=P, UV=UV, C=C)
+    return P, UV, C
+
+
+def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, seed=11):
+    """The trees: GT4's where GT4 has them (each tree's faces joined by shared corners, set on our ground; none
+    wider than 25 m), and TREE_CLUSTERS clusters of two crossed cards each, off the runway (TREE_BAND), not in the
+    pits and paddock or the main grandstand's strip; every face both ways round. (vertices, triangles, texture
+    coordinates on the sheet (u across all eight cells, v down))."""
+    rng = np.random.default_rng(seed)
+    V, T, UV = [], [], []
+
+    def add(quad_p, quad_uv):  # a quad (4 corners round), both faces
+        b = len(V)
+        V.extend(quad_p); UV.extend(quad_uv)
+        T.extend([(b, b + 1, b + 2), (b, b + 2, b + 3), (b, b + 2, b + 1), (b, b + 3, b + 2)])
+    P, G, C = read_gt4_trees(runway_dir)
+    if len(P):
+        key = {}
+        parent = list(range(len(P)))
+        def find(i):
+            while parent[i] != i: parent[i] = parent[parent[i]]; i = parent[i]
+            return i
+        for i, tri in enumerate(P):
+            for q in tri:
+                k = tuple(np.round(q, 1))
+                if k in key: parent[find(i)] = find(key[k])
+                else: key[k] = i
+        groups = {}
+        for i in range(len(P)): groups.setdefault(find(i), []).append(i)
+        kept = 0
+        for g in groups.values():
+            pts = P[g].reshape(-1, 3)
+            if max(np.ptp(pts[:, 0]), np.ptp(pts[:, 2])) > 25: continue
+            dy = ground_at(pts[:, [0, 2]]).min() - 0.3 - pts[:, 1].min()
+            for i in g:
+                b = len(V)
+                V.extend(P[i] + (0, dy, 0))
+                UV.extend([((C[i] + np.clip(u, 0, 1)) / 8, np.clip(v, 0, 1)) for u, v in G[i]])
+                T.extend([(b, b + 1, b + 2), (b, b + 2, b + 1)])
+            kept += 1
+        print('trees: GT4\'s %d of %d' % (kept, len(groups)))
+    n = len(centre)
+    clear_of = lambda q, i, side: np.hypot(*(centre[:, [0, 2]] - q).T).min() >= (reach_in if side == 'in' else reach_out)[i] + 4.0
+    planted = 0
+    for _ in range(TREE_CLUSTERS):
+        i0 = int(rng.integers(n)); share = i0 / n
+        side = 'in' if rng.random() < 0.5 else 'out'
+        d = inner[i0] if side == 'in' else -inner[i0]
+        reach = (reach_in if side == 'in' else reach_out)[i0]
+        off = rng.uniform(*TREE_BAND)
+        if (share > 0.9 or share < 0.05) and (side == 'in' and off < 150 or side == 'out' and off < 30): continue  # (pits, paddock, grandstand)
+        mid = centre[i0][[0, 2]] + d[[0, 2]] * (reach + off)
+        rad = rng.uniform(6, 22)
+        for _ in range(int(rng.integers(3, 10))):
+            q = mid + rng.normal(0, rad / 2, 2)
+            # the nearest point's side and reach: the tree stays off the runway by 4 m
+            j = int(np.argmin(np.hypot(*(centre[:, [0, 2]] - q).T)))
+            sd = 'in' if (q - centre[j][[0, 2]]) @ inner[j][[0, 2]] > 0 else 'out'
+            if not clear_of(q, j, sd): continue
+            h = rng.uniform(*TREE_H); w = h / 2
+            cell = TREE_TALL[int(rng.integers(len(TREE_TALL)))]
+            y0 = float(ground_at(q[None])[0]) - 0.3
+            a = rng.uniform(0, np.pi)
+            for ang in (a, a + np.pi / 2):
+                e = np.array([np.cos(ang), np.sin(ang)]) * w / 2
+                quad = [(q[0] - e[0], y0 + h, q[1] - e[1]), (q[0] + e[0], y0 + h, q[1] + e[1]), (q[0] + e[0], y0, q[1] + e[1]), (q[0] - e[0], y0, q[1] - e[1])]
+                add(quad, [(cell / 8, 0), ((cell + 1) / 8, 0), ((cell + 1) / 8, 1), (cell / 8, 1)])
+            planted += 1
+    print('trees: %d planted in clusters' % planted)
+    return np.array(V, float), np.array(T, int), np.array(UV, float)
 
 
 def read_png(path):
