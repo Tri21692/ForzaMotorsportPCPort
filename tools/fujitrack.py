@@ -378,10 +378,13 @@ def build(disc, runway_dir, out):
     # the donors: small stride-6 strips of 24-byte vertices in the svb, with a ppw sphere found
     nmesh = struct.unpack_from('<I', res, model)[0]
     pool = []
+    import re
+    prop = re.compile('vbuff_quickpreview_(%s)(_vb\d+)?$' % '|'.join(['(?:%s)' % p_[0].rstrip('$') for p_ in SCATTER] + [re.escape(o_[0]) for o_ in OBJECTS]))
+    props = {k + 9 for k, r in enumerate(names) if prop.match(r[0])}  # (props to place: not donors)
     for i in range(nmesh):
         at, (fl, ab, nidx, vbytes, vb, stride, prim, t0, t1, sh) = record(res, model, i)
         if stride != 6 or prim != 6 or vbytes % 24 or vb not in svb or nidx < 8 or vbytes < 24 * 4: continue
-        if i in {m for m, _, _ in MATERIALS.values()}: continue
+        if i in {m for m, _, _ in MATERIALS.values()} or vb in props: continue
         o = names[vb - 9][3]
         v = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, 6)[:, :3].astype(float)
         if not np.all(np.isfinite(v)): continue
@@ -468,6 +471,10 @@ def build(disc, runway_dir, out):
     # Road Atlanta's own objects moved beside Fuji (OBJECTS), drawn in every cell with their buffers streamed in
     om, ot, ov = move_objects(res, names, model, ppw, svb, svb_out, to_forza(E['centre']), to_forza(E['right']), to_forza(E['left']))
     meshes += om; tex_used |= ot; vbs_used |= ov
+    cf = to_forza(E['centre'])
+    reach = runway_reach(Vf, F, cf, sides(cf)[1])
+    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], {o_[0] for o_ in OBJECTS})
+    meshes += sm; tex_used |= st_; vbs_used |= sv
 
     # the visibility: every cell the same, Fuji's meshes only
     import shipyardloop as sl
@@ -525,19 +532,35 @@ BANNERS = [(16, 'fuji_logo_wall.png', 1), (87, 'fuji_banner_wall.png', 2)]
 ART_GAIN = 1.8
 
 
-PLAIN_RECORDS = 1346  # Road Atlanta's ppw: records before the first one followed by more (a word of 512)
+
+
+def ppw_records(ppw):
+    """The offsets of QuickPreview1.pvs.ppw's records, one a mesh in model_quickpreview's order: after a u32 version
+    and a 16-byte id, 21 bytes each (f32 radius, centre x, y, z, a u32 of flags, a byte), a record whose flags have
+    512 followed by a u32 count and that many u16 (edges: pairs of corners). (Road Atlanta's: 8,029, its meshes'.)"""
+    o, offs = 20, []
+    while o + 21 <= len(ppw):
+        offs.append(o)
+        w = struct.unpack_from('<I', ppw, o + 16)[0]
+        o += 21
+        if w & 512: o += 4 + 2 * struct.unpack_from('<I', ppw, o)[0]
+    return offs
+
+
+_PPW_RECORDS = {}
 
 
 def sphere_offset(ppw, i, centre, radius):
-    """Mesh i's bounding sphere in QuickPreview1.pvs.ppw. After a u32 version and a 16-byte id, a 21-byte record a
-    mesh in model_quickpreview's order (f32 radius, centre x, y, z, u32, a byte), but a record whose word is 512 is
-    followed by more (a count and u16 lists, 32 bytes after mesh 1345, 62,904 after 1929): not walked. Below
-    PLAIN_RECORDS, 20 + 21 i, if that record's centre is near the mesh's (a building's sphere is not its vertices'
-    box: the search by value missed it); else shipyardcircuit.sphere_at's search by value (exact); else None.
-    (Indexing every mesh at 20 + 21 i wrote the donors' spheres over other meshes' and the road vanished.)"""
+    """Mesh i's bounding sphere's offset in the ppw (ppw_records), if that record's centre is near the mesh's (a
+    building's or a tree's sphere is not its vertices' box: the search by value missed them); else
+    shipyardcircuit.sphere_at's search by value (exact); else None. (Indexing every mesh at 20 + 21 i, the lists
+    not walked, wrote the donors' spheres over other meshes' and the road vanished.)"""
     import shipyardcircuit as sc
-    if i < PLAIN_RECORDS:
-        o = 20 + 21 * i
+    key = (id(ppw), len(ppw))
+    if key not in _PPW_RECORDS: _PPW_RECORDS[key] = ppw_records(bytes(ppw))
+    offs = _PPW_RECORDS[key]
+    if i < len(offs):
+        o = offs[i]
         r, cx, cy, cz = struct.unpack_from('<4f', ppw, o)
         if np.isfinite([r, cx, cy, cz]).all() and np.linalg.norm(np.array([cx, cy, cz]) - centre) < 0.5 * radius + 5: return o
     return sc.sphere_at(ppw, centre, radius)
@@ -580,78 +603,234 @@ def object_meshes(res, names, model, stem):
     return out
 
 
-def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
-    """Each of OBJECTS' meshes turned and moved to its place by Fuji: turned so the way it faced Road Atlanta's
-    track (from its middle to the nearest point of Road Atlanta's centre line) faces Fuji's, its feet on the
-    track's height there; normals turned with it; bounding spheres in the ppw moved (a mesh whose sphere is not
-    found is left out). Returns (meshes, textures, vertex buffers) to show and stream in every cell."""
+def instance_geometry(res, names, model, ms):
+    """An object's vertex buffers {buffer: (vertex size in dwords, vertices)} (a buffer is its vertices, then the meshes'
+    u16 strip indices: moved as vertices, those scrambled every triangle, smeared stripes in the game) and its sane
+    vertices' positions."""
+    bufs = {}
+    for i, at, f in ms:
+        vb_, nidx_, vbytes_, vsize, _ = mesh_info(res, names, model, i)
+        if not vsize: continue
+        bufs[vb_] = (vsize // 4, max(vbytes_ // vsize, bufs.get(vb_, (0, 0))[1]))
+    allp = []
+    for vb, (stride, n) in bufs.items():
+        o = names[vb - 9][3]
+        v = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<f4').reshape(n, stride)[:, :3].astype(float)
+        ok = np.all(np.isfinite(v), 1) & (np.abs(v).max(1) < 5000)
+        allp.append(v[ok])
+    return bufs, (np.vstack(allp) if allp else np.zeros((0, 3)))
+
+
+def place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, lift):
+    """An object's vertices turned by R (2 x 2, on x and z) about `mid` onto `target`, raised by `lift`, normals
+    turned with them, the svb copies and the ppw spheres (a mesh whose sphere is not found is left out) moved.
+    Returns (meshes, textures, vertex buffers) to show and stream in every cell."""
     import shipyardcircuit as sc
+    meshes, texs, vbs = [], set(), set()
+    for vb, (stride, n) in bufs.items():
+        o = names[vb - 9][3]
+        raw = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<u4').reshape(n, stride).copy()
+        v = raw[:, :3].view('<f4').astype(float)
+        xz = (v[:, [0, 2]] - mid[[0, 2]]) @ R.T + target[[0, 2]]
+        v[:, 0], v[:, 2], v[:, 1] = xz[:, 0], xz[:, 1], v[:, 1] + lift
+        raw[:, :3] = v.astype('<f4').view('<u4')
+        if stride >= 4:  # its normals (the word after the position) turned the same way
+            for j in range(n):
+                nv_ = sc.unpack_normal(int(raw[j, 3]))
+                nxz = R @ nv_[[0, 2]]
+                raw[j, 3] = sc.pack_normal((nxz[0], nv_[1], nxz[1]))
+        data = raw.tobytes()
+        res[o:o + len(data)] = data
+        if vb in svb:
+            so, ssz = svb[vb]
+            svb_out[so:so + min(ssz, len(data))] = data[:ssz]
+        vbs.add(vb)
+    for i, at, f in ms:
+        vb, nidx, vbytes, vsize, mtex = mesh_info(res, names, model, i)
+        if not vsize or vb not in bufs: continue
+        o, n, stride = names[vb - 9][3], vbytes // vsize, vsize // 4
+        now = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(n, stride)[:, :3].astype(float)
+        was = np.frombuffer(bytes(ORIG_RES[o:o + vbytes]), '<f4').reshape(n, stride)[:, :3].astype(float)
+        if not (np.isfinite(was).all() and np.isfinite(now).all()): continue
+        c0 = (was.min(0) + was.max(0)) / 2
+        sp = sphere_offset(ppw, i, c0, float(np.max(np.linalg.norm(was - c0, axis=1))))
+        if sp is None: continue
+        c1 = (now.min(0) + now.max(0)) / 2
+        struct.pack_into('<4f', ppw, sp, float(np.max(np.linalg.norm(now - c1, axis=1))) + 0.5, *c1)
+        meshes.append(i); texs |= mtex
+    return meshes, texs, vbs
+
+
+def turn(a):
+    return np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])  # (x, z) turned by a
+
+
+def facing(mid):
+    """The way an object at mid faced Road Atlanta's track (radians, on x and z)."""
+    near = RA_CENTRE[np.argmin(np.hypot(*(RA_CENTRE[:, [0, 2]] - mid[[0, 2]]).T))]
+    return np.arctan2(near[2] - mid[2], near[0] - mid[0])
+
+
+def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
+    """Each of OBJECTS turned and moved to its place by Fuji: turned so the way it faced Road Atlanta's track faces
+    Fuji's, its nearest side `out` m beyond the track's edge, its feet on the track's height there."""
     meshes, texs, vbs = [], set(), set()
     seg = np.linalg.norm(np.diff(np.vstack([centre, centre[:1]]), axis=0), axis=1)
     arc = np.concatenate([[0], np.cumsum(seg)])
     for stem, share, side, out in OBJECTS:
         ms = object_meshes(res, names, model, stem)
         if not ms: print('object %s: no meshes' % stem); continue
-        bufs = {}  # vertex buffer: (vertex size in dwords, vertices): a buffer is its vertices, then the meshes' u16 strip
-        for i, at, f in ms:  # indices (moved as vertices, those scrambled every triangle: smeared stripes in the game)
-            vb_, nidx_, vbytes_, vsize, _ = mesh_info(res, names, model, i)
-            if not vsize: continue
-            bufs[vb_] = (vsize // 4, max(vbytes_ // vsize, bufs.get(vb_, (0, 0))[1]))
-        allp = []
-        for vb, (stride, n) in bufs.items():
-            o = names[vb - 9][3]
-            v = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<f4').reshape(n, stride)[:, :3].astype(float)
-            ok = np.all(np.isfinite(v), 1) & (np.abs(v).max(1) < 5000)
-            allp.append(v[ok])
-        allp = np.vstack(allp)
+        bufs, allp = instance_geometry(res, names, model, ms)
         mid = (allp.min(0) + allp.max(0)) / 2
-        foot = allp[:, 1].min()
-        near = RA_CENTRE[np.argmin(np.hypot(*(RA_CENTRE[:, [0, 2]] - mid[[0, 2]]).T))]
-        face_from = np.arctan2(near[2] - mid[2], near[0] - mid[0])
-        # its place: `share` round Fuji's lap, `out` m beyond that side's edge
         i0 = int(np.searchsorted(arc, share * arc[-1])) % len(centre)
         edge = right[i0] if side == 'pit' else left[i0]
         away = edge - centre[i0]; away[1] = 0; away /= np.linalg.norm(away)
-        target = edge + away * out
-        face_to = np.arctan2(-away[2], -away[0])
-        a = face_to - face_from
-        R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])  # (x, z) turned by a
+        a = np.arctan2(-away[2], -away[0]) - facing(mid)
+        R = turn(a)
         # its nearest side `out` m from the edge, not its middle (Road Atlanta's 200 m pit stands, middle 12 m out, roofed the grid)
         near_side = ((allp[:, [0, 2]] - mid[[0, 2]]) @ R.T @ away[[0, 2]]).min()
-        target = edge + away * (out - near_side)
-        lift = centre[i0][1] - foot
-        for vb, (stride, n) in bufs.items():
-            o = names[vb - 9][3]
-            raw = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<u4').reshape(n, stride).copy()
-            v = raw[:, :3].view('<f4').astype(float)
-            xz = (v[:, [0, 2]] - mid[[0, 2]]) @ R.T + target[[0, 2]]
-            v[:, 0], v[:, 2], v[:, 1] = xz[:, 0], xz[:, 1], v[:, 1] + lift
-            raw[:, :3] = v.astype('<f4').view('<u4')
-            if stride >= 4:  # its normals (the word after the position) turned the same way
-                for j in range(n):
-                    nv_ = sc.unpack_normal(int(raw[j, 3]))
-                    nxz = R @ nv_[[0, 2]]
-                    raw[j, 3] = sc.pack_normal((nxz[0], nv_[1], nxz[1]))
-            data = raw.tobytes()
-            res[o:o + len(data)] = data
-            if vb in svb:
-                so, ssz = svb[vb]
-                svb_out[so:so + min(ssz, len(data))] = data[:ssz]
-            vbs.add(vb)
-        shown = 0
-        for i, at, f in ms:
-            vb, nidx, vbytes, vsize, mtex = mesh_info(res, names, model, i)
-            if not vsize: continue
-            o, n, stride = names[vb - 9][3], vbytes // vsize, vsize // 4
-            now = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(n, stride)[:, :3].astype(float)
-            was = np.frombuffer(bytes(ORIG_RES[o:o + vbytes]), '<f4').reshape(n, stride)[:, :3].astype(float)
-            c0 = (was.min(0) + was.max(0)) / 2
-            sp = sphere_offset(ppw, i, c0, float(np.max(np.linalg.norm(was - c0, axis=1))))
-            if sp is None: continue
-            c1 = (now.min(0) + now.max(0)) / 2
-            struct.pack_into('<4f', ppw, sp, float(np.max(np.linalg.norm(now - c1, axis=1))) + 0.5, *c1)
-            meshes.append(i); texs |= mtex; shown += 1
-        print('object %s: %d meshes (%d shown), %d buffers, at %.0f%% of the lap, %s side, turned %.0f degrees' % (stem, len(ms), shown, len(bufs), 100 * share, side, np.degrees(a)))
+        m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, edge + away * (out - near_side), centre[i0][1] - allp[:, 1].min())
+        meshes += m_; texs |= t_; vbs |= v_
+        print('object %s: %d meshes (%d shown), at %.0f%% of the lap, %s side, turned %.0f degrees' % (stem, len(ms), len(m_), 100 * share, side, np.degrees(a)))
+    return meshes, texs, vbs
+
+
+# Road Atlanta's many props spread round Fuji by rule: (instance name pattern, how many at most, where, metres beyond
+# the runway's edge (a range: drawn at random), how it is turned). Where: 'corners' (the outside of each corner's
+# apex, a few metres apart when several), 'fast' (the straights and fast bends, end to end, the two sides in turn),
+# 'pits' (the pit straight's pit side, the garages'), 'out' (anywhere, the outer side), 'backdrop' (evenly round the
+# lap, the two sides in turn). Turned: 'face' (the way it faced Road Atlanta's track, to Fuji's) or 'along' (its long
+# side along the track). Each prop stands just beyond the runway, behind its walls: no collision of its own; one
+# that would reach over the runway anywhere is left out. A sixth field: the longest prop of the rule (MAX_PROP).
+# (Road Atlanta's trees are trunks alone: the canopies are other meshes, many to a buffer, of packed vertices; its
+# forest cards (foliagefacade, tree_wall) stand in for Fuji's woods.)
+SCATTER = [
+    (r'workerstand\d*$', 14, 'corners', (4.0, 4.0), 'face'),
+    (r'tirewall_capa\d+$', 20, 'corners', (0.5, 0.5), 'along'),
+    (r'catchfence\d+$', 60, 'fast', (1.0, 1.0), 'along'),
+    (r'barrierblock\d+$', 24, 'pits', (0.5, 0.5), 'along'),
+    (r'pole_streetlight\d+$', 12, 'pits', (6.0, 6.0), 'face'),
+    (r'(shack|restroom|tvcart_base|racecart_base)\d*$', 20, 'out', (12.0, 30.0), 'face'),
+    (r'(foliagefacade_?\d+|tree_wall\d*_how\d*|tree_wall\d+)$', 80, 'backdrop', (45.0, 90.0), 'face', 200.0),
+]
+MAX_PROP = 90.0   # m: props longer than this left out (a fence round a whole bend of Road Atlanta's would cross Fuji's track)
+TRIES = 6         # places tried for a prop before it is left out
+
+
+def sides(centre):
+    """Per centre line point: the unit tangent and the unit way across to the loop's inside (both on x and z)."""
+    n = len(centre)
+    t = np.roll(centre, -1, 0) - np.roll(centre, 1, 0); t[:, 1] = 0; t /= np.linalg.norm(t, axis=1, keepdims=True)
+    inner = np.stack([t[:, 2], np.zeros(n), -t[:, 0]], 1)
+    if np.mean(np.einsum('ij,ij->i', inner[:, [0, 2]], (centre.mean(0) - centre)[:, [0, 2]])) < 0: inner = -inner
+    return t, inner
+
+
+def runway_reach(V, F, centre, inner):
+    """For each point of the centre line (Forza's), how far the runway (any surface; V Forza's) reaches each side:
+    (inner, outer) m from the centre line, its edge being where it stops for more than 3 m."""
+    r = Raster(V, F, res=0.5)
+    c = centre[:, [0, 2]]
+    nrm = inner[:, [0, 2]]
+    offs = np.arange(0, 250, 0.5)
+    out = np.zeros((len(c), 2))
+    for side, sgn in ((0, 1), (1, -1)):
+        k = r.at(c[:, None, :] + sgn * offs[None, :, None] * nrm[:, None, :]) >= 0
+        for i in range(len(c)):
+            row, last, gap = k[i], 0, 0
+            for j in range(len(row)):
+                if row[j]: last, gap = j, 0
+                else:
+                    gap += 1
+                    if gap > 6 and last: break
+            out[i, side] = offs[last]
+    return out
+
+
+def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, seed=7):
+    """SCATTER's props placed round Fuji (centre: Forza's, a point every STEP m; reach_in/out: how far the runway
+    reaches each side of it there, the inside of the loop and the outside: runway_reach). Returns (meshes,
+    textures, vertex buffers)."""
+    import re
+    rng = np.random.default_rng(seed)
+    n = len(centre)
+    t, inner_dir = sides(centre)
+    k = 15  # (30 m each way)
+    turnrate = np.array([np.arctan2(t[i - k][0] * t[(i + k) % n][2] - t[i - k][2] * t[(i + k) % n][0],
+                                    t[i - k][[0, 2]] @ t[(i + k) % n][[0, 2]]) for i in range(n)])
+
+    def clear(p):  # a placed prop's points (x, z) all beyond the runway, on whichever side each is
+        d = np.hypot(*(centre[None, :, [0, 2]] - p[:, None, :]).transpose(2, 0, 1))
+        j = d.argmin(1)
+        inside = np.einsum('ij,ij->i', p - centre[j][:, [0, 2]], inner_dir[j][:, [0, 2]]) > 0
+        return bool(np.all(d[np.arange(len(p)), j] >= np.where(inside, reach_in[j], reach_out[j]) + 0.25))
+    corners = []
+    for i in range(n):
+        tr = abs(turnrate[i])
+        if tr > 0.6 and tr >= abs(turnrate[(i - 8) % n]) and tr >= abs(turnrate[(i + 8) % n]):
+            if not corners or min(abs(i - corners[-1]), n - abs(i - corners[-1])) > 40: corners.append(i)
+    fast = [i for i in range(n) if abs(turnrate[i]) < 0.15]
+    pits = [i for i in range(n) if (i < n * 0.04 or i > n * 0.86) and abs(turnrate[i]) < 0.15]
+
+    def outside(i):  # a corner's outside: away from where it turns
+        bend = t[(i + k) % n] - t[i - k]
+        return 'in' if bend[[0, 2]] @ inner_dir[i][[0, 2]] < 0 else 'out'
+    meshes, texs, vbs = [], set(), set()
+    inst_names = sorted({re.sub(r'_vb\d+$', '', r[0][len('vbuff_quickpreview_'):]) for r in names
+                         if r[0].startswith('vbuff_quickpreview_') and 'splines' not in r[0]})
+    print('scatter: %d corners, %d fast points, %d pit-straight points' % (len(corners), len(fast), len(pits)))
+    for pattern, most, where, gap, align, *longest in SCATTER:
+        pat = re.compile(pattern)
+        stems = [s_ for s_ in inst_names if pat.match(s_) and s_ not in used][:most]
+        slot, placed, fast_at, crossing = 0, 0, 0, 0
+        for stem in stems:
+            ms = object_meshes(res, names, model, stem)
+            if not ms: continue
+            bufs, allp = instance_geometry(res, names, model, ms)
+            if len(allp) < 3: continue
+            mid = (allp.min(0) + allp.max(0)) / 2
+            xz = allp[:, [0, 2]] - mid[[0, 2]]
+            ev, evec = np.linalg.eigh(np.cov(xz.T))
+            long_axis = evec[:, -1]
+            length = 2 * np.abs(xz @ long_axis).max()
+            if length > (longest[0] if longest else MAX_PROP): continue
+            # a few tries: the next place along, a curved prop the other way round, a metre further out each time
+            ok, used_up = False, False
+            for attempt in range(TRIES):
+                if where == 'corners':
+                    if not corners: used_up = True; break
+                    c_ = corners[slot % len(corners)]; i0 = (c_ + 4 * (slot // len(corners))) % n; side = outside(c_)
+                elif where == 'fast':
+                    if fast_at >= len(fast): used_up = True; break
+                    i0 = fast[fast_at]; side = 'out' if slot % 2 == 0 else 'in'
+                    if side == 'in': fast_at += max(1, int(length / STEP) + 1)
+                elif where == 'pits':
+                    at_ = slot * max(1, int(length / STEP) + 2)
+                    if at_ >= len(pits): used_up = True; break
+                    i0 = pits[at_]; side = 'out'
+                elif where == 'out':
+                    i0 = int(rng.integers(n)); side = 'out'
+                else:
+                    i0 = (slot * n // max(1, len(stems)) + int(rng.integers(8))) % n; side = 'in' if slot % 2 else 'out'
+                slot += 1
+                d = inner_dir[i0] if side == 'in' else -inner_dir[i0]
+                reach = reach_in[i0] if side == 'in' else reach_out[i0]
+                g = (gap[0] if gap[0] == gap[1] else rng.uniform(*gap)) + attempt
+                if align == 'along':
+                    a = np.arctan2(t[i0][2], t[i0][0]) - np.arctan2(long_axis[1], long_axis[0]) + np.pi * (attempt % 2)
+                else:
+                    a = np.arctan2(-d[2], -d[0]) - facing(mid)
+                R = turn(a)
+                near_side = (xz @ R.T @ d[[0, 2]]).min()
+                target = centre[i0] + d * (reach + g - near_side)
+                if clear(xz @ R.T + target[[0, 2]]): ok = True; break
+            if used_up: break
+            if not ok: crossing += 1; continue
+            m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, centre[i0][1] - allp[:, 1].min())
+            if m_: placed += 1
+            meshes += m_; texs |= t_; vbs |= v_
+            used.add(stem)
+        print('scatter %-26s %3d placed of %3d, %s (%d over the runway, left out)' % (pattern[:26], placed, len(stems), where, crossing))
     return meshes, texs, vbs
 
 
