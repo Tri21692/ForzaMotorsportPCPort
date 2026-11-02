@@ -21,7 +21,7 @@ import sys
 
 import bpy
 
-sys.path.insert(0, r'C:\Users\maste\ForzaMotorsportPC\tools')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import carbin
 
 argv = sys.argv[sys.argv.index('--') + 1:]
