@@ -32,6 +32,7 @@ QuickPreview1.pvs.ppw, quickpreview1.xbp.svb, fuji_forza.npz (the edges in Forza
 """
 import json
 import os
+import shutil
 import struct
 import sys
 
@@ -542,6 +543,8 @@ def build(disc, runway_dir, out):
                        ('QuickPreview1.pvs.ppw', ppw), ('quickpreview1.xbp.svb', zlib_like(files['quickpreview1.xbp.svb'], svb_out))):
         open(os.path.join(out, name), 'wb').write(bytes(data))
     np.savez(os.path.join(out, 'fuji_forza.npz'), centre=cen, inner=inner, outer=outer)
+    for f in ('fuji_logo.png', LOAD_PHOTO):  # (the menus' art, for install)
+        shutil.copy(os.path.join(runway_dir, f), os.path.join(out, f))
     build_png(placed, Vd, os.path.join(out, 'build_check.png'))
 
 
@@ -1108,6 +1111,113 @@ def build_png(placed, Vf, path, px=2000):
 
 NAME, TAG = 'Fuji Speedway', 'FujiSpeedway'
 MAP_TILE = 46   # frontend\gfx_trackmaps.xpr: the disc uses 0-44, the Pacific Shipyards Circuit 45
+LOGO = 47       # ico_tracklogo_sm and _lg (15 a row): the disc uses 0-46; the small strip's 47-59 are unused dark copies
+LOGO_SM, LOGO_LG = (108, 60, 15), (210, 117, 15)
+LOAD_IMAGE = None   # media\FrontEnd\Loading_Track_bkgd: loading_screen makes Fuji's (Road Atlanta's frame, Fuji's map,
+                    # photo and logo), but the game showed "a problem with the disc" at the race's load for any name the
+                    # disc lacks (Load_Fuji.xpr, Load_FujiSpeedway.xpr), never opening it, and the folder isn't listed;
+                    # with no Image the loading screen has no picture and the race loads
+LOAD_PHOTO = 'fuji_load_photo.png'   # a bumper-camera frame of Fuji's pit straight (in run/gt4_fuji)
+
+
+def logo_tile(d, index, logo, tile):
+    """The logo strip d with tile `index` Fuji's logo (RGBA, scaled to fit with a margin) over the strip's own
+    ground (the small strip's tiles stand on a grey of alpha 102: its tile 46's corner; the large one's clear)."""
+    import addseries
+    hdr, w, h, pitch = addseries.linear(d)
+    tw, th, per = tile
+    px = np.frombuffer(d[hdr:hdr + pitch * h], np.uint8).reshape(h, pitch // 4, 4)[:, :, [2, 1, 0, 3]]
+    x46, y46 = 46 % per * tw, 46 // per * th
+    ground = px[y46 + 1, x46 + 1].astype(float)
+    s = min((tw - 8) / logo.shape[1], (th - 6) / logo.shape[0])
+    lw, lh = int(logo.shape[1] * s), int(logo.shape[0] * s)
+    ys = np.minimum((np.arange(lh * 4) / 4 / s).astype(int), logo.shape[0] - 1)
+    xs = np.minimum((np.arange(lw * 4) / 4 / s).astype(int), logo.shape[1] - 1)
+    big = logo[ys][:, xs].astype(float)
+    big[..., :3] *= big[..., 3:] / 255  # (premultiplied, then averaged 4 x 4 down)
+    small = big.reshape(lh, 4, lw, 4, 4).mean((1, 3))
+    img = np.tile(ground, (th, tw, 1))
+    y0, x0 = (th - lh) // 2, (tw - lw) // 2
+    a = small[..., 3:] / 255
+    img[y0:y0 + lh, x0:x0 + lw, :3] = small[..., :3] + img[y0:y0 + lh, x0:x0 + lw, :3] * (1 - a)
+    img[y0:y0 + lh, x0:x0 + lw, 3:] = small[..., 3:] + img[y0:y0 + lh, x0:x0 + lw, 3:] * (1 - a)
+    return addseries.put_tile(d, index, np.clip(img + 0.5, 0, 255).astype(np.uint8), tile)
+
+
+def loading_screen(disc, centre, art_dir):
+    """Fuji's loading screen (1024 x 512 DXT5, the picture in its top-left 640 x 480 as the disc's): Road
+    Atlanta's, its map taken out (each pixel the lighter of Road Atlanta's and Road Atlanta Short's: their maps
+    differ), Fuji's map in its place, Fuji's photo in its picture's disc (the pixels the two screens' pictures
+    differ in, a row's from its first past x 250) and Fuji's logo over it."""
+    import addcar
+    import forzaxpr
+    import shipyardloop as sl
+    folder = addcar.disc_file(disc, 'media', 'FrontEnd', 'Loading_Track_bkgd')
+    raw = {f.lower(): open(os.path.join(folder, f), 'rb').read() for f in os.listdir(folder) if f.lower() in ('load_rdatlanta.xpr', 'load_rdatlantashort.xpr')}
+    template = raw['load_rdatlanta.xpr']
+    a, b = (np.asarray(forzaxpr.dxt(raw[k][2048:2048 + 1024 * 512], 1024, 512, 5)).astype(float) for k in ('load_rdatlanta.xpr', 'load_rdatlantashort.xpr'))
+    out = a.copy()
+    differ = np.abs(a - b)[..., :3].sum(-1) > 30
+    # the map's panel, its map gone: each of the maps' pixels (where the two differ, grown 3 pixels) taken from
+    # along the panel's diagonal stripes, from the nearest pixel neither map covers
+    panel = np.zeros(differ.shape, bool); panel[60:420, 20:260] = True
+    gone = differ & panel
+    for _ in range(3): gone = gone | np.roll(gone, 1, 0) | np.roll(gone, -1, 0) | np.roll(gone, 1, 1) | np.roll(gone, -1, 1)
+    gone &= panel
+    clean = panel & ~gone
+    best = None
+    for deg in range(0, 180):
+        v = np.array([np.cos(np.radians(deg)), np.sin(np.radians(deg))]) * 12
+        dy, dx = int(round(v[1])), int(round(v[0]))
+        sh = np.roll(np.roll(a, -dy, 0), -dx, 1)
+        ok = clean & np.roll(np.roll(clean, -dy, 0), -dx, 1)
+        e = np.abs(a - sh)[..., :3].sum(-1)[ok].mean()
+        if best is None or e < best[0]: best = (e, np.radians(deg))
+    u = np.array([np.cos(best[1]), np.sin(best[1])])
+    for y, x in zip(*np.nonzero(gone)):
+        for k in range(1, 300):
+            got = False
+            for sg in (1, -1):
+                xx, yy = int(round(x + sg * k * u[0])), int(round(y + sg * k * u[1]))
+                if 0 <= yy < 512 and 0 <= xx < 1024 and clean[yy, xx]: out[y, x] = a[yy, xx]; got = True; break
+            if got: break
+    # the picture's disc: per row from its left edge (the 10th-lowest differing x past 250, smoothed) to 640
+    left = np.full(512, 9999.0)
+    for y in range(63, 417):
+        xs = np.nonzero(differ[y, 250:640])[0] + 250
+        if len(xs) > 20: left[y] = np.sort(xs)[10]
+    rows = np.arange(63, 417)
+    k_ = left[rows] < 9999
+    left[rows] = np.interp(rows, rows[k_], np.convolve(np.pad(left[rows][k_], 7, mode='edge'), np.ones(15) / 15, 'valid'))
+    photo = read_png(os.path.join(art_dir, LOAD_PHOTO)).astype(float)
+    ph = 417 - 63
+    s = ph / photo.shape[0]
+    pw = int(photo.shape[1] * s)
+    ys = np.minimum((np.arange(ph) / s).astype(int), photo.shape[0] - 1); xs = np.minimum((np.arange(pw) / s).astype(int), photo.shape[1] - 1)
+    big = photo[ys][:, xs]
+    x0 = 640 - pw
+    for y in rows:
+        l_ = int(left[y])
+        for x in range(max(l_, x0), 640):
+            t = min(1.0, (x - l_ + 1) / 4.0)  # (a 4-pixel blend into Road Atlanta's ring)
+            out[y, x, :3] = big[y - 63, x - x0, :3] * t + out[y, x, :3] * (1 - t)
+    # the map: north up, as the track select screen's, in the panel
+    m = sl.trackmap(centre, size=256).astype(float)
+    my, mx = 240 - 128, 150 - 128
+    al = m[..., 3:] / 255
+    out[my:my + 256, mx:mx + 256, :3] = m[..., :3] * al + out[my:my + 256, mx:mx + 256, :3] * (1 - al)
+    # the logo over the picture's top
+    logo = read_png(os.path.join(art_dir, 'fuji_logo.png')).astype(float)
+    s = 190 / logo.shape[1]
+    lw, lh = int(logo.shape[1] * s), int(logo.shape[0] * s)
+    ys = np.minimum((np.arange(lh) / s).astype(int), logo.shape[0] - 1); xs = np.minimum((np.arange(lw) / s).astype(int), logo.shape[1] - 1)
+    lg = logo[ys][:, xs]
+    ly, lx = 80, 420
+    al = lg[..., 3:] / 255
+    out[ly:ly + lh, lx:lx + lw, :3] = lg[..., :3] * al + out[ly:ly + lh, lx:lx + lw, :3] * (1 - al)
+    out[..., 3] = 255
+    img = np.clip(out + 0.5, 0, 255).astype(np.uint8)
+    return forzaxpr.write_dxt5(template, img), img
 B = '\\'
 
 
@@ -1168,9 +1278,11 @@ def track_entry(tracklist, name_id, length):
                  ('trackSegCamsFile', folder + 'TrackSegCams.xml'), ('pitCamsFile', folder + 'PitCams.xml'),
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
                  ('collObjsFile', folder + 'CollObjs.xml'), ('Ordinal', ordinal), ('hotlapordinal', hotlap),
-                 ('length', int(round(length))), ('minimap', MAP_TILE), ('NumberOfTurns', 16)):
+                 ('length', int(round(length))), ('minimap', MAP_TILE), ('NumberOfTurns', 16),
+                 ('icon', LOGO)) + ((('Image', LOAD_IMAGE),) if LOAD_IMAGE else ()):
         e = attr(e, k, v)
     e = re.sub(r'\s(p2pordinal|start|end)="[^"]*"', '', e)
+    if not LOAD_IMAGE: e = re.sub(r'\sImage="[^"]*"', '', e)  # (no picture on the loading screen: the game skips it)
     return tracklist[:m.end()] + '\r\n\r\n\t' + e + tracklist[m.end():], ordinal, hotlap
 
 
@@ -1221,8 +1333,18 @@ def install(disc, build_dir, mods):
     key = next(k for k in xpr.files if k.lower() == 'frontend' + B + 'gfx_trackmaps.xpr')
     north_up = centre.copy()
     xpr.files[key] = addseries.put_tile(xpr.files[key], MAP_TILE, sl.trackmap(north_up), (128, 128, 4))
+    art_dir = build_dir
+    logo = read_png(os.path.join(art_dir, 'fuji_logo.png')).astype(np.uint8)
+    for name, tile in (('ico_tracklogo_sm', LOGO_SM), ('ico_tracklogo_lg', LOGO_LG)):
+        key = next(k for k in xpr.files if k.lower() == 'frontend' + B + name + '.xpr')
+        xpr.files[key] = logo_tile(xpr.files[key], LOGO, logo, tile)
     for a in (mega, xpr): a.check()
     for a in (mega, xpr): a.write()
+    if LOAD_IMAGE:
+        screen, _ = loading_screen(disc, centre, build_dir)
+        ld = os.path.join(mods, 'media', 'FrontEnd', 'Loading_Track_bkgd')
+        os.makedirs(ld, exist_ok=True)
+        open(os.path.join(ld, LOAD_IMAGE), 'wb').write(screen)
     d = os.path.join(mods, 'media', 'tracks', TAG)
     os.makedirs(d, exist_ok=True)
     col = open(os.path.join(build_dir, 'QuickPreview1.col'), 'rb').read()
