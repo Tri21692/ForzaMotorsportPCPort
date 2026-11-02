@@ -119,6 +119,30 @@ def encode_dxt5(img):
     return out.tobytes()
 
 
+def encode_dxt1(img):
+    """RGB(A) (h, w, 4) -> DXT1 blocks: encode_dxt5's colour halves (its end points are ordered c0 >= c1,
+    four-colour mode; a flat block has c0 == c1 and every index 0, never the clear colour)."""
+    b = np.frombuffer(encode_dxt5(img), np.uint8).reshape(-1, 16)
+    return b[:, 8:].tobytes()
+
+
+def encode_with_mips(img, kind, size):
+    """img (RGBA, power-of-two sides) as DXT1 (kind 1) or DXT5 (5) with its mip levels, each a box-filtered
+    half of the last, until `size` bytes are filled (a resource's size: the game's textures keep their whole
+    chain); levels under 4 texels a side are padded to a block."""
+    enc = encode_dxt1 if kind == 1 else encode_dxt5
+    out, cur = bytearray(), img.astype(np.float32)
+    while len(out) < size:
+        h, w = cur.shape[:2]
+        blk = np.zeros((max(h, 4), max(w, 4), 4), np.float32)
+        blk[:h, :w] = cur
+        if h < 4 or w < 4: blk[h:, :] = blk[h - 1:h, :]; blk[:, w:] = blk[:, w - 1:w]
+        out += enc(np.clip(blk + 0.5, 0, 255).astype(np.uint8))
+        if h == 1 and w == 1: break
+        cur = cur.reshape(max(h // 2, 1), 2 if h > 1 else 1, max(w // 2, 1), 2 if w > 1 else 1, 4).mean((1, 3))
+    return bytes(out[:size]) + bytes(max(0, size - len(out)))
+
+
 def textures(d):
     """The texture resources of an XPR0 pack: dicts of width, height,
     depth, format byte, mip levels and the data's offset in the file."""

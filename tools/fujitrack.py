@@ -453,6 +453,11 @@ def build(disc, runway_dir, out):
         meshes.append(mesh)
     print('drawn: %d donor meshes; textures %s' % (len(meshes), sorted(tex_used)))
 
+    # GT4's art on Road Atlanta's signs
+    stx_p = files['quickpreview1.pvs.stx']
+    stx = xb2.unpack(stx_p) if open(stx_p, 'rb').read(1) == b'\x78' else open(stx_p, 'rb').read()
+    retexture(res, names, stx, os.path.join(runway_dir, 'art'))
+
     # Road Atlanta's own objects moved beside Fuji (OBJECTS), drawn in every cell with their buffers streamed in
     om, ot, ov = move_objects(res, names, model, ppw, svb, svb_out, to_forza(E['centre']), to_forza(E['right']), to_forza(E['left']))
     meshes += om; tex_used |= ot; vbs_used |= ov
@@ -503,7 +508,14 @@ def build(disc, runway_dir, out):
 # Road Atlanta objects set beside Fuji: (its vertex buffers' name stem, where along the lap (a share of it), which
 # side ('pit': the inside of the loop, the right going round; 'out': the outside), metres out from the track's edge).
 # The pit building and pit stands along the main straight's pit side, the grandstands across from them.
-OBJECTS = [('pirellabuilding', 0.10, 'pit', 30.0), ('garages01', 0.16, 'pit', 30.0), ('outerpitstands01', 0.05, 'out', 12.0)]
+OBJECTS = [('pirellabuilding', 0.965, 'pit', 25.0), ('garages01', 0.93, 'pit', 25.0), ('outerpitstands01', 0.96, 'out', 8.0),
+           ('4signs', 0.03, 'out', 4.0), ('sunocosign', 0.075, 'out', 10.0)]
+# GT4's art on Road Atlanta's signs (the user's: GT4's models only for what identifies the track): (texture
+# resource, image in run\gt4_fuji\art, times across). GT4 keeps colours at half (its vertex colours double them):
+# brightened by ART_GAIN. The Sunoco sign (256 x 128) takes Fuji's big logo, the four ad walls (512 x 64) its wall
+# banner twice.
+BANNERS = [(16, 'fuji_logo_wall.png', 1), (87, 'fuji_banner_wall.png', 2)]
+ART_GAIN = 1.8
 
 
 def sphere_offset(i):
@@ -560,6 +572,9 @@ def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
         face_to = np.arctan2(-away[2], -away[0])
         a = face_to - face_from
         R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])  # (x, z) turned by a
+        # its nearest side `out` m from the edge, not its middle (Road Atlanta's 200 m pit stands, middle 12 m out, roofed the grid)
+        near_side = ((allp[:, [0, 2]] - mid[[0, 2]]) @ R.T @ away[[0, 2]]).min()
+        target = edge + away * (out - near_side)
         lift = centre[i0][1] - foot
         for vb, stride in bufs.items():
             o, size = names[vb - 9][3], names[vb - 9][4]
@@ -593,6 +608,75 @@ def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
             meshes.append(i); texs |= {t0, t1}; shown += 1
         print('object %s: %d meshes (%d shown), %d buffers, at %.0f%% of the lap, %s side, turned %.0f degrees' % (stem, len(ms), shown, len(bufs), 100 * share, side, np.degrees(a)))
     return meshes, texs, vbs
+
+
+def texture_shape(res, names, stx, t):
+    """Texture resource t's (width, height, kind: 1 DXT1, 5 DXT5): its format from the stx copy's record, its
+    size the one whose mip chain fills the resource (as blender_export.texture_png finds it)."""
+    size, slots, _, nres = struct.unpack_from('<4I', stx, 20)
+    table = np.frombuffer(stx, '<i4', nres, 36)
+    fmt = struct.unpack_from('<5I', stx, 36 + 4 * nres + 20 * int(table[t]))[3]
+    f, lu, lv = (fmt >> 8) & 0xFF, (fmt >> 20) & 0xF, (fmt >> 24) & 0xF
+    kind, bs = {0x0C: (1, 8), 0x0E: (5, 16), 0x0F: (5, 16)}[f]
+    nbytes = names[t - 9][4]
+    for a in range(2, 12):
+        w, h = 1 << a, 1 << max(a - (lu - lv), 0)
+        tot, ww, hh = 0, w, h
+        while True:
+            tot += max(ww // 4, 1) * max(hh // 4, 1) * bs
+            if ww == 1 and hh == 1: break
+            ww, hh = max(ww // 2, 1), max(hh // 2, 1)
+        if tot == nbytes or w * h * bs // 16 == nbytes: return w, h, kind
+    raise ValueError('texture %d: no size fits %d bytes' % (t, nbytes))
+
+
+def retexture(res, names, stx, art_dir):
+    """BANNERS' images written over their textures, each at the texture's size and format with its mips."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    for t, name, across in BANNERS:
+        w, h, kind = texture_shape(res, names, stx, t)
+        img = read_png(os.path.join(art_dir, name)).astype(np.float32)
+        img = np.concatenate([img] * across, 1)
+        ys = (np.arange(h) * img.shape[0] / h).astype(int); xs = (np.arange(w) * img.shape[1] / w).astype(int)
+        img = img[ys][:, xs]
+        img[..., :3] = np.clip(img[..., :3] * ART_GAIN, 0, 255)
+        img[..., 3] = 255
+        o, n = names[t - 9][3], names[t - 9][4]
+        res[o:o + n] = forzaxpr.encode_with_mips(img.astype(np.uint8), kind, n)
+        print('texture %d (%s): %s at %d x %d, DXT%d' % (t, names[t - 9][0][-40:], name, w, h, kind))
+
+
+def read_png(path):
+    """An RGBA PNG (forzaxpr.png's: 8-bit, unfiltered or filtered) as an array."""
+    import zlib as _z
+    d = open(path, 'rb').read()
+    i, idat, w, h, ct = 8, b'', 0, 0, 6
+    while i < len(d):
+        n, t = struct.unpack('>I4s', d[i:i + 8]); b = d[i + 8:i + 8 + n]
+        if t == b'IHDR': w, h = struct.unpack('>II', b[:8]); ct = b[9]
+        if t == b'IDAT': idat += b
+        i += 12 + n
+    ch = 4 if ct == 6 else 3
+    raw = np.frombuffer(_z.decompress(idat), np.uint8).reshape(h, 1 + w * ch)
+    out = np.zeros((h, w * ch), np.int32)
+    for y in range(h):  # (PNG's row filters undone)
+        f, row = raw[y, 0], raw[y, 1:].astype(np.int32)
+        prev = out[y - 1] if y else np.zeros(w * ch, np.int32)
+        if f == 0: out[y] = row
+        elif f == 2: out[y] = (row + prev) & 255
+        else:
+            for x in range(w * ch):
+                a_ = out[y, x - ch] if x >= ch else 0
+                b_ = prev[x]; c_ = prev[x - ch] if x >= ch else 0
+                if f == 1: pr = a_
+                elif f == 3: pr = (a_ + b_) // 2
+                else:
+                    pa, pb, pc = abs(b_ - c_), abs(a_ - c_), abs(a_ + b_ - 2 * c_)
+                    pr = a_ if pa <= pb and pa <= pc else (b_ if pb <= pc else c_)
+                out[y, x] = (row[x] + pr) & 255
+    img = out.reshape(h, w, ch).astype(np.uint8)
+    return img if ch == 4 else np.concatenate([img, np.full((h, w, 1), 255, np.uint8)], 2)
 
 
 def zlib_like(src_path, data):
