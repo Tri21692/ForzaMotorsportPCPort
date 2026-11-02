@@ -5,7 +5,7 @@ options do.
   python tools/tunecar.py <disc folder> <mods folder> <car>
                           [--physics-like <car>:<part>[,<part>...]]... [--tooldata-like <car>:<Section>[,...]]...
                           [--tires <front>,<rear>] [--final-drive <ratio>] [--mass <kg>]
-                          [--performance <0-60 s>,<0-100 mph s>,<top km/h>] [--power <hp>] [--own-engine <name>]
+                          [--performance <0-60 s>,<0-100 mph s>,<top km/h>] [--power <hp>] [--own-engine <name>] [--price <credits>]
                           [--unlock <level>[,<Europe's>,<Asia's>]] [--paint-like <car>] [--subclass <D4..S1>]
                           [--ratings <speed>,<acceleration>,<handling>]
                           [--scale <physics file or folder>:<attribute>[,...]=<factor>]... [--shift <same>=<amount>]...
@@ -121,7 +121,7 @@ def rewrite(d, texts):
 
 
 def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, final_drive=None, mass=None, performance=None,
-         power=None, unlock=None, paint_like=None, subclass=None, scale=None, shift=None, ratings=None, own_engine=None):
+         power=None, unlock=None, paint_like=None, subclass=None, scale=None, shift=None, ratings=None, own_engine=None, price=None):
     mega, cars = addcar.Archive(disc, mods, 'Mega.ca2'), addcar.Archive(disc, mods, 'Cars.ca2')
     key = 'cars' + B + 'carlist.xml'
     xml = mega.files[key].decode('latin-1')
@@ -190,6 +190,10 @@ def main(disc, mods, car, physics_like=None, tooldata_like=None, tires=None, fin
     if power:  # the menus' power figure (gamecars.dat, tenths of a kilowatt); the engine itself as it was but with --own-engine
         struct.pack_into('<f', grow, 12, power * 0.745699872 * 10)
         print('menus: %.0f hp' % power)
+    if price:  # what the dealer asks: model.dat's two prices (24, 28) and gamecars.dat's (88, 92), as addcar.py's --price
+        struct.pack_into('<II', mrow, 24, price, price)
+        struct.pack_into('<II', grow, 88, price, price)
+        print('price: %d credits' % price)
     if paint_like:  # the paint shop's base colours as that car's, without its vinyl layers (custom: a race car has no liveries.xml at all, and no paint shop)
         lx = cars.files[B.join(('cars', paint_like.lower(), 'liveries', 'liveries.xml'))].decode('latin-1')
         lx = re.sub(r'[ \t]*<custom\b[^>]*/>\r?\n?', '', lx)
@@ -229,7 +233,7 @@ if __name__ == '__main__':
     it = iter(sys.argv[1:])
     for a in it:
         if a in ('--physics-like', '--tooldata-like', '--scale', '--shift'): opts.setdefault(a[2:].replace('-', '_'), []).append(next(it))
-        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass', '--ratings', '--own-engine'): opts[a[2:].replace('-', '_')] = next(it)
+        elif a in ('--tires', '--final-drive', '--mass', '--performance', '--power', '--unlock', '--paint-like', '--subclass', '--ratings', '--own-engine', '--price'): opts[a[2:].replace('-', '_')] = next(it)
         else: args.append(a)
     if len(args) != 3: raise SystemExit(__doc__)
     if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(args[1]).split(os.sep)):
@@ -241,4 +245,4 @@ if __name__ == '__main__':
          power=float(opts['power']) if 'power' in opts else None,
          unlock=tuple(int(x) for x in opts['unlock'].split(',')) if 'unlock' in opts else None,
          paint_like=opts.get('paint_like'), subclass=opts.get('subclass'), scale=opts.get('scale'), shift=opts.get('shift'),
-         ratings=tuple(float(x) for x in opts['ratings'].split(',')) if 'ratings' in opts else None, own_engine=opts.get('own_engine'))
+         ratings=tuple(float(x) for x in opts['ratings'].split(',')) if 'ratings' in opts else None, own_engine=opts.get('own_engine'), price=int(opts['price']) if 'price' in opts else None)

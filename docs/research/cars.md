@@ -697,7 +697,7 @@ the scale, not the curve, is what reaches the stock level 3. Its gearing
 held it to about 86 m/s at the limiter: final drive 3.87 to 2.65 puts
 242 mph near 7,900 rpm (the power peak is 7,500). Body and wing drag x0.75,
 downforce x1.15, tyre grip x1.06, brakes x1.10, shifts x0.75; listed P1,
-ratings 10, spec 3.7 s / 7.3 s / 389 km/h.
+ratings 10, spec 3.7 s / 7.3 s / 389 km/h; 1,000,000 credits (was 380,000; tunecar.py --price).
 
 The top speed comes from a fit over the disc cars' spec figures: power =
 k x drag x v^3, D the body's LongitudinalDrag plus each wing's drag at its
