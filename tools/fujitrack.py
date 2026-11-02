@@ -148,6 +148,24 @@ def cross_sections(r, c):
     return left, right, nrm
 
 
+def ai_points(runway_dir):
+    """The AI racing lines' points (x, z) from the course's autodrive file (<runway folder>/*.ad: PDTools'
+    Courses/Autodrive layout: 'ADLN' at 0x80, its lines' records 0x40 bytes from 0x40 into each, x and z at +4)."""
+    import glob
+    ads = glob.glob(os.path.join(runway_dir, '*.ad'))
+    if not ads: return np.zeros((0, 2))
+    d = open(ads[0], 'rb').read()
+    b = 0x80
+    if d[b:b + 4] != b'ADLN': return np.zeros((0, 2))
+    n_lines, aoff = struct.unpack_from('<ii', d, b + 20)
+    pts = []
+    for i in range(n_lines):
+        io = b + struct.unpack_from('<i', d, b + aoff + 4 * i)[0]
+        n = struct.unpack_from('<i', d, io)[0]
+        pts += [struct.unpack_from('<2f', d, io + 0x40 + k * 0x40 + 4) for k in range(n)]
+    return np.array(pts, float).reshape(-1, 2) * (-1, 1)  # (x turned round: as read, 155 of Fuji's 229 lay off the runway; turned, all on it)
+
+
 def layout(runway_dir, out):
     V, F = read_runway_obj(os.path.join(runway_dir, 'road.obj'))
     L = json.load(open(os.path.join(runway_dir, 'layout.json')))
@@ -156,6 +174,14 @@ def layout(runway_dir, out):
     r.grow_edges()
     print('raster %d x %d at %.2f m' % (r.shape[1], r.shape[0], RES))
     c = closed_resample(np.array([[cp['mid'][0], cp['mid'][2]] for cp in cps]), STEP)
+    ai = ai_points(runway_dir)
+    if len(ai):  # the AI's racing lines lie on the track proper (the gates' middles ran through paved run-off at
+        # the hairpin): ordered round the lap by the gates' line, they are the first line, then re-centred
+        at = np.array([np.argmin(np.hypot(*(c - p).T)) for p in ai])
+        bins = (at // 10).astype(int)  # (the lines run side by side: averaged a 20 m stretch, not interleaved)
+        mids = np.array([ai[bins == k].mean(0) for k in np.unique(bins)])
+        c = closed_resample(smooth_closed(closed_resample(mids, STEP), 9), STEP)
+        print('first line: %d AI points' % len(ai))
     for it in range(8):
         left, right, nrm = cross_sections(r, c)
         ok = np.isfinite(left)
@@ -210,8 +236,13 @@ GT4_MIDDLE = (111.4, 106.7)     # the Fuji runway's (x, z): x -797..1020, z -195
 # shader 13407, a lit diffuse), the texture (None: that mesh's own) and the metres a repeat. Road Atlanta's kerbs
 # and gravel traps have richer vertices (flags 0x2000), so their textures are drawn the tarmac's way.
 MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, None, 8.0)}
+# a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
+# mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
+# a black, clear texel at the lightmap's edge)
+LIGHT = {101: (-32615, -32406), 137: (-32439, -32451)}
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
+KERB_W = 1.2                    # m across a kerb's texture (its stripes along the track)
 REACH = 120.0                   # m: a donor's faces within this of its first
 GRASS_REACH = 30.0              # m: grass drawn this near the centre line only (all of it solid): the small buffers ran out
 SLIVER = 0.02                   # m2: thinner triangles not drawn
@@ -295,6 +326,10 @@ def build(disc, runway_dir, out):
     res = bytearray(xb2.unpack(files['quickpreview1.xb2']))
     names, _ = xb2.resources(bytes(res))
     model = model_offset(res, names)
+    global ORIG_RES, RA_CENTRE
+    ORIG_RES = bytes(res)
+    RA_CENTRE = np.mean([np.frombuffer(bytes(res[r[3]:r[3] + 12 * ((r[4] + 4) // 16)]), '<f4').reshape(-1, 3).astype(float)
+                         for r in names if r[0] in ('vbuff_quickpreview_splines_roadinner_vb0', 'vbuff_quickpreview_splines_roadouter_vb0')], 0)
     svb_raw = xb2.unpack(files['quickpreview1.xbp.svb'])
     svb = sc.read_svb(svb_raw)
     svb_out = bytearray(svb_raw)
@@ -320,6 +355,22 @@ def build(disc, runway_dir, out):
     drawn = (area >= SLIVER) & ~((kinds == GRASS) & (dist > GRASS_REACH))
     print('drawn: %d of %d triangles (grass beyond %.0f m and slivers left out)' % (drawn.sum(), len(T), GRASS_REACH))
 
+    # each vertex's place along the lap (m from the lap line) and across it (m left of the centre line): the
+    # kerbs' texture follows the track
+    cl = to_forza(E['centre'])[:, [0, 2]]
+    seg = np.linalg.norm(np.diff(np.vstack([cl, cl[:1]]), axis=0), axis=1)
+    arc = np.concatenate([[0], np.cumsum(seg)[:-1]])
+    lap = seg.sum()
+    tang = np.roll(cl, -1, 0) - np.roll(cl, 1, 0)
+    tang /= np.linalg.norm(tang, axis=1, keepdims=True)
+    along, side = np.zeros(len(Vf)), np.zeros(len(Vf))
+    for i0 in range(0, len(Vf), 2000):
+        q = Vf[i0:i0 + 2000, [0, 2]]
+        j = np.argmin(((q[:, None, :] - cl[None]) ** 2).sum(2), axis=1)
+        dvec = q - cl[j]
+        along[i0:i0 + 2000] = arc[j] + (dvec * tang[j]).sum(1)
+        side[i0:i0 + 2000] = dvec[:, 0] * -tang[j, 1] + dvec[:, 1] * tang[j, 0]
+
     # the donors: small stride-6 strips of 24-byte vertices in the svb, with a ppw sphere found
     nmesh = struct.unpack_from('<I', res, model)[0]
     pool = []
@@ -330,10 +381,7 @@ def build(disc, runway_dir, out):
         o = names[vb - 9][3]
         v = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, 6)[:, :3].astype(float)
         if not np.all(np.isfinite(v)): continue
-        c = (v.min(0) + v.max(0)) / 2
-        sp = sc.sphere_at(ppw, c, float(np.max(np.linalg.norm(v - c, axis=1))))
-        if sp is None: continue
-        pool.append([vbytes // 24, nidx, i, sp, vb])
+        pool.append([vbytes // 24, nidx, i, sphere_offset(i), vb])
     pool.sort(key=lambda r: -r[0])
     print('donors: %d small meshes, room for %d vertices and %d indices' % (len(pool), sum(r[0] for r in pool), sum(r[1] for r in pool)))
 
@@ -356,10 +404,17 @@ def build(disc, runway_dir, out):
         mt0 = tex or mt0
         mo = names[record(res, model, mat)[1][4] - 9][3]
         mst = np.frombuffer(bytes(res[mo:mo + 24 * record(res, model, mat)[1][3] // 24]), '<i2').reshape(-1, 12)[:, 8:12]
-        light = tuple(int(x) for x in np.median(mst[:, 2:4], 0))
+        light = LIGHT.get(mt1) or tuple(int(x) for x in np.median(mst[:, 2:4], 0))
         at, (fl, ab, nidx, vbytes, vbr, stride, prim, t0, t1, sh) = record(res, model, mesh)
         pts = np.vstack([Vf[s] for s in strips])
         org = np.floor(pts.min(0) / metres) * metres  # (texture coordinates from a whole repeat near the faces: s16 holds +-64 repeats)
+        if k == KERB:  # along the track (its stripes across it): s across, `metres` a repeat along
+            ids_all = sorted({vi for s in strips for vi in s})
+            al = along[ids_all]
+            if al.max() - al.min() > lap / 2: al = np.where(al < lap / 2, al + lap, al)  # (a donor over the lap line)
+            a0 = np.floor(al.min() / metres) * metres
+            s0 = np.floor(side[ids_all].min() / KERB_W) * KERB_W
+            uv = {vi: (int((side[vi] - s0) / KERB_W * 512) - 32768, int((a - a0) / metres * 512) - 32768) for vi, a in zip(ids_all, al)}
         verts, order, local = [], [], {}  # (a vertex once a donor, its strips indexing it)
         for s in strips:
             ids = []
@@ -367,7 +422,8 @@ def build(disc, runway_dir, out):
                 if vi not in local:
                     local[vi] = len(verts)
                     p = Vf[vi]
-                    verts.append((p, int((p[0] - org[0]) / metres * 512) - 32768, int((p[2] - org[2]) / metres * 512) - 32768))
+                    if k == KERB: verts.append((p,) + uv[vi])
+                    else: verts.append((p, int((p[0] - org[0]) / metres * 512) - 32768, int((p[2] - org[2]) / metres * 512) - 32768))
                 ids.append(local[vi])
             if order:
                 order += [order[-1], ids[0]]
@@ -396,6 +452,10 @@ def build(disc, runway_dir, out):
         vbs_used.add(vbr)
         meshes.append(mesh)
     print('drawn: %d donor meshes; textures %s' % (len(meshes), sorted(tex_used)))
+
+    # Road Atlanta's own objects moved beside Fuji (OBJECTS), drawn in every cell with their buffers streamed in
+    om, ot, ov = move_objects(res, names, model, ppw, svb, svb_out, to_forza(E['centre']), to_forza(E['right']), to_forza(E['left']))
+    meshes += om; tex_used |= ot; vbs_used |= ov
 
     # the visibility: every cell the same, Fuji's meshes only
     import shipyardloop as sl
@@ -438,6 +498,101 @@ def build(disc, runway_dir, out):
         open(os.path.join(out, name), 'wb').write(bytes(data))
     np.savez(os.path.join(out, 'fuji_forza.npz'), centre=cen, inner=inner, outer=outer)
     build_png(placed, Vf, os.path.join(out, 'build_check.png'))
+
+
+# Road Atlanta objects set beside Fuji: (its vertex buffers' name stem, where along the lap (a share of it), which
+# side ('pit': the inside of the loop, the right going round; 'out': the outside), metres out from the track's edge).
+# The pit building and pit stands along the main straight's pit side, the grandstands across from them.
+OBJECTS = [('pirellabuilding', 0.10, 'pit', 30.0), ('garages01', 0.16, 'pit', 30.0), ('outerpitstands01', 0.05, 'out', 12.0)]
+
+
+def sphere_offset(i):
+    """Mesh i's bounding sphere in QuickPreview1.pvs.ppw: after a u32 version and a 16-byte id, a 21-byte record a
+    mesh in model_quickpreview's order (f32 radius, centre x, y, z, u32, a byte). (Searched for by value before,
+    shipyardcircuit.sphere_at; a building's sphere is the mesh's own but not its vertices' box, and was missed.)"""
+    return 20 + 21 * i
+
+
+def object_meshes(res, names, model, stem):
+    """The meshes of model_quickpreview whose vertex buffer is vbuff_quickpreview_<stem>[_vbN]: [(mesh, record
+    offset, fields)]."""
+    import re
+    pat = re.compile(r'vbuff_quickpreview_%s(_vb\d+)?$' % re.escape(stem))
+    out = []
+    for i in range(struct.unpack_from('<I', res, model)[0]):
+        at, f = record(res, model, i)
+        vb = f[4]
+        if 9 <= vb < len(names) + 9 and pat.match(names[vb - 9][0]): out.append((i, at, f))
+    return out
+
+
+def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
+    """Each of OBJECTS' meshes turned and moved to its place by Fuji: turned so the way it faced Road Atlanta's
+    track (from its middle to the nearest point of Road Atlanta's centre line) faces Fuji's, its feet on the
+    track's height there; normals turned with it; bounding spheres in the ppw moved (a mesh whose sphere is not
+    found is left out). Returns (meshes, textures, vertex buffers) to show and stream in every cell."""
+    import shipyardcircuit as sc
+    meshes, texs, vbs = [], set(), set()
+    seg = np.linalg.norm(np.diff(np.vstack([centre, centre[:1]]), axis=0), axis=1)
+    arc = np.concatenate([[0], np.cumsum(seg)])
+    for stem, share, side, out in OBJECTS:
+        ms = object_meshes(res, names, model, stem)
+        if not ms: print('object %s: no meshes' % stem); continue
+        bufs = {}
+        for i, at, f in ms: bufs[f[4]] = f[5]  # vertex buffer: stride (dwords)
+        allp = []
+        for vb, stride in bufs.items():
+            o, size = names[vb - 9][3], names[vb - 9][4]
+            n = size // (4 * stride)
+            v = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<f4').reshape(n, stride)[:, :3].astype(float)
+            ok = np.all(np.isfinite(v), 1) & (np.abs(v).max(1) < 5000)
+            allp.append(v[ok])
+        allp = np.vstack(allp)
+        mid = (allp.min(0) + allp.max(0)) / 2
+        foot = allp[:, 1].min()
+        near = RA_CENTRE[np.argmin(np.hypot(*(RA_CENTRE[:, [0, 2]] - mid[[0, 2]]).T))]
+        face_from = np.arctan2(near[2] - mid[2], near[0] - mid[0])
+        # its place: `share` round Fuji's lap, `out` m beyond that side's edge
+        i0 = int(np.searchsorted(arc, share * arc[-1])) % len(centre)
+        edge = right[i0] if side == 'pit' else left[i0]
+        away = edge - centre[i0]; away[1] = 0; away /= np.linalg.norm(away)
+        target = edge + away * out
+        face_to = np.arctan2(-away[2], -away[0])
+        a = face_to - face_from
+        R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])  # (x, z) turned by a
+        lift = centre[i0][1] - foot
+        for vb, stride in bufs.items():
+            o, size = names[vb - 9][3], names[vb - 9][4]
+            n = size // (4 * stride)
+            raw = np.frombuffer(bytes(res[o:o + n * 4 * stride]), '<u4').reshape(n, stride).copy()
+            v = raw[:, :3].view('<f4').astype(float)
+            xz = (v[:, [0, 2]] - mid[[0, 2]]) @ R.T + target[[0, 2]]
+            v[:, 0], v[:, 2], v[:, 1] = xz[:, 0], xz[:, 1], v[:, 1] + lift
+            raw[:, :3] = v.astype('<f4').view('<u4')
+            if stride >= 5:  # its normals turned the same way
+                for j in range(n):
+                    nv_ = sc.unpack_normal(int(raw[j, 3]))
+                    nxz = R @ nv_[[0, 2]]
+                    raw[j, 3] = sc.pack_normal((nxz[0], nv_[1], nxz[1]))
+            data = raw.tobytes()
+            res[o:o + len(data)] = data
+            if vb in svb:
+                so, ssz = svb[vb]
+                svb_out[so:so + min(ssz, len(data))] = data[:ssz]
+            vbs.add(vb)
+        shown = 0
+        for i, at, f in ms:
+            fl, ab, nidx, vbytes, vb, stride, prim, t0, t1, sh = f
+            o = names[vb - 9][3]
+            n = vbytes // (4 * stride) if stride else 0
+            if not n: continue
+            now = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(n, stride)[:, :3].astype(float)
+            sp = sphere_offset(i)
+            c1 = (now.min(0) + now.max(0)) / 2
+            struct.pack_into('<4f', ppw, sp, float(np.max(np.linalg.norm(now - c1, axis=1))) + 0.5, *c1)
+            meshes.append(i); texs |= {t0, t1}; shown += 1
+        print('object %s: %d meshes (%d shown), %d buffers, at %.0f%% of the lap, %s side, turned %.0f degrees' % (stem, len(ms), shown, len(bufs), 100 * share, side, np.degrees(a)))
+    return meshes, texs, vbs
 
 
 def zlib_like(src_path, data):
