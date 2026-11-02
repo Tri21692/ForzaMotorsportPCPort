@@ -368,9 +368,12 @@ def build(disc, runway_dir, out):
     print('drawn: %d of %d triangles (grass beyond %.0f m and slivers left out)' % (drawn.sum(), len(T), GRASS_REACH))
     # and the ground beyond, drawn only: Vd and Td the drawn vertices and faces (the runway's first)
     Vt, Tt, ground_at = terrain(Vf, F, drawn, to_forza(E['centre']), read_ground(runway_dir))
-    Vd = np.vstack([Vf, Vt])
-    Td = np.vstack([T[drawn], Tt + len(Vf)])
-    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS)])
+    cf = to_forza(E['centre'])
+    reach = runway_reach(Vf, F, cf, sides(cf)[1])
+    Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON)
+    Vd = np.vstack([Vf, Vt, Va])
+    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + len(Vf) + len(Vt)])
+    kinds_d = np.concatenate([kinds[drawn], np.full(len(Tt), GRASS), np.full(len(Ta), TARMAC)])
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
     # each vertex's place along the lap (m from the lap line) and across it (m left of the centre line): the
@@ -393,7 +396,7 @@ def build(disc, runway_dir, out):
     nmesh = struct.unpack_from('<I', res, model)[0]
     pool = []
     import re
-    prop = re.compile('vbuff_quickpreview_(%s)(_vb\d+)?$' % '|'.join(['(?:%s)' % p_[0].rstrip('$') for p_ in SCATTER] + [re.escape(o_[0]) for o_ in OBJECTS]))
+    prop = re.compile('vbuff_quickpreview_(%s)(_vb\d+)?$' % '|'.join(['(?:%s)' % p_[0].rstrip('$') for p_ in SCATTER] + [re.escape(x_) for r_ in ROWS if isinstance(r_[0], list) for x_ in r_[0]] + [r_[0][0].rstrip('$') for r_ in ROWS if not isinstance(r_[0], list)]))
     props = {k + 9 for k, r in enumerate(names) if prop.match(r[0])}  # (props to place: not donors)
     from collections import Counter
     sharing = Counter(record(res, model, i)[1][4] for i in range(nmesh))
@@ -421,10 +424,11 @@ def build(disc, runway_dir, out):
             jobs.append((k, s))
     # the ground in blocks of 8 x 8 squares (a grid row's strip ran kilometres: past s16's texture coordinates)
     ground = []
-    block = np.floor(Vd[Tt + len(Vf)].mean(1)[:, [0, 2]] / (8 * TERRAIN_CELL)).astype(int)
-    for bk in sorted({tuple(b) for b in block}):
-        for s in strips_of([tuple(t) for t in (Tt + len(Vf))[(block == bk).all(1)]]):
-            ground.append((GRASS, s))
+    for k_, tris in ((GRASS, Tt + len(Vf)), (TARMAC, Ta + len(Vf) + len(Vt))):  # (and the pit apron)
+        block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / (8 * TERRAIN_CELL)).astype(int)
+        for bk in sorted({tuple(b) for b in block}):
+            for s in strips_of([tuple(t) for t in tris[(block == bk).all(1)]]):
+                ground.append((k_, s))
     nstrip_idx = sum(len(s) + 3 for _, s in jobs + ground)
     print('surface: %d triangles in %d strips, the ground %d triangles in %d (~%d indices with the joins)' % (nrun, len(jobs), len(Tt), len(ground), nstrip_idx))
     # the runway in the svb's small donors (a larger one's kerbs ran past s16's texture coordinates), the ground in what is left
@@ -498,12 +502,9 @@ def build(disc, runway_dir, out):
     stx = xb2.unpack(stx_p) if open(stx_p, 'rb').read(1) == b'\x78' else open(stx_p, 'rb').read()
     retexture(res, names, stx, os.path.join(runway_dir, 'art'))
 
-    # Road Atlanta's own objects moved beside Fuji (OBJECTS), drawn in every cell with their buffers streamed in
-    om, ot, ov = move_objects(res, names, model, ppw, svb, svb_out, to_forza(E['centre']), to_forza(E['right']), to_forza(E['left']))
-    meshes += om; tex_used |= ot; vbs_used |= ov
-    cf = to_forza(E['centre'])
-    reach = runway_reach(Vf, F, cf, sides(cf)[1])
-    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], {o_[0] for o_ in OBJECTS}, ground_at)
+    # Road Atlanta's buildings, stands and props set round Fuji (ROWS, SCATTER), drawn in every cell with their
+    # buffers streamed in
+    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], set(), ground_at)
     meshes += sm; tex_used |= st_; vbs_used |= sv
 
     # the visibility: every cell the same, Fuji's meshes only
@@ -551,11 +552,26 @@ def build(disc, runway_dir, out):
     build_png(placed, Vd, os.path.join(out, 'build_check.png'))
 
 
-# Road Atlanta objects set beside Fuji: (its vertex buffers' name stem, where along the lap (a share of it), which
-# side ('pit': the inside of the loop, the right going round; 'out': the outside), metres out from the track's edge).
-# The pit building and pit stands along the main straight's pit side, the grandstands across from them.
-OBJECTS = [('pirellabuilding', 0.965, 'pit', 25.0), ('garages01', 0.93, 'pit', 25.0), ('outerpitstands01', 0.96, 'out', 8.0),
-           ('4signs', 0.03, 'out', 4.0), ('sunocosign', 0.075, 'out', 10.0)]
+# Road Atlanta's buildings and stands in rows along Fuji, where GT4's Fuji has its own: (the instances (a list of
+# names, or a pattern and how many), from and to (shares of the lap from the lap line, the way round), the side
+# ('in': the inside of the loop; 'out'), metres beyond the runway's edge, metres between them). Each is laid end to
+# end the way round, its long side along the track and its front (the way it faced Road Atlanta's track) to Fuji's,
+# on the ground; one that would reach over the runway goes further out (ROW_PUSH), or is left out.
+# GT4's pit building (348 m long, 14 m high) stands on the main straight's inside from 94% of the lap to 2%, its
+# main grandstand opposite (92% to 2%), the paddock behind the pits (its buildings 40 to 120 m from the straight).
+ROWS = [
+    (['hangar01', 'hangar02', 'hangar03', 'garages01', 'pirellabuilding'], 0.935, 0.02, 'in', 17.0, 4.0),
+    (['seatsarea', 'outerpitstands01', 'seatsarea_02'], 0.92, 0.03, 'out', 3.0, 3.0),
+    (['fuelstation01', 'restroom01', 'restroom02', 'restroom03', 'truckcambody01k_284', 'truckcambody02k_285'], 0.93, 0.02, 'in', 50.0, 12.0),
+    ((r'(broadcast_trailer|semitrailer|trailerlarge)\w*$', 53), 0.93, 0.02, 'in', 72.0, 4.0),
+    ((r'rvlarge\w*$', 60), 0.93, 0.02, 'in', 92.0, 5.0),
+    ((r'rvlarge\w*$', 60), 0.93, 0.02, 'in', 110.0, 5.0),
+    (['4signs'], 0.03, 0.05, 'out', 4.0, 0.0),
+    (['sunocosign'], 0.075, 0.1, 'out', 10.0, 0.0),
+]
+ROW_PUSH = (0.0, 3.0, 8.0, 16.0)   # m further out tried when a row's piece would reach over the runway
+PIT_APRON = (0.935, 0.02, 15.0)    # the pit lane's apron (tarmac, drawn only): from and to (shares of the lap), its width
+                                   # beyond the runway's inside edge (GT4's runway has no pit lane), the pit building behind
 # GT4's art on Road Atlanta's signs (the user's: GT4's models only for what identifies the track): (texture
 # resource, image in run\gt4_fuji\art, times across). GT4 keeps colours at half (its vertex colours double them):
 # brightened by ART_GAIN. The Sunoco sign (256 x 128) takes Fuji's big logo, the four ad walls (512 x 64) its wall
@@ -703,30 +719,6 @@ def facing(mid):
     return np.arctan2(near[2] - mid[2], near[0] - mid[0])
 
 
-def move_objects(res, names, model, ppw, svb, svb_out, centre, right, left):
-    """Each of OBJECTS turned and moved to its place by Fuji: turned so the way it faced Road Atlanta's track faces
-    Fuji's, its nearest side `out` m beyond the track's edge, its feet on the track's height there."""
-    meshes, texs, vbs = [], set(), set()
-    seg = np.linalg.norm(np.diff(np.vstack([centre, centre[:1]]), axis=0), axis=1)
-    arc = np.concatenate([[0], np.cumsum(seg)])
-    for stem, share, side, out in OBJECTS:
-        ms = object_meshes(res, names, model, stem)
-        if not ms: print('object %s: no meshes' % stem); continue
-        bufs, allp = instance_geometry(res, names, model, ms)
-        mid = (allp.min(0) + allp.max(0)) / 2
-        i0 = int(np.searchsorted(arc, share * arc[-1])) % len(centre)
-        edge = right[i0] if side == 'pit' else left[i0]
-        away = edge - centre[i0]; away[1] = 0; away /= np.linalg.norm(away)
-        a = np.arctan2(-away[2], -away[0]) - facing(mid)
-        R = turn(a)
-        # its nearest side `out` m from the edge, not its middle (Road Atlanta's 200 m pit stands, middle 12 m out, roofed the grid)
-        near_side = ((allp[:, [0, 2]] - mid[[0, 2]]) @ R.T @ away[[0, 2]]).min()
-        m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, edge + away * (out - near_side), centre[i0][1] - allp[:, 1].min())
-        meshes += m_; texs |= t_; vbs |= v_
-        print('object %s: %d meshes (%d shown), at %.0f%% of the lap, %s side, turned %.0f degrees' % (stem, len(ms), len(m_), 100 * share, side, np.degrees(a)))
-    return meshes, texs, vbs
-
-
 # Road Atlanta's many props spread round Fuji by rule: (instance name pattern, how many at most, where, metres beyond
 # the runway's edge (a range: drawn at random), how it is turned). Where: 'corners' (the outside of each corner's
 # apex, a few metres apart when several), 'fast' (the straights and fast bends, end to end, the two sides in turn),
@@ -741,7 +733,7 @@ SCATTER = [
     (r'tirewall_capa\d+$', 20, 'corners', (0.5, 0.5), 'along'),
     (r'catchfence\d+$', 60, 'fast', (1.0, 1.0), 'along'),
     (r'barrierblock\d+$', 24, 'pits', (0.5, 0.5), 'along'),
-    (r'pole_streetlight\d+$', 12, 'pits', (6.0, 6.0), 'face'),
+    (r'pole_streetlight\d+$', 12, 'pits', (13.0, 13.0), 'face'),
     (r'(shack|restroom|tvcart_base|racecart_base)\d*$', 20, 'out', (12.0, 30.0), 'face'),
     (r'(foliagefacade_?\d+|tree_wall\d*_how\d*|tree_wall\d+)$', 80, 'backdrop', (45.0, 90.0), 'face', 200.0),
 ]
@@ -836,6 +828,35 @@ def ground_raster(Gv, Gt, lo, shape, g):
         ys = Gv[[a, b, c], 1]
         np.minimum.at(out, (zz[m], xx[m]), ys[0] + u[m] * (ys[1] - ys[0]) + w[m] * (ys[2] - ys[0]))
     return np.where(np.isfinite(out), out, np.nan)
+
+
+def box_axes(xz):
+    """The sides of the smallest rectangle round the points (x, z): (the long side's direction, the short's)."""
+    best = None
+    for deg in np.arange(0, 90, 0.5):
+        u = np.array([np.cos(np.radians(deg)), np.sin(np.radians(deg))]); v = np.array([-u[1], u[0]])
+        a_, b_ = np.ptp(xz @ u), np.ptp(xz @ v)
+        if best is None or a_ * b_ < best[0]: best = (a_ * b_, (u, v) if a_ >= b_ else (v, u))
+    return best[1]
+
+
+def apron(centre, inner, reach_in, s0, s1, width):
+    """A paved strip beyond the runway's inside edge from s0 to s1 (shares of the lap), `width` m wide, at the
+    centre line's height (over the ground, which lies under the runway): (vertices, triangles wound as the
+    runway's)."""
+    n = len(centre)
+    a, b = int(s0 * n), int(s1 * n) + (n if s1 < s0 else 0)
+    V, T = [], []
+    for k, j in enumerate(range(a, b + 1, 2)):
+        i = j % n
+        for off in (reach_in[i] - 0.3, reach_in[i] + width):  # (from under the runway's edge)
+            V.append(centre[i] + inner[i] * off + (0, 0.02, 0))
+        if k: T += [(2 * k - 2, 2 * k - 1, 2 * k + 1), (2 * k - 2, 2 * k + 1, 2 * k)]
+    V, T = np.array(V, float), np.array(T, int)
+    nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+    flip = nrm[:, 1] > 0
+    T[flip] = T[flip][:, [0, 2, 1]]
+    return V, T
 
 
 def terrain(Vf, F, drawn, loop, ground=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
@@ -969,6 +990,48 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
     inst_names = sorted({re.sub(r'_vb\d+$', '', r[0][len('vbuff_quickpreview_'):]) for r in names
                          if r[0].startswith('vbuff_quickpreview_') and 'splines' not in r[0]})
     print('scatter: %d corners, %d fast points, %d pit-straight points' % (len(corners), len(fast), len(pits)))
+    seg = np.linalg.norm(np.diff(np.vstack([centre, centre[:1]])[:, [0, 2]], axis=0), axis=1)
+    arc = np.concatenate([[0], np.cumsum(seg)])
+    lap = arc[-1]
+    for stems_, s0, s1, side, gap_, spacing in ROWS:
+        if isinstance(stems_, list): stems = [x for x in stems_ if x in inst_names and x not in used]
+        else:
+            pat = re.compile(stems_[0])
+            stems = [x for x in inst_names if pat.match(x) and x not in used][:stems_[1]]
+        at = s0 * lap
+        end = s1 * lap + (lap if s1 < s0 else 0)
+        placed = 0
+        for stem in stems:
+            ms = object_meshes(res, names, model, stem)
+            if not ms: continue
+            bufs, allp = instance_geometry(res, names, model, ms)
+            if len(allp) < 3: continue
+            mid = (allp.min(0) + allp.max(0)) / 2
+            xz = allp[:, [0, 2]] - mid[[0, 2]]
+            long_axis, short_axis = box_axes(xz)
+            length = float(np.ptp(xz @ long_axis))
+            if at + length > end: break
+            i0 = int(np.searchsorted(arc, (at + length / 2) % lap)) % n
+            at += length + spacing
+            d = inner_dir[i0] if side == 'in' else -inner_dir[i0]
+            reach = reach_in[i0] if side == 'in' else reach_out[i0]
+            base = np.arctan2(t[i0][2], t[i0][0]) - np.arctan2(long_axis[1], long_axis[0])
+            f0 = facing(mid)
+            square = length < 1.4 * float(np.ptp(xz @ short_axis))  # (its long side no guide: any right angle)
+            a = max([base + k_ * np.pi / (2 if square else 1) for k_ in range(4 if square else 2)],
+                    key=lambda a_: np.cos(f0 + a_) * -d[0] + np.sin(f0 + a_) * -d[2])  # its front to the track
+            R = turn(a)
+            near_side = (xz @ R.T @ d[[0, 2]]).min()
+            for push in ROW_PUSH:
+                target = centre[i0] + d * (reach + gap_ + push - near_side)
+                if clear(xz @ R.T + target[[0, 2]]): break
+            else: continue
+            foot = ground_at(xz @ R.T + target[[0, 2]]).min() if ground_at else centre[i0][1]
+            m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, foot - allp[:, 1].min())
+            if m_: placed += 1
+            meshes += m_; texs |= t_; vbs |= v_
+            used.add(stem)
+        print('row %-30s %3d placed of %3d, %s %.0f m out, %.0f%% to %.0f%%' % (str(stems_[0])[:30], placed, len(stems), side, gap_, 100 * s0, 100 * s1))
     for pattern, most, where, gap, align, *longest in SCATTER:
         pat = re.compile(pattern)
         stems = [s_ for s_ in inst_names if pat.match(s_) and s_ not in used][:most]
@@ -997,7 +1060,7 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
                 elif where == 'pits':
                     at_ = slot * max(1, int(length / STEP) + 2)
                     if at_ >= len(pits): used_up = True; break
-                    i0 = pits[at_]; side = 'out'
+                    i0 = pits[at_]; side = 'in'
                 elif where == 'out':
                     i0 = int(rng.integers(n)); side = 'out'
                 else:
@@ -1434,6 +1497,12 @@ def install(disc, build_dir, mods):
     for name, tile in (('ico_tracklogo_sm', LOGO_SM), ('ico_tracklogo_lg', LOGO_LG)):
         key = next(k for k in xpr.files if k.lower() == 'frontend' + B + name + '.xpr')
         xpr.files[key] = logo_tile(xpr.files[key], LOGO, logo, tile)
+    # its AI files: what the game counts laps and progress by (and its AI drivers race by), along the
+    # track's edges; the audio spline one record per waypoint (written below)
+    import aitrack
+    half = np.linalg.norm(E['inner'] - E['outer'], axis=1) / 2
+    wps, nseg, sounds = aitrack.install(mega, TAG, (E['inner'] + E['outer']) / 2, half)
+    print('AI files: %d waypoints, %d segments; sounds kept %s' % (len(wps), nseg, sounds))
     for a in (mega, xpr): a.check()
     for a in (mega, xpr): a.write()
     if LOAD_IMAGE:
@@ -1447,8 +1516,11 @@ def install(disc, build_dir, mods):
     open(os.path.join(d, 'QuickPreview1.col'), 'wb').write(col)
     ra = addcar.disc_file(disc, 'media', 'tracks', DONOR_TRACK)
     for f in os.listdir(ra):
-        if f.lower() in ('audiospline.bin', 'tracklightmap.dat', 'fog.bin', 'flythrough.bik'):
+        if f.lower() in ('tracklightmap.dat', 'fog.bin', 'flythrough.bik'):
             open(os.path.join(d, f), 'wb').write(open(os.path.join(ra, f), 'rb').read())
+        if f.lower() == 'audiospline.bin':  # Road Atlanta's sounds, a record per Fuji waypoint (the nearest's)
+            ref = mega.files['ai' + B + 'drivatarv2' + B + DONOR_TRACK.lower() + 'geometry.bin']
+            open(os.path.join(d, 'AudioSpline.bin'), 'wb').write(aitrack.audio_spline(wps, ref, open(os.path.join(ra, f), 'rb').read()))
     res = open(os.path.join(build_dir, 'roadatlanta.res'), 'rb').read()
     cbx_disc = next(os.path.join(ra, f) for f in os.listdir(ra) if f.lower() == 'quickpreview1.xbp.cbx')
     cbx = zlib.decompress(open(cbx_disc, 'rb').read())
