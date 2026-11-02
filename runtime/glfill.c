@@ -251,6 +251,8 @@ struct GlProg {
     float (*vc_last)[4]; /* the constants last given this program (glvsh.c sends only the rows that changed) */
     int vc_rows;         /* 1: u_vc's rows have consecutive locations, so a part can be sent; -1: not */
     void *fu_last;       /* the fragment uniforms it last got (gl_frag_state's FragUniforms) */
+    float sf_last[6];    /* the sample scale and fog it last got (glvsh.c), once sf_set */
+    int sf_set;
 };
 
 static GlProg gl_main, *gl_using;
@@ -880,11 +882,12 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     if (rt_overlay_open()) gl_overlay_draw(x, H - y - ch, cw, ch);
     else gl_tt_hud_draw(x, H - y - ch, cw, ch);
     static const char *pshot = (const char *)1;
-    if (pshot == (const char *)1) pshot = getenv("XBRT_PRESENT_SHOT"); /* the shown picture, after the post effects, as <file>_<n>.ppm every 5 s (testing) */
-    static uint64_t pshot_next;
-    if (pshot && post && rt_now_100ns() >= pshot_next) {
+    if (pshot == (const char *)1) pshot = getenv("XBRT_PRESENT_SHOT"); /* the shown picture, after the post effects, as <file>_<n>.ppm every 5 s, or XBRT_PRESENT_SHOT_MS (testing) */
+    static uint64_t pshot_next, pshot_every;
+    if (!pshot_every) pshot_every = getenv("XBRT_PRESENT_SHOT_MS") ? (uint64_t)atoi(getenv("XBRT_PRESENT_SHOT_MS")) * 10000 + 1 : 50000000;
+    if (pshot && (post || getenv("XBRT_PRESENT_SHOT_MS")) && rt_now_100ns() >= pshot_next) {
         static int n;
-        pshot_next = rt_now_100ns() + 50000000;
+        pshot_next = rt_now_100ns() + pshot_every;
         uint8_t *px = malloc((size_t)cw * ch * 3);
         char path[1100];
         snprintf(path, sizeof path, "%s_%03d.ppm", pshot, n++);
@@ -2047,7 +2050,7 @@ static GLuint gl_texture(Texture *t) {
         for (int i = 0; i < t->w * t->h; i++) f[i] = (float)t->texels[i];
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->w, t->h, GL_RED, GL_FLOAT, f);
         free(f);
-    } else { /* with the game's own mipmaps, as texture() decoded them */
+    } else if (t->cube || !hd_upload(t->gl, t)) { /* with the game's own mipmaps, as texture() decoded them (gltexhd.c: else from the pack, or upscaled) */
         glTexStorage2D(target, t->levels, GL_RGBA8, t->w, t->h);
         for (int f = 0; f < (t->cube ? 6 : 1); f++) {
             const uint32_t *p = t->texels + (size_t)f * t->face_texels;

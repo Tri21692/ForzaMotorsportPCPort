@@ -31,6 +31,10 @@ static const OvItem items[] = {
     {"anisotropic", "Texture Filtering", {"1", "2", "4", "8", "16"}, {"Off", "2x Anisotropic", "4x Anisotropic", "8x Anisotropic", "16x Anisotropic"}, 0,
      "Keeps the road and verges sharp when seen at a shallow angle."},
     {"show_fps", "Show Frame Rate", {"0", "1"}, {"Off", "On"}, 1, "The frame rate, small in the top left corner."},
+    {"texture_pack", "HD Texture Pack", {"0", "1"}, {"Off", "On"}, 1,
+     "AI-upscaled textures from the mods folder, where the pack has them. Changing it reloads the textures."},
+    {"texture_upscale", "Texture Upscaling", {"0", "2"}, {"Off", "2x"}, 1,
+     "Redraws the other textures at twice their size as they load: sharper up close. Changing it reloads the textures."},
     {"sharpen", "Sharpening", {"0", "0.25", "0.5", "0.75", "1"}, {"Off", "Low", "Medium", "High", "Maximum"}, 1,
      "Crisper detail on the road, cars and signs. Contrast-adaptive, so edges do not ring."},
     {"bloom", "Bloom", {"0", "0.15", "0.3", "0.5", "0.75"}, {"Off", "Subtle", "Medium", "Strong", "Very Strong"}, 1,
@@ -92,6 +96,8 @@ static void apply(const OvItem *it, const char *v) {
     else if (!strcmp(it->setting, "fullscreen")) rt_display_set_fullscreen(atoi(v));
     else if (!strcmp(it->setting, "brightness")) rt_brightness = (float)atof(v);
     else if (!strcmp(it->setting, "show_fps")) rt_show_fps = atoi(v);
+    else if (!strcmp(it->setting, "texture_pack")) rt_tex_pack_on = atoi(v), rt_tex_reload = 1;
+    else if (!strcmp(it->setting, "texture_upscale")) rt_tex_upscale = atoi(v) >= 2 ? 2 : 0, rt_tex_reload = 1;
     else if (!strcmp(it->setting, "sharpen")) rt_post_sharpen = (float)atof(v);
     else if (!strcmp(it->setting, "bloom")) rt_post_bloom = (float)atof(v);
     else if (!strcmp(it->setting, "vibrance")) rt_post_vibrance = (float)atof(v);

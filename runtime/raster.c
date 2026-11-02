@@ -146,6 +146,7 @@ typedef struct {
     uint32_t depth;   /* a depth texture: texels hold depth, up to this maximum */
     uint32_t *texels; /* A8R8G8B8 */
     uint32_t version; /* bumped at each decode */
+    uint32_t decodes; /* decodes of this entry's key: many where the CPU redraws it (video, copies of the screen) */
     GLuint gl;        /* its GL texture, made from version gl_version */
     uint32_t gl_version;
     int surface;      /* gl is a framebuffer's colour texture (glfill.c), sampled where it was drawn */
@@ -222,7 +223,31 @@ static uint64_t hash_sparse(const uint8_t *p, uint32_t n) {
     return h ^ hash_bytes(p + n - 64, 64);
 }
 
+/* The same with the CPU's CRC32C (SSE4.2): three streams of 8 bytes at a time, every byte counted. A
+ * hash is only ever compared with another of this session's, so which function makes it is free to
+ * choose. A fifth of the device thread was hashing (texture, vertex and surface change checks); this
+ * is 1.5 times as fast over large spans and three times over hash_sparse's 64-byte pieces. */
+__attribute__((target("sse4.2"))) static uint64_t hash_crc(const uint8_t *p, uint32_t n) {
+    uint64_t c0 = 0x9E3779B9u ^ n, c1 = 0xC2B2AE3Du, c2 = 0x165667B1u;
+    uint32_t k = 0;
+    for (; k + 24 <= n; k += 24) {
+        uint64_t a, b, c;
+        memcpy(&a, p + k, 8), memcpy(&b, p + k + 8, 8), memcpy(&c, p + k + 16, 8);
+        c0 = __builtin_ia32_crc32di(c0, a), c1 = __builtin_ia32_crc32di(c1, b), c2 = __builtin_ia32_crc32di(c2, c);
+    }
+    for (; k + 8 <= n; k += 8) {
+        uint64_t a;
+        memcpy(&a, p + k, 8);
+        c0 = __builtin_ia32_crc32di(c0, a);
+    }
+    for (; k < n; k++) c1 = __builtin_ia32_crc32qi((uint32_t)c1, p[k]);
+    return (c0 | c1 << 32) ^ (c2 * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)n << 40);
+}
+
 static uint64_t hash_bytes(const uint8_t *p, uint32_t n) {
+    static int crc = -1;
+    if (crc < 0) crc = __builtin_cpu_supports("sse4.2") && !(getenv("XBRT_HASH_CRC") && !atoi(getenv("XBRT_HASH_CRC")));
+    if (crc) return hash_crc(p, n);
     uint64_t h[4] = {0x9E3779B97F4A7C15ull ^ n, 0xC2B2AE3D27D4EB4Full, 0x165667B19E3779F9ull, 0x27D4EB2F165667C5ull};
     uint32_t k = 0;
     for (; k + 32 <= n; k += 32)
@@ -467,6 +492,7 @@ static Texture *texture(int i) {
     t->used = nv2a.flips;
     t->hash = hash, t->gen = generation, t->sig = quick_sig, t->sig_checks = 0;
     t->version++;
+    t->decodes = t == hit ? t->decodes + 1 : 1; /* (version runs on across the slot's earlier keys) */
     t->w = w, t->h = h, t->linear = linear, t->cube = cube;
     t->levels = nl, t->face_texels = face_texels;
     t->depth = color == 0x2E ? 0xFFFFFF : color == 0x30 ? 0xFFFF : 0;
@@ -1483,10 +1509,28 @@ void nv2a_raster_sync_range(uint32_t base, uint32_t size) {
     if (rt_gl_on) gl_sync_color_async(base, size);
 }
 
+/* F1's texture switches (gltexhd.c): every decoded texture but the framebuffers' dropped at a flip,
+ * when no draw holds one, to be decoded and uploaded again the new way (a second's stutter). */
+static int hd_on; /* gltexhd.c: -1 reads its settings and the pack again */
+/* F1's texture switches: every texture decoded and uploaded again when next drawn, as if its bytes had
+ * changed. The entries stay (draw state holds pointers to them: clearing them crashed the game). */
+static void tex_flush_all(void) {
+    int n = 0;
+    for (int i = 0; i < TEX_CACHE; i++) {
+        Texture *t = &cache[i];
+        if (!t->texels || t->surface) continue;
+        t->hash = 0, t->sig = 0, t->sig_checks = 0, t->gen = generation - 1, t->decodes = 0; /* (still upscaled after) */
+        n++;
+    }
+    generation++;
+    fprintf(stderr, "xbrt: textures: %d to load again (pack %s, upscale %s)\n", n, rt_tex_pack_on ? "on" : "off", rt_tex_upscale ? "2x" : "off");
+}
+
 void nv2a_raster_flip(void) {
     frame_draws = 0;
     nv2a_raster_flush();
     if (rt_gl_on) gl_flip();
+    if (rt_tex_reload) rt_tex_reload = 0, hd_on = -1, tex_flush_all();
 }
 
 void nv2a_raster_vblank(void) {
@@ -1530,6 +1574,7 @@ static int vidx_cap, deferred;
 static uint32_t fetch_attr(const FetchAttr *fa, const uint8_t *p, float *v);
 static void materialize(void);
 
+#include "gltexhd.c"
 #include "glfill.c"
 #include "glover.c"
 #include "glfs.c"

@@ -110,6 +110,7 @@ extern volatile float rt_draw_distance;       /* XBRT_DRAW_DISTANCE (nv2a.c); 0:
 extern volatile float rt_post_sharpen, rt_post_bloom, rt_post_vibrance; /* XBRT_SHARPEN, XBRT_BLOOM, XBRT_VIBRANCE: the shown picture's post effects, 0 off */
 extern volatile int rt_display_fxaa;
 extern volatile int rt_show_fps;
+extern volatile int rt_tex_upscale, rt_tex_pack_on, rt_tex_reload; /* gltexhd.c: XBRT_TEX_UPSCALE, the HD pack (XBRT_TEX_PACK_ON); F1 changed one: reload at the next flip */
 extern volatile float rt_fps_shown;          /* XBRT_AA: edge smoothing on the shown picture */
 void rt_display_set_fullscreen(int on);
 extern uint32_t rt_frame_interval_at; /* where the game keeps its frame interval in vertical blanks, or 0 */

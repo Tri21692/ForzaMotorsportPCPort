@@ -279,6 +279,9 @@ void xb_mmio_write(uint32_t a, int bytes, uint32_t v) {
         else {                                                  /* PALETTE_DATA: R, G, B, then the next entry */
             rt_gamma[index][comp] = (uint8_t)v;
             if (++comp == 3) comp = 0, index = (index + 1) & 255, rt_gamma_seq++;
+            if (!index && !comp && getenv("XBRT_GAMMA_LOG")) /* debugging: each whole ramp, at a few points */
+                fprintf(stderr, "[%10.3f] gamma: 32 %u %u %u, 128 %u %u %u, 224 %u %u %u\n", rt_now_100ns() / 1e7, rt_gamma[32][0], rt_gamma[32][1],
+                        rt_gamma[32][2], rt_gamma[128][0], rt_gamma[128][1], rt_gamma[128][2], rt_gamma[224][0], rt_gamma[224][1], rt_gamma[224][2]);
         }
     }
     if (bytes != 4) { /* nothing with effects is written in parts */

@@ -19,6 +19,12 @@
     X(PFNGLSCISSORPROC, glScissor)                                                                                          \
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer)                                                                          \
     X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)                                                                            \
+    X(PFNGLDISPATCHCOMPUTEPROC, glDispatchCompute)                                                                          \
+    X(PFNGLBINDIMAGETEXTUREPROC, glBindImageTexture)                                                                        \
+    X(PFNGLMEMORYBARRIERPROC, glMemoryBarrier)                                                                              \
+    X(PFNGLBINDVERTEXBUFFERPROC, glBindVertexBuffer)                                                                        \
+    X(PFNGLVERTEXATTRIBFORMATPROC, glVertexAttribFormat)                                                                    \
+    X(PFNGLVERTEXATTRIBBINDINGPROC, glVertexAttribBinding)                                                                  \
     X(PFNGLSTENCILMASKPROC, glStencilMask)                                                                                  \
     X(PFNGLSTENCILFUNCPROC, glStencilFunc)                                                                                  \
     X(PFNGLSTENCILOPPROC, glStencilOp)                                                                                      \
@@ -130,6 +136,12 @@ GL_FUNCTIONS(GL_DECLARE)
 #define glScissor p_glScissor
 #define glBlitFramebuffer p_glBlitFramebuffer
 #define glGenerateMipmap p_glGenerateMipmap
+#define glDispatchCompute p_glDispatchCompute
+#define glBindImageTexture p_glBindImageTexture
+#define glMemoryBarrier p_glMemoryBarrier
+#define glBindVertexBuffer p_glBindVertexBuffer
+#define glVertexAttribFormat p_glVertexAttribFormat
+#define glVertexAttribBinding p_glVertexAttribBinding
 #define glStencilMask p_glStencilMask
 #define glStencilFunc p_glStencilFunc
 #define glStencilOp p_glStencilOp

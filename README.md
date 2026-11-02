@@ -94,7 +94,17 @@ resolution, widescreen, volume (and muting while the window is in the
 background) and the rest are in `forza.ini`, or press F1 in the game,
 which also has the picture's sharpening, bloom and vibrance and a frame
 rate counter. F12 saves a screenshot to `run\screenshots` ("Screenshot
-saved" shows for a moment), as PNG when ffmpeg is set in `forza.ini`. The game's saves live in `run\hdd`: back that folder up, and
+saved" shows for a moment), as PNG when ffmpeg is set in `forza.ini`.
+
+Textures: by default each is redrawn at twice its size on the GPU as it
+loads (F1: Texture Upscaling). An HD texture pack can replace them with
+AI-upscaled copies: play with `XBRT_TEX_EXPORT=<folder>` set (each
+texture saved once), then `python tools/texpack.py <folder>
+<mods>\textures --upscaler realesrgan-ncnn-vulkan.exe` (Real-ESRGAN,
+github.com/xinntao/Real-ESRGAN; 4x up to 1024 texels a side, 2x past
+that, `--max-out`); F1's HD Texture Pack switches it on and off. Neither
+costs anything a frame, only video memory (a pack of 2,500 textures is
+about 1.5 GB). Videos and copies of the screen are not exported. The game's saves live in `run\hdd`: back that folder up, and
 never edit the save files (they are signed; the game deletes profiles that
 fail the check). A pad is read through XInput; without one, the keyboard
 (see [runtime/README.md](runtime/README.md)). Every setting and debugging

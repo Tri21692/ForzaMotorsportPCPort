@@ -22,6 +22,8 @@ static RtSetting settings[] = {
     {"window", "XBRT_WINDOW_SIZE", "auto", "Window size in pixels, as 1280x960, or auto (twice the Xbox picture, fitted to the screen)"},
     {"antialiasing", "XBRT_AA", "fxaa", "Edge smoothing: fxaa or off. A higher scale than the window also smooths edges"},
     {"anisotropic", "XBRT_GL_ANISO", "16", "Texture sharpness at angles: 1 (off) to 16"},
+    {"texture_upscale", "XBRT_TEX_UPSCALE", "2", "Textures drawn at twice their size as they load (sharper close up, no cost a frame): 2 on, 0 off"},
+    {"texture_pack", "XBRT_TEX_PACK_ON", "1", "The HD texture pack (the mods folder's textures, tools/texpack.py): 1 on, 0 off"},
     {"screenshot_format", "XBRT_SCREENSHOT_FORMAT", "png", "F12 screenshots as png (made by ffmpeg in the background, a third of the size) or bmp"},
     {"show_fps", "XBRT_SHOW_FPS", "0", "The frame rate in the top left corner: 1 on, 0 off"},
     {"sharpen", "XBRT_SHARPEN", "0.5", "Sharpening of the shown picture (contrast-adaptive): 0 off to 1"},

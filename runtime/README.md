@@ -79,8 +79,14 @@ first build takes a while.
 | `XBRT_SHARPEN` | `0`-`1`: contrast-adaptive sharpening of the shown picture (after AMD FidelityFX CAS); `sharpen` in forza.ini, F1 | 0.5 |
 | `XBRT_BLOOM` | `0`-`1`: a soft glow round the brightest parts, from a half-size mipmapped copy of the picture, over Forza's own glow; `bloom` | 0.3 |
 | `XBRT_VIBRANCE` | `0`-`1`: more colour in dull tones, saturated ones left alone; `vibrance` | 0.25 |
+| `XBRT_TEX_UPSCALE` | `2`: every colour texture (not depth or cube maps) drawn at twice its size on the GPU as it loads (gltexhd.c: Catmull-Rom held within its four nearest texels, the mipmaps made again), once per texture; `texture_upscale` | 2 |
+| `XBRT_TEX_PACK` | a folder of replacement textures, `<key>.hd`, swapped in as each loads (tools/texpack.py makes them, e.g. with Real-ESRGAN) | `<mods>/textures` |
+| `XBRT_TEX_EXPORT` | `<folder>`: each texture the game uploads saved once as `<key>.bmp`, for tools/texpack.py (not those it redraws over and over: videos, copies of the screen) | off |
+| `XBRT_HASH_CRC` | `0`: the change checks' hash in plain C instead of the CPU's CRC32C (SSE4.2), for comparing | 1 |
 | `XBRT_SHOW_FPS` | `1`: new pictures a second in the top left corner; `show_fps` | 0 |
 | `XBRT_PRESENT_SHOT` | `<file>`: the shown picture, after the post effects, as `<file>_NNN.ppm` every 5 s (testing; screenshots are the game's picture before them) | off |
+| `XBRT_PRESENT_SHOT_MS` | `<ms>`: `XBRT_PRESENT_SHOT` that often, and of every picture shown, menus too (menu transitions) | 5000 |
+| `XBRT_GAMMA_LOG` | `1`: each gamma ramp the game writes (its fades), at three points | off |
 
 Controller: on Windows the first XInput pad is the Xbox pad on port 1
 (shoulder buttons are WHITE and BLACK); without one, the keyboard

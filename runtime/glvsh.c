@@ -613,21 +613,26 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
         from = ce;
     }
     if (from) {
-        glBindBuffer(GL_ARRAY_BUFFER, from->vbo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, from->ibo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, from->ibo); /* (always: a deleted buffer's name can come back as another) */
     } else {
         glBindBuffer(GL_ARRAY_BUFFER, gl_vsh_vbo);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_vsh_ibo);
         glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * m * 16, packed, GL_STREAM_DRAW);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)k * (GLsizeiptr)sizeof(GLuint), idx, GL_STREAM_DRAW);
     }
+    /* The attributes' layout in the buffer (packed, in order) only when the program's inputs change,
+     * all from binding 0; a draw then binds its buffer there in one call, where each attribute's
+     * pointer was set again at every draw. */
     if (v->inputs != last_inputs) {
         for (int a = 0; a < NATTR; a++) glDisableVertexAttribArray((GLuint)a);
-        for (int j = 0; j < m; j++) glEnableVertexAttribArray((GLuint)used[j]);
+        for (int j = 0; j < m; j++) {
+            glEnableVertexAttribArray((GLuint)used[j]);
+            glVertexAttribFormat((GLuint)used[j], 4, GL_FLOAT, GL_FALSE, (GLuint)(j * 16));
+            glVertexAttribBinding((GLuint)used[j], 0);
+        }
         last_inputs = v->inputs;
     }
-    /* the attributes in the buffer bound now (the cache's or the stream's) */
-    for (int j = 0; j < m; j++) glVertexAttribPointer((GLuint)used[j], 4, GL_FLOAT, GL_FALSE, m * 16, (void *)(uintptr_t)(j * 16));
+    glBindVertexBuffer(0, from ? from->vbo : gl_vsh_vbo, 0, m * 16);
     uint64_t p3 = rt_now_100ns();
 
     float c[192][4];
@@ -649,10 +654,12 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
         glUniform4fv(p->vc + lo, hi - lo + 1, &c[lo][0]);
         memcpy(p->vc_last[lo], c[lo], (size_t)(hi - lo + 1) * 16);
     }
-    float sxy[2] = {(float)d->sx, (float)d->sy};
-    glUniform2fv(p->sxy, 1, sxy);
-    float fog[4] = {K(SET_FOG_ENABLE) ? 1.0f : 0.0f, (float)K(SET_FOG_MODE), f32(K(SET_FOG_PARAMS)), f32(K(SET_FOG_PARAMS + 4))};
-    glUniform4fv(p->fog, 1, fog);
+    float sf[6] = {(float)d->sx, (float)d->sy, K(SET_FOG_ENABLE) ? 1.0f : 0.0f, (float)K(SET_FOG_MODE), f32(K(SET_FOG_PARAMS)), f32(K(SET_FOG_PARAMS + 4))};
+    if (!p->sf_set || memcmp(sf, p->sf_last, sizeof sf)) { /* (mostly the same from draw to draw) */
+        glUniform2fv(p->sxy, 1, sf);
+        glUniform4fv(p->fog, 1, sf + 2);
+        memcpy(p->sf_last, sf, sizeof sf), p->sf_set = 1;
+    }
     uint64_t p4 = rt_now_100ns();
     gl_frag_state(d, s);
     uint64_t p5 = rt_now_100ns();

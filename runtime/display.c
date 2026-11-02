@@ -140,7 +140,8 @@ static void save_bmp(const char *path, const uint32_t *px, int W, int H) {
 volatile uint32_t rt_debug_keys;
 
 volatile int rt_display_fxaa = 1;
-volatile int rt_show_fps = -1;  /* XBRT_SHOW_FPS: the frame rate in a corner */
+volatile int rt_show_fps = -1;
+volatile int rt_tex_upscale = -1, rt_tex_pack_on = -1, rt_tex_reload;  /* XBRT_SHOW_FPS: the frame rate in a corner */
 volatile float rt_fps_shown;   /* new pictures a second, over half a second (glfill.c) */
 volatile float rt_post_sharpen = 0.5f, rt_post_bloom = 0.3f, rt_post_vibrance = 0.25f;
 
