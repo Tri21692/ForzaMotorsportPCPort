@@ -875,6 +875,8 @@ static void career_timetrial(void) {
 /* Wakes the device loop when a vertical blank is due. Its own timed wait
  * goes by winpthreads' millisecond clock and woke up to 15 ms late, which
  * the game saw as a dropped frame. */
+volatile float rt_vblank_rate = 1.0f; /* (see device_main) */
+
 static void *vblank_ticker(void *arg) {
     (void)arg;
     for (;;) {
@@ -901,8 +903,12 @@ static void *device_main(void *arg) {
     for (;;) {
         uint64_t t = now_ns();
         if (t >= next_vblank) {
-            next_vblank += 16683333; /* 59.94 Hz */
-            if (t > next_vblank) next_vblank = t + 16683333;
+            /* 59.94 Hz; slower by rt_vblank_rate (the takedown camera's slow motion: the game steps its race once a
+             * frame, by the blanks, so fewer blanks a second slow everything; its clock alone did not) */
+            float rate = rt_vblank_rate > 0.1f && rt_vblank_rate <= 1.0f ? rt_vblank_rate : 1.0f;
+            uint64_t period = (uint64_t)(16683333 / rate);
+            next_vblank += period;
+            if (t > next_vblank) next_vblank = t + period;
             vblank_due = next_vblank;
             nv2a.vblanks++;
             nv2a_trace('V', nv2a.vblanks);

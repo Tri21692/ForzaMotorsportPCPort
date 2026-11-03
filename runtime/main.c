@@ -58,7 +58,7 @@ void xb_trap(XbCtx *c, uint32_t addr, const char *why) { rt_fatal(c, "trap at %0
 
 uint64_t xb_rdtsc(XbCtx *c) {
     (void)c;
-    return rt_now_100ns() * 733 / 10; /* a 733 MHz Pentium III */
+    return rt_game_now_100ns() * 733 / 10; /* a 733 MHz Pentium III (the game's clock: slow motion) */
 }
 
 /* cpuid as the Xbox's CPU answers it: a GenuineIntel Pentium III

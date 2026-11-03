@@ -992,7 +992,8 @@ SCATTER = [
     (r'workerstand\d*$', 14, 'corners', (4.0, 4.0), 'face'),
     # (no tyre walls: Road Atlanta's are whole stacks, 70-150 KB each; 20 of them were a third of the streamed
     # memory, over the stock track's busiest cell, and parts of the woods went unloaded)
-    (r'catchfence\d+$', 60, 'fast', (1.0, 1.0), 'along'),
+    # (no catch fence props: the walls carry their own catch fence (dressing); Road Atlanta's stood out on the banks
+    # behind it and crossed it at odd angles on the slopes, the user's 'misplaced fences')
     (r'barrierblock\d+$', 24, 'pits', (0.5, 0.5), 'along'),
     (r'pole_streetlight\d+$', 12, 'pits', (13.0, 13.0), 'face'),
     (r'(shack|restroom|tvcart_base|racecart_base)\d*$', 20, 'out', (12.0, 30.0), 'face'),
@@ -2233,7 +2234,8 @@ def build_png(placed, Vf, path, px=2000):
 # ---- install: a track of its own on Road Atlanta's data
 
 NAME, TAG = 'Fuji Speedway', 'FujiSpeedway'
-MAP_TILE = 46   # frontend\gfx_trackmaps.xpr: the disc uses 0-44, the Pacific Shipyards Circuit 45
+MAP_TILE = 47   # frontend\gfx_trackmaps.xpr (64 tiles): the disc uses 0-44, the Pacific Shipyards Circuit 45, its II 46
+                # (Fuji at 46 drew over Pacific Shipyards Circuit II's map on the menu, the user's)
 LOGO = 47       # ico_tracklogo_sm and _lg (15 a row): the disc uses 0-46; the small strip's 47-59 are unused dark copies
 LOGO_SM, LOGO_LG = (108, 60, 15), (210, 117, 15)
 LOAD_IMAGE = None   # media\FrontEnd\Loading_Track_bkgd: loading_screen makes Fuji's (Road Atlanta's frame, Fuji's map,

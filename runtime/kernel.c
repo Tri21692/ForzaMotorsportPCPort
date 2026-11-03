@@ -209,7 +209,7 @@ K(RtlCompareMemoryUlong) {
 /* ---- Ke: time, IRQL, dispatcher objects ---- */
 
 K(KeQueryPerformanceCounter) {
-    uint64_t v = rt_now_100ns() * 733333333ull / 10000000ull;
+    uint64_t v = rt_game_now_100ns() * 733333333ull / 10000000ull; /* (the game's clock: slow motion) */
     c->edx = (uint32_t)(v >> 32);
     return (uint32_t)v;
 }

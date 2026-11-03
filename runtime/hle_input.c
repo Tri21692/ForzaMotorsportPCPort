@@ -306,6 +306,17 @@ static void host_pad(uint32_t pad) {
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
     }
+    if (rt_qr_auto) { /* Quick Race's takedown autopilot (hle_quickrace.c): the car on the suggested line until the player
+                       * takes it, once the camera is back: steers, brakes, or lets off and presses the throttle again */
+        static int let_off;
+        if (rt_qr_auto == 2) let_off = 0, rt_qr_auto = 1;
+        int took = 0;
+        if (analog[A_RT] < 30) let_off = 1;
+        else if (let_off && !rt_qr_cam_active()) took = 1;
+        if (!rt_qr_cam_active() && (abs(thumbs[0]) > 8000 || analog[A_LT] > 60)) took = 1;
+        if (took) rt_qr_auto = 0;
+        else thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
+    }
     set_pad(pad, buttons, analog, thumbs);
 }
 

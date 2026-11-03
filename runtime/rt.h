@@ -56,6 +56,10 @@ extern int rt_log_level; /* XBRT_LOG: 0 quiet, 1 kernel calls, 2 more */
 #define RT_DBG_NO_WBUF 32u /* F2: screen z instead of the w-buffer */
 extern volatile uint32_t rt_debug_keys;
 extern volatile int rt_ram_dump_wanted; /* F4 (display.c): nv2a.c saves the RAM */
+extern volatile float rt_cam_pos[3];  /* the world camera's position, from the frame's constants (raster.c) */
+extern volatile uint32_t rt_cam_frame; /* counts the frames it was found in */
+typedef struct { int on; float pos[3], target[3]; } RtViewCam;
+extern volatile RtViewCam rt_view_cam; /* the takedown camera: the world drawn from pos facing target (raster.c) */
 extern volatile int rt_gpu_dump_wanted; /* F3 (display.c): nv2a.c writes a frame's GPU methods */
 void rt_save_constants(const char *path); /* with a screenshot: the vertex constants mid-frame (raster.c) */
 
@@ -119,6 +123,9 @@ int rt_qr_menu_row(int i, const char **label, char *value, int n, int *sel);
 const char *rt_qr_note(void);
 int rt_qr_takedowns(void);
 float rt_qr_tank(void);
+extern volatile int rt_qr_auto; /* Quick Race's takedown autopilot on (2 just started); hle_input.c ends it */
+int rt_qr_cam_active(void);     /* the takedown camera on the wreck */
+extern volatile float rt_vblank_rate; /* vertical blanks at this share of 59.94 Hz (nv2a.c): the game's slow motion */
 void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */
 extern char rt_toast_text[64];
 extern volatile uint64_t rt_toast_until;
@@ -262,6 +269,8 @@ RtThread *rt_thread_create(uint32_t stack_size, uint32_t tls_size, uint32_t extr
 void rt_thread_start(RtThread *t);
 void rt_thread_run_main(RtThread *t, uint32_t entry);
 uint64_t rt_now_100ns(void); /* monotonic, Xbox system time units */
+uint64_t rt_game_now_100ns(void); /* the game's clock: rt_now_100ns, slowed by rt_time_scale (thread.c) */
+void rt_time_scale(double s);     /* the game's clock from now on at s (0.05..1) of real time */
 void rt_profile_thread(pthread_t t); /* XBRT_PROFILE (main.c) */
 void rt_profile_game_thread(pthread_t t); /* XBRT_PROFILE_GAME (main.c) */
 void rt_sleep_precise(uint64_t ns); /* to well under a millisecond, whatever the timer resolution */

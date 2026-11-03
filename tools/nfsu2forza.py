@@ -88,7 +88,9 @@ SHADERS = {bhash('CARSKIN'): BODY, bhash('WINDSHIELD'): WINDOW, 0x12C9453C: WIND
            bhash('DULLPLASTIC'): PLASTIC, bhash('CHROME'): CHROME, bhash('HEADLIGHTGLASS'): HEADLIGHTGLASS,
            bhash('BRAKELIGHTGLASS'): REDGLASS, bhash('DECAL'): BADGE, bhash('HEADLIGHT'): HEADLIGHTS,
            bhash('BRAKELIGHT'): TAILLIGHTS, bhash('RUBBER'): BLACK, bhash('ENGINE'): BLACK,
-           bhash('MIRROR'): CHROME}  # the mirrors' glass, as the Civic's (as paint it was a flat blue slab)
+           bhash('MIRROR'): CHROME,  # the mirrors' glass, as the Civic's (as paint it was a flat blue slab)
+           0x8E3305A7: TAILLIGHTS}  # Underground 2's (name unknown): the Celica GT-Four's red tail lamp lenses, black as Black
+LAMP_GLASS = {0x9DAE417A}  # Underground 2's (name unknown), in a lamp part: the Celica GT-Four's grey see-through headlight covers
 
 
 MW_HOODS = (4, 21, 2, 7, 10, 16, 26, 31, 13, 20, 3, 5)  # a Most Wanted car's STYLE<n>_HOOD for the shop's other hoods, the first the car has
@@ -790,6 +792,25 @@ def nfsu_rgba(t):
     return np.frombuffer(t['data'][:w * h * 4], np.uint8).reshape(h, w, 4)[..., [2, 1, 0, 3]]
 
 
+def lamp_texture(role, side):
+    """A lamp's picture made here, as an NFSU texture (64 x 64, BGRA): Underground 2's shared HEADLIGHT_<side>
+    and BRAKELIGHT_<side> are in its global files, not in an add-on car's pack. A headlight's reflector white
+    in the middle to a cool grey at the rim, with a ring; a tail light red, brighter in the middle. Alpha as
+    Forza's own lamp texels: 0 the headlights, 25 the tail lights."""
+    import numpy as np
+    y, x = np.mgrid[0:64, 0:64].astype(float)
+    r = np.clip(np.hypot(x - 31.5, y - 31.5) / 32, 0, 1)[..., None]
+    if role == 'HEADLIGHT':
+        rgb = (1 - r ** 1.5) * np.array([255, 252, 245]) + r ** 1.5 * np.array([170, 180, 196])
+        rgb *= 1 - 0.12 * np.exp(-((r - 0.55) / 0.06) ** 2)  # (the reflector's ring)
+        a = 0
+    else:
+        rgb = (1 - r) * np.array([255, 72, 56]) + r * np.array([150, 12, 14])
+        a = 25
+    img = np.concatenate([rgb[..., ::-1], np.full((64, 64, 1), a)], -1).clip(0, 255).astype(np.uint8)  # (BGRA)
+    return {'name': '%s_%s (made)' % (role, side), 'width': 64, 'height': 64, 'fourcc': 'BGRA', 'data': img.tobytes()}
+
+
 def dark_uv(xpr_path):
     """An opaque black texel of the template's livery atlas (slice 0), in
     the middle of a black patch, as u16 u, v. Body material blends paint and
@@ -825,6 +846,28 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     prefix = os.path.basename(os.path.normpath(nfsu_dir)).upper()
     names = {bhash(prefix + '_SKIN1'): prefix + '_SKIN1'}
     names.update({h: t['name'] for h, t in textures.items()})
+    # Underground 2's shared lamp textures (its global files, not an add-on car's pack: the Neon's). Missing,
+    # the lamps drew from whatever template texels their coordinates found: the headlights' reflectors dark
+    # (Chrome by their shader), their glass a white shell, the tail lights under glass drawn opaque black.
+    # The glass covers are left out, and the lamps get pictures made here (lamp_texture), packed as the car's own.
+    # The same pictures for every lit lamp face of an Underground 2 car's KIT00 lamps (made_pic): the Celica
+    # GT-Four's lamps are drawn from its door-handle and interior sheets, grey and dark red, black as Black.
+    made_lamps, no_glass, made_pic = {}, set(), {}
+    mw_ = any(p['materials'] for p in nparts)  # (as mw, below: a Most Wanted car finds its own lamps there)
+    used_tex = {th for p in nparts for th in p['textures']}
+    for role in ('HEADLIGHT', 'BRAKELIGHT'):
+        for side in ('LEFT', 'RIGHT'):
+            h, g = bhash('%s_%s' % (role, side)), bhash('%s_GLASS_%s' % (role, side))
+            lamp_part = any('_KIT00_' + role in p['name'] for p in nparts)
+            if mw_ or not (h in used_tex or g in used_tex or (lamp_part and side == 'LEFT')): continue
+            if g in used_tex and not (g in textures and textures[g]['data']): no_glass.add(g)
+            if not (h in textures and textures[h]['data']):
+                textures[h] = lamp_texture(role, side)
+                names[h] = '%s_%s' % (role, side)
+                made_lamps[h] = HEADLIGHTS if role == 'HEADLIGHT' else TAILLIGHTS
+            if side == 'LEFT' and lamp_part and h in made_lamps: made_pic[role] = h
+    if made_lamps or no_glass:
+        print('lamps: %d pictures made (%s), %d glass covers left out' % (len(made_lamps), ', '.join(sorted(names[h] for h in made_lamps)), len(no_glass)))
 
     def find(suffix):
         """The stock part's detail levels, finest first (_A to _D; some
@@ -925,6 +968,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                for g, name in zip(p['groups'], p['materials'])
                if mw_material(name) in (BADGE, HEADLIGHTS, TAILLIGHTS) and g[0x1C] < len(p['textures'])
                and p['textures'][g[0x1C]] in textures and textures[p['textures'][g[0x1C]]]['data']}
+    own |= set(made_pic.values())  # (packed though no part names them: the Celica GT-Four's lamps)
     livery_dir = os.path.join(os.path.dirname(template_path), 'liveries', 'standard')
     images = {h: nfsu_rgba(textures[h]) for h in own}
     if mw:  # halved to 128 at most: the atlas's free room is small
@@ -1145,6 +1189,12 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     arches.extend(tuple(pos(p['verts'][i - base]) for i in t) for t in tris)
                 m = material_for(names.get(th, ''), sh)
                 if m is None: continue  # (mw_material: left out)
+                if th in no_glass: continue  # (a shared lamp's glass cover: see made_lamps)
+                if th in made_lamps and m != WINDOWS: m = made_lamps[th]  # (the reflector, Chrome by its shader, lit as the lamp; the black housing stays)
+                role = next((r for r in ('HEADLIGHT', 'BRAKELIGHT') if '_KIT00_' + r in p['name']), None)
+                if role and sh in LAMP_GLASS: continue  # (a lamp's see-through cover)
+                if role in made_pic and m in (HEADLIGHTS, TAILLIGHTS):  # a lit face: the lamp's own colour, its made picture
+                    m, th = (HEADLIGHTS, made_pic[role]) if role == 'HEADLIGHT' else (TAILLIGHTS, made_pic[role])
                 if UV32 and m == BADGE:
                     # An Underground 2 car's decals (door handles, side markers, badges) are see-through
                     # overlays on the paint; Badge drew their clear texels black, as black boxes. As
@@ -1522,6 +1572,12 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         # A template with its lamps in its body (the S15): the tail lights go in the body,
         # matched to its lamp texels; with no slot of their own they were left out, as holes
         plan['body'] = (plan['body'][0] + [find('BRAKELIGHT')],) + plan['body'][1:]
+    if not mw and find('HEADLIGHT') and not any(p['name'].startswith('headlight') for p in car['parts']):
+        # The same for the headlights (the SRT-4 and Celica GTS have no headlight part, their lamps painted on):
+        # into the front bumper, or the body without one. Left out, the Neon's and Celica GT-Four's lamps were
+        # their empty housings, dark ovals.
+        to = 'bumperF' if any(p['name'].startswith('bumperF') for p in car['parts']) else 'body'
+        plan[to] = (plan[to][0] + [find('HEADLIGHT')],) + plan[to][1:]
     if mw:
         def find(suffix, _find=find):  # exactly that part's levels: LEFT_HEADLIGHT also began LEFT_HEADLIGHT_GLASS, mixed in as its levels
             return [p for p in _find(suffix) if re.fullmatch(re.escape(prefix + '_KIT00_' + suffix) + '_[A-D]', p['name'])]

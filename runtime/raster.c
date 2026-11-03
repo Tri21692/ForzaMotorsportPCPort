@@ -639,7 +639,58 @@ void rt_save_constants(const char *path) {
     __atomic_store_n(&cst_wanted, 1, __ATOMIC_RELEASE);
 }
 
+/* The world's camera as the 100th draw of a frame has it (rows 166-169, a view and projection in one: the point
+ * where rows 0, 1 and 3 as planes meet, as tools/shotpos.py finds it), for the takedown camera's search. */
+volatile float rt_cam_pos[3];
+volatile uint32_t rt_cam_frame;
+static void camera_of_constants(void) {
+    float m[4][4];
+    memcpy(m, constants[166], sizeof m);
+    float a[3][3] = {{m[0][0], m[0][1], m[0][2]}, {m[1][0], m[1][1], m[1][2]}, {m[3][0], m[3][1], m[3][2]}};
+    float b[3] = {-m[0][3], -m[1][3], -m[3][3]};
+    float det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+              + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    if (!(det > 1e-12f || det < -1e-12f)) return;
+    float p[3];
+    for (int k = 0; k < 3; k++) { /* Cramer's rule */
+        float t[3][3];
+        memcpy(t, a, sizeof t);
+        for (int r = 0; r < 3; r++) t[r][k] = b[r];
+        p[k] = (t[0][0] * (t[1][1] * t[2][2] - t[1][2] * t[2][1]) - t[0][1] * (t[1][0] * t[2][2] - t[1][2] * t[2][0])
+              + t[0][2] * (t[1][0] * t[2][1] - t[1][1] * t[2][0])) / det;
+    }
+    rt_cam_pos[0] = p[0], rt_cam_pos[1] = p[1], rt_cam_pos[2] = p[2];
+    rt_cam_frame++;
+}
+
+/* The takedown camera (hle_quickrace.c): the world's view rows 166-169 changed as they are loaded, as if the camera
+ * stood at rt_view_cam.pos turned (about the up axis) to face rt_view_cam.target. A row r (xyz, w) takes a point
+ * p as r.xyz . p + r.w; seen from a camera moved by G (turn R, then to pos), p is where G^-1 takes it:
+ * xyz' = R xyz, w' = w + xyz . c - xyz' . pos (c the camera now). XBRT_VIEWTEST=1: always on, 8 m up (testing:
+ * do the cars, drawn with their own rows, follow?). */
+volatile RtViewCam rt_view_cam;
+static void view_override(void) {
+    static int test = -1;
+    if (test < 0) test = getenv("XBRT_VIEWTEST") && atoi(getenv("XBRT_VIEWTEST"));
+    if (!rt_view_cam.on && !test) return;
+    float m[4][4];
+    memcpy(m, constants[166], sizeof m);
+    camera_of_constants();
+    float c[3] = {rt_cam_pos[0], rt_cam_pos[1], rt_cam_pos[2]}, pos[3], tx, tz;
+    if (rt_view_cam.on) pos[0] = rt_view_cam.pos[0], pos[1] = rt_view_cam.pos[1], pos[2] = rt_view_cam.pos[2], tx = rt_view_cam.target[0] - pos[0], tz = rt_view_cam.target[2] - pos[2];
+    else pos[0] = c[0], pos[1] = c[1] + 8, pos[2] = c[2], tx = m[3][0], tz = m[3][2];
+    float th = atan2f(tx, tz) - atan2f(m[3][0], m[3][2]), cs = cosf(th), sn = sinf(th);
+    for (int r = 0; r < 4; r++) {
+        float x = m[r][0], y = m[r][1], z = m[r][2];
+        float x2 = cs * x + sn * z, z2 = -sn * x + cs * z;
+        m[r][3] += x * c[0] + y * c[1] + z * c[2] - (x2 * pos[0] + y * pos[1] + z2 * pos[2]);
+        m[r][0] = x2, m[r][2] = z2;
+    }
+    memcpy(constants[166], m, sizeof m);
+}
+
 static void constants_drawn(void) {
+    if (frame_draws + 1 == 100) camera_of_constants();
     if (++frame_draws != 100 || !__atomic_load_n(&cst_wanted, __ATOMIC_ACQUIRE)) return;
     FILE *f = fopen(cst_path, "wb");
     if (f) fwrite(constants, sizeof constants, 1, f), fclose(f);
@@ -823,6 +874,7 @@ static int program_method(uint32_t method, uint32_t arg) {
     if (method >= SET_TRANSFORM_CONSTANT && method < SET_TRANSFORM_CONSTANT + 0x80) {
         uint32_t k = (method - SET_TRANSFORM_CONSTANT) / 4 % 4;
         if (constant_load < 192) constants[constant_load][k] = arg;
+        if (k == 3 && constant_load == 169) view_override(); /* (the world's view, rows 166-169, now whole) */
         if (k == 3) constant_load++;
         return 1;
     }

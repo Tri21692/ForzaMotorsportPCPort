@@ -43,6 +43,26 @@ uint64_t rt_now_100ns(void) {
     return (uint64_t)ns / 100;
 }
 
+/* The game's clock (what rdtsc and KeQueryPerformanceCounter tell it): real time, or slowed for a takedown's
+ * slow motion (rt_time_scale; XBRT_TIMESCALE=<0.1..1> to try one throughout). Read and set under rt_gil. */
+static double ts_scale = -1;
+static uint64_t ts_real0, ts_game0;
+
+uint64_t rt_game_now_100ns(void) {
+    uint64_t r = rt_now_100ns();
+    if (ts_scale < 0) {
+        const char *e = getenv("XBRT_TIMESCALE");
+        ts_scale = e && atof(e) >= 0.05 && atof(e) <= 1 ? atof(e) : 1.0;
+        ts_real0 = ts_game0 = r;
+    }
+    return ts_game0 + (uint64_t)((double)(r - ts_real0) * ts_scale);
+}
+
+void rt_time_scale(double s) {
+    uint64_t g = rt_game_now_100ns(); /* (from here on at the new rate: the clock never runs back) */
+    ts_real0 = rt_now_100ns(), ts_game0 = g, ts_scale = s < 0.05 ? 0.05 : s > 1 ? 1 : s;
+}
+
 /* ---- handles ---- */
 
 static RtObject *objects[4096];
