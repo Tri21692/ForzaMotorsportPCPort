@@ -278,6 +278,8 @@ static void host_pad(uint32_t pad) {
     pc_pad(&buttons, analog, thumbs);
     if (!rt_overlay_open()) keyboard(&buttons, analog, thumbs); /* the overlay takes the keys (display.c) */
     scripted(&buttons, analog, thumbs); /* (before the overlay: a test script can open and drive F1 too) */
+    int touched = buttons || abs(thumbs[0]) > 8000 || abs(thumbs[1]) > 8000 || abs(thumbs[2]) > 8000 || abs(thumbs[3]) > 8000;
+    for (int i = 0; i < 8; i++) touched |= analog[i] > 30; /* (as the player holds them: for held, below) */
     if (rt_overlay_pad(buttons, analog, thumbs)) { /* and the pad: the game sees nothing while it is open */
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
@@ -292,6 +294,15 @@ static void host_pad(uint32_t pad) {
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
     }
     if (rt_mg_pad(buttons, analog, thumbs)) { /* hle_minigame.c: Prize Match takes the pad while it is open */
+        buttons = 0;
+        memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
+    }
+    /* Our menus (F1, Quick Race, Prize Match) open, or closed with something still held: the game sees nothing
+     * until every button and stick is let go (the B or Esc that closed F1, still down, backed the game's screen out) */
+    static int held;
+    if (rt_overlay_open() || rt_qr_menu_open() || rt_mg_open()) held = 1;
+    else if (held && !touched) held = 0;
+    if (held) {
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
     }

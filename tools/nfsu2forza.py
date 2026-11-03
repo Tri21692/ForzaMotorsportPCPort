@@ -1096,7 +1096,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         only them (as Window). inner=True gives the panels a black inside
         (copies facing in): drawn from outside only, the far side of the
         body was missing through the windows, and the studio showed
-        through the 240SX's empty hatch area."""
+        through the 240SX's empty hatch area. inner=2: the black inside only,
+        the panels left facing as they are (the bumpers' intakes face in)."""
         verts, subs, same = [], [], {}
         for lod, p in [(i + 1, lv) for src in sources for i, lv in enumerate(src[:4])]:
             # A level the same as a finer one (an Underground 2 car's levels are copies of
@@ -1131,7 +1132,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                         continue  # below the body: the Neon's far detail level closed each wheel opening with a flat panel to 0.35 under the ground, over the wheels
                     e1 = [vb[k] - va[k] for k in range(3)]; e2 = [vc[k] - va[k] for k in range(3)]
                     g = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
-                    if inner and sh != bhash('WINDSHIELD'):
+                    if inner is True and sh != bhash('WINDSHIELD'):
                         # the outer skin faces away from the car's middle: its normals are wrong
                         # in places (19 roof triangles; on the hatch lid's trim, wedges by the
                         # spoiler faced in, and their black insides showed)
@@ -1219,6 +1220,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                         # pointed out of the panel the black copy ended up outside it, as a
                         # black wedge at the hatch's corners)
                         d = [v[k] - mid_f[k] for k in range(3)]
+                        if inner == 2:  # (the bumpers: straight through the panel, the normal's way out: towards the middle the copy
+                            n = v[3:6]  # slid along the arches' lips and left their edges bare, the pale line still there)
+                            d = [c if sum(x * y for x, y in zip(n, d)) > 0 else -c for c in n]
                         l = max(1e-6, sum(x * x for x in d) ** 0.5)
                         verts.append(tuple(int(round(v[k] - d[k] / l * INSET)) for k in range(3))
                                      + tuple(-c for c in v[3:6]) + tuple(v[6:12]))
@@ -1503,7 +1507,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         # (the roof where the car has one of its own: the Celica GT-Four has none, and without it
         # the slot was skipped and the template's body stayed under the new bumpers)
         'body': ([find('BODY')] + [r for r in [find('ROOF')] if r], 0, None, True), 'hood': ([find('HOOD')], 0), 'trunk': ([find('TRUNK')], 0, None, True),
-        'bumperF': ([find('FRONT_BUMPER')], 0), 'bumperR': ([find('REAR_BUMPER')], 0),
+        # (the bumpers' black insides without the panels turned: from behind, at the wheel arches'
+        # ends, the Neon's bumper skins showed their backs lit as their fronts, a pale line)
+        'bumperF': ([find('FRONT_BUMPER')], 0, None, 2), 'bumperR': ([find('REAR_BUMPER')], 0, None, 2),
         'skirtL': ([find('SKIRT')], -1), 'skirtR': ([find('SKIRT')], 1),
         'headlightL': ([find('HEADLIGHT')], -1), 'headlightR': ([find('HEADLIGHT')], 1),
         'taillightL': ([find('BRAKELIGHT')], -1), 'taillightR': ([find('BRAKELIGHT')], 1),
