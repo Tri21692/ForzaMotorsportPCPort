@@ -189,10 +189,13 @@ def racing_line(runway_dir=None):
             x = c + left * (h * chi)[:, None]
             mid = (np.roll(x, k, 0) + np.roll(x, -k, 0)) / 2
             chi = np.clip(np.einsum('ij,ij->i', mid - c, left) / h, -LINE_LIMIT, LINE_LIMIT)
-        n = len(chi)
+        # smoothed where it lies, not across the road: the centre wanders on the wide straights (chi swinging to keep
+        # the line straight), and smoothing chi gave that wander back, the arrows weaving down the pit straight
+        x = c + left * (h * chi)[:, None]
         w = np.hanning(LINE_SMOOTH + 2)[1:-1]; w /= w.sum()
-        chi = np.convolve(np.concatenate([chi[-LINE_SMOOTH:], chi, chi[:LINE_SMOOTH]]), w, 'same')[LINE_SMOOTH:-LINE_SMOOTH]
-        chi = np.clip(chi, -LINE_LIMIT, LINE_LIMIT)
+        ext = np.vstack([x[-LINE_SMOOTH:], x, x[:LINE_SMOOTH]])
+        x = np.stack([np.convolve(ext[:, j], w, 'same')[LINE_SMOOTH:-LINE_SMOOTH] for j in range(2)], 1)
+        chi = np.clip(np.einsum('ij,ij->i', x - c, left) / h, -LINE_LIMIT, LINE_LIMIT)
         print('suggested line: chi %.2f to %.2f, largest step %.3f a waypoint' % (chi.min(), chi.max(), np.abs(np.diff(chi)).max()))
         return chi
     return line
@@ -303,6 +306,16 @@ FOREST_LIGHT = (int(83 / 255 * 512) - 32768, int(127 / 255 * 512) - 32768)  # th
 TARMAC_LIGHT = (int(128 / 255 * 512) - 32768, int(134 / 255 * 512) - 32768)  # the asphalt's texel: 0.78 of the grey
 GRASS_LIGHT = (int(127 / 255 * 512) - 32768, int(144 / 255 * 512) - 32768)  # the grass's texel of it: 0.85 of that grey,
                                                                           # flat round (the user's: grass a little darker)
+# The ground lit (the runway's grass and asphalt, the ground beyond, the woods; the user's: "the other tracks look
+# better"): Road Atlanta's are baked, ours sampled one texel a kind and every hill read flat. Each vertex samples
+# instead a grey on a ramp written over RAMP_ROWS of the lightmap (texel x grey x): its kind's grey (SHADE_BASE)
+# times its face's light from SUN (toward it brighter, away darker, flat ground 1; SUN_GAIN) and patches of
+# value noise (SHADE_PATCHES: (m across, amount) each) breaking up the textures' repeats.
+RAMP_ROWS = (0, 64)
+SUN = (-0.45, 0.70, 0.55)
+SUN_GAIN = 0.9
+SHADE_BASE = {GRASS: 95.0, FOREST: 64.0, TARMAC: 72.0}   # (the asphalt darker than its texel's 87: it read pale)
+SHADE_PATCHES = {GRASS: ((70.0, 0.12), (18.0, 0.07)), FOREST: ((50.0, 0.16), (12.0, 0.10)), TARMAC: ((45.0, 0.06), (9.0, 0.04))}
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
 ASPHALT = (32.0, 10.0)          # m along and across the track a repeat of the asphalt's strip texture (1024 x 256)
@@ -335,6 +348,15 @@ GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces with
                                  # each is a draw in every cell; 2,000 small ones cost frames)
 STAND_KEEP = 24                  # the biggest spare donors kept for the stands' copies
 CLONE_DONOR = 2000               # vertices: the largest streamed donor kept for the stands' copies
+# Shortcuts blocked (the user's "Forza touches"): armco and a wall to the cars wherever crossing the runway's
+# run-off or grass from one part of the lap to another saves SHORTCUT_SAVE m or more, kept SHORTCUT_CLEAR m off
+# the asphalt (shortcut_barriers).
+SHORTCUT_SAVE, SHORTCUT_CLEAR = 25.0, 1.5  # (the most anywhere at Fuji: 29 m, across the hairpin's grass)
+# More kerbs (the user's "add some more curbs"): Forza's red and white at the corners (curvature over KERB_TURN a
+# metre, a radius under 200 m) where GT4 has none: on the inside edge round the apex (KERB_APEX m each side) and the
+# outside edge on the way out (KERB_EXIT m past the apex), KERB_W wide from KERB_IN m over the asphalt, KERB_LIFT m
+# over the runway; none within KERB_SKIP m of GT4's own.
+KERB_TURN, KERB_APEX, KERB_EXIT, KERB_IN, KERB_LIFT, KERB_SKIP = 1 / 200.0, 25.0, (5.0, 45.0), 0.3, 0.03, 3.0
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -462,17 +484,26 @@ def build(disc, runway_dir, out):
     Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
     Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear, (top_near, top_far))
     Vw, Tw, UVw, Kw = dressing(walls, cf)
+    rast = Raster(Vf, F, res=0.5)
+    lef_f, rig_f = to_forza(E['left']), to_forza(E['right'])
+    half = np.linalg.norm((lef_f - rig_f)[:, [0, 2]], axis=1) / 2
+    Vb, Tb, UVb, Kb, bwalls = barrier_geometry(shortcut_barriers(cf, half, rast, ground_at))
+    Tw, Vw = np.vstack([Tw.reshape(-1, 3), Tb + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vb])
+    UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVb]), np.concatenate([Kw, Kb])
+    Vk, Tk, UVk = more_kerbs(cf, lef_f, rig_f, rast, Vf[T[kinds == KERB]].mean(1) if (kinds == KERB).any() else np.zeros((0, 3)))
     Vr, Tr, UVr, Kr = far_ring(runway_dir)
-    Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw, Vr])
+    Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw, Vr, Vk])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
     o_t = o_f + len(Vfar)
     o_w = o_t + len(Vtr)
     o_r = o_w + len(Vw)
-    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t, Tw + o_w, Tr + o_r])
-    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw, Kr])
+    o_k = o_r + len(Vr)
+    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t, Tw + o_w, Tr + o_r, Tk + o_k])
+    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw, Kr, np.full(len(Tk), KERB)])
     given_uv = {o_t + i: (u, v) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet; repeats, set per donor)
     given_uv.update({o_w + i: (u, v) for i, (u, v) in enumerate(UVw)})  # (the rails and fences)
     given_uv.update({o_r + i: (u, v) for i, (u, v) in enumerate(UVr)})  # (the far ring)
+    given_uv.update({o_k + i: (u, v) for i, (u, v) in enumerate(UVk)})  # (the kerbs added)
     print('walls dressed: %d armco and fence quads' % (len(Tw) // 4))
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
@@ -527,7 +558,8 @@ def build(disc, runway_dir, out):
     for k_, tris, bsize in ((GRASS, (Tt + len(Vf))[Kt == GRASS], 8 * TERRAIN_CELL), (FOREST, (Tt + len(Vf))[Kt == FOREST], 8 * TERRAIN_CELL),
                             (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, (Tfar + o_f)[Kfar == GRASS], 8 * FAR_CELL),
                             (FOREST, (Tfar + o_f)[Kfar == FOREST], 8 * FAR_CELL), (TREE, Ttr + o_t, 8 * TERRAIN_CELL),
-                            (ARMCO, (Tw + o_w)[Kw == ARMCO], 8 * TERRAIN_CELL), (FENCE, (Tw + o_w)[Kw == FENCE], 8 * TERRAIN_CELL)) + \
+                            (ARMCO, (Tw + o_w)[Kw == ARMCO], 8 * TERRAIN_CELL), (FENCE, (Tw + o_w)[Kw == FENCE], 8 * TERRAIN_CELL),
+                            (KERB, Tk + o_k, 4 * TERRAIN_CELL)) + \
                            tuple((k_r, (Tr + o_r)[Kr == k_r], 1e6) for k_r in sorted(set(Kr.tolist()))):  # (the woods, the apron, the far ground, the trees)
         if not len(tris): continue
         block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / bsize).astype(int)
@@ -544,13 +576,28 @@ def build(disc, runway_dir, out):
     if left: raise SystemExit('out of donor meshes: %d strips left over' % left)
     taken = {p_[0] for p_ in placed}
     more, left = pack_strips(ground, Vd, [p_ for p_ in pool if p_[2] not in taken and p_[2] not in keep_],
-                             reach={TARMAC: 150.0, ARMCO: 100.0, FENCE: 100.0, None: GROUND_REACH, **{FAR_KIND + i: 1e6 for i in range(len(FAR_TEX))}},
-                             longest={ARMCO: 100.0, FENCE: 100.0, None: 150.0, **{FAR_KIND + i: 1e6 for i in range(len(FAR_TEX))}})
+                             reach={TARMAC: 150.0, ARMCO: 100.0, FENCE: 100.0, KERB: 50.0, None: GROUND_REACH, **{FAR_KIND + i: 1e6 for i in range(len(FAR_TEX))}},
+                             longest={ARMCO: 100.0, FENCE: 100.0, KERB: 60.0, None: 150.0, **{FAR_KIND + i: 1e6 for i in range(len(FAR_TEX))}})
     if left: raise SystemExit('out of donor meshes for the ground: %d strips left over' % left)
     placed += more
     from collections import Counter as _C
     print('donors by surface:', dict(_C(x[3] for x in placed)))
     spare = [p_ for p_ in pool if p_[2] not in {x[0] for x in placed}]  # (for the stands' copies)
+
+    # the ground's light per vertex (SUN, SHADE_PATCHES): its faces' normals, area weighted
+    nrm = np.zeros_like(Vd)
+    fn = np.cross(Vd[Td[:, 1]] - Vd[Td[:, 0]], Vd[Td[:, 2]] - Vd[Td[:, 0]])
+    fn *= np.where(fn[:, 1] < 0, -1.0, 1.0)[:, None]
+    for j in range(3): np.add.at(nrm, Td[:, j], fn)
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-9)
+    sun = np.array(SUN) / np.linalg.norm(SUN)
+    sunlit = np.clip(1.0 + SUN_GAIN * (nrm @ sun - sun[1]), 0.45, 1.35)
+    ramp_t = (RAMP_ROWS[0] + RAMP_ROWS[1]) - 32768  # (the band's middle row: (row + 0.5) * 2)
+
+    def shade(k, vi):
+        g = SHADE_BASE[k] * sunlit[vi]
+        for m, amt in SHADE_PATCHES[k]: g *= 1.0 + amt * value_noise(Vd[vi, [0, 2]], m, int(m))
+        return int(round((np.clip(g, 6, 248) + 0.5) * 2)) - 32768, ramp_t
 
     # each donor rewritten: its material's texture, lightmap, shader, flags; planar texture coordinates
     tex_used, vbs_used, meshes = set(), set(), []
@@ -565,7 +612,7 @@ def build(disc, runway_dir, out):
         pts = np.vstack([Vd[s] for s in strips])
         org = np.floor(pts.min(0) / metres) * metres  # (texture coordinates from a whole repeat near the faces: s16 holds +-64 repeats)
         uv = {}  # (texture coordinates set per vertex: kerbs, the runway's asphalt, lines; else planar)
-        if k == KERB:  # along the track (its stripes across it): s across, `metres` a repeat along
+        if k == KERB and max(vi for s in strips for vi in s) < len(Vf):  # along the track (its stripes across it): s across, `metres` a repeat along
             ids_all = sorted({vi for s in strips for vi in s})
             al = along[ids_all]
             if al.max() - al.min() > lap / 2: al = np.where(al < lap / 2, al + lap, al)  # (a donor over the lap line)
@@ -594,6 +641,7 @@ def build(disc, runway_dir, out):
                     p = Vd[vi]
                     if vi in uv: verts.append((p,) + uv[vi])
                     else: verts.append((p, int((p[0] - org[0]) / metres * 512) - 32768, int((p[2] - org[2]) / metres * 512) - 32768))
+                    verts[-1] += shade(k, vi) if k in SHADE_BASE else tuple(light)
                 ids.append(local[vi])
             if order:
                 order += [order[-1], ids[0]]
@@ -604,12 +652,12 @@ def build(disc, runway_dir, out):
         dt = np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)])
         buf = np.zeros(nv, dt)
         for j in range(nv):
-            p, s_, t_ = verts[min(j, len(verts) - 1)]
+            p, s_, t_, ls_, lt_ = verts[min(j, len(verts) - 1)]
             buf['p'][j] = p
             buf['n'][j] = sc.pack_normal((0.0, 1.0, 0.0))
             if not (-32768 <= s_ <= 32767 and -32768 <= t_ <= 32767):
                 raise SystemExit('texture coordinates past s16: surface %s, donor %d, %d strips, s %d t %d' % (k, mesh, len(strips), s_, t_))
-            buf['st'][j] = (s_, t_, light[0], light[1])
+            buf['st'][j] = (s_, t_, ls_, lt_)
         o = names[vbr - 9][3]
         data = buf.tobytes() + np.array(order + [order[-1]] * (nidx - len(order)), '<u2').tobytes()
         res[o:o + len(data)] = data
@@ -635,6 +683,7 @@ def build(disc, runway_dir, out):
     tree_sheet(res, names, stx, os.path.join(runway_dir, 'trees'))
     far_pictures(res, names, stx, os.path.join(runway_dir, 'far', 'textures'))
     kerb_colour(res, names, stx)
+    light_ramp(res, names, stx)
     line_paint(res, names, stx)
 
     # Road Atlanta's buildings, stands and props set round Fuji (ROWS, SCATTER), drawn in every cell with their
@@ -659,7 +708,9 @@ def build(disc, runway_dir, out):
     col.blocks = []
     for (a, b, c_), k in zip(T, kinds):
         col.add_ground(COLLISION.get(int(k), 0x0200), Vf[[a, b, c_]])
-    for q in walls:
+    for t_ in Tk:
+        col.add_ground(COLLISION[KERB], Vk[t_])
+    for q in walls + bwalls:
         col.add(WALL, q[:3]); col.add(WALL, q[[0, 2, 3]])
     col_bytes = col.to_bytes()
     big = max(len(col.block_bytes(b)) for b in col.blocks)
@@ -1534,6 +1585,31 @@ def line_paint(res, names, stx, t=2180, white=232.0):
     print('lines: texture %d painted white' % t)
 
 
+def light_ramp(res, names, stx, t=LIGHTMAP[0]):
+    """The grey ramp the ground's light samples (texel x grey x) over RAMP_ROWS of the lightmap, its other rows (the
+    texels the trees, rails and props sample) kept."""
+    w, h, kind = texture_shape(res, names, stx, t)
+    o, n = names[t - 9][3], names[t - 9][4]
+    img = np.asarray(forzaxpr.dxt(bytes(res[o:o + n]), w, h, kind)).astype(np.float32).copy()
+    r0, r1 = (np.array(RAMP_ROWS) * h // 256)
+    img[r0:r1, :, :3] = (np.arange(w) * 256.0 / w)[None, :, None]
+    res[o:o + n] = forzaxpr.encode_with_mips(img.clip(0, 255).astype(np.uint8), kind, n)
+    print('light: a grey ramp on lightmap %d rows %d-%d (%d x %d)' % (t, r0, r1, w, h))
+
+
+def value_noise(xz, scale, seed):
+    """Smooth noise (-1..1) at a point (x, z): random values on a grid `scale` m apart, blended (smoothstep)."""
+    f = np.asarray(xz, float) / scale
+    i0 = np.floor(f).astype(np.int64); t = f - i0
+    t = t * t * (3 - 2 * t)
+
+    def r(a, b):
+        hsh = (a * 73856093) ^ (b * 19349663) ^ (seed * 83492791)
+        return ((hsh * 2654435761) % 1000003) / 500001.5 - 1.0
+    a, b = int(i0[0]), int(i0[1])
+    return (r(a, b) * (1 - t[0]) + r(a + 1, b) * t[0]) * (1 - t[1]) + (r(a, b + 1) * (1 - t[0]) + r(a + 1, b + 1) * t[0]) * t[1]
+
+
 def kerb_colour(res, names, stx, t=497):
     """Road Atlanta's kerb texture (road_curbing_standard_001: green and white stripes) red and white as Fuji's:
     its red and green swapped (white stays white), written back with its mips."""
@@ -1886,6 +1962,159 @@ def outline_runs(walls, centre):
         tt = np.linspace(0, sarc[-1], m)
         out.append(np.stack([np.interp(tt, sarc, q[:, j]) for j in range(3)], 1))
     return out
+
+
+def lap_arc(centre):
+    """Metres round the closed loop to each point, and the lap's length."""
+    seg = np.linalg.norm(np.diff(np.vstack([centre, centre[:1]])[:, [0, 2]], axis=0), axis=1)
+    return np.concatenate([[0], np.cumsum(seg)[:-1]]), seg.sum()
+
+
+def shortcut_barriers(centre, half, rast, ground_at, cell=1.0):
+    """The shortcuts' barriers (SHORTCUT_*): polylines (n x 3) every RAIL_STEP m, on the runway (or the ground).
+    Every drivable spot of the runway (a `cell` m grid) takes the lap position of the track nearest it; where two
+    side by side take parts of the lap whose distance round it, less their distances off the track, is SHORTCUT_SAVE
+    m or more, a car could cut across there (GT4's wide run-off round the Dunlop loop), and a barrier stands on that
+    seam, kept SHORTCUT_CLEAR m off the asphalt; the run-off on each side stays."""
+    c = centre[:, [0, 2]]
+    arc, lap = lap_arc(centre)
+    lo = c.min(0) - 150
+    nz, nx = (np.ceil((c.max(0) + 150 - lo) / cell).astype(int))[::-1]
+    g = lo + (np.stack(np.meshgrid(np.arange(nx), np.arange(nz)), -1) + 0.5) * cell
+    drive = rast.at(g) >= 0
+    near = np.full((nz, nx), -1, int); clear = np.zeros((nz, nx), bool); off = np.zeros((nz, nx))
+    zi, xi = np.nonzero(drive)
+    for a in range(0, len(zi), 4000):
+        q = g[zi[a:a + 4000], xi[a:a + 4000]]
+        d = np.hypot(q[:, None, 0] - c[None, :, 0], q[:, None, 1] - c[None, :, 1])
+        j = d.argmin(1)
+        near[zi[a:a + 4000], xi[a:a + 4000]] = j
+        off[zi[a:a + 4000], xi[a:a + 4000]] = d[np.arange(len(j)), j]
+        clear[zi[a:a + 4000], xi[a:a + 4000]] = (d - half[None]).min(1) > SHORTCUT_CLEAR
+    seam, hit = np.zeros((nz, nx), bool), np.zeros((nz, nx), bool)  # (a cut at all; one saving SHORTCUT_SAVE)
+    for dz, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        a_ = near[max(0, -dz):nz - max(0, dz), max(0, -dx):nx - max(0, dx)]
+        b_ = near[max(0, dz):, max(0, dx):][:a_.shape[0], :a_.shape[1]]
+        both = (a_ >= 0) & (b_ >= 0)
+        la = np.abs(arc[a_] - arc[b_]); la = np.minimum(la, lap - la)
+        oa = off[max(0, -dz):nz - max(0, dz), max(0, -dx):nx - max(0, dx)]
+        ob = off[max(0, dz):, max(0, dx):][:a_.shape[0], :a_.shape[1]]
+        seam[max(0, -dz):nz - max(0, dz), max(0, -dx):nx - max(0, dx)] |= both & (la - oa - ob > 0)
+        hit[max(0, -dz):nz - max(0, dz), max(0, -dx):nx - max(0, dx)] |= both & (la - oa - ob >= SHORTCUT_SAVE)
+    seam &= clear
+    pts = list(map(tuple, np.argwhere(seam)))
+    left, runs = set(pts), []
+    while left:  # chained: from a run's end, the nearest seam cell within 2 cells, again and again
+        start = left.pop(); run = [start]
+        for direction in (0, 1):
+            cur = run[-1] if direction == 0 else run[0]
+            while True:
+                nb = [(cur[0] + dz, cur[1] + dx) for dz in (-2, -1, 0, 1, 2) for dx in (-2, -1, 0, 1, 2) if (cur[0] + dz, cur[1] + dx) in left]
+                if not nb: break
+                cur = min(nb, key=lambda p_: (p_[0] - cur[0]) ** 2 + (p_[1] - cur[1]) ** 2)
+                left.discard(cur)
+                for dz in (-1, 0, 1):  # (the seam is a cell or two thick: its neighbours across taken too)
+                    for dx in (-1, 0, 1): left.discard((cur[0] + dz, cur[1] + dx))
+                if direction == 0: run.append(cur)
+                else: run.insert(0, cur)
+        if len(run) * cell >= 6 and any(hit[max(0, a - 2):a + 3, max(0, b - 2):b + 3].any() for a, b in run):
+            runs.append(g[tuple(np.array(run).T)])
+    out = []
+    for r in runs:
+        if len(r) > 5: r = np.stack([np.convolve(np.pad(r[:, k], 2, mode='edge'), np.ones(5) / 5, 'valid') for k in range(2)], 1)
+        sarc = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(r, axis=0), axis=1))])
+        tt = np.linspace(0, sarc[-1], max(2, int(sarc[-1] / RAIL_STEP) + 1))
+        xz = np.stack([np.interp(tt, sarc, r[:, k]) for k in range(2)], 1)
+        k_ = rast.at(xz); y = np.full(len(xz), np.nan)
+        ij = np.floor((xz - rast.lo) / rast.res).astype(int)
+        on = k_ >= 0
+        y[on] = rast.y[ij[on, 1], ij[on, 0]]
+        y = np.where(np.isfinite(y), y, ground_at(xz))
+        out.append(np.stack([xz[:, 0], y, xz[:, 1]], 1))
+    print('shortcuts: %d barriers, %.0f m' % (len(out), sum(np.linalg.norm(np.diff(r, axis=0), axis=1).sum() for r in out)))
+    return out
+
+
+def barrier_geometry(runs):
+    """Armco along the shortcuts' barriers (both faces) and their walls for the collision (both faces):
+    (vertices, triangles, texture coordinates, kinds, wall quads)."""
+    V, T, UV, K, quads = [], [], [], [], []
+    for r in runs:
+        u = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(r[:, [0, 2]], axis=0), axis=1))]) / RAIL_REPEAT
+        b = len(V)
+        for p_, uu in zip(r, u):
+            V += [p_ + (0, ARMCO_H[0], 0), p_ + (0, ARMCO_H[1], 0)]; UV += [(uu, 1), (uu, 0)]
+        for i in range(len(r) - 1):
+            a0, a1, c0, c1 = b + 2 * i, b + 2 * i + 2, b + 2 * i + 1, b + 2 * i + 3
+            T += [(a0, a1, c1), (a0, c1, c0), (a0, c1, a1), (a0, c0, c1)]
+            K += [ARMCO] * 4
+            q = np.array([r[i], r[i + 1], r[i + 1] + (0, WALL_H, 0), r[i] + (0, WALL_H, 0)])
+            quads += [q, q[[1, 0, 3, 2]]]
+    return np.array(V, float).reshape(-1, 3), np.array(T, int).reshape(-1, 3), np.array(UV, float).reshape(-1, 2), np.array(K, int), quads
+
+
+def more_kerbs(centre, left, right, rast, gt4_kerbs):
+    """Kerbs at the corners (KERB_*): (vertices, triangles, texture coordinates: across 0-1, along in repeats)."""
+    c = centre[:, [0, 2]]
+    n = len(c)
+    arc, lap = lap_arc(centre)
+    t = np.roll(c, -3, 0) - np.roll(c, 3, 0); t /= np.linalg.norm(t, axis=1, keepdims=True)
+    ang = np.arctan2(t[:, 1], t[:, 0])
+    k = np.angle(np.exp(1j * (np.roll(ang, -3) - np.roll(ang, 3)))) / (np.roll(arc, -3) - np.roll(arc, 3) + np.where(np.roll(arc, -3) < np.roll(arc, 3), lap, 0))
+    k = np.convolve(np.concatenate([k[-7:], k, k[:7]]), np.ones(15) / 15, 'valid')
+    bent = np.abs(k) > KERB_TURN
+    lft = np.stack([-t[:, 1], t[:, 0]], 1)
+    near_gt4 = np.zeros(n, bool)
+    if len(gt4_kerbs):
+        for side in (left, right):
+            e = side[:, [0, 2]]
+            for a in range(0, n, 500):
+                d = np.hypot(e[a:a + 500, None, 0] - gt4_kerbs[None, :, 0], e[a:a + 500, None, 1] - gt4_kerbs[None, :, 2])
+                near_gt4[a:a + 500] |= d.min(1) < KERB_SKIP
+    want = []  # (indices along the edge, the edge)
+    i = 0
+    while i < n:
+        if not bent[i]: i += 1; continue
+        j = i
+        while j < n and bent[j]: j += 1
+        apex = i + int(np.argmax(np.abs(k[i:j])))
+        turn_left = k[apex] > 0
+        inside, outside = (left, right) if turn_left else (right, left)
+        # (which of the layout's edges is the inside: the one the bend's centre is on)
+        if np.dot(inside[apex, [0, 2]] - c[apex], lft[apex]) * (1 if turn_left else -1) < 0: inside, outside = outside, inside
+        step = np.mean(np.diff(arc[:50]))
+        a_ = int(KERB_APEX / step)
+        want.append(([q % n for q in range(apex - a_, apex + a_ + 1)], inside))
+        want.append(([q % n for q in range(apex + int(KERB_EXIT[0] / step), apex + int(KERB_EXIT[1] / step) + 1)], outside))
+        i = j
+    V, T, UV = [], [], []
+    made = 0
+    for idx, edge in want:
+        run = []
+        for q in idx + [None]:
+            if q is not None and not near_gt4[q]: run.append(q); continue
+            if len(run) >= 4:
+                b = len(V)
+                for m_, q_ in enumerate(run):
+                    e = edge[q_]
+                    o = e[[0, 2]] - c[q_]; o /= max(np.linalg.norm(o), 1e-9)
+                    for f, u in ((-KERB_IN, 0.0), (KERB_W - KERB_IN, 1.0)):
+                        xz = e[[0, 2]] + o * f
+                        ij = np.floor((xz - rast.lo) / rast.res).astype(int)
+                        y = rast.y[ij[1], ij[0]] if 0 <= ij[0] < rast.shape[1] and 0 <= ij[1] < rast.shape[0] else np.nan
+                        V.append((xz[0], (y if np.isfinite(y) else e[1]) + KERB_LIFT, xz[1])); UV.append((u, (arc[q_] - arc[run[0]]) % lap / 4.0))
+                for m_ in range(len(run) - 1):
+                    a0, a1, c0, c1 = b + 2 * m_, b + 2 * m_ + 2, b + 2 * m_ + 1, b + 2 * m_ + 3
+                    T += [(a0, a1, c1), (a0, c1, c0)]
+                made += 1
+            run = []
+    V, T = np.array(V, float).reshape(-1, 3), np.array(T, int).reshape(-1, 3)
+    if len(T):  # wound face up (the game's way: as the runway's)
+        nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+        flip = nrm[:, 1] > 0
+        T[flip] = T[flip][:, [0, 2, 1]]
+    print('kerbs: %d added at the corners, %d triangles' % (made, len(T)))
+    return V, T, np.array(UV, float).reshape(-1, 2)
 
 
 def dressing(walls, centre=None):
