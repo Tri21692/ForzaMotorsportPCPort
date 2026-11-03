@@ -297,10 +297,12 @@ LIGHT = {101: (-32615, -32406), 137: (-32439, -32451)}
 # lightmaps, innerterrainfs_03's (resource 437, texel (138, 192) of 256 x 256: 112, 112, 112)
 LIGHTMAP = (437, int(138 / 255 * 512) - 32768, int(192 / 255 * 512) - 32768)
 FOREST_LIGHT = (int(83 / 255 * 512) - 32768, int(127 / 255 * 512) - 32768)  # the woods' texel: 0.57 of the grey
+TARMAC_LIGHT = (int(128 / 255 * 512) - 32768, int(134 / 255 * 512) - 32768)  # the asphalt's texel: 0.78 of the grey
 GRASS_LIGHT = (int(127 / 255 * 512) - 32768, int(144 / 255 * 512) - 32768)  # the grass's texel of it: 0.85 of that grey,
                                                                           # flat round (the user's: grass a little darker)
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
+ASPHALT = (32.0, 10.0)          # m along and across the track a repeat of the asphalt's strip texture (1024 x 256)
 KERB_W = 1.2                    # m across a kerb's texture (its stripes along the track)
 REACH = 120.0                   # m: a donor's faces within this of its first
 GRASS_REACH = 30.0              # m: grass drawn this near the centre line only (all of it solid): the small buffers ran out
@@ -311,10 +313,24 @@ SLIVER = 0.02                   # m2: thinner triangles not drawn
 # (from and to as shares of the lap, side, metres beyond the runway kept clear)). Trees line its edge.
 FOREST_FROM, FOREST_RAMP, CANOPY_H, CANOPY_BUMPS = 50.0, 14.0, 13.0, 3.0
 CLEARINGS = [(0.88, 0.06, 'in', 170.0), (0.88, 0.06, 'out', 70.0)]
+# GT4 Fuji's grandstands by the corners (its world model's stands: from and to as shares of the lap, side), each
+# filled with copies of Road Atlanta's stands (STAND_CLONES, end to end, its front to the track) STAND_GAP m beyond
+# the runway; the woods kept off them.
+STAND_SITES = [(0.029, 0.119, 'out'), (0.168, 0.232, 'in'), (0.316, 0.445, 'out'), (0.427, 0.458, 'in'),
+               (0.615, 0.642, 'out'), (0.633, 0.673, 'in'), (0.719, 0.748, 'out'), (0.791, 0.863, 'out')]
+STAND_CLONES = ['seatsarea_02', 'outerpitstands01', 'seatsarea']
+STAND_GAP = 3.0
+STAND_PUSH = (0.0, 4.0, 10.0, 20.0, 35.0)  # m further out tried (a long straight stand by a bend)
+CLEARINGS += [(a, b, side, 75.0) for a, b, side in STAND_SITES]
 # The walls dressed (the user's photo: armco and catch fence round the track): on each wall (its line along the
 # runway's outline) an armco rail ARMCO_H m and a catch fence FENCE_H m (from, to over the edge), a texture repeat
 # every RAIL_REPEAT m along, both faces.
-ARMCO_H, FENCE_H, RAIL_REPEAT = (0.3, 1.0), (1.0, 4.0), 4.0
+ARMCO_H, FENCE_H, RAIL_REPEAT = (-0.5, 0.8), (0.8, 3.8), 4.0   # (the armco's foot in the grass, 0.3 m under the runway)
+RAIL_SMOOTH, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
+GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces within this of its first (fewer, bigger donors:
+                                 # each is a draw in every cell; 2,000 small ones cost frames)
+STAND_KEEP = 24                  # the biggest spare donors kept for the stands' copies
+CLONE_DONOR = 6000               # vertices: the largest streamed donor kept for the stands' copies
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -441,15 +457,15 @@ def build(disc, runway_dir, out):
     Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON, ground_at)
     Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
     Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear, (top_near, top_far))
-    Vw, Tw, UVw, Kw = dressing(walls)
+    Vw, Tw, UVw, Kw = dressing(walls, cf)
     Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
     o_t = o_f + len(Vfar)
     o_w = o_t + len(Vtr)
     Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t, Tw + o_w])
     kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw])
-    given_uv = {o_t + i: (int(u * 512) - 32768, int(v * 512) - 32768) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet)
-    given_uv.update({o_w + i: (int(u * 512) - 32768, int(v * 512) - 32768) for i, (u, v) in enumerate(UVw)})  # (the rails and fences)
+    given_uv = {o_t + i: (u, v) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet; repeats, set per donor)
+    given_uv.update({o_w + i: (u, v) for i, (u, v) in enumerate(UVw)})  # (the rails and fences)
     print('walls dressed: %d armco and fence quads' % (len(Tw) // 4))
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
@@ -480,7 +496,7 @@ def build(disc, runway_dir, out):
     for i in range(nmesh):
         at, (fl, ab, nidx, vbytes, vb, stride, prim, t0, t1, sh) = record(res, model, i)
         if stride != 6 or prim != 6 or vbytes % 24 or nidx < 8 or vbytes < 24 * 4 or sharing[vb] > 1: continue
-        if vb not in svb and vbytes > 24 * STREAMED_DONOR: continue  # (a streamed buffer: loaded from the xb2 in each cell listing it)
+        if vb not in svb and vbytes > 24 * CLONE_DONOR: continue  # (a streamed buffer: loaded from the xb2 in each cell listing it)
         if i in {m for m, _, _ in MATERIALS.values()} or vb in props: continue
         o = names[vb - 9][3]
         v = np.frombuffer(bytes(res[o:o + vbytes]), '<f4').reshape(-1, 6)[:, :3].astype(float)
@@ -512,13 +528,20 @@ def build(disc, runway_dir, out):
                 ground.append((k_, s))
     nstrip_idx = sum(len(s) + 3 for _, s in jobs + ground)
     print('surface: %d triangles in %d strips, the ground %d triangles in %d (~%d indices with the joins)' % (nrun, len(jobs), len(Tt), len(ground), nstrip_idx))
-    # the runway in the svb's small donors (a larger one's kerbs ran past s16's texture coordinates), the ground in what is left
-    placed, left = pack_strips(jobs, Vd, [p_ for p_ in pool if p_[4] in svb])
+    # the biggest donors first (each a draw in every cell: 2,000 small ones cost frames): the runway's, its strips
+    # short and its donors' faces near (texture coordinates stay in s16's range: a kerb repeats every 4 m), then the
+    # ground's; some 900-2,000-vertex ones kept for the stands' copies
+    keep_ = {p_[2] for p_ in sorted((p_ for p_ in pool if p_[4] not in svb and 900 <= p_[0] <= 2000), key=lambda p_: p_[0])[:STAND_KEEP]}
+    placed, left = pack_strips(jobs, Vd, [p_ for p_ in pool if p_[2] not in keep_], reach={KERB: 50.0, None: 120.0}, longest={KERB: 60.0, None: 100.0})
     if left: raise SystemExit('out of donor meshes: %d strips left over' % left)
     taken = {p_[0] for p_ in placed}
-    more, left = pack_strips(ground, Vd, [p_ for p_ in pool if p_[2] not in taken])
+    more, left = pack_strips(ground, Vd, [p_ for p_ in pool if p_[2] not in taken and p_[2] not in keep_],
+                             reach={TARMAC: 150.0, ARMCO: 100.0, FENCE: 100.0, None: GROUND_REACH}, longest={ARMCO: 100.0, FENCE: 100.0, None: 150.0})
     if left: raise SystemExit('out of donor meshes for the ground: %d strips left over' % left)
     placed += more
+    from collections import Counter as _C
+    print('donors by surface:', dict(_C(x[3] for x in placed)))
+    spare = [p_ for p_ in pool if p_[2] not in {x[0] for x in placed}]  # (for the stands' copies)
 
     # each donor rewritten: its material's texture, lightmap, shader, flags; planar texture coordinates
     tex_used, vbs_used, meshes = set(), set(), []
@@ -527,10 +550,11 @@ def build(disc, runway_dir, out):
         if k == TREE: tex = TREE_SHEET
         mat_at, (mfl, _, _, _, _, _, _, mt0, mt1, msh) = record(res, model, mat)
         mt0 = tex or mt0
-        mt1, light = LIGHTMAP[0], {GRASS: GRASS_LIGHT, FOREST: FOREST_LIGHT}.get(k, LIGHTMAP[1:])
+        mt1, light = LIGHTMAP[0], {GRASS: GRASS_LIGHT, FOREST: FOREST_LIGHT, TARMAC: TARMAC_LIGHT}.get(k, LIGHTMAP[1:])
         at, (fl, ab, nidx, vbytes, vbr, stride, prim, t0, t1, sh) = record(res, model, mesh)
         pts = np.vstack([Vd[s] for s in strips])
         org = np.floor(pts.min(0) / metres) * metres  # (texture coordinates from a whole repeat near the faces: s16 holds +-64 repeats)
+        uv = {}  # (texture coordinates set per vertex: kerbs, the runway's asphalt, lines; else planar)
         if k == KERB:  # along the track (its stripes across it): s across, `metres` a repeat along
             ids_all = sorted({vi for s in strips for vi in s})
             al = along[ids_all]
@@ -538,6 +562,19 @@ def build(disc, runway_dir, out):
             a0 = np.floor(al.min() / metres) * metres
             s0 = np.floor(side[ids_all].min() / KERB_W) * KERB_W
             uv = {vi: (int((side[vi] - s0) / KERB_W * 512) - 32768, int((a - a0) / metres * 512) - 32768) for vi, a in zip(ids_all, al)}
+        elif k == TARMAC and max(vi for s in strips for vi in s) < len(Vf):  # the runway's asphalt: its strip texture
+            ids_all = sorted({vi for s in strips for vi in s})                 # along the track (road08completemap)
+            al = along[ids_all]
+            if al.max() - al.min() > lap / 2: al = np.where(al < lap / 2, al + lap, al)
+            a0 = np.floor(al.min() / ASPHALT[0]) * ASPHALT[0]
+            s0 = np.floor(side[ids_all].min() / ASPHALT[1]) * ASPHALT[1]
+            uv = {vi: (int((a - a0) / ASPHALT[0] * 512) - 32768, int((side[vi] - s0) / ASPHALT[1] * 512) - 32768) for vi, a in zip(ids_all, al)}
+        elif k == LINE:
+            uv = {vi: (256 - 32768, 256 - 32768) for s in strips for vi in s}  # (the line texture's white middle: solid paint)
+        elif strips and strips[0][0] in given_uv:  # (trees, rails, fences: theirs, shifted by whole repeats to start near 0)
+            ids_all = {vi for s in strips for vi in s}
+            u0 = np.floor(min(given_uv[vi][0] for vi in ids_all)); v0 = np.floor(min(given_uv[vi][1] for vi in ids_all))
+            uv = {vi: (int((given_uv[vi][0] - u0) * 512) - 32768, int((given_uv[vi][1] - v0) * 512) - 32768) for vi in ids_all}
         verts, order, local = [], [], {}  # (a vertex once a donor, its strips indexing it)
         for s in strips:
             ids = []
@@ -545,8 +582,7 @@ def build(disc, runway_dir, out):
                 if vi not in local:
                     local[vi] = len(verts)
                     p = Vd[vi]
-                    if k == KERB: verts.append((p,) + uv[vi])
-                    elif vi in given_uv: verts.append((p,) + given_uv[vi])
+                    if vi in uv: verts.append((p,) + uv[vi])
                     else: verts.append((p, int((p[0] - org[0]) / metres * 512) - 32768, int((p[2] - org[2]) / metres * 512) - 32768))
                 ids.append(local[vi])
             if order:
@@ -561,6 +597,8 @@ def build(disc, runway_dir, out):
             p, s_, t_ = verts[min(j, len(verts) - 1)]
             buf['p'][j] = p
             buf['n'][j] = sc.pack_normal((0.0, 1.0, 0.0))
+            if not (-32768 <= s_ <= 32767 and -32768 <= t_ <= 32767):
+                raise SystemExit('texture coordinates past s16: surface %s, donor %d, %d strips, s %d t %d' % (k, mesh, len(strips), s_, t_))
             buf['st'][j] = (s_, t_, light[0], light[1])
         o = names[vbr - 9][3]
         data = buf.tobytes() + np.array(order + [order[-1]] * (nidx - len(order)), '<u2').tobytes()
@@ -572,6 +610,7 @@ def build(disc, runway_dir, out):
         struct.pack_into('<HHH', res, at + 22, mt0, mt1, msh)
         res[at + 21] = res[mat_at + 21]  # (the format's second byte: 1 for the forest cards, their alpha cut out)
         struct.pack_into('<I', res, at, mfl)
+        struct.pack_into('<I', res, at + 8, len(order))  # (the indices it uses: the padding's degenerate triangles cost frames)
         c = (pts.min(0) + pts.max(0)) / 2
         struct.pack_into('<4f', ppw, sp, float(np.max(np.linalg.norm(pts - c, axis=1))) + 0.5, *c)
         tex_used |= {mt0, mt1}
@@ -589,7 +628,7 @@ def build(disc, runway_dir, out):
 
     # Road Atlanta's buildings, stands and props set round Fuji (ROWS, SCATTER), drawn in every cell with their
     # buffers streamed in
-    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], set(), ground_at)
+    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], set(), ground_at, spare=spare)
     meshes += sm; tex_used |= st_; vbs_used |= sv
 
     # the visibility: every cell the same, Fuji's meshes only
@@ -808,6 +847,56 @@ def place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, targe
     return meshes, texs, vbs
 
 
+def clone_instance(res, names, model, ppw, svb, svb_out, ms, mid, R, target, lift, spare):
+    """A copy of an object's meshes (as the disc has them: ORIG_RES) in spare donors (rows [vertices, indices, mesh,
+    sphere, buffer], taken from `spare`, each the smallest that fits), turned by R about `mid` onto `target` and
+    raised by `lift` as place_instance's, with the mesh's own material (flags, format, textures, shader) and
+    lightmap coordinates. Only 24-byte-vertex meshes. Returns (meshes, textures, vertex buffers)."""
+    import shipyardcircuit as sc
+    meshes, texs, vbs = [], set(), set()
+    plan = []  # (a donor for every mesh, or no copy)
+    for i, at, f in ms:
+        vb, nidx, vbytes, vsize, mtex = mesh_info(ORIG_RES, names, model, i)
+        if vsize != 24: continue
+        fits = [p_ for p_ in spare if p_[0] >= vbytes // 24 and p_[1] >= nidx and p_ not in [q_[1] for q_ in plan]]
+        if not fits: return [], set(), set()
+        plan.append((i, min(fits, key=lambda p_: (p_[0], p_[1]))))
+    for i, donor in plan:
+        vb, nidx, vbytes, vsize, mtex = mesh_info(ORIG_RES, names, model, i)
+        nv = vbytes // 24
+        spare.remove(donor)
+        dnv, dnidx, dmesh, dsp, dvb = donor
+        o = names[vb - 9][3]
+        raw = np.frombuffer(bytes(ORIG_RES[o:o + vbytes]), '<u4').reshape(nv, 6).copy()
+        idx = np.frombuffer(bytes(ORIG_RES[o + vbytes:o + vbytes + 2 * nidx]), '<u2').copy()
+        v = raw[:, :3].view('<f4').astype(float)
+        xz = (v[:, [0, 2]] - mid[[0, 2]]) @ R.T + target[[0, 2]]
+        v[:, 0], v[:, 2], v[:, 1] = xz[:, 0], xz[:, 1], v[:, 1] + lift
+        raw[:, :3] = v.astype('<f4').view('<u4')
+        for j in range(nv):
+            nv_ = sc.unpack_normal(int(raw[j, 3]))
+            nxz = R @ nv_[[0, 2]]
+            raw[j, 3] = sc.pack_normal((nxz[0], nv_[1], nxz[1]))
+        full = np.vstack([raw, np.repeat(raw[-1:], dnv - nv, 0)])
+        order = np.concatenate([idx, np.full(dnidx - nidx, idx[-1], '<u2')])
+        data = full.astype('<u4').tobytes() + order.astype('<u2').tobytes()
+        do = names[dvb - 9][3]
+        res[do:do + len(data)] = data
+        if dvb in svb:
+            so, ssz = svb[dvb]
+            svb_out[so:so + min(ssz, len(data))] = data[:ssz]
+        dat, _ = record(res, model, dmesh)
+        sat, sf = record(ORIG_RES, model, i)
+        res[dat:dat + 4] = ORIG_RES[sat:sat + 4]          # flags
+        struct.pack_into('<I', res, dat + 8, nidx)          # its own index count (a big donor's padding cost frames)
+        res[dat + 20:dat + 22] = ORIG_RES[sat + 20:sat + 22]  # format and its second byte
+        res[dat + 22:dat + 28] = ORIG_RES[sat + 22:sat + 28]  # textures, lightmap, shader
+        c = (v.min(0) + v.max(0)) / 2
+        struct.pack_into('<4f', ppw, dsp, float(np.max(np.linalg.norm(v - c, axis=1))) + 0.5, *c)
+        meshes.append(dmesh); texs |= mtex | {sf[7], sf[8]}; vbs.add(dvb)
+    return meshes, texs, vbs
+
+
 def turn(a):
     return np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])  # (x, z) turned by a
 
@@ -887,24 +976,48 @@ def read_ground(runway_dir):
     cache = os.path.join(runway_dir, 'world_ground.npz')
     if os.path.exists(cache) and (not os.path.exists(src) or os.path.getmtime(cache) >= os.path.getmtime(src)):
         z = np.load(cache)
-        if 'near' in z and float(z['near']) == GROUND_NEAR: return z['V'], z['T']
+        if 'near' in z and float(z['near']) == GROUND_NEAR and 'green' in z: return z['V'], z['T']
     if not os.path.exists(src): return None
-    V, T = [], []
+    green = green_materials(runway_dir)
+    V, T, M, cur = [], [], [], None
     for l in open(src):
         if l.startswith('v '): V.append(list(map(float, l.split()[1:4])))
-        elif l.startswith('f '): T.append([int(x.split('/')[0]) - 1 for x in l.split()[1:4]])
-    V, T = np.array(V), np.array(T)
+        elif l.startswith('usemtl '): cur = l.split()[1]
+        elif l.startswith('f '): T.append([int(x.split('/')[0]) - 1 for x in l.split()[1:4]]); M.append(cur in green)
+    V, T, M = np.array(V), np.array(T), np.array(M, bool)
     n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
     ln = np.linalg.norm(n, axis=1)
     mid = V[T].mean(1)
-    keep = (ln > 1e-9) & (np.abs(n[:, 1]) > GROUND_FLAT * np.maximum(ln, 1e-9)) & \
+    keep = (ln > 1e-9) & (np.abs(n[:, 1]) > GROUND_FLAT * np.maximum(ln, 1e-9)) & M & \
            (np.hypot(mid[:, 0] - GT4_MIDDLE[0], mid[:, 2] - GT4_MIDDLE[1]) < GROUND_NEAR)
     T = T[keep]
     used = np.unique(T)
     remap = np.full(len(V), -1); remap[used] = np.arange(len(used))
     V, T = to_forza(V[used]), remap[T]
-    np.savez(cache, V=V, T=T, near=GROUND_NEAR)
+    np.savez(cache, V=V, T=T, near=GROUND_NEAR, green=True)
     return V, T
+
+
+def green_materials(runway_dir):
+    """GT4's world model's materials whose texture is green (grass, woods: its ground), from world.mtl and the
+    textures beside it: its grandstands', buildings' and paving's flat faces are not the ground (a hill rose where
+    its main grandstand stands, ours sunk in it)."""
+    out = set()
+    mtl = os.path.join(runway_dir, 'world.mtl')
+    if not os.path.exists(mtl): return out
+    cur = None
+    for l in open(mtl):
+        if l.startswith('newmtl '): cur = l.split()[1]
+        elif l.startswith('map_Kd ') and cur:
+            p_ = os.path.join(runway_dir, l.split(None, 1)[1].strip())
+            if not os.path.exists(p_): continue
+            a = read_png(p_).astype(float)
+            if a.shape[2] == 4: a = a[a[..., 3] > 64]
+            else: a = a.reshape(-1, 3)
+            if not len(a): continue
+            r, g, b = a[:, :3].mean(0)
+            if g > r * 1.05 and g > b * 1.05: out.add(cur)
+    return out
 
 
 def ground_raster(Gv, Gt, lo, shape, g):
@@ -1177,11 +1290,12 @@ def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reac
     return V, T, grid_sampler(H, lo, cell), K, grid_sampler(H + can, lo, cell)
 
 
-def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, ground_at=None, seed=7):
+def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, ground_at=None, seed=7, spare=None):
     """SCATTER's props placed round Fuji (centre: Forza's, a point every STEP m; reach_in/out: how far the runway
     reaches each side of it there, the inside of the loop and the outside: runway_reach). Returns (meshes,
     textures, vertex buffers). Each stands on the ground (ground_at: terrain's), its lowest point under its foot."""
     import re
+    from collections import Counter
     rng = np.random.default_rng(seed)
     n = len(centre)
     t, inner_dir = sides(centre)
@@ -1251,6 +1365,48 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
             meshes += m_; texs |= t_; vbs |= v_
             used.add(stem)
         print('row %-30s %3d placed of %3d, %s %.0f m out, %.0f%% to %.0f%%' % (str(stems_[0])[:30], placed, len(stems), side, gap_, 100 * s0, 100 * s1))
+    # GT4's stands: copies (from the disc's geometry, ORIG_RES) end to end at each site
+    if spare is not None:
+        src = {}
+        for stem in STAND_CLONES:
+            ms = object_meshes(ORIG_RES, names, model, stem)
+            bufs, allp = instance_geometry(ORIG_RES, names, model, ms)
+            if len(allp) < 3: continue
+            mid = (allp.min(0) + allp.max(0)) / 2
+            xz = allp[:, [0, 2]] - mid[[0, 2]]
+            la, sa = box_axes(xz)
+            src[stem] = (ms, allp, mid, xz, la, sa)
+        copies = 0
+        for s0, s1, side in STAND_SITES:
+            at, end, k_ = s0 * lap, s1 * lap, 0
+            why = Counter()
+            while True:  # (the next in turn that fits what is left of the site)
+                fit = [st_ for st_ in (STAND_CLONES[(k_ + q_) % len(STAND_CLONES)] for q_ in range(len(STAND_CLONES)))
+                       if st_ in src and at + float(np.ptp(src[st_][3] @ src[st_][4])) <= end]
+                if not fit: break
+                stem = fit[0]; k_ = STAND_CLONES.index(stem) + 1
+                ms, allp, mid, xz, long_axis, short_axis = src[stem]
+                length = float(np.ptp(xz @ long_axis))
+                i0 = int(np.searchsorted(arc, (at + length / 2) % lap)) % n
+                at += length + 4.0
+                d = inner_dir[i0] if side == 'in' else -inner_dir[i0]
+                reach = reach_in[i0] if side == 'in' else reach_out[i0]
+                base = np.arctan2(t[i0][2], t[i0][0]) - np.arctan2(long_axis[1], long_axis[0])
+                f0 = facing(mid)
+                a = max((base, base + np.pi), key=lambda a_: np.cos(f0 + a_) * -d[0] + np.sin(f0 + a_) * -d[2])
+                R = turn(a)
+                near_side = (xz @ R.T @ d[[0, 2]]).min()
+                for push in STAND_PUSH:
+                    target = centre[i0] + d * (reach + STAND_GAP + push - near_side)
+                    if clear(xz @ R.T + target[[0, 2]]): break
+                else: why['over the runway'] += 1; continue
+                foot = ground_at(xz @ R.T + target[[0, 2]]).min() if ground_at else centre[i0][1]
+                m_, t_, v_ = clone_instance(res, names, model, ppw, svb, svb_out, ms, mid, R, target, foot - allp[:, 1].min(), spare)
+                if m_: copies += 1; why['copied'] += 1
+                else: why['no donors'] += 1
+                meshes += m_; texs |= t_; vbs |= v_
+            print('stands %.0f%%-%.0f%% %s: %s' % (100 * s0, 100 * s1, side, dict(why)))
+        print('stands: %d copies at GT4\'s %d sites (%d spare donors left)' % (copies, len(STAND_SITES), len(spare)))
     for pattern, most, where, gap, align, *longest in SCATTER:
         pat = re.compile(pattern)
         stems = [s_ for s_ in inst_names if pat.match(s_) and s_ not in used][:most]
@@ -1566,12 +1722,13 @@ def cut(s, size):
     return out
 
 
-def pack_strips(jobs, Vf, pool, reach=REACH):
+def pack_strips(jobs, Vf, pool, reach=REACH, longest=None):
     """Strips (surface, vertex indices) into donors (pool rows: [vertices, indices, mesh, sphere, buffer]),
-    one surface a donor: from the west, a seed strip and the strips within `reach` m of it, nearest first,
-    while they fit (vertices shared by a donor's strips count once; joins cost 2 or 3 indices); a seed too
-    long for the largest donor left is cut to fit it. Returns ([(mesh, sphere, buffer, surface, [strips])],
-    strips left over)."""
+    one surface a donor: from the west, a seed strip and the strips within `reach` m of it (or {surface: m,
+    None: otherwise}), nearest first, while they fit (vertices shared by a donor's strips count once; joins cost
+    2 or 3 indices); a seed too long for the largest donor left is cut to fit it, and strips longer than
+    `longest` m ({surface: m, None: m}) cut first. Returns ([(mesh, sphere, buffer, surface, [strips])], strips
+    left over)."""
     pool = sorted(pool, key=lambda r: -min(r[0], r[1] - 3))
     mid = lambda s: Vf[s][:, [0, 2]].mean(0)
     out = []
@@ -1579,13 +1736,28 @@ def pack_strips(jobs, Vf, pool, reach=REACH):
     for k, s in jobs: by.setdefault(k, []).append(s)
     for k in sorted(by, key=lambda k_: -len(by[k_])):
         q = list(by[k])
+        lim = longest.get(k, longest.get(None)) if longest else None
+        if lim:
+            q2 = []
+            for s in q:
+                pv = Vf[s][:, [0, 2]]  # (its length along: a loop's box is short)
+                span = max(np.ptp(pv, axis=0).max(), np.linalg.norm(np.diff(pv[::2], axis=0), axis=1).sum())
+                q2 += cut(s, max(4, int(len(s) / np.ceil(span / lim)) + 2)) if span > lim else [s]
+            q = q2
+        reach_k = reach.get(k, reach.get(None)) if isinstance(reach, dict) else reach
         cen = [mid(s) for s in q]
         alive = [True] * len(q)
         while any(alive):
             if not pool: return out, sum(alive) + sum(len(by[k_]) for k_ in by if k_ != k and not any(o[3] == k_ for o in out))
-            nv, nidx, mesh, sp, vb = pool.pop(0)
             live = [i for i, a in enumerate(alive) if a]
             seed = min(live, key=lambda i: (cen[i][0], cen[i][1]))
+            # the smallest donor that holds every strip near the seed (the biggest, if none does): a big one spent
+            # on a few kerb strips left the trees hundreds of small ones
+            near = [i for i in live if np.hypot(cen[i][0] - cen[seed][0], cen[i][1] - cen[seed][1]) <= reach_k]
+            need_v = len(set().union(*[set(q[i]) for i in near]))
+            need_i = sum(len(q[i]) + 3 for i in near)
+            fit = [j for j in range(len(pool)) if pool[j][0] >= need_v and pool[j][1] >= need_i]
+            nv, nidx, mesh, sp, vb = pool.pop(fit[-1] if fit else 0)
             room = min(nv, nidx)
             if len(q[seed]) > room:  # cut to this donor's size: the rest go back in the queue
                 parts = cut(q[seed], room)
@@ -1598,7 +1770,7 @@ def pack_strips(jobs, Vf, pool, reach=REACH):
             live.sort(key=lambda i: (i != seed, np.hypot(cen[i][0] - c0[0], cen[i][1] - c0[1])))
             took, have, ix = [], set(), 0
             for i in live:
-                if took and np.hypot(cen[i][0] - c0[0], cen[i][1] - c0[1]) > reach: break
+                if took and np.hypot(cen[i][0] - c0[0], cen[i][1] - c0[1]) > reach_k: break
                 s = q[i]
                 join = (2 + ((ix + 2) % 2)) if took else 0
                 if len(have | set(s)) > nv or ix + join + len(s) > nidx: continue
@@ -1607,12 +1779,69 @@ def pack_strips(jobs, Vf, pool, reach=REACH):
     return out, 0
 
 
-def dressing(walls):
-    """Armco and catch fence on the walls: (vertices, triangles, texture coordinates, kinds per triangle), each
-    quad both faces."""
-    V, T, UV, K = [], [], [], []
+def outline_runs(walls, centre):
+    """The walls' bottom edges joined end to end into runs (polylines), each smoothed (RAIL_SMOOTH points; GT4's
+    runway outline steps through the grass like a staircase) and resampled every RAIL_STEP m; a smoothed point that
+    comes nearer the track than its own is put back (never over the runway)."""
+    from collections import defaultdict
+    key = lambda p: (round(p[0], 2), round(p[2], 2))
+    nxt, prv = {}, {}
+    pts = {}
     for q in walls:
-        p0, p1 = q[0], q[1]
+        a, b = key(q[0]), key(q[1]); pts[a] = q[0]; pts[b] = q[1]
+        nxt[a] = b; prv[b] = a
+    seen, runs = set(), []
+    for start in list(nxt):
+        if start in seen: continue
+        s0 = start  # (back to the run's beginning, or once round a loop)
+        while s0 in prv and prv[s0] not in seen and prv[s0] != start: s0 = prv[s0]
+        run, k = [], s0
+        while k is not None and k not in seen:
+            seen.add(k); run.append(pts[k]); k = nxt.get(k)
+        closed = k == s0
+        if len(run) >= 2: runs.append((np.array(run), closed))
+    c2 = centre[:, [0, 2]]
+    out = []
+    for run, closed in runs:
+        p = run.copy()
+        if len(p) > RAIL_SMOOTH:
+            w = np.ones(RAIL_SMOOTH) / RAIL_SMOOTH
+            pad = RAIL_SMOOTH // 2
+            ext = np.vstack([p[-pad:], p, p[:pad]]) if closed else np.vstack([np.repeat(p[:1], pad, 0), p, np.repeat(p[-1:], pad, 0)])
+            sm = np.stack([np.convolve(ext[:, j], w, 'valid') for j in range(3)], 1)
+            d0 = np.array([np.hypot(*(c2 - q[[0, 2]]).T).min() for q in p])
+            d1 = np.array([np.hypot(*(c2 - q[[0, 2]]).T).min() for q in sm])
+            p = np.where((d1 < d0 - 0.3)[:, None], p, sm)
+        q = np.vstack([p, p[:1]]) if closed else p
+        sarc = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(q[:, [0, 2]], axis=0), axis=1))])
+        m = max(2, int(sarc[-1] / RAIL_STEP) + 1)
+        tt = np.linspace(0, sarc[-1], m)
+        out.append(np.stack([np.interp(tt, sarc, q[:, j]) for j in range(3)], 1))
+    return out
+
+
+def dressing(walls, centre=None):
+    """Armco and catch fence along the walls (on outline_runs' smoothed line): (vertices, triangles, texture
+    coordinates, kinds per triangle), each quad both faces."""
+    V, T, UV, K = [], [], [], []
+    if centre is not None:  # (a run's quads share their corners: half the vertices, long strips)
+        runs = []
+        for r in outline_runs(walls, centre):  # (pieces of at most 200 m, each its texture from 0: a loop's two ends
+            k_ = max(1, int(200 / RAIL_STEP))   # meet, a donor holding both ran past s16's coordinates)
+            runs += [r[i:i + k_ + 1] for i in range(0, len(r) - 1, k_)]
+        for r in runs:
+            u = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(r[:, [0, 2]], axis=0), axis=1))]) / RAIL_REPEAT
+            for kind, (y0, y1) in ((ARMCO, ARMCO_H), (FENCE, FENCE_H)):
+                b = len(V)
+                for p_, uu in zip(r, u):
+                    V += [p_ + (0, y0, 0), p_ + (0, y1, 0)]; UV += [(uu, 1), (uu, 0)]
+                for i in range(len(r) - 1):
+                    a0, a1, c0, c1 = b + 2 * i, b + 2 * i + 2, b + 2 * i + 1, b + 2 * i + 3
+                    T += [(a0, a1, c1), (a0, c1, c0), (a0, c1, a1), (a0, c0, c1)]
+                    K += [kind] * 4
+        return np.array(V, float), np.array(T, int), np.array(UV, float), np.array(K, int)
+    segs = [(q[0], q[1]) for q in walls]
+    for p0, p1 in segs:
         ln = float(np.linalg.norm((p1 - p0)[[0, 2]]))
         for kind, (y0, y1) in ((ARMCO, ARMCO_H), (FENCE, FENCE_H)):
             b = len(V)
