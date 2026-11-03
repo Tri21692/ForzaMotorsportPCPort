@@ -154,8 +154,9 @@ def cross_sections(r, c):
 
 
 RACING_LINES = (1, 6)   # GT4's autodrive file's lines taken as the racing line (2 an alternate, 4 the pit lane's)
-LINE_SMOOTH = 40        # waypoints (2 m) the suggested line is smoothed over
-LINE_LIMIT = 0.85       # its reach across the road (chi), each side
+LINE_SMOOTH = 45        # waypoints (2 m) the suggested line is smoothed over
+LINE_LIMIT = 0.7        # its reach across the road (chi), each side
+LINE_ROUNDS = 3000      # its straightening passes
 
 
 def ai_lines(runway_dir, which):
@@ -175,26 +176,25 @@ def ai_lines(runway_dir, which):
     return out
 
 
-def racing_line(runway_dir):
-    """The suggested line (aitrack's `line`) from GT4's racing lines (RACING_LINES): each point's place across the
-    road at its nearest waypoint, spread over all the waypoints round the lap, averaged over LINE_SMOOTH of them,
-    within LINE_LIMIT of the edges. None without GT4's file."""
-    lines = ai_lines(runway_dir, RACING_LINES)
-    if not lines: return None
-    pts = np.vstack([to_forza(np.stack([l[:, 0], np.zeros(len(l)), l[:, 1]], 1))[:, [0, 2]] for l in lines])
-
+def racing_line(runway_dir=None):
+    """The suggested line (aitrack's `line`): the shortest, least bent path round the lap within LINE_LIMIT of the
+    edges (the waypoints' points pulled toward their neighbours' middle, LINE_ROUNDS times, each kept inside the
+    road), then its place across the road smoothed over LINE_SMOOTH waypoints: no jumps. (GT4's autodrive lines,
+    two disagreeing, swung the line across the straights and off it.)"""
     def line(p, h, left):
-        xz = p[:, [0, 2]]
-        n = len(xz)
-        j = np.array([np.hypot(*(xz - q).T).argmin() for q in pts])
-        chi = np.einsum('ij,ij->i', pts - xz[j], left[j]) / h[j]
-        order = np.argsort(j)
-        jj, cc = j[order], chi[order]
-        full = np.interp(np.arange(n), np.concatenate([jj - n, jj, jj + n]), np.concatenate([cc, cc, cc]))
-        k = np.ones(LINE_SMOOTH) / LINE_SMOOTH
-        full = np.convolve(np.concatenate([full[-LINE_SMOOTH:], full, full[:LINE_SMOOTH]]), k, 'same')[LINE_SMOOTH:-LINE_SMOOTH]
-        print("suggested line: GT4's %d points, chi %.2f to %.2f" % (len(pts), full.min(), full.max()))
-        return np.clip(full, -LINE_LIMIT, LINE_LIMIT)
+        c = p[:, [0, 2]]
+        chi = np.zeros(len(c))
+        for r in range(LINE_ROUNDS):
+            k = 2 + r % 6  # (several reaches: tight bends and long ones)
+            x = c + left * (h * chi)[:, None]
+            mid = (np.roll(x, k, 0) + np.roll(x, -k, 0)) / 2
+            chi = np.clip(np.einsum('ij,ij->i', mid - c, left) / h, -LINE_LIMIT, LINE_LIMIT)
+        n = len(chi)
+        w = np.hanning(LINE_SMOOTH + 2)[1:-1]; w /= w.sum()
+        chi = np.convolve(np.concatenate([chi[-LINE_SMOOTH:], chi, chi[:LINE_SMOOTH]]), w, 'same')[LINE_SMOOTH:-LINE_SMOOTH]
+        chi = np.clip(chi, -LINE_LIMIT, LINE_LIMIT)
+        print('suggested line: chi %.2f to %.2f, largest step %.3f a waypoint' % (chi.min(), chi.max(), np.abs(np.diff(chi)).max()))
+        return chi
     return line
 
 
@@ -286,10 +286,11 @@ GT4_MIDDLE = (111.4, 106.7)     # the Fuji runway's (x, z): x -797..1020, z -195
 # shader 13407, a lit diffuse), the texture (None: that mesh's own) and the metres a repeat. Road Atlanta's kerbs
 # and gravel traps have richer vertices (flags 0x2000), so their textures are drawn the tarmac's way.
 MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, 2180, 4.0),
-             TREE: (5628, None, 1.0), FOREST: (83, 430, 40.0),
-             ARMCO: (130, 107, 1.0), FENCE: (130, 319, 1.0)}
-MATERIALS.update({FAR_KIND + i: (5628, None, 1.0) for i in range(11)})  # (their textures: FAR_SLOTS)  # (guardrail_white_001, racedeco catchfence_001 on a railing's
-                                                              # material: 24-byte vertices, cut out; theirs take 20-byte ones)  # (the woods: terrain_hillside_distantbrush_001)  # (the trees: foliagefacade01's card material, its texture GT4's trees: TREE_TEX)
+             TREE: (5628, None, 1.0),     # the trees: foliagefacade01's card material, its texture GT4's trees (TREE_TEX)
+             FOREST: (83, 430, 40.0),     # the woods: terrain_hillside_distantbrush_001
+             ARMCO: (130, 107, 1.0),      # guardrail_white_001 and racedeco catchfence_001 on a railing's material
+             FENCE: (130, 319, 1.0)}      # (24-byte vertices, cut out; their own meshes take 20-byte ones)
+MATERIALS.update({FAR_KIND + i: (5628, None, 1.0) for i in range(11)})  # (GT4's far cards: their textures FAR_SLOTS)
 # a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
 # a black, clear texel at the lightmap's edge)
@@ -328,11 +329,12 @@ CLEARINGS += [(a, b, side, 75.0) for a, b, side in STAND_SITES]
 # runway's outline) an armco rail ARMCO_H m and a catch fence FENCE_H m (from, to over the edge), a texture repeat
 # every RAIL_REPEAT m along, both faces.
 ARMCO_H, FENCE_H, RAIL_REPEAT = (-0.5, 0.8), (0.8, 3.8), 4.0   # (the armco's foot in the grass, 0.3 m under the runway)
+FENCE_NEAR = 35.0   # m from the centre line: the outline dressed only this near the track
 RAIL_SMOOTH, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
 GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces within this of its first (fewer, bigger donors:
                                  # each is a draw in every cell; 2,000 small ones cost frames)
 STAND_KEEP = 24                  # the biggest spare donors kept for the stands' copies
-CLONE_DONOR = 6000               # vertices: the largest streamed donor kept for the stands' copies
+CLONE_DONOR = 2000               # vertices: the largest streamed donor kept for the stands' copies
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -720,7 +722,8 @@ ART_GAIN = 1.8
 # among them; its clouds left out, Forza has its own sky): scaled about the circuit's middle to FAR_RING m (every
 # angle as GT4's), each picture on a spare texture of Road Atlanta's (its road overlays, 512 x 256), drawn with the
 # forest cards' cut-out material.
-FAR_TEX = ['1_0', '2_0', '2_1', '3_0', '3_1', '4_0', '4_1', '4_2', '5_0', '5_1', '5_2']
+FAR_TEX_ALL = ['1_0', '2_0', '2_1', '3_0', '3_1', '4_0', '4_1', '4_2', '5_0', '5_1', '5_2']
+FAR_TEX = []   # (off: at 2.5 km the cards stood as brown cliffs on the skyline, and fog left the rest a haze)
 FAR_SLOTS = [2827, 2830, 2833, 2836, 2839, 2842, 2845, 2848, 2851, 2859, 2862]
 FAR_RING = 2500.0
 FAR_BASE = -40.0   # m: the ring's foot (under the hills round the circuit)
@@ -935,7 +938,8 @@ def facing(mid):
 # forest cards (foliagefacade, tree_wall) ended in hard vertical edges by the track: the user's 'out of place'; none.)
 SCATTER = [
     (r'workerstand\d*$', 14, 'corners', (4.0, 4.0), 'face'),
-    (r'tirewall_capa\d+$', 20, 'corners', (0.5, 0.5), 'along'),
+    # (no tyre walls: Road Atlanta's are whole stacks, 70-150 KB each; 20 of them were a third of the streamed
+    # memory, over the stock track's busiest cell, and parts of the woods went unloaded)
     (r'catchfence\d+$', 60, 'fast', (1.0, 1.0), 'along'),
     (r'barrierblock\d+$', 24, 'pits', (0.5, 0.5), 'along'),
     (r'pole_streetlight\d+$', 12, 'pits', (13.0, 13.0), 'face'),
@@ -1890,7 +1894,17 @@ def dressing(walls, centre=None):
     V, T, UV, K = [], [], [], []
     if centre is not None:  # (a run's quads share their corners: half the vertices, long strips)
         runs = []
-        for r in outline_runs(walls, centre):  # (pieces of at most 200 m, each its texture from 0: a loop's two ends
+        c2 = centre[:, [0, 2]]
+        split = []
+        for r in outline_runs(walls, centre):  # only where the outline runs near the track: GT4's runway's grass runs up
+            near = np.array([np.hypot(*(c2 - q[[0, 2]]).T).min() for q in r]) <= FENCE_NEAR  # the embankments, its fence
+            cur = []                                                                     # floated over the hills
+            for q, ok in zip(r, near):
+                if ok: cur.append(q)
+                elif len(cur) >= 2: split.append(np.array(cur)); cur = []
+                else: cur = []
+            if len(cur) >= 2: split.append(np.array(cur))
+        for r in split:  # (pieces of at most 200 m, each its texture from 0: a loop's two ends
             k_ = max(1, int(200 / RAIL_STEP))   # meet, a donor holding both ran past s16's coordinates)
             runs += [r[i:i + k_ + 1] for i in range(0, len(r) - 1, k_)]
         for r in runs:
