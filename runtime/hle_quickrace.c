@@ -318,8 +318,86 @@ static void autopilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, doubl
     wrf(car + 0x44, fx * auto_speed), wrf(car + 0x4C, fz * auto_speed);
 }
 
+/* Finding a car's damage (for the takedown's wrecks): XBRT_DMGSCAN=1, watched from the race's start: the player's
+ * car's first 32 KB and the first 4 KB of every object its first 2 KB points at (up to 48). Damage only grows, so
+ * the floats that were 0 then and never went down since (looked at every 0.2 s) and now stand above 0 (up to 5)
+ * are logged every 10 s ("car+offset" or "pointer@its place in the car+offset"); the rest (suspension, wheels'
+ * turning, the moving parts) drop out as soon as they fall back. (The car's own 32 KB alone: none but an angle.) */
+static void dmg_debug_tick(void) {
+    enum { SPAN = 0x8000, OBJ = 0x2000, NOBJ = 64, NW = SPAN / 4 + NOBJ * OBJ / 4 };
+    static int on = -1, nobj;
+    static float prev[NW];
+    static uint8_t alive[NW];
+    static uint32_t car, base[1 + NOBJ], from[1 + NOBJ];
+    static uint64_t look_at, print_at;
+    if (on < 0) on = getenv("XBRT_DMGSCAN") && atoi(getenv("XBRT_DMGSCAN"));
+    if (!on || !xb_rd32(0x592984)) { car = 0; return; }
+    uint32_t list = 0x58DAA0, cnt = xb_rd32(list + 0x10), arr = xb_rd32(list + 4), me = 0, rme = 0;
+    for (uint32_t i = 0; arr && i < cnt && i < 12; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i);
+        if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) me = xb_rd32(r + 0xA0), rme = r;
+    }
+    if (!me || me >= RT_USER_LIMIT) return;
+    uint32_t tm = xb_rd32(rme + 0xC0);
+    if (!tm || tm >= RT_USER_LIMIT || (int)xb_rd32(tm + 0x9C) < 0) return; /* (from the start line on) */
+    uint64_t now = rt_now_100ns();
+    /* word k: the car's own (k < SPAN/4), else object j's ((k - SPAN/4) / (OBJ/4)) */
+    #define DMG_ADDR(k) ((k) < SPAN / 4 ? me + 4 * (k) : base[1 + ((k) - SPAN / 4) / (OBJ / 4)] + 4 * (((k) - SPAN / 4) % (OBJ / 4)))
+    if (me != car) {
+        car = me, nobj = 0;
+        for (uint32_t o = 0; o < 0x1000 && nobj < NOBJ; o += 4) { /* (the car's pointers, then the racer record's: from +0x800) */
+            uint32_t p = xb_rd32(o < 0x800 ? me + o : rme + o - 0x800), b, sz, pr, st;
+            if (p < 0x01000000 || p >= RT_USER_LIMIT || (p & 3) || (p >= me && p < me + SPAN)) continue;
+            if (!rt_user_query(p, &b, &sz, &pr, &st) || st != 0x1000 || p + OBJ > b + sz) continue;
+            int dup = 0;
+            for (int j = 0; j < nobj; j++) dup |= base[1 + j] == p;
+            if (!dup) base[1 + nobj] = p, from[1 + nobj++] = o;
+        }
+        for (uint32_t k = 0; k < NW; k++) {
+            if (k >= SPAN / 4 && (k - SPAN / 4) / (OBJ / 4) >= (uint32_t)nobj) { alive[k] = 0; continue; }
+            prev[k] = rdf(DMG_ADDR(k)), alive[k] = prev[k] == 0.0f;
+        }
+        look_at = print_at = now;
+        fprintf(stderr, "xbrt: dmgscan: watching car %08x and %d objects it points at\n", me, nobj);
+        return;
+    }
+    { /* the crashes, timed, to match the readings to */
+        static float lv[3];
+        static uint64_t lt, told;
+        float v[3] = {rdf(me + 0x44), rdf(me + 0x48), rdf(me + 0x4C)};
+        double d = lt ? (now - lt) / 1e7 : 0;
+        float jx = v[0] - lv[0], jz = v[2] - lv[2], j = d > 0 && d < 0.25 ? sqrtf(jx * jx + jz * jz) / (float)d : 0;
+        if (j > 150 && now - told > 10000000) told = now, fprintf(stderr, "xbrt: dmgscan: crash, jolt %.0f m/s^2 at %.1f s\n", j, now / 1e7);
+        memcpy(lv, v, sizeof v), lt = now;
+    }
+    if (now - look_at > 2000000) {
+        look_at = now;
+        for (uint32_t k = 0; k < NW; k++) {
+            if (!alive[k]) continue;
+            float v = rdf(DMG_ADDR(k));
+            if (!(v >= prev[k] - 1e-6f) || v > 5.0f) alive[k] = 0; /* (went down, NaN, or no damage figure) */
+            else prev[k] = v;
+        }
+    }
+    if (now - print_at > 50000000) {
+        print_at = now;
+        fprintf(stderr, "xbrt: dmgscan: at %.1f s, grown and never down:", now / 1e7);
+        int n = 0;
+        for (uint32_t k = 0; k < NW && n < 150; k++) {
+            if (!alive[k] || !(prev[k] > 0.0005f)) continue;
+            if (k < SPAN / 4) fprintf(stderr, " car+%x=%.3f", 4 * k, prev[k]);
+            else fprintf(stderr, " [%s%x]+%x=%.3f", from[1 + (k - SPAN / 4) / (OBJ / 4)] < 0x800 ? "car+" : "racer+", from[1 + (k - SPAN / 4) / (OBJ / 4)] % 0x800, 4 * ((k - SPAN / 4) % (OBJ / 4)), prev[k]);
+            if (0) fprintf(stderr, " [%x]+%x=%.3f", from[1 + (k - SPAN / 4) / (OBJ / 4)], 4 * ((k - SPAN / 4) % (OBJ / 4)), prev[k]);
+            n++;
+        }
+        fprintf(stderr, " (%d)\n", n);
+    }
+    #undef DMG_ADDR
+}
+
 void rt_qr_tick(void) {
     cam_debug_tick();
+    dmg_debug_tick();
     static uint64_t last;
     uint64_t now = rt_game_now_100ns(); /* (the game's clock: in the takedown's slow motion, everything here slows with it) */
     double dt = last ? (now - last) / 1e7 : 0;
@@ -445,33 +523,34 @@ void rt_qr_tick(void) {
              * one, on a rival's own knock near the player) */
             int touch = car != me && me && dd < 5.0f && dd > 0.1f && jolt > 40 && mjolt > 25;
             /* how hard: the speed the two closed at just before (the player's and its velocities of the tick before,
-             * along the line between them). Resistance (the user's): a nudge under 3 m/s is the game's own touch,
-             * and above it the throw and spin grow with the impact, full at 12 m/s, so neither car flies off light */
+             * along the line between them). Resistance (the user's): a nudge under 4.5 m/s is the game's own touch,
+             * and above it the throw and spin grow with the impact, full at 18 m/s, so neither car flies off light
+             * (and halved again: "very easy to move opponents around") */
             float closing = touch ? ((mv0[0] - cs[i].v[0]) * dx + (mv0[2] - cs[i].v[2]) * dz) / dd : 0;
-            if (touch && closing >= 3.0f && now - cs[i].hit_at > 10000000 && !cs[i].down_at) {
+            if (touch && closing >= 4.5f && now - cs[i].hit_at > 10000000 && !cs[i].down_at) {
                 float fx = rdf(me + 0x38), fz = rdf(me + 0x40), ux = dx / dd, uz = dz / dd; /* the player's heading; the way to the rival */
-                float ahead = ux * fx + uz * fz, s = closing / 12 > 1 ? 1 : closing / 12;
+                float ahead = ux * fx + uz * fz, s = closing / 18 > 1 ? 1 : closing / 18;
                 if (ahead > 0.8f) { /* a shunt: punted on, along the player's heading */
                     cs[i].kind = 2;
-                    v[0] += fx * 3 * s, v[2] += fz * 3 * s;
-                    cs[i].spin = (rand() & 1 ? 1 : -1) * 1.5f * s;
+                    v[0] += fx * 1.5f * s, v[2] += fz * 1.5f * s;
+                    cs[i].spin = (rand() & 1 ? 1 : -1) * 0.8f * s;
                     say("SHUNT!");
                 } else { /* a slam: across, away from the player (the side of the heading it is on) */
                     float lx = ux - ahead * fx, lz = uz - ahead * fz, ll = sqrtf(lx * lx + lz * lz);
                     if (ll > 0.01f) lx /= ll, lz /= ll;
                     cs[i].kind = 1;
-                    v[0] += lx * 4 * s, v[2] += lz * 4 * s;
-                    cs[i].spin = (lx * fz - lz * fx > 0 ? 1 : -1) * 2.0f * s; /* (its nose turned towards where it is thrown) */
+                    v[0] += lx * 2 * s, v[2] += lz * 2 * s;
+                    cs[i].spin = (lx * fz - lz * fx > 0 ? 1 : -1) * 1.2f * s; /* (its nose turned towards where it is thrown) */
                     say("SLAM!");
                 }
                 cs[i].impact = closing;
                 wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
                 cs[i].hit_at = now, cs[i].spin_until = now + 5000000;
                 fresh = 0; /* (this tick's jolt is the hit, not a wall) */
-                if (!touched) { /* the player's car heavier: half of the knock it took given back */
+                if (!touched) { /* the player's car heavier: 30% of the knock it took given back (half let it shove through) */
                     touched = 1;
                     float w[3];
-                    for (int j = 0; j < 3; j++) w[j] = rdf(me + 0x44 + 4 * (uint32_t)j) - 0.5f * mdv[j];
+                    for (int j = 0; j < 3; j++) w[j] = rdf(me + 0x44 + 4 * (uint32_t)j) - 0.3f * mdv[j];
                     wrf(me + 0x44, w[0]), wrf(me + 0x4C, w[2]); /* (not the up: no lift) */
                     if (im >= 0 && cs[im].car == me) cs[im].v[0] = w[0], cs[im].v[2] = w[2];
                 }
