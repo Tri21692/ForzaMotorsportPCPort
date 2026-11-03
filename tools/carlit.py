@@ -9,6 +9,7 @@ normals and shading bytes, Body as paint times the texel where the atlas is clea
 Writes <out prefix>_<view>.png for the views front, rear, left, fside.
 
 Env: VIEWS=front,rear,...  (also lclose, rclose, fclose, rtop, cabin, rearc)  ALL=1 every part
+     ICON=1 the car-select tile's view (icon: a front three-quarter, no ground, a clear background, 512 x 256)
      PARTS=1 a flat colour a part (the names printed)   ONLYP=<regex> only those parts   PICK=<name,...> add these
      BACKRED=1 back faces (by the carbin's winding) red
 
@@ -139,6 +140,43 @@ for p in car['parts']:
     o = bpy.data.objects.new(p['name'], me)
     scene.collection.objects.link(o)
 print('SHOWN', ' '.join(shown))
+if os.environ.get('ICON'):  # the tile's car stands on wheels: tyres and rims in its arches (the carbin has none), each arch
+    # where the body's lower edge along its sides rises (the middle of each raised run), the tyre to its top
+    import numpy as np
+    P = np.array([tuple(o.matrix_world @ v.co) for o in scene.objects if o.type == 'MESH' for v in o.data.vertices])
+    x0, x1, y0, y1, zlo = P[:, 0].min(), P[:, 0].max(), P[:, 1].min(), P[:, 1].max(), P[:, 2].min()
+    L, Wd = x1 - x0, y1 - y0
+    side = P[np.abs(P[:, 1] - (y0 + y1) / 2) > 0.38 * Wd]
+    bins = np.floor((side[:, 0] - x0) / (L / 80)).astype(int)
+    low = np.full(80, np.nan)
+    for b_ in range(80):
+        z = side[bins == b_, 2]
+        if len(z): low[b_] = z.min()
+    sill = np.nanpercentile(low, 15)
+    axles = []
+    for half in (range(40, 80), range(0, 40)):  # front half (x up), rear half
+        run = [b_ for b_ in half if np.isfinite(low[b_]) and low[b_] > sill + 0.06 * L / 4.2]
+        if run:
+            mid = (min(run) + max(run) + 1) / 2 * L / 80 + x0
+            top = np.nanmax(low[min(run):max(run) + 1])
+            axles.append((mid, top, (max(run) - min(run) + 1) * L / 80))
+    rubber = bpy.data.materials.new('tyre'); rubber.use_nodes = True
+    rubber.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.02, 0.02, 0.02, 1)
+    rubber.node_tree.nodes['Principled BSDF'].inputs['Roughness'].default_value = 0.8
+    alloy = bpy.data.materials.new('rim'); alloy.use_nodes = True
+    alloy.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.32, 0.33, 0.35, 1)
+    alloy.node_tree.nodes['Principled BSDF'].inputs['Metallic'].default_value = 0.9
+    alloy.node_tree.nodes['Principled BSDF'].inputs['Roughness'].default_value = 0.25
+    for ax, top, width in axles:
+        r = 0.074 * L  # (a 0.31 m tyre on a 4.2 m car)
+        for sgn in (-1, 1):
+            y = (y0 + y1) / 2 + sgn * (Wd / 2 - 0.14 * Wd)
+            zc = sill + 0.3 * r  # (from the sill: the arch liners hang low and hide the arch top)
+            bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=0.15 * Wd, location=(ax, y, zc), rotation=(math.pi / 2, 0, 0), vertices=48)
+            bpy.context.object.data.materials.append(rubber)
+            bpy.ops.mesh.primitive_cylinder_add(radius=r * 0.64, depth=0.15 * Wd + 0.01, location=(ax, y, zc), rotation=(math.pi / 2, 0, 0), vertices=48)
+            bpy.context.object.data.materials.append(alloy)
+    print('ICON axles', [(round(a, 2), round(t, 2), round(w, 2)) for a, t, w in axles])
 # ground, light, world
 bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, -0.02))
 g = bpy.context.object; gm = bpy.data.materials.new('ground'); gm.use_nodes = True
@@ -153,13 +191,20 @@ scene.world.node_tree.nodes['Background'].inputs[1].default_value = 0.9
 scene.render.engine = 'BLENDER_EEVEE'
 scene.eevee.use_ssr = True; scene.eevee.use_gtao = True; scene.eevee.use_soft_shadows = True
 scene.render.resolution_x, scene.render.resolution_y = 900, 600
+if os.environ.get('ICON'):  # the car-select tile: the car alone on a clear background, wide
+    g.hide_render = True
+    scene.render.film_transparent = True
+    scene.render.resolution_x, scene.render.resolution_y = 512, 256
 cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam')); scene.collection.objects.link(cam); scene.camera = cam
 cam.data.lens = 45
-views = {'front': (6.0, -4.2, 1.9), 'rear': (-6.0, 4.2, 2.1), 'left': (0.2, 8.0, 0.8), 'fside': (4.5, 5.5, 1.2), 'lclose': (0.3, 4.6, 0.6), 'rclose': (-2.2, 3.2, 1.0), 'fclose': (3.4, -1.6, 0.9), 'rtop': (-3.6, 1.8, 2.6), 'cabin': (0.6, 2.2, 2.4), 'rearc': (-4.6, 1.4, 0.9)}
+views = {'icon': (6.4, -6.6, 2.2), 'front': (6.0, -4.2, 1.9), 'rear': (-6.0, 4.2, 2.1), 'left': (0.2, 8.0, 0.8), 'fside': (4.5, 5.5, 1.2), 'lclose': (0.3, 4.6, 0.6), 'rclose': (-2.2, 3.2, 1.0), 'fclose': (3.4, -1.6, 0.9), 'rtop': (-3.6, 1.8, 2.6), 'cabin': (0.6, 2.2, 2.4), 'rearc': (-4.6, 1.4, 0.9)}
 if os.environ.get('VIEWS'): views = {k: views[k] for k in os.environ['VIEWS'].split(',')}
+elif os.environ.get('ICON'): views = {'icon': views['icon']}
+else: del views['icon']
 for name, (x, y, z) in views.items():
     cam.location = (x, y, z)
     cam.data.lens = 45 if 'close' not in name else 35
+    if name == 'icon': cam.data.lens = 52
     cam.rotation_euler = (-cam.location).normalized().to_track_quat('-Z', 'Y').to_euler()
     scene.render.filepath = '%s_%s.png' % (out, name)
     bpy.ops.render.render(write_still=True)
