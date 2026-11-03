@@ -868,7 +868,12 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         k = (max(tx) - min(tx)) / (max(v[1] for v in nb) - min(v[1] for v in nb))
     dz = (max(tz) + min(tz)) / 2 - k * (max(nx) + min(nx)) / 2
     dy = min(ty) - k * min(nz) - LOWER
-    print('fit: scale %.3f, forward offset %.3f, up offset %.3f' % (k, dz, dy))
+    floor = min(nz)  # (the finest body's lowest point: nothing hangs below it)
+    kx = 1.0
+    if FIT_TRACK:  # its width then the template's (plan "fit": "track"): the wheels are the template's, at its track, and
+        tx = [v[0] / 4096 for v in tbody['verts']]  # the Neon, fitted by length 8% wider than the SRT-4, had them 6-9 cm inside its fenders
+        kx = (max(tx) - min(tx)) / (k * (max(v[1] for v in nb) - min(v[1] for v in nb)))
+    print('fit: scale %.3f, forward offset %.3f, up offset %.3f%s' % (k, dz, dy, ', width x%.3f' % kx if kx != 1 else ''))
 
     dark = dark_uv(os.path.join(os.path.dirname(template_path), 'liveries', 'standard', 'livery0nc.xpr'))
     # The paint texel: the one the template body's door uses (its Body
@@ -1054,11 +1059,15 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         return hr + (x - ar) * (hf - hr) / (af - ar)
 
     def pos(v):
-        x, y, z = -k * v[1], k * v[2] + dy, along(v[0])
+        x, y, z = -k * kx * v[1], k * v[2] + dy, along(v[0])
         return [max(-32768, min(32767, int(round(c * 4096)))) for c in (x, y, z)]
 
     def nrm(v):
         x, y, z = -v[4], v[5], v[3]
+        if kx != 1:  # (a surface squeezed across: its normals lean further out)
+            x /= kx
+            n = (x * x + y * y + z * z) ** 0.5 / max(1.0, (v[3] ** 2 + v[4] ** 2 + v[5] ** 2) ** 0.5) or 1
+            x, y, z = x / n, y / n, z / n
         return [max(-32767, min(32767, int(round(c * 32767)))) for c in (x, y, z)]  # (symmetric: the black insides negate them, and the Celica's normals, longer than 1, hit -32768)
 
     arches = []
@@ -1118,6 +1127,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     va, vb, vc = (p['verts'][i] for i in (a, b, c))
                     if sh == 0x010CB64A and max(va[2], vb[2], vc[2]) < 0.15:
                         continue  # the arch liner's bottom: it hung below the body behind the front wheels
+                    if min(va[2], vb[2], vc[2]) < floor - 0.03:
+                        continue  # below the body: the Neon's far detail level closed each wheel opening with a flat panel to 0.35 under the ground, over the wheels
                     e1 = [vb[k] - va[k] for k in range(3)]; e2 = [vc[k] - va[k] for k in range(3)]
                     g = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
                     if inner and sh != bhash('WINDSHIELD'):
@@ -1978,6 +1989,7 @@ VINYL_CANVAS = ('BODY', 'BODY_LEFT', 'BODY_RIGHT', 'BODY_TOP', 'BODY_REAR')  # M
 CANVAS = '__canvas__'  # the canvas's rooms in the atlas: pack_atlas images (CANVAS, k), white (plain paint)
 CANVAS_SIZE = 512  # Most Wanted's vinyl canvas, texels
 SKIN = None  # (texture name, canvas size): a livery sheet the BODY groups are drawn from, as a vinyl canvas (cartoolkit.py sets it)
+FIT_TRACK = False  # its width scaled apart to the template body's (cartoolkit.py's plan "fit": "track")
 FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoolkit.py's plan "fit": "width")
 KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
 # rear halves that need bumpers of their own (its kit 1 had no nose, kit 2 came out black)

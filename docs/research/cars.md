@@ -887,6 +887,19 @@ beside the stock template car):
   "materials" can now be set per part ({"KIT00_INTERIOR": .., "*": ..}),
   to drop its copy of the windscreen.
 
+Wheels (3 Nov, the user asked whether they were on properly): the wheels are
+the template's, at its physics track and wheelbase. The Celica GT-Four's
+arches came within 3 cm of the Celica GTS's, as wide: fine. The Neon, fitted
+by length, came out 8% wider than the SRT-4 (no arch liners in an
+Underground 2 add-on, so no arch-to-hub stretch either; its arches fell
+within 0.1 unit of the SRT-4's anyway), and the tyres sat 6-9 cm inside its
+fenders, hidden from behind. Plan "fit": "track" keeps the length fit and
+scales the width to the template body's (x0.925 on the Neon), normals
+leaning out to match; the tyres now sit flush. Its far detail level closed
+each wheel opening with a flat body panel reaching 0.35 units under the
+ground: triangles below the finest body's lowest point are dropped. Still
+open: a pale line along the Neon's arch lips in the dealer.
+
 Still as before: the windows are dark, not see-through (glass drew clear in
 game), and the lamps take the template's lamp texels where the add-on's lamp
 textures are Underground 2's shared ones (not in the car's pack).

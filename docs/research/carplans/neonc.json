@@ -33,5 +33,6 @@
   },
   "hide": [
     "wing"
-  ]
+  ],
+  "fit": "track"
 }

@@ -26,6 +26,8 @@ The plan:
   "aliases": {"KIT00_BODY": "BASE"}                      a second name for a part's levels
   "fit": "width"                                         scaled to the template's width, not its length (the
                                                          wheel arches still go to its hubs)
+  "fit": "track"                                         fitted by length, then narrowed (or widened) to the
+                                                         template's width: the template's wheels sit flush
   "lower": 0.06                                          the body set that much (carbin units / 4096) below
                                                          the template's floor (the lowest points meet)
 """
@@ -392,6 +394,7 @@ if __name__ == '__main__':
         os.path.normcase(os.path.abspath(car_dir)) else _real(path)
     if plan.get('skin'): nfsu2forza.SKIN, nfsu2forza.CANVAS_SIZE = tuple(plan['skin']), plan['skin'][1]
     nfsu2forza.FIT_WIDTH = plan.get('fit') == 'width'
+    nfsu2forza.FIT_TRACK = plan.get('fit') == 'track'
     nfsu2forza.LOWER = plan.get('lower', 0.0)
     nfsu2forza.KITS = plan.get('kits')
     nfsu2forza.HIDE = tuple(plan.get('hide', ()))
