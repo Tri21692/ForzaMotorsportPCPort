@@ -284,6 +284,7 @@ static void host_pad(uint32_t pad) {
         buttons |= 0x10;
         analog[A_A] = 255;
     }
+    if (rt_qol_pad()) analog[A_A] = 255; /* (hle_qol.c: the intro skipped) */
     scripted(&buttons, analog, thumbs);
     set_pad(pad, buttons, analog, thumbs);
 }

@@ -94,6 +94,14 @@ int rt_gl_window_begin(int *W, int *H) {
     static int failed;
     HWND wnd = (HWND)rt_display_hwnd();
     if (!wnd || failed) return 0;
+    RECT r;
+    GetClientRect(wnd, &r);
+    *W = r.right > 0 ? r.right : 0, *H = r.bottom > 0 ? r.bottom : 0;
+    /* HDR (hdr.c): the window a DXGI swap chain's, OpenGL drawing off it (glfill.c presents) */
+    if (rt_hdr_on() || (wnd != shown && *W > 0 && *H > 0 && rt_hdr_start(wnd, *W, *H))) {
+        shown = wnd, win_dc = NULL;
+        return 1;
+    }
     if (wnd != shown) {
         dc = GetDC(wnd);
         if (!dc || (GetPixelFormat(dc) != gl_format && !SetPixelFormat(dc, gl_format, &gl_pfd)) || !wglMakeCurrent(dc, gl_ctx)) {
@@ -106,9 +114,6 @@ int rt_gl_window_begin(int *W, int *H) {
         if (interval) interval(getenv("XBRT_VSYNC") && atoi(getenv("XBRT_VSYNC")) ? 1 : 0);
     }
     win_dc = dc;
-    RECT r;
-    GetClientRect(wnd, &r);
-    *W = r.right > 0 ? r.right : 0, *H = r.bottom > 0 ? r.bottom : 0;
     return 1;
 }
 

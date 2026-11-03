@@ -151,6 +151,7 @@ typedef struct {
     uint32_t gl_version;
     int surface;      /* gl is a framebuffer's colour texture (glfill.c), sampled where it was drawn */
     int alpha_one;    /* ... of an X8R8G8B8 texture: alpha reads as one */
+    int hd;           /* its GL texture is bigger, with every mip level (gltexhd.c: the pack's, or upscaled) */
     uint64_t sig;     /* hash_sparse of its bytes when last fully hashed */
     uint32_t sig_checks; /* checks since the last full hash */
     uint32_t zaddr;   /* a shadow map sampled on the GPU: its depth's address (glvsh.c's shadow-matrix forwarding) */
@@ -1523,7 +1524,7 @@ static void tex_flush_all(void) {
         n++;
     }
     generation++;
-    fprintf(stderr, "xbrt: textures: %d to load again (pack %s, upscale %s)\n", n, rt_tex_pack_on ? "on" : "off", rt_tex_upscale ? "2x" : "off");
+    fprintf(stderr, "xbrt: textures: %d to load again (pack %s, upscale %s)\n", n, rt_tex_pack_on ? "on" : "off", rt_tex_upscale == 4 ? "4x" : rt_tex_upscale ? "2x" : "off");
 }
 
 void nv2a_raster_flip(void) {

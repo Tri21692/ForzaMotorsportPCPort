@@ -20,8 +20,15 @@ typedef struct {
 
 static const OvItem items[] = {
     {"fps", "Frame Rate", {"30", "60"}, {"30 FPS", "60 FPS"}, 0, "Forza runs its physics once a frame, so 60 is the most it can do."},
-    {"scale", "Resolution", {"1", "2", "3", "4"}, {"1x  (640x480)", "2x  (1280x960)", "3x  (1920x1440)", "4x  (2560x1920)"}, 0,
-     "Draws the game at a multiple of the Xbox's 640x480. Lower it on slower GPUs."},
+    {"scale", "Resolution", {"1", "2", "3", "4", "5", "6"},
+     {"1x  (640x480)", "2x  (1280x960)", "3x  (1920x1440)", "4x  (2560x1920)", "5x  (3200x2400)", "6x  (3840x2880)"}, 0,
+     "Draws the game at a multiple of the Xbox's 640x480. Lower it on slower GPUs; 5x and 6x need a fast one."},
+    {"hdr", "HDR", {"0", "1"}, {"Off", "On"}, 0,
+     "HDR output on an HDR screen. Turn on Use HDR in Windows' display settings first."},
+    {"hdr_paper_white", "HDR White Level", {"120", "160", "200", "250", "300", "400"}, {"120 nits", "160 nits", "200 nits", "250 nits", "300 nits", "400 nits"}, 1,
+     "How bright white is with HDR on (menus, the HUD, white paint)."},
+    {"hdr_peak", "HDR Peak Brightness", {"auto", "400", "600", "800", "1000", "1500"}, {"Auto  (the screen's)", "400 nits", "600 nits", "800 nits", "1000 nits", "1500 nits"}, 1,
+     "How bright the sky, sun and lamps get with HDR on."},
     {"widescreen", "Widescreen", {"0", "1"}, {"Off  (4:3)", "On  (16:9)"}, 0, "Forza draws a wider 16:9 view of the track itself."},
     {"fullscreen", "Fullscreen", {"0", "1"}, {"Off", "On"}, 1, "Borderless fullscreen. Alt+Enter or F11 switches at any time."},
     {"window", "Window Size", {"auto", "1280x960", "1600x1200", "1280x720", "1920x1080", "2560x1440"},
@@ -31,10 +38,14 @@ static const OvItem items[] = {
     {"anisotropic", "Texture Filtering", {"1", "2", "4", "8", "16"}, {"Off", "2x Anisotropic", "4x Anisotropic", "8x Anisotropic", "16x Anisotropic"}, 0,
      "Keeps the road and verges sharp when seen at a shallow angle."},
     {"show_fps", "Show Frame Rate", {"0", "1"}, {"Off", "On"}, 1, "The frame rate, small in the top left corner."},
+    {"skip_intro", "Skip Intro Video", {"0", "1"}, {"Off", "On"}, 0, "Skips the intro video when the game starts."},
+    {"fast_loading", "Fast Loading", {"0", "1"}, {"Off", "On"}, 1,
+     "Skips the game's least time on loading screens: races start and restart about a second sooner."},
     {"texture_pack", "HD Texture Pack", {"0", "1"}, {"Off", "On"}, 1,
      "AI-upscaled textures from the mods folder, where the pack has them. Changing it reloads the textures."},
-    {"texture_upscale", "Texture Upscaling", {"0", "2"}, {"Off", "2x"}, 1,
-     "Redraws the other textures at twice their size as they load: sharper up close. Changing it reloads the textures."},
+    {"texture_upscale", "Texture Upscaling", {"0", "2", "4"}, {"Off", "2x", "4x"}, 1,
+     "Redraws the other textures larger as they load: sharper up close. 4x uses more video memory. Changing it reloads the textures."},
+    {"soft_shadows", "Soft Shadows", {"0", "1"}, {"Off", "On"}, 0, "Smooth shadow edges instead of the Xbox's stepped ones."},
     {"sharpen", "Sharpening", {"0", "0.25", "0.5", "0.75", "1"}, {"Off", "Low", "Medium", "High", "Maximum"}, 1,
      "Crisper detail on the road, cars and signs. Contrast-adaptive, so edges do not ring."},
     {"bloom", "Bloom", {"0", "0.15", "0.3", "0.5", "0.75"}, {"Off", "Subtle", "Medium", "Strong", "Very Strong"}, 1,
@@ -96,8 +107,11 @@ static void apply(const OvItem *it, const char *v) {
     else if (!strcmp(it->setting, "fullscreen")) rt_display_set_fullscreen(atoi(v));
     else if (!strcmp(it->setting, "brightness")) rt_brightness = (float)atof(v);
     else if (!strcmp(it->setting, "show_fps")) rt_show_fps = atoi(v);
+    else if (!strcmp(it->setting, "fast_loading")) rt_fast_loading = atoi(v);
     else if (!strcmp(it->setting, "texture_pack")) rt_tex_pack_on = atoi(v), rt_tex_reload = 1;
-    else if (!strcmp(it->setting, "texture_upscale")) rt_tex_upscale = atoi(v) >= 2 ? 2 : 0, rt_tex_reload = 1;
+    else if (!strcmp(it->setting, "texture_upscale")) rt_tex_upscale = atoi(v) >= 4 ? 4 : atoi(v) >= 2 ? 2 : 0, rt_tex_reload = 1;
+    else if (!strcmp(it->setting, "hdr_paper_white")) rt_hdr_paper = (float)atof(v);
+    else if (!strcmp(it->setting, "hdr_peak")) rt_hdr_peak = (float)atof(v); /* ("auto": 0, the screen's) */
     else if (!strcmp(it->setting, "sharpen")) rt_post_sharpen = (float)atof(v);
     else if (!strcmp(it->setting, "bloom")) rt_post_bloom = (float)atof(v);
     else if (!strcmp(it->setting, "vibrance")) rt_post_vibrance = (float)atof(v);

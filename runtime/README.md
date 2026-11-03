@@ -79,11 +79,17 @@ first build takes a while.
 | `XBRT_SHARPEN` | `0`-`1`: contrast-adaptive sharpening of the shown picture (after AMD FidelityFX CAS); `sharpen` in forza.ini, F1 | 0.5 |
 | `XBRT_BLOOM` | `0`-`1`: a soft glow round the brightest parts, from a half-size mipmapped copy of the picture, over Forza's own glow; `bloom` | 0.3 |
 | `XBRT_VIBRANCE` | `0`-`1`: more colour in dull tones, saturated ones left alone; `vibrance` | 0.25 |
-| `XBRT_TEX_UPSCALE` | `2`: every colour texture (not depth or cube maps) drawn at twice its size on the GPU as it loads (gltexhd.c: Catmull-Rom held within its four nearest texels, the mipmaps made again), once per texture; `texture_upscale` | 2 |
+| `XBRT_TEX_UPSCALE` | `2` or `4`: every colour texture (not depth or cube maps) drawn at 2 or 4 times its size on the GPU (4x only up to 512 a side, larger ones 2x) as it loads (gltexhd.c: Catmull-Rom held within its four nearest texels, the mipmaps made again), once per texture; `texture_upscale` | 2 |
+| `XBRT_HDR` | `1`: HDR output (hdr.c): the window a D3D11 flip-model swap chain in scRGB, the frame drawn as before into an 8-bit framebuffer and expanded into a texture shared with OpenGL (WGL_NV_DX_interop2); only when Windows has HDR on for the screen (`XBRT_HDR_FORCE=1` skips that check, for testing); `hdr` | 0 |
+| `XBRT_HDR_PAPER` | HDR: SDR white in nits; `hdr_paper_white` | 200 |
+| `XBRT_HDR_PEAK` | HDR: the brightest tones (above 60% of white raised toward it) in nits, or `auto` (the screen's peak); `hdr_peak` | auto |
 | `XBRT_TEX_PACK` | a folder of replacement textures, `<key>.hd`, swapped in as each loads (tools/texpack.py makes them, e.g. with Real-ESRGAN) | `<mods>/textures` |
 | `XBRT_TEX_EXPORT` | `<folder>`: each texture the game uploads saved once as `<key>.bmp`, for tools/texpack.py (not those it redraws over and over: videos, copies of the screen) | off |
 | `XBRT_HASH_CRC` | `0`: the change checks' hash in plain C instead of the CPU's CRC32C (SSE4.2), for comparing | 1 |
 | `XBRT_SHOW_FPS` | `1`: new pictures a second in the top left corner; `show_fps` | 0 |
+| `XBRT_FAST_LOADING` | `0`: the game's least time on its loading screens kept (hle_qol.c: 1 to 3 s a race load, the picture stopped); `fast_loading`, F1 | 1 |
+| `XBRT_SKIP_INTRO` | `0`: the intro video at the start plays (by default A is pressed for the player as it starts); `skip_intro` | 1 |
+| `XBRT_SOFT_SHADOWS` | `0`: shadow-map compares as the Xbox's (2 x 2 texels); by default 4 x 4, nine filtered compares averaged, softer edges; `soft_shadows` | 1 |
 | `XBRT_PRESENT_SHOT` | `<file>`: the shown picture, after the post effects, as `<file>_NNN.ppm` every 5 s (testing; screenshots are the game's picture before them) | off |
 | `XBRT_PRESENT_SHOT_MS` | `<ms>`: `XBRT_PRESENT_SHOT` that often, and of every picture shown, menus too (menu transitions) | 5000 |
 | `XBRT_GAMMA_LOG` | `1`: each gamma ramp the game writes (its fades), at three points | off |

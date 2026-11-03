@@ -110,7 +110,18 @@ extern volatile float rt_draw_distance;       /* XBRT_DRAW_DISTANCE (nv2a.c); 0:
 extern volatile float rt_post_sharpen, rt_post_bloom, rt_post_vibrance; /* XBRT_SHARPEN, XBRT_BLOOM, XBRT_VIBRANCE: the shown picture's post effects, 0 off */
 extern volatile int rt_display_fxaa;
 extern volatile int rt_show_fps;
+extern volatile int rt_fast_loading;  /* hle_qol.c: XBRT_FAST_LOADING, the loading screens' least time skipped */
+extern volatile int rt_skip_intro;    /* hle_qol.c: XBRT_SKIP_INTRO, the intro video skipped (A pressed for the player) */
+extern volatile uint64_t rt_intro_at; /* file.c: when the intro video was first opened (100 ns), 0 not yet */
+int rt_qol_pad(void);                 /* hle_qol.c: 1 while the runtime presses A for the player (hle_input.c) */
 extern volatile int rt_tex_upscale, rt_tex_pack_on, rt_tex_reload; /* gltexhd.c: XBRT_TEX_UPSCALE, the HD pack (XBRT_TEX_PACK_ON); F1 changed one: reload at the next flip */
+/* hdr.c: HDR output through a DXGI swap chain (XBRT_HDR); nits, F1 changes them live (peak 0: the screen's) */
+extern volatile float rt_hdr_paper, rt_hdr_peak;
+extern float rt_hdr_screen_peak;
+int rt_hdr_start(void *hwnd, int W, int H); /* once, before OpenGL takes the window: 1 if HDR is on */
+int rt_hdr_on(void);
+unsigned rt_hdr_frame(int W, int H);        /* the frame's HDR texture (an OpenGL name), held until rt_hdr_present; 0 none */
+void rt_hdr_present(int vsync);
 extern volatile float rt_fps_shown;          /* XBRT_AA: edge smoothing on the shown picture */
 void rt_display_set_fullscreen(int on);
 extern uint32_t rt_frame_interval_at; /* where the game keeps its frame interval in vertical blanks, or 0 */

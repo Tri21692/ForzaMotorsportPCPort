@@ -18,12 +18,12 @@ RTFLAGS = -O2 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=off -I$(GEN) 
 ifeq ($(OS),Windows_NT)
 EXE = .exe
 OSFLAGS = -Wa,-mbig-obj -D_FILE_OFFSET_BITS=64
-OSLIBS = -lwinmm -lgdi32 -lopengl32
+OSLIBS = -lwinmm -lgdi32 -lopengl32 -ld3d11 -ldxgi -ldxguid
 endif
 
 GEN_SRC = $(wildcard $(GEN)/*.c)
 GEN_OBJ = $(patsubst $(GEN)/%.c,build/gen/%.o,$(GEN_SRC))
-RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c apu_vp.c hle_input.c hle_net.c hle_fiber.c hle_d3d.c hle_career.c hle_drift.c hle_career_panel.c hle_career_cats.c hle_cheats.c hle_listcheck.c crypto.c inflate.c display.c raster.c gl.c settings.c overlay.c soundtrack.c
+RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c apu_vp.c hle_input.c hle_net.c hle_fiber.c hle_d3d.c hle_career.c hle_drift.c hle_career_panel.c hle_career_cats.c hle_cheats.c hle_qol.c hle_listcheck.c crypto.c inflate.c display.c raster.c gl.c hdr.c settings.c overlay.c soundtrack.c
 RT_OBJ = $(patsubst %.c,build/%.o,$(RT_SRC))
 
 TARGET ?= forza$(EXE)

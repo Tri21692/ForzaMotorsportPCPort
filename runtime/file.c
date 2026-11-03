@@ -346,6 +346,7 @@ static int host_path(const char *xbox, char *out, size_t n) {
         snprintf(root, sizeof root, "%s", disc_dir);
         rest = dev + 14;
         note_track(rest);
+        if (!rt_intro_at && !strncasecmp(rest, "\\media\\FrontEnd\\IntroVideo", 26)) rt_intro_at = rt_now_100ns(); /* (hle_qol.c: skip_intro) */
         if (track_file(rest, out, n)) return 1;
         if (mod_file(rest, out, n)) {
             static int said;

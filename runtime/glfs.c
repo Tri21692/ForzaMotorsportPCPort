@@ -124,6 +124,28 @@ static char *fs_generate(const FsKey *k) {
             char bexpr[64] = "0.0", fl4[96] = "";
             if (mode == 2) snprintf(bexpr, sizeof bexpr, "clamp(q.z / qw, 0.0, u_dmax[%d])", i);
             if (kind == 4) snprintf(fl4, sizeof fl4, "          a = floor(a * u_dmax[%d] + 0.5);\n", i); /* GL's 0..1 depth back to the Xbox's units */
+            static int soft = -1; /* XBRT_SOFT_SHADOWS (soft_shadows): the compare over 4 x 4 texels, nine of the
+                                   * Xbox's 2 x 2 filtered compares averaged: edges a texel softer each side, not stepped */
+            if (soft < 0) soft = !(getenv("XBRT_SOFT_SHADOWS") && !atoi(getenv("XBRT_SOFT_SHADOWS")));
+            if (soft)
+                fsput(&s, "    { vec4 q = v_t%d; float qw = q.w != 0.0 ? q.w : 1.0;\n"
+                          "      float b = %s;\n"
+                          "      vec2 sz = vec2(textureSize(u_tex%d, 0));\n"
+                          "      vec2 uv = q.xy / qw * u_scale[%d] * sz - 0.5, f = fract(uv), base = (floor(uv) + 0.5) / sz;\n"
+                          "      float c[16];\n"
+                          "      for (int k = 0; k < 16; k++) {\n"
+                          "          float a = texture(u_tex%d, base + vec2((k & 3) - 1, (k >> 2) - 1) / sz).r;\n"
+                          "%s"
+                          "          c[k] = %s ? 1.0 : 0.0;\n"
+                          "      }\n"
+                          "      float t = 0.0;\n"
+                          "      for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) {\n"
+                          "          int o = y * 4 + x;\n"
+                          "          t += mix(mix(c[o], c[o + 1], f.x), mix(c[o + 4], c[o + 5], f.x), f.y);\n"
+                          "      }\n"
+                          "      R%d = vec4(t / 9.0); }\n",
+                       i, bexpr, i, i, i, fl4, getenv("XBRT_GL_NO_SHADOW") ? "true" : fs_cmp(k->shadow_func), 8 + i);
+            else
             fsput(&s, "    { vec4 q = v_t%d; float qw = q.w != 0.0 ? q.w : 1.0;\n"
                       "      float b = %s;\n"
                       "      vec2 sz = vec2(textureSize(u_tex%d, 0));\n"

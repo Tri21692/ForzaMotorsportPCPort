@@ -437,7 +437,7 @@ static int gl_setup(void) {
     glEnable(GL_DEPTH_CLAMP);
     gl_k = getenv("XBRT_GL_SCALE") ? atoi(getenv("XBRT_GL_SCALE")) : 2;
     if (gl_k < 1) gl_k = 1;
-    if (gl_k > 4) gl_k = 4;
+    if (gl_k > 6) gl_k = 6; /* (6: 3840x2880) */
     fprintf(stderr, "xbrt: drawing on the GPU\n");
     return 1;
 }
@@ -710,10 +710,14 @@ static const char *present_fs =
     "uniform vec2 u_px;\n" /* one window pixel, in the picture's coordinates */
     "uniform sampler2D u_bloom;\n" /* the picture at half size with every mip level (gl_window_show) */
     "uniform float u_sharpen, u_bloom_amt, u_vibrance;\n"
-    "vec3 shrink(vec2 uv) {\n" /* shrinking the supersampled picture: four bilinear taps cover each pixel's area, where one skipped rows */
-    "    vec2 d = 0.25 * max(u_step, vec2(1.0)) * u_rcp;\n"
-    "    return 0.25 * (texture(u_src, uv + vec2(-d.x, -d.y)).rgb + texture(u_src, uv + vec2(d.x, -d.y)).rgb\n"
-    "                 + texture(u_src, uv + vec2(-d.x, d.y)).rgb + texture(u_src, uv + d).rgb);\n"
+    "vec3 shrink(vec2 uv) {\n" /* shrinking the supersampled picture: n x n bilinear taps (2 x 2 texels each) cover each pixel's area, where one skipped rows */
+    "    vec2 st = max(u_step, vec2(1.0));\n"
+    "    ivec2 n = clamp(ivec2(ceil(st * 0.5)), ivec2(2), ivec2(4));\n" /* (4 taps up to 4 texels a pixel; more at 5x and 6x) */
+    "    vec3 c = vec3(0.0);\n"
+    "    for (int j = 0; j < n.y; j++)\n"
+    "        for (int i = 0; i < n.x; i++)\n"
+    "            c += texture(u_src, uv + ((vec2(i, j) + 0.5) / vec2(n) - 0.5) * st * u_rcp).rgb;\n"
+    "    return c / float(n.x * n.y);\n"
     "}\n"
     "vec3 fxaa(vec2 uv) {\n"
     "    vec3 m = texture(u_src, uv).rgb;\n"
@@ -761,6 +765,77 @@ static const char *present_fs =
 static void gl_overlay_draw(int vx, int vy, int vw, int vh);
 static void gl_tt_hud_draw(int vx, int vy, int vw, int vh);
 
+/* HDR (hdr.c): the shown frame drawn as before, into win_fbo (8 bits, the window's size), then
+ * written into the swap chain's texture in scRGB (linear, 1.0 = 80 nits): its tones made linear
+ * (2.2), SDR white at the paper white, the brightest (above 60% of white) raised toward the peak,
+ * as the eye takes the sky and lamps on an HDR screen. u_paper and u_peak in 80-nit units. */
+static const char *hdr_fs =
+    "#version 430\n"
+    "in vec2 v_uv;\n" /* (rows down: the D3D texture's first row is the top) */
+    "out vec4 o;\n"
+    "uniform sampler2D u_sdr;\n"
+    "uniform float u_paper, u_peak;\n"
+    "void main() {\n"
+    "    vec3 l = pow(clamp(texture(u_sdr, v_uv).rgb, 0.0, 1.0), vec3(2.2));\n"
+    "    float y = dot(l, vec3(0.2126, 0.7152, 0.0722));\n"
+    "    float t = clamp((y - 0.6) / 0.4, 0.0, 1.0);\n"
+    "    l *= mix(1.0, max(u_peak / u_paper, 1.0), t * t * t);\n"
+    "    o = vec4(l * u_paper, 1.0);\n"
+    "}\n";
+static GLuint win_fbo, win_tex;
+static int win_w, win_h;
+
+/* The framebuffer the frame is drawn into: the window's (0), or with HDR on win_fbo at W x H. */
+static GLuint gl_window_target(int W, int H) {
+    if (!rt_hdr_on()) return 0;
+    if (W != win_w || H != win_h || !win_fbo) {
+        if (win_tex) glDeleteTextures(1, &win_tex);
+        if (!win_fbo) glGenFramebuffers(1, &win_fbo);
+        glGenTextures(1, &win_tex);
+        glBindTexture(GL_TEXTURE_2D, win_tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, W, H);
+        glBindFramebuffer(GL_FRAMEBUFFER, win_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, win_tex, 0);
+        win_w = W, win_h = H;
+    }
+    return win_fbo;
+}
+
+/* win_fbo's frame to the HDR screen (hdr_fs into the shared texture, then the swap chain). */
+static void gl_hdr_present(int W, int H, GLuint vao) {
+    static GLuint prog, fbo, attached;
+    static GLint u_sdr, u_paper, u_peak;
+    static int vsync = -1;
+    if (!prog) {
+        GLuint vs = compile(GL_VERTEX_SHADER, present_vs), fs = compile(GL_FRAGMENT_SHADER, hdr_fs);
+        prog = glCreateProgram();
+        if (vs && fs) glAttachShader(prog, vs), glAttachShader(prog, fs), glLinkProgram(prog);
+        u_sdr = glGetUniformLocation(prog, "u_sdr"), u_paper = glGetUniformLocation(prog, "u_paper"), u_peak = glGetUniformLocation(prog, "u_peak");
+        glGenFramebuffers(1, &fbo);
+        vsync = getenv("XBRT_VSYNC") && atoi(getenv("XBRT_VSYNC"));
+    }
+    GLuint t = rt_hdr_frame(W, H);
+    if (!t) return;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    if (t != attached) glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t, 0), attached = t;
+    glDisable(GL_SCISSOR_TEST), glDisable(GL_DEPTH_TEST), glDisable(GL_BLEND), glDisable(GL_CULL_FACE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glViewport(0, 0, W, H);
+    glUseProgram(prog);
+    gl_using = NULL; /* the next draw sets its own program again */
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, win_tex);
+    glBindSampler(0, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    float peak = rt_hdr_peak > 0 ? rt_hdr_peak : rt_hdr_screen_peak;
+    glUniform1i(u_sdr, 0), glUniform1f(u_paper, rt_hdr_paper / 80.0f), glUniform1f(u_peak, peak / 80.0f);
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(gl_vao);
+    rt_hdr_present(vsync);
+}
+
 static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     static GLuint prog, empty_vao;
     static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step, u_ramp_mix, u_post, u_px, u_bloom, u_sharpen, u_bloom_amt, u_vibrance;
@@ -805,7 +880,8 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     }
     int x, y, cw, ch;
     rt_display_fit(W, H, &x, &y, &cw, &ch);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    GLuint target = gl_window_target(W, H); /* (0: the window; HDR: win_fbo) */
+    glBindFramebuffer(GL_FRAMEBUFFER, target);
     glDisable(GL_SCISSOR_TEST), glDisable(GL_DEPTH_TEST), glDisable(GL_BLEND), glDisable(GL_CULL_FACE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glViewport(0, 0, W, H);
@@ -836,7 +912,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, bloom_fbo);
         glBlitFramebuffer(0, 0, w, h, 0, 0, bloom_w, bloom_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, target);
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, bloom_tex);
         glBindSampler(2, 0);
@@ -901,7 +977,8 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         }
         free(px);
     }
-    rt_gl_window_swap();
+    if (target) gl_hdr_present(W, H, empty_vao);
+    else rt_gl_window_swap();
     return 1;
 }
 
@@ -2122,6 +2199,9 @@ static void gl_filter_of(GlSampling *k, const Texture *t, uint32_t filt) {
     }
     k->aniso = 1;
     if (aniso > 1 && !t->depth && t->levels > 1 && min != GL_NEAREST && min != GL_LINEAR) min = GL_LINEAR_MIPMAP_LINEAR, k->aniso = aniso;
+    /* A bigger copy (gltexhd.c) the game samples without mipmaps (it has none) is sampled through its
+     * own: far off, a 2 or 4 times bigger level 0 read texel by texel cost the GPU a frame in six. */
+    if (t->hd && min == GL_LINEAR) min = GL_LINEAR_MIPMAP_LINEAR, k->aniso = aniso > 1 ? aniso : 1;
     k->min = min, k->mag = mag, k->bias = (float)bias / 256.0f;
 }
 

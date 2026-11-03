@@ -4,7 +4,7 @@
  *   - replaced from a pack: <pack>/<key>.hd ('XHD1', u32 width, u32 height, then the texels as the
  *     decoder makes them, A8R8G8B8 rows), made offline (tools/texpack.py: an AI upscaler over
  *     exported textures). XBRT_TEX_PACK names the folder, else <mods>/textures;
- *   - drawn at twice its size on the GPU (XBRT_TEX_UPSCALE=2, texture_upscale in forza.ini): a
+ *   - drawn at 2 or 4 times its size on the GPU (XBRT_TEX_UPSCALE=2 or 4, texture_upscale in forza.ini): a
  *     compute pass of Catmull-Rom interpolation held within its four nearest texels (no ringing),
  *     then the mipmaps made again. Once per texture, so nothing a frame;
  *   - exported (XBRT_TEX_EXPORT=<folder>): <key>.bmp, level 0 with alpha, once each, for a pack.
@@ -67,7 +67,7 @@ static void hd_init(void) {
     hd_on = 1;
     if (rt_tex_upscale < 0) {
         const char *s = getenv("XBRT_TEX_UPSCALE");
-        rt_tex_upscale = s && atoi(s) >= 2 ? 2 : 0;
+        rt_tex_upscale = !s ? 0 : atoi(s) >= 4 ? 4 : atoi(s) >= 2 ? 2 : 0;
     }
     if (rt_tex_pack_on < 0) rt_tex_pack_on = !(getenv("XBRT_TEX_PACK_ON") && !atoi(getenv("XBRT_TEX_PACK_ON")));
     hd_scale = rt_tex_upscale;
@@ -96,7 +96,7 @@ static void hd_init(void) {
     }
     if (d) closedir(d);
     if (hd_npack) qsort(hd_pack, (size_t)hd_npack, sizeof *hd_pack, hd_cmp);
-    fprintf(stderr, "xbrt: textures: %d in the pack %s (%s), upscale %s%s%s\n", hd_npack, hd_dir, rt_tex_pack_on ? "on" : "off", hd_scale ? "2x" : "off",
+    fprintf(stderr, "xbrt: textures: %d in the pack %s (%s), upscale %s%s%s\n", hd_npack, hd_dir, rt_tex_pack_on ? "on" : "off", hd_scale == 4 ? "4x" : hd_scale ? "2x" : "off",
             hd_export ? ", exported to " : "", hd_export ? hd_export : "");
 }
 
@@ -155,6 +155,7 @@ static const char *hd_cs =
     "uniform sampler2D u_src;\n"
     "uniform vec2 u_sizef;\n"
     "uniform int u_wrap;\n" /* a tiling (power of two) texture wraps at its edges, a picture (linear) is held at them */
+    "uniform int u_k;\n" /* the new size over the old: 2 or 4 */
     "ivec2 u_size;\n"
     "vec4 at(ivec2 p) {\n"
     "    p = u_wrap == 1 ? (p % u_size + u_size) % u_size : clamp(p, ivec2(0), u_size - 1);\n"
@@ -163,8 +164,8 @@ static const char *hd_cs =
     "void main() {\n"
     "    u_size = ivec2(u_sizef);\n"
     "    ivec2 o = ivec2(gl_GlobalInvocationID.xy);\n"
-    "    if (o.x >= 2 * u_size.x || o.y >= 2 * u_size.y) return;\n"
-    "    vec2 s = (vec2(o) + 0.5) * 0.5 - 0.5;\n" /* the new texel's centre in the old texels */
+    "    if (o.x >= u_k * u_size.x || o.y >= u_k * u_size.y) return;\n"
+    "    vec2 s = (vec2(o) + 0.5) / float(u_k) - 0.5;\n" /* the new texel's centre in the old texels */
     "    ivec2 b = ivec2(floor(s));\n"
     "    vec2 f = s - vec2(b);\n"
     "    vec4 wx = vec4(((-0.5 * f.x + 1.0) * f.x - 0.5) * f.x, (1.5 * f.x - 2.5) * f.x * f.x + 1.0,\n"
@@ -182,11 +183,11 @@ static const char *hd_cs =
     "    imageStore(u_dst, o, c);\n"
     "}\n";
 
-/* t's level 0 at twice the size into tex (bound to the current unit), every mip level made. The
+/* t's level 0 at k times the size (2 or 4) into tex (bound to the current unit), every mip level made. The
  * renderer's program and active unit are put back: this runs while a draw binds its textures. */
-static int hd_upscale(GLuint tex, const Texture *t) {
+static int hd_upscale(GLuint tex, const Texture *t, int k) {
     static GLuint prog, src;
-    static GLint u_size, u_wrap, u_src;
+    static GLint u_size, u_wrap, u_src, u_k;
     static int failed;
     if (failed) return 0;
     if (!prog) {
@@ -202,6 +203,7 @@ static int hd_upscale(GLuint tex, const Texture *t) {
             return 0;
         }
         u_size = glGetUniformLocation(prog, "u_sizef"), u_wrap = glGetUniformLocation(prog, "u_wrap"), u_src = glGetUniformLocation(prog, "u_src");
+        u_k = glGetUniformLocation(prog, "u_k");
         glGenTextures(1, &src);
     }
     GLint was_prog = 0, was_unit = 0;
@@ -224,12 +226,12 @@ static int hd_upscale(GLuint tex, const Texture *t) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->w, t->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, t->texels);
     glActiveTexture((GLenum)was_unit);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexStorage2D(GL_TEXTURE_2D, hd_levels(2 * t->w, 2 * t->h), GL_RGBA8, 2 * t->w, 2 * t->h);
+    glTexStorage2D(GL_TEXTURE_2D, hd_levels(k * t->w, k * t->h), GL_RGBA8, k * t->w, k * t->h);
     glUseProgram(prog);
-    glUniform1i(u_src, 15), glUniform1i(u_wrap, !t->linear);
+    glUniform1i(u_src, 15), glUniform1i(u_wrap, !t->linear), glUniform1i(u_k, k);
     glUniform2fv(u_size, 1, (float[2]){(float)t->w, (float)t->h});
     glBindImageTexture(0, tex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
-    glDispatchCompute((GLuint)(2 * t->w + 7) / 8, (GLuint)(2 * t->h + 7) / 8, 1);
+    glDispatchCompute((GLuint)(k * t->w + 7) / 8, (GLuint)(k * t->h + 7) / 8, 1);
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_UPDATE_BARRIER_BIT);
     glBindImageTexture(0, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
     glGenerateMipmap(GL_TEXTURE_2D);
@@ -240,13 +242,16 @@ static int hd_upscale(GLuint tex, const Texture *t) {
 /* From gl_texture, for a 2D colour texture: 1 when tex (bound) holds it, from the pack or upscaled. */
 static int hd_upload(GLuint tex, Texture *t) {
     if (hd_on < 0) hd_init();
+    t->hd = 0;
     if (t->cube || t->depth || !t->texels || t->texels == tex_dropped || t->w < 8 || t->h < 8) return 0;
     int pack = hd_npack && rt_tex_pack_on > 0;
     if (!hd_export && !pack && !hd_scale) return 0;
     uint64_t k = hd_key(t->texels, t->w, t->h);
     if (hd_export && t->decodes <= 2) hd_export_one(t, k); /* (not each frame of a video) */
-    if (pack && hd_in_pack(k) && hd_load(tex, k)) return 1;
+    if (pack && hd_in_pack(k) && hd_load(tex, k)) return t->hd = 1;
     /* not one the CPU redraws over and over (its re-uploads: a compute pass each), nor huge (memory) */
-    if (hd_scale && t->decodes <= 4 && t->w <= 1024 && t->h <= 1024) return hd_upscale(tex, t);
+    /* (4x only up to 512 a side: none past 2048, as at 2x) */
+    if (hd_scale && t->decodes <= 4 && t->w <= 1024 && t->h <= 1024)
+        return t->hd = hd_upscale(tex, t, hd_scale == 4 && t->w <= 512 && t->h <= 512 ? 4 : 2);
     return 0;
 }
