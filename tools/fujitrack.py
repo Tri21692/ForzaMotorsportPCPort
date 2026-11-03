@@ -343,6 +343,7 @@ CLEARINGS += [(a, b, side, 75.0) for a, b, side in STAND_SITES]
 # every RAIL_REPEAT m along, both faces.
 ARMCO_H, FENCE_H, RAIL_REPEAT = (-0.5, 0.8), (0.8, 3.8), 4.0   # (the armco's foot in the grass, 0.3 m under the runway)
 FENCE_NEAR = 35.0   # m from the centre line: the outline dressed only this near the track
+FENCE_RISE = 3.0    # m: and no higher or lower than the track there (up the embankment by the last bend it stood in the sky)
 RAIL_SMOOTH, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
 GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces within this of its first (fewer, bigger donors:
                                  # each is a draw in every cell; 2,000 small ones cost frames)
@@ -2126,7 +2127,8 @@ def dressing(walls, centre=None):
         c2 = centre[:, [0, 2]]
         split = []
         for r in outline_runs(walls, centre):  # only where the outline runs near the track: GT4's runway's grass runs up
-            near = np.array([np.hypot(*(c2 - q[[0, 2]]).T).min() for q in r]) <= FENCE_NEAR  # the embankments, its fence
+            jn = [int(np.argmin(np.hypot(*(c2 - q[[0, 2]]).T))) for q in r]  # the embankments, its fence
+            near = np.array([np.hypot(*(c2[j] - q[[0, 2]])) <= FENCE_NEAR and abs(q[1] - centre[j, 1]) <= FENCE_RISE for q, j in zip(r, jn)])
             cur = []                                                                     # floated over the hills
             for q, ok in zip(r, near):
                 if ok: cur.append(q)
