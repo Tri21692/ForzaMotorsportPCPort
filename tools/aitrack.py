@@ -51,7 +51,7 @@ def racing_line(p, h, margin=0.25, rounds=400):
     return chi
 
 
-def geometry(centre, half, crc, circuit=True):
+def geometry(centre, half, crc, circuit=True, line=None):
     p, h = waypoints(centre, half)
     t = np.roll(p, -1, 0) - np.roll(p, 1, 0)
     left = np.stack([-t[:, 2], t[:, 0]], 1)
@@ -65,7 +65,7 @@ def geometry(centre, half, crc, circuit=True):
         ('fWaypointX', 'float', p[:, 0]), ('fWaypointY', 'float', p[:, 2]), ('fWaypointZ', 'float', p[:, 1]),
         ('fNormalX', 'float', left[:, 0] * h), ('fNormalY', 'float', left[:, 1] * h), ('fNormalZ', 'float', np.zeros(n)),
         ('fLeftWallChi', 'float', one), ('fRightWallChi', 'float', -one),
-        ('fChiOptimal', 'float', racing_line(p, h)),
+        ('fChiOptimal', 'float', racing_line(p, h) if line is None else line(p, h, left)),
         ('fLeftCurbChi', 'float', one), ('fRightCurbChi', 'float', -one),
     ]), p
 
@@ -163,12 +163,13 @@ def renamed(d, name):
     return mlp.write([(n, t, name.encode() if n == 'trackName' else v[n]) for n, t, c, k in fields])
 
 
-def install(mega, name, centre, half, circuit=True):
+def install(mega, name, centre, half, circuit=True, line=None):
     """Into the open Mega.ca2 archive `mega` (addcar.Archive): the track's geometry and segmentation,
-    and its name in the AI track list. Returns (waypoints, segments)."""
+    and its name in the AI track list. `line`, if given, makes the suggested line: a function of the waypoints,
+    their half widths and their left normals (x, z) giving chi across the road. Returns (waypoints, segments)."""
     ai = 'ai' + B + 'drivatarv2' + B
     crc = mlp.read(mega.files[ai + 'vancouverreversegeometry.bin'])[0]['iCRC']
-    geo, p = geometry(centre, half, crc, circuit)
+    geo, p = geometry(centre, half, crc, circuit, line)
     # the AI drivers' files: a track in the list needs them all or its load fails ("disc error"), and
     # they go by its segments (Pacific Shipyards II's 55 against this one's 14: a crash at the start);
     # a stock track's with as many segments, named for this one. The turns' threshold is eased or

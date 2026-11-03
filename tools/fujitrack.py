@@ -151,6 +151,51 @@ def cross_sections(r, c):
     return left, right, nrm
 
 
+RACING_LINES = (1, 6)   # GT4's autodrive file's lines taken as the racing line (2 an alternate, 4 the pit lane's)
+LINE_SMOOTH = 40        # waypoints (2 m) the suggested line is smoothed over
+LINE_LIMIT = 0.85       # its reach across the road (chi), each side
+
+
+def ai_lines(runway_dir, which):
+    """GT4's autodrive lines `which` (indices), each a list of (x, z) in GT4's frame (x turned round, as ai_points)."""
+    import glob
+    ads = glob.glob(os.path.join(runway_dir, '*.ad'))
+    if not ads: return []
+    d = open(ads[0], 'rb').read()
+    b = 0x80
+    n_lines, aoff = struct.unpack_from('<ii', d, b + 20)
+    out = []
+    for i in which:
+        if i >= n_lines: continue
+        io = b + struct.unpack_from('<i', d, b + aoff + 4 * i)[0]
+        n = struct.unpack_from('<i', d, io)[0]
+        out.append(np.array([struct.unpack_from('<2f', d, io + 0x40 + k * 0x40 + 4) for k in range(n)], float).reshape(-1, 2) * (-1, 1))
+    return out
+
+
+def racing_line(runway_dir):
+    """The suggested line (aitrack's `line`) from GT4's racing lines (RACING_LINES): each point's place across the
+    road at its nearest waypoint, spread over all the waypoints round the lap, averaged over LINE_SMOOTH of them,
+    within LINE_LIMIT of the edges. None without GT4's file."""
+    lines = ai_lines(runway_dir, RACING_LINES)
+    if not lines: return None
+    pts = np.vstack([to_forza(np.stack([l[:, 0], np.zeros(len(l)), l[:, 1]], 1))[:, [0, 2]] for l in lines])
+
+    def line(p, h, left):
+        xz = p[:, [0, 2]]
+        n = len(xz)
+        j = np.array([np.hypot(*(xz - q).T).argmin() for q in pts])
+        chi = np.einsum('ij,ij->i', pts - xz[j], left[j]) / h[j]
+        order = np.argsort(j)
+        jj, cc = j[order], chi[order]
+        full = np.interp(np.arange(n), np.concatenate([jj - n, jj, jj + n]), np.concatenate([cc, cc, cc]))
+        k = np.ones(LINE_SMOOTH) / LINE_SMOOTH
+        full = np.convolve(np.concatenate([full[-LINE_SMOOTH:], full, full[:LINE_SMOOTH]]), k, 'same')[LINE_SMOOTH:-LINE_SMOOTH]
+        print("suggested line: GT4's %d points, chi %.2f to %.2f" % (len(pts), full.min(), full.max()))
+        return np.clip(full, -LINE_LIMIT, LINE_LIMIT)
+    return line
+
+
 def ai_points(runway_dir):
     """The AI racing lines' points (x, z) from the course's autodrive file (<runway folder>/*.ad: PDTools'
     Courses/Autodrive layout: 'ADLN' at 0x80, its lines' records 0x40 bytes from 0x40 into each, x and z at +4)."""
@@ -384,10 +429,10 @@ def build(disc, runway_dir, out):
     cf = to_forza(E['centre'])
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
     clear = clearings(cf, sides(cf)[1], reach[:, 0], reach[:, 1])
-    Vt, Tt, ground_at, Kt = terrain(Vf, F, drawn, cf, read_ground(runway_dir), clear)
+    Vt, Tt, ground_at, Kt, top_near = terrain(Vf, F, drawn, cf, read_ground(runway_dir), clear)
     Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON, ground_at)
-    Vfar, Tfar, Kfar = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
-    Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear)
+    Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
+    Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear, (top_near, top_far))
     Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
     o_t = o_f + len(Vfar)
@@ -416,7 +461,7 @@ def build(disc, runway_dir, out):
     nmesh = struct.unpack_from('<I', res, model)[0]
     pool = []
     import re
-    prop = re.compile('vbuff_quickpreview_(%s)(_vb\d+)?$' % '|'.join(['(?:%s)' % p_[0].rstrip('$') for p_ in SCATTER] + [re.escape(x_) for r_ in ROWS if isinstance(r_[0], list) for x_ in r_[0]] + [r_[0][0].rstrip('$') for r_ in ROWS if not isinstance(r_[0], list)]))
+    prop = re.compile(r'vbuff_quickpreview_(%s)(_vb\d+)?$' % '|'.join(['(?:%s)' % p_[0].rstrip('$') for p_ in SCATTER] + [re.escape(x_) for r_ in ROWS if isinstance(r_[0], list) for x_ in r_[0]] + [r_[0][0].rstrip('$') for r_ in ROWS if not isinstance(r_[0], list)]))
     props = {k + 9 for k, r in enumerate(names) if prop.match(r[0])}  # (props to place: not donors)
     from collections import Counter
     sharing = Counter(record(res, model, i)[1][4] for i in range(nmesh))
@@ -575,7 +620,7 @@ def build(disc, runway_dir, out):
                        ('QuickPreview1.pvs.ppw', ppw), ('quickpreview1.xbp.svb', zlib_like(files['quickpreview1.xbp.svb'], svb_out))):
         open(os.path.join(out, name), 'wb').write(bytes(data))
     np.savez(os.path.join(out, 'fuji_forza.npz'), centre=cen, inner=inner, outer=outer)
-    for f in ('fuji_logo.png', LOAD_PHOTO):  # (the menus' art, for install)
+    for f in ('fuji_logo.png', LOAD_PHOTO, 'new_fisco.ad'):  # (the menus' art and GT4's racing lines, for install)
         shutil.copy(os.path.join(runway_dir, f), os.path.join(out, f))
     build_png(placed, Vd, os.path.join(out, 'build_check.png'))
 
@@ -619,6 +664,8 @@ TREE_TALL = [0, 1, 2, 3]  # the cells holding a whole tree (the generated trees'
 TREE_CLUSTERS = 520        # generated clusters, each 3 to 9 trees within 6 to 22 m
 TREE_BAND = (FOREST_FROM - 14.0, FOREST_FROM + 6.0)   # m beyond the runway: along the woods' edge (its ramp hidden)
 TREE_H = (12.0, 20.0)      # m high (the canopy 13)
+WOOD_FILL = (20.0, 300.0)  # trees through the woods (the user's: "like we're in the middle of a forest"): one about every
+                           # 20 m (jittered), out to 300 m beyond the runway, crowns over the canopy
 
 
 
@@ -906,6 +953,20 @@ def apron(centre, inner, reach_in, s0, s1, cols, ground_at=None):
     return V, T
 
 
+def grid_sampler(Hg, lo, cell):
+    """A grid's heights (corners every `cell` m from `lo`) at points (..., 2), blended between its corners."""
+    nz, nx = Hg.shape
+
+    def at(xz):
+        f = (np.asarray(xz, float) - lo) / cell
+        i0 = np.clip(np.floor(f).astype(int), 0, [nx - 2, nz - 2])
+        t = np.clip(f - i0, 0, 1)
+        a, b = i0[..., 0], i0[..., 1]
+        return (Hg[b, a] * (1 - t[..., 0]) + Hg[b, a + 1] * t[..., 0]) * (1 - t[..., 1]) + \
+               (Hg[b + 1, a] * (1 - t[..., 0]) + Hg[b + 1, a + 1] * t[..., 0]) * t[..., 1]
+    return at
+
+
 def spread(y, it=600):
     """The raster y's NaN cells filled from their filled neighbours, a ring at a time: (y, how many rings away)."""
     filled = np.isfinite(y)
@@ -1011,7 +1072,7 @@ def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH,
     flip = nrm[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
     print('far ground: %d vertices, %d triangles (%d woods), %.0f to %.0f m high' % (len(V), len(T), (K == FOREST).sum(), V[:, 1].min(), V[:, 1].max()))
-    return V, T, K
+    return V, T, K, grid_sampler(y[zi, xi] - drop + can, lo, cell)
 
 
 def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
@@ -1071,7 +1132,6 @@ def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reac
     for _ in range(int(cell / g)):  # the lowest drawn runway within a cell
         low = np.minimum.reduce([np.roll(np.roll(low, dz, 0), dx, 1) for dz, dx in nb + [(0, 0)]])
     hgt = np.minimum(y, low) - drop
-    covered = rd.k >= 0
 
     def at(xz):
         ij = np.clip(np.floor((xz - r.lo) / g).astype(int), 0, [r.shape[1] - 1, r.shape[0] - 1])
@@ -1086,12 +1146,9 @@ def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reac
     can = canopy(corner, away[zi, xi], clear) if clear else np.zeros(gx.shape)
     vid = -np.ones(gx.shape, int)
     V, T, K = [], [], []
-    frac = np.linspace(0, 1, int(cell) + 1)  # (every metre: a square the runway leaves a sliver of is drawn)
     for a in range(nz - 1):
-        for b in range(nx - 1):
-            if not (near[a, b] and near[a + 1, b] and near[a, b + 1] and near[a + 1, b + 1]): continue
-            s = np.stack(np.meshgrid(gx[a, b] + cell * frac, gz[a, b] + cell * frac), -1)
-            if covered[at(s)].all(): continue
+        for b in range(nx - 1):  # (under the runway too: GT4's runway has cracks at its seams and T-junctions, holes
+            if not (near[a, b] and near[a + 1, b] and near[a, b + 1] and near[a + 1, b + 1]): continue  # to the sky)
             q = []
             for (u, v) in ((a, b), (a, b + 1), (a + 1, b + 1), (a + 1, b)):
                 if vid[u, v] < 0:
@@ -1104,16 +1161,9 @@ def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reac
     flip = n[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
     H = hgt[zi, xi]
-
-    def height(xz):  # the grid's height at points (..., 2): its corners' blended (the grass drawn between them)
-        f = (np.asarray(xz, float) - lo) / cell
-        i0 = np.clip(np.floor(f).astype(int), 0, [nx - 2, nz - 2])
-        t = np.clip(f - i0, 0, 1)
-        a, b = i0[..., 0], i0[..., 1]
-        return (H[b, a] * (1 - t[..., 0]) + H[b, a + 1] * t[..., 0]) * (1 - t[..., 1]) + \
-               (H[b + 1, a] * (1 - t[..., 0]) + H[b + 1, a + 1] * t[..., 0]) * t[..., 1]
     print('terrain: %d of %d triangles woods' % ((K == FOREST).sum(), len(K)))
-    return V, T, height, K
+    # the ground's height (the grass) and the woods' top (the canopy over it), at points (..., 2)
+    return V, T, grid_sampler(H, lo, cell), K, grid_sampler(H + can, lo, cell)
 
 
 def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, used, ground_at=None, seed=7):
@@ -1342,7 +1392,7 @@ def read_gt4_trees(runway_dir):
     return P, UV, C
 
 
-def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, clear=None, seed=11):
+def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, clear=None, tops=None, seed=11):
     """The trees: GT4's where GT4 has them (each tree's faces joined by shared corners, set on our ground; none
     wider than 25 m), and TREE_CLUSTERS clusters of two crossed cards each, off the runway (TREE_BAND), not in the
     pits and paddock or the main grandstand's strip; every face both ways round. (vertices, triangles, texture
@@ -1409,6 +1459,36 @@ def trees(runway_dir, centre, inner, reach_in, reach_out, ground_at, clear=None,
                 add(quad, [(cell / 8, 0), ((cell + 1) / 8, 0), ((cell + 1) / 8, 1), (cell / 8, 1)])
             planted += 1
     print('trees: %d planted in clusters' % planted)
+    if tops is not None:  # through the woods: WOOD_FILL
+        step, far = WOOD_FILL
+        lo, hi = centre[:, [0, 2]].min(0) - far, centre[:, [0, 2]].max(0) + far
+        gx, gz = np.meshgrid(np.arange(lo[0], hi[0], step), np.arange(lo[1], hi[1], step))
+        q = np.stack([gx.ravel(), gz.ravel()], 1) + rng.uniform(-step * 0.4, step * 0.4, (gx.size, 2))
+        c2 = centre[:, [0, 2]]
+        away = np.empty(len(q))
+        for a in range(0, len(q), 3000):
+            d = np.hypot(q[a:a + 3000, None, 0] - c2[None, :, 0], q[a:a + 3000, None, 1] - c2[None, :, 1])
+            j = d.argmin(1); dist = d[np.arange(len(j)), j]
+            side_in = np.einsum('ij,ij->i', q[a:a + 3000] - c2[j], inner[j][:, [0, 2]]) > 0
+            away[a:a + 3000] = dist - np.where(side_in, reach_in[j], reach_out[j])
+        keep = (away > FOREST_FROM + 8) & (away < far)
+        q, away = q[keep], away[keep]
+        can = canopy(q, away, clear) if clear else np.zeros(len(q))
+        q, away = q[can > CANOPY_H * 0.6], away[can > CANOPY_H * 0.6]
+        near_grid = away < TERRAIN_REACH - 2 * TERRAIN_CELL
+        top = np.where(near_grid, tops[0](q), tops[1](q))
+        filled = 0
+        for qq, tp in zip(q, top):
+            h = rng.uniform(*TREE_H); w = h / 2
+            cell = TREE_TALL[int(rng.integers(len(TREE_TALL)))]
+            y0 = tp - 0.5 * h  # (its lower half in the canopy)
+            a = rng.uniform(0, np.pi)
+            for ang in (a, a + np.pi / 2):
+                e = np.array([np.cos(ang), np.sin(ang)]) * w / 2
+                quad = [(qq[0] - e[0], y0 + h, qq[1] - e[1]), (qq[0] + e[0], y0 + h, qq[1] + e[1]), (qq[0] + e[0], y0, qq[1] + e[1]), (qq[0] - e[0], y0, qq[1] - e[1])]
+                add(quad, [(cell / 8, 0), ((cell + 1) / 8, 0), ((cell + 1) / 8, 1), (cell / 8, 1)])
+            filled += 1
+        print('trees: %d through the woods' % filled)
     return np.array(V, float), np.array(T, int), np.array(UV, float)
 
 
@@ -1807,7 +1887,7 @@ def install(disc, build_dir, mods):
     # track's edges; the audio spline one record per waypoint (written below)
     import aitrack
     half = np.linalg.norm(E['inner'] - E['outer'], axis=1) / 2
-    wps, nseg, sounds = aitrack.install(mega, TAG, (E['inner'] + E['outer']) / 2, half)
+    wps, nseg, sounds = aitrack.install(mega, TAG, (E['inner'] + E['outer']) / 2, half, line=racing_line(build_dir))
     print('AI files: %d waypoints, %d segments; sounds kept %s' % (len(wps), nseg, sounds))
     for a in (mega, xpr): a.check()
     for a in (mega, xpr): a.write()
