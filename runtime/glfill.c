@@ -763,6 +763,8 @@ static const char *present_fs =
     "}\n";
 
 static void gl_overlay_draw(int vx, int vy, int vw, int vh);
+static void gl_mg_draw(int vx, int vy, int vw, int vh);
+static void gl_qr_draw(int vx, int vy, int vw, int vh);
 static void gl_tt_hud_draw(int vx, int vy, int vw, int vh);
 
 /* HDR (hdr.c): the shown frame drawn as before, into win_fbo (8 bits, the window's size), then
@@ -956,6 +958,8 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glBlitFramebuffer(0, 0, w, h, x, H - y, x + cw, H - y - ch, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     }
     if (rt_overlay_open()) gl_overlay_draw(x, H - y - ch, cw, ch);
+    else if (rt_mg_open()) gl_mg_draw(x, H - y - ch, cw, ch);
+    else if (rt_qr_menu_open()) gl_qr_draw(x, H - y - ch, cw, ch);
     else gl_tt_hud_draw(x, H - y - ch, cw, ch);
     static const char *pshot = (const char *)1;
     if (pshot == (const char *)1) pshot = getenv("XBRT_PRESENT_SHOT"); /* the shown picture, after the post effects, as <file>_<n>.ppm every 5 s, or XBRT_PRESENT_SHOT_MS (testing) */
@@ -1029,7 +1033,12 @@ static void gl_present_vblank(uint32_t fb) {
         static int fps_frames;
         uint64_t now = rt_now_100ns();
         if (!fps_from || now - fps_from > 30000000) fps_from = now, fps_frames = 0; /* (after a pause: start again) */
-        else if (++fps_frames, now - fps_from >= 5000000) rt_fps_shown = fps_frames * 1e7f / (float)(now - fps_from), fps_from = now, fps_frames = 0;
+        else if (++fps_frames, now - fps_from >= 5000000) {
+            rt_fps_shown = fps_frames * 1e7f / (float)(now - fps_from), fps_from = now, fps_frames = 0;
+            static int fps_log = -1; /* XBRT_FPS_LOG=1: the shown frame rate in the log every 5 s (benchmarks) */
+            if (fps_log < 0) fps_log = getenv("XBRT_FPS_LOG") && atoi(getenv("XBRT_FPS_LOG"));
+            if (fps_log) fprintf(stderr, "xbrt: fps %.1f\n", rt_fps_shown);
+        }
     }
     if (rt_display_video_on()) s = NULL; /* a movie: the overlay is composited from RAM */
     if (!s) gl_fifo_n = 0, gl_fifo_shown = -1; /* RAM shows the screen: what was queued is old */

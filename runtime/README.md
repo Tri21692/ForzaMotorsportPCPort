@@ -83,6 +83,15 @@ first build takes a while.
 | `XBRT_HDR` | `1`: HDR output (hdr.c): the window a D3D11 flip-model swap chain in scRGB, the frame drawn as before into an 8-bit framebuffer and expanded into a texture shared with OpenGL (WGL_NV_DX_interop2); only when Windows has HDR on for the screen (`XBRT_HDR_FORCE=1` skips that check, for testing); `hdr` | 0 |
 | `XBRT_HDR_PAPER` | HDR: SDR white in nits; `hdr_paper_white` | 200 |
 | `XBRT_HDR_PEAK` | HDR: the brightest tones (above 60% of white raised toward it) in nits, or `auto` (the screen's peak); `hdr_peak` | auto |
+| `XBRT_ACHIEVEMENTS` | the achievements file (hle_achieve.c: 17, watched from races, F1's Achievements tab, a banner when earned) | achievements.txt |
+| `XBRT_PRIZEMATCH` | Prize Match's file (hle_minigame.c: a turn every 5 driver levels, on the career menus, Q / White) | prizematch.txt |
+| `XBRT_QR_ALWAYS` | `1`: Quick Race's modifiers (hle_quickrace.c: X on the arcade screens) in every race, for testing | 0 |
+| `XBRT_QR_TEST` | `<name id>,<track>,<laps>`: an arcade event rewritten as Quick Race does, for testing (3073 is Series 1 - Race 1) | |
+| `XBRT_TOUR` | `<s>[,<points>[,3]]`: track audits, the player's car set down along the racing line every that many seconds (,3 also facing left and right) | |
+| `XBRT_RDOC_EVERY` | `<s>`: run through RenderDoc (renderdoccmd capture), a capture spanning 4 swaps every that many seconds | |
+| `XBRT_FPS_LOG` | `1`: the shown frame rate in the log every 5 s (benchmarks) | 0 |
+| `XBRT_EVENT_DUMP` | `1`: the running event's record (and what its first word points at) in the log, once each | 0 |
+| `XBRT_SETTINGS` | another settings file than forza.ini (a launcher with its own: the graphics test) | forza.ini |
 | `XBRT_TEX_PACK` | a folder of replacement textures, `<key>.hd`, swapped in as each loads (tools/texpack.py makes them, e.g. with Real-ESRGAN) | `<mods>/textures` |
 | `XBRT_TEX_EXPORT` | `<folder>`: each texture the game uploads saved once as `<key>.bmp`, for tools/texpack.py (not those it redraws over and over: videos, copies of the screen) | off |
 | `XBRT_HASH_CRC` | `0`: the change checks' hash in plain C instead of the CPU's CRC32C (SSE4.2), for comparing | 1 |

@@ -2,3 +2,5 @@
 # them from the generated code at build time). One hex address a line.
 265046  # GetTickCount: hle_qol.c, fast loading (the loading screens' least time)
 410E0   # CCar::ResetPositionForGrid: hle_career.c's catch-up start (XBRT_MODS catchup.txt)
+78080   # the profile's level getter: hle_minigame.c finds the profile by it
+78050   # the profile's credits getter (the career menus' status bar): likewise

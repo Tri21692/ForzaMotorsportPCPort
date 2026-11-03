@@ -117,8 +117,54 @@ int rt_gl_window_begin(int *W, int *H) {
     return 1;
 }
 
+/* Track audits (2026-11-02): run through RenderDoc (renderdoccmd capture), XBRT_RDOC_EVERY=<s> takes
+ * a capture every that many seconds, through its in-app API (RENDERDOC_GetAPI 1.1.2: a table of
+ * functions, StartFrameCapture the 20th, EndFrameCapture the 22nd). A capture spans RDOC_SWAPS
+ * swaps: one swap's (TriggerCapture's) held only the picture shown again, the game's drawing fell
+ * between others. Nothing without RenderDoc. */
+#define RDOC_SWAPS 4
+static void **rdoc_api;
+static int rdoc_open; /* 0 none; 1 to begin after this swap; 2.. swaps into a capture */
+
+/* Before a swap: the capture ended once it spans RDOC_SWAPS; another due every XBRT_RDOC_EVERY s. */
+static void rdoc_tick(void) {
+    static int every = -1;
+    static uint64_t next;
+    void **api = rdoc_api;
+    if (rdoc_open >= 2 && ++rdoc_open > RDOC_SWAPS + 1) {
+        ((uint32_t(__cdecl *)(void *, void *))api[21])(NULL, NULL);
+        rdoc_open = 0;
+    }
+    if (every < 0) {
+        every = getenv("XBRT_RDOC_EVERY") ? atoi(getenv("XBRT_RDOC_EVERY")) : 0;
+        HMODULE m = every > 0 ? GetModuleHandleA("renderdoc.dll") : NULL;
+        typedef int(__cdecl * GetApi)(int, void **);
+        GetApi get = m ? (GetApi)(void *)GetProcAddress(m, "RENDERDOC_GetAPI") : NULL;
+        if (!get || !get(10102, (void **)&api)) every = 0, api = NULL;
+        rdoc_api = api;
+        fprintf(stderr, "xbrt: RenderDoc %s\n", api ? "found: a capture every XBRT_RDOC_EVERY seconds" : "not loaded (XBRT_RDOC_EVERY ignored)");
+    }
+    if (!api || !every || rdoc_open) return;
+    uint64_t now = rt_now_100ns();
+    if (!next) next = now + (uint64_t)every * 10000000;
+    if (now < next) return;
+    next = now + (uint64_t)every * 10000000;
+    rdoc_open = 1;
+}
+
+/* After a swap: a capture due begins (StartFrameCapture, any device and window). */
+static void rdoc_begin(void) {
+    if (rdoc_open != 1 || !rdoc_api) return;
+    ((void(__cdecl *)(void *, void *))rdoc_api[19])(NULL, NULL);
+    rdoc_open = 2;
+}
+
 void rt_gl_window_swap(void) {
+    static int rdoc = -1;
+    if (rdoc < 0) rdoc = getenv("XBRT_RDOC_EVERY") != NULL;
+    if (rdoc) rdoc_tick();
     if (win_dc) SwapBuffers(win_dc);
+    if (rdoc) rdoc_begin();
 }
 
 int rt_gl_init(void) {

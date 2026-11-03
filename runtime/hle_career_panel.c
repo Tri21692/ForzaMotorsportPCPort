@@ -29,6 +29,7 @@ static int tt_first_tile(uint32_t index) {
 void f_00184C30(XbCtx *c) {
     uint32_t cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;
     (void)cf; (void)zf; (void)sf; (void)of; (void)pf; (void)af;
+    rt_mg_menu_seen();  /* changed: hle_minigame.c, the Race Type screen is up */
     /* 00184C30  sub esp, 0x148 */
     { uint32_t a = c->esp, b = 0x148u, r; r = (a - b) & 0xFFFFFFFFu; cf = a < b; of = (((a ^ b) & (a ^ r)) >> 31) & 1; af = ((a ^ b ^ r) >> 4) & 1; zf = r == 0; sf = (r >> 31) & 1; pf = xb_parity(r); c->esp = (uint32_t)(r); }
     /* 00184C36  push ebx */

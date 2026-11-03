@@ -258,6 +258,7 @@ static void debug_key(WPARAM vk) {
         snprintf(path, sizeof path, "screenshots/shot_%06.1fs.bmp", rt_now_100ns() / 1e7);
         save_bmp(path, frame, frame_w, frame_h);
         rt_toast("Screenshot saved");
+        rt_ach_add("shots25", 1);
         shot_to_png(path);
         strcpy(path + strlen(path) - 3, "cst");
         rt_save_constants(path);
@@ -325,7 +326,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (rt_overlay_open()) {
             int k = wp == VK_UP ? RT_OV_UP : wp == VK_DOWN ? RT_OV_DOWN : wp == VK_LEFT ? RT_OV_LEFT : wp == VK_RIGHT ? RT_OV_RIGHT
-                  : wp == VK_RETURN || wp == VK_SPACE ? RT_OV_OK : wp == VK_ESCAPE || wp == VK_BACK ? RT_OV_BACK : -1;
+                  : wp == VK_RETURN || wp == VK_SPACE ? RT_OV_OK : wp == VK_ESCAPE || wp == VK_BACK ? RT_OV_BACK
+                  : wp == 'Q' || wp == VK_PRIOR || (wp == VK_TAB && GetKeyState(VK_SHIFT) < 0) ? RT_OV_TAB_PREV
+                  : wp == 'E' || wp == VK_NEXT || wp == VK_TAB ? RT_OV_TAB_NEXT : -1;
             if (k >= 0) rt_overlay_key(k);
             return 0;
         }

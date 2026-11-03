@@ -81,6 +81,7 @@ static struct {
     float angle, v[3], penalty;
     int drifting, done, offroad;  /* offroad: the car left the road and has not yet run straight on it */
     uint64_t last, calm_since, v_at, straight_since;
+    float clock;                  /* the race's clock (timing +0xA0) at the last tick */
     char msg[32];
     uint64_t msg_until;
 } ds;
@@ -127,27 +128,36 @@ void rt_drift_tick(void) {
     uint64_t now = rt_now_100ns();
     if (r != ds.racer) { /* a new run (a restart makes the racers again) */
         memset(&ds, 0, sizeof ds);
-        ds.racer = r, ds.last = now, ds.penalty = rdf(timing + 0x98);
+        ds.racer = r, ds.last = now, ds.penalty = rdf(timing + 0x98), ds.clock = rdf(timing + 0xA0);
         fprintf(stderr, "xbrt: drift event: a run begins\n");
     }
     int32_t lap = (int32_t)xb_rd32(timing + 0x9C);
-    double dt = (now - ds.last) / 1e7;
-    ds.last = now;
+    /* the race's own clock, not the wall's: paused it stands still (the user's: pausing mid-drift, the
+     * frozen car's slide scored on and on) */
+    float clock = rdf(timing + 0xA0);
+    double dt = clock - ds.clock;
+    ds.clock = clock, ds.last = now;
     if (ds.done) return;
     if (laps && lap >= (int32_t)laps) { /* the last lap done: what is drifting now counts */
         dr_bank();
         ds.done = 1;
         fprintf(stderr, "xbrt: drift event: %.0f points\n", ds.total);
+        { /* the achievements: a score of 10,000, a 1st place (the event's first target) */
+            int i = dr_event(NULL);
+            if (ds.total >= 10000) rt_ach_reach("drift10k", 1);
+            if (i >= 0 && ds.total >= dr[i].target[0]) rt_ach_reach("drift_win", 1);
+        }
         return;
     }
     float v[3] = {rdf(car + 0x44), rdf(car + 0x48), rdf(car + 0x4C)}, fx = rdf(car + 0x38), fz = rdf(car + 0x40);
     float pen = rdf(timing + 0x98);
     int off = pen > ds.penalty + 0.001f;
     ds.penalty = pen;
-    if (lap < 0 || dt <= 0 || dt > 0.25) { /* not yet started, or paused: nothing to score */
+    if (lap < 0 || dt > 0.25 || dt < 0) { /* not yet started, or back from a restart: nothing to score */
         memcpy(ds.v, v, sizeof v), ds.v_at = now;
         return;
     }
+    if (dt == 0) return; /* paused (or no new frame yet): the clock stands */
     if (now - ds.v_at >= 500000) { /* every 50 ms: an impact is a jump in velocity */
         double t = (now - ds.v_at) / 1e7, dv = sqrt((v[0] - ds.v[0]) * (v[0] - ds.v[0]) + (v[1] - ds.v[1]) * (v[1] - ds.v[1]) + (v[2] - ds.v[2]) * (v[2] - ds.v[2]));
         memcpy(ds.v, v, sizeof v), ds.v_at = now;

@@ -119,6 +119,7 @@ static void keyboard(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
     if (DOWN('V')) analog[A_Y] = 255;
     if (DOWN('Q')) analog[A_WHITE] = 255;
     if (DOWN('E')) analog[A_BLACK] = 255;
+    if (DOWN('N')) *buttons |= 0x80; /* the right stick's click (Quick Race's nitro) */
     if (DOWN('W')) analog[A_RT] = 255;
     if (DOWN('S')) analog[A_LT] = 255;
 #undef DOWN
@@ -276,6 +277,7 @@ static void host_pad(uint32_t pad) {
     int16_t thumbs[4] = {0};
     pc_pad(&buttons, analog, thumbs);
     if (!rt_overlay_open()) keyboard(&buttons, analog, thumbs); /* the overlay takes the keys (display.c) */
+    scripted(&buttons, analog, thumbs); /* (before the overlay: a test script can open and drive F1 too) */
     if (rt_overlay_pad(buttons, analog, thumbs)) { /* and the pad: the game sees nothing while it is open */
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
@@ -285,7 +287,14 @@ static void host_pad(uint32_t pad) {
         analog[A_A] = 255;
     }
     if (rt_qol_pad()) analog[A_A] = 255; /* (hle_qol.c: the intro skipped) */
-    scripted(&buttons, analog, thumbs);
+    if (rt_qr_pad(buttons, analog, thumbs)) { /* hle_quickrace.c: Y the nitro; X the Quick Race menu, which takes the pad while open */
+        buttons = 0;
+        memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
+    }
+    if (rt_mg_pad(buttons, analog, thumbs)) { /* hle_minigame.c: Prize Match takes the pad while it is open */
+        buttons = 0;
+        memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
+    }
     set_pad(pad, buttons, analog, thumbs);
 }
 

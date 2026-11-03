@@ -370,7 +370,78 @@ void f_000410E0(XbCtx *c) {
  * still to drive (seen: -1 to 0 on reaching it). 2 s after the race is under way ([0x592984] set;
  * the racers' own clocks start at the line), the opponent's lap is counted as begun, so its reaching
  * the line finishes its lap. */
+/* Track audits (2026-11-02, XBRT_TOUR=<seconds>[,<points>[,3]]): once the race is on, every that many seconds
+ * the player's car is set down <points> (default 50, about 100 m) further along the track's racing line
+ * ([0x5E1450]+4: +8 its points, +0x30/0x44/0x58 their x, z, y), facing along it (the grid's turn, as
+ * f_000410E0 lays it), stopped: a lap of views for the screenshots without anyone driving. With ,3 each point
+ * is shown three times, facing along the line, then to its left, then to its right (the woods beside it). */
+static void tour_tick(void) {
+    static double every = -1;
+    static int step, views, view, k = -1;
+    static uint64_t next;
+    if (every < 0) {
+        const char *e = getenv("XBRT_TOUR");
+        every = e ? atof(e) : 0;
+        step = e && strchr(e, ',') ? atoi(strchr(e, ',') + 1) : 50;
+        if (step <= 0) step = 50;
+        views = e && strchr(e, ',') && strchr(strchr(e, ',') + 1, ',') ? atoi(strchr(strchr(e, ',') + 1, ',') + 1) : 1;
+        if (views != 3) views = 1;
+    }
+    if (every <= 0 || !xb_rd32(0x592984)) { k = -1, next = 0; return; }
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4), car = 0;
+    for (uint32_t i = 0; i < n && n <= 16 && arr && !car; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i);
+        if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) car = xb_rd32(r + 0xA0);
+    }
+    uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+    uint32_t np = line ? xb_rd32(line + 8) : 0, xs = line ? xb_rd32(line + 0x30) : 0, zs = line ? xb_rd32(line + 0x44) : 0, ys = line ? xb_rd32(line + 0x58) : 0;
+    if (!car || car >= RT_USER_LIMIT || np < 3 || np > 100000 || !xs || !zs || !ys) return;
+    uint64_t now = rt_now_100ns();
+    if (!next) { next = now + (uint64_t)(every * 1e7); return; }
+    if (now < next) return;
+    next = now + (uint64_t)(every * 1e7);
+    if (k < 0) k = 0, view = 0;
+    else if (++view >= views) view = 0, k = (k + step) % (int)np;
+    float p[3], q[2], v;
+    uint32_t w;
+    w = xb_rd32(xs + 4 * k); memcpy(&p[0], &w, 4); w = xb_rd32(ys + 4 * k); memcpy(&p[1], &w, 4); w = xb_rd32(zs + 4 * k); memcpy(&p[2], &w, 4);
+    w = xb_rd32(xs + 4 * ((k + 3) % np)); memcpy(&q[0], &w, 4); w = xb_rd32(zs + 4 * ((k + 3) % np)); memcpy(&q[1], &w, 4);
+    float fx = q[0] - p[0], fz = q[1] - p[2], len = sqrtf(fx * fx + fz * fz);
+    if (len < 0.1f) return;
+    fx /= len, fz /= len;
+    if (view) { /* 1: to the left, 2: to the right (the grid's turn: right is (z, -x)) */
+        float t = fx;
+        if (view == 1) fx = -fz, fz = t;
+        else fx = fz, fz = -t;
+    }
+    float pose[12] = {p[0], p[1] + 0.5f, p[2], fz, 0, -fx, 0, 1, 0, fx, 0, fz};
+    for (int j = 0; j < 12; j++) memcpy(&w, &pose[j], 4), xb_wr32(car + 0x14 + 4 * j, w);
+    v = 0, memcpy(&w, &v, 4);
+    for (int j = 0; j < 3; j++) xb_wr32(car + 0x44 + 4 * j, w);
+    fprintf(stderr, "xbrt: tour: point %d of %u view %d: %.1f %.1f %.1f\n", k, np, view, p[0], p[1], p[2]);
+}
+
 void rt_career_tick(void) {
+    tour_tick();
+    rt_ach_tick();
+    rt_qr_tick();
+    rt_qr_test_tick();
+    if (getenv("XBRT_EVENT_DUMP")) { /* debugging (Quick Race): the running event's record, once each, its words */
+        static uint32_t told;
+        uint32_t g = xb_rd32(0x592984), ev = g ? xb_rd32(g + 0x318) : 0;
+        if (ev && ev < RT_USER_LIMIT && ev != told) {
+            told = ev;
+            fprintf(stderr, "xbrt: event record at %08x (game %08x):", ev, g);
+            for (uint32_t o = 0; o < 0x200; o += 4) fprintf(stderr, "%s+%02x=%x", o % 32 ? " " : "\n  ", o, xb_rd32(ev + o));
+            fprintf(stderr, "\n");
+            uint32_t p0 = xb_rd32(ev);
+            if (p0 && p0 < RT_USER_LIMIT) { /* what its first word points at (the field?) */
+                fprintf(stderr, "xbrt: event record's +00 -> %08x:", p0);
+                for (uint32_t o = 0; o < 0x100; o += 4) fprintf(stderr, "%s+%02x=%x", o % 32 ? " " : "\n  ", o, xb_rd32(p0 + o));
+                fprintf(stderr, "\n");
+            }
+        }
+    }
     if (getenv("XBRT_RACE_DUMP")) { /* debugging: every racer's type, lap and car position (+0x14 x, +0x1c z), every 5 s */
         static uint64_t next;
         uint64_t now = rt_now_100ns();
@@ -503,6 +574,9 @@ void rt_career_tick(void) {
  * player leads the opponent, in metres (negative: behind), from both racers' progress (timing
  * +0x70: laps begun less one plus the lap's fraction) and the lap's length (its racing line's
  * points, about 2 m apart). */
+int rt_catchup_active(void) { return cu_active; }
+int rt_tt_running(void) { return tt_event() >= 0; }
+
 int rt_catchup_hud(int *metres) {
     pthread_once(&cu_once, cu_load);
     uint32_t g = xb_rd32(0x592984), ev = g ? xb_rd32(g + 0x318) : 0;

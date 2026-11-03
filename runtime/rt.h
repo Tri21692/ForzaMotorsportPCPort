@@ -71,20 +71,54 @@ void rt_settings_set(const char *name, const char *value); /* and saves the file
 void rt_soundtracks_init(void);              /* soundtrack.c: the music folder onto the hard disk */
 
 /* The settings overlay (overlay.c; drawn by glfill.c). */
-enum { RT_OV_UP, RT_OV_DOWN, RT_OV_LEFT, RT_OV_RIGHT, RT_OV_OK, RT_OV_BACK };
+enum { RT_OV_UP, RT_OV_DOWN, RT_OV_LEFT, RT_OV_RIGHT, RT_OV_OK, RT_OV_BACK, RT_OV_TAB_PREV, RT_OV_TAB_NEXT };
 int rt_overlay_open(void);
 void rt_overlay_toggle(void);
 void rt_overlay_key(int key);
 int rt_overlay_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]); /* 1: the game sees nothing */
 /* A career time trial running (hle_career.c): its three target times, the time so far (ms), the lap done. */
 int rt_tt_hud(uint32_t targets[3], uint32_t *elapsed, int *done);
-int rt_overlay_items(void);
+int rt_overlay_items(void);                       /* in the tab shown */
+int rt_overlay_tabs(const char **names, int max, int *cur);
+int rt_overlay_scroll(void);                      /* the first row shown of a tab with no settings (the achievements) */ /* the tabs' names, how many, the one shown */
 int rt_overlay_selected(void);
 int rt_overlay_needs_restart(void);
 void rt_overlay_item(int i, const char **label, const char **value, int *live);
 const char *rt_overlay_help(int i);
 void rt_apu_set_volume(float v);
 void rt_apu_set_muted(int on);      /* silent (the window in the background) */
+/* hle_achieve.c: achievements (achievements.txt, XBRT_ACHIEVEMENTS) */
+void rt_ach_tick(void);                         /* rt_gil held, from rt_career_tick */
+void rt_ach_add(const char *id, int by);
+void rt_ach_reach(const char *id, int v);
+int rt_ach_count(void);
+void rt_ach_get(int i, const char **name, const char **desc, int *progress, int *goal, int *earned);
+const char *rt_ach_banner(void);                /* the one just earned, for a few seconds; else NULL */
+int rt_catchup_active(void);                    /* hle_career.c: a Catch-Up race is on */
+int rt_tt_running(void);                        /* hle_career.c: a career time trial is on */
+/* hle_minigame.c: Prize Match, a turn every 5 levels on the career's Race Type screen */
+typedef struct { int prize[16], face[16], cursor, first, second, flips, misses_left, done, won; } RtMatch;
+void rt_mg_menu_seen(void);
+int rt_mg_turns(void);
+int rt_mg_hint(void);
+int rt_mg_open(void);
+int rt_mg_career_menu_recent(void);
+void rt_mg_request(void);
+void rt_mg_key(int key);
+void rt_mg_state(RtMatch *out);
+int rt_mg_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]);
+/* hle_quickrace.c: Quick Race's modifiers */
+enum { QR_TAKEDOWNS = 1, QR_LOWGRAVITY = 2, QR_NITRO = 4, QR_SLIPSTREAM = 8 };
+extern volatile int rt_qr_mods;
+void rt_qr_tick(void);                          /* rt_gil held, from rt_career_tick */
+void rt_qr_test_tick(void);
+int rt_qr_apply(uint32_t textid, uint32_t track, uint32_t laps);
+int rt_qr_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]);
+int rt_qr_menu_open(void);
+int rt_qr_menu_row(int i, const char **label, char *value, int n, int *sel);
+const char *rt_qr_note(void);
+int rt_qr_takedowns(void);
+float rt_qr_tank(void);
 void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */
 extern char rt_toast_text[64];
 extern volatile uint64_t rt_toast_until;
