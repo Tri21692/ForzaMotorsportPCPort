@@ -424,9 +424,10 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     int qtd = rt_qr_takedowns();
     float tank = rt_qr_tank();
     int qr_hud = (rt_qr_mods & QR_NITRO) && tank < 0.999f;
+    int qcam = rt_qr_cam_active();
     if (rt_show_fps < 0) rt_show_fps = getenv("XBRT_SHOW_FPS") && atoi(getenv("XBRT_SHOW_FPS"));
     int fps = rt_show_fps && rt_fps_shown > 0;
-    if (!(tt || cu || drift || toast || fps || ach || mg || qn || qtd || qr_hud) || !ov_init()) return;
+    if (!(tt || cu || drift || toast || fps || ach || mg || qn || qtd || qr_hud || qcam) || !ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
     static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
                        gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1},
@@ -511,13 +512,21 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
         ov_rect(W - 300, 72, W - 20, 98, bg);
         ov_text(OVF_ITEM, W - 160, 76, t, gold, 2);
     }
-    if (qn || qtd || qr_hud) { /* Quick Race: a TAKEDOWN! / RESPAWN note, the takedowns so far, the nitro left */
-        static const float orange[4] = {1.0f, 0.55f, 0.15f, 1}, shade[4] = {0, 0, 0, 0.7f}, track[4] = {1, 1, 1, 0.18f}, blue[4] = {0.35f, 0.75f, 1, 0.9f};
+    if (qn || qtd || qr_hud || qcam) { /* Quick Race: a TAKEDOWN! / RESPAWN note, the takedowns so far, the nitro left */
+        static const float orange[4] = {1.0f, 0.55f, 0.15f, 1}, shade[4] = {0, 0, 0, 0.7f}, track[4] = {1, 1, 1, 0.18f}, blue[4] = {0.35f, 0.75f, 1, 0.9f},
+                           bars[4] = {0, 0, 0, 1}, red[4] = {0.85f, 0.12f, 0.10f, 1}, white2[4] = {1, 1, 1, 1};
         char t[32];
-        if (qn) ov_text(OVF_TITLE, W / 2 + 2, 152, qn, shade, 2), ov_text(OVF_TITLE, W / 2, 150, qn, orange, 2);
-        if (qtd) {
+        if (qcam) { /* the takedown camera (the user's: an overlay "like in the video", our own): bars top and bottom,
+                     * an IMPACT tag in the top one, the takedown's name large in the bottom one */
+            ov_rect(0, 0, W, 54, bars), ov_rect(0, H - 64, W, H, bars);
+            ov_rect(R - 120, 16, R, 40, red);
+            ov_text(OVF_ITEM, R - 60, 18, "IMPACT", white2, 2);
+            if (qn) ov_text(OVF_TITLE, W / 2 + 2, H - 50, qn, shade, 2), ov_text(OVF_TITLE, W / 2, H - 52, qn, orange, 2);
+        } else if (qn) ov_text(OVF_TITLE, W / 2 + 2, 152, qn, shade, 2), ov_text(OVF_TITLE, W / 2, 150, qn, orange, 2);
+        if (qtd) { /* top left, large: the run's takedowns (in the bar while the camera is on a wreck) */
             snprintf(t, sizeof t, "TAKEDOWNS  %d", qtd);
-            ov_text(OVF_ITEM, R - 142, 147, t, shade, 0), ov_text(OVF_ITEM, R - 144, 145, t, orange, 0);
+            float ty = qcam ? 16 : 70;
+            ov_text(OVF_MENU, 46, ty + 2, t, shade, 0), ov_text(OVF_MENU, 44, ty, t, orange, 0);
         }
         if (qr_hud) {
             ov_rect(R - 144, 170, R, 178, track);

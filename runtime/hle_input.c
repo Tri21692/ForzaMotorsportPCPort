@@ -297,6 +297,10 @@ static void host_pad(uint32_t pad) {
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
     }
+    if (rt_mayhem_pad(buttons, analog)) { /* hle_quickrace.c: Mayhem's code on the career menus (its last B not the game's) */
+        buttons = 0;
+        memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
+    }
     /* Our menus (F1, Quick Race, Prize Match) open, or closed with something still held: the game sees nothing
      * until every button and stick is let go (the B or Esc that closed F1, still down, backed the game's screen out) */
     static int held;

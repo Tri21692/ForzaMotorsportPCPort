@@ -107,6 +107,7 @@ int rt_mg_turns(void);
 int rt_mg_hint(void);
 int rt_mg_open(void);
 int rt_mg_career_menu_recent(void);
+uint64_t rt_mg_menu_age(void); /* 100 ns since a career menu was up (all ones: never) */
 void rt_mg_request(void);
 void rt_mg_key(int key);
 void rt_mg_state(RtMatch *out);
@@ -125,6 +126,7 @@ int rt_qr_takedowns(void);
 float rt_qr_tank(void);
 extern volatile int rt_qr_auto; /* Quick Race's takedown autopilot on (2 just started); hle_input.c ends it */
 int rt_qr_cam_active(void);     /* the takedown camera on the wreck */
+int rt_mayhem_pad(uint16_t buttons, const uint8_t analog[8]); /* Mayhem's code on the career menus; 1: swallow the pad */
 extern volatile float rt_vblank_rate; /* vertical blanks at this share of 59.94 Hz (nv2a.c): the game's slow motion */
 void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */
 extern char rt_toast_text[64];

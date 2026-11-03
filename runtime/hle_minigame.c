@@ -141,6 +141,9 @@ int rt_mg_open(void) { return open_; }
 /* A career menu (its level and credits bar) up lately: hle_quickrace.c leaves X to it (the dealer's Car List). */
 int rt_mg_career_menu_recent(void) { return rt_now_100ns() - menu_at < 5000000; }
 
+/* How long since a career menu was up (100 ns units; all ones if never): a race begun soon after one is the career's. */
+uint64_t rt_mg_menu_age(void) { return menu_at ? rt_now_100ns() - menu_at : ~0ull; }
+
 static void finish(int credits) {
     m.done = 1, m.won = credits;
     uint32_t p = profile;
