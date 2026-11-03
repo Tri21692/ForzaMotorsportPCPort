@@ -12,7 +12,8 @@
 
 #include "rt.h"
 
-#define SETTINGS_FILE "forza.ini"
+/* forza.ini, or the file XBRT_SETTINGS names (a launcher with settings of its own: the graphics test) */
+#define SETTINGS_FILE (getenv("XBRT_SETTINGS") && *getenv("XBRT_SETTINGS") ? getenv("XBRT_SETTINGS") : "forza.ini")
 
 static RtSetting settings[] = {
     {"fps", "XBRT_FPS", "60", "Frame rate: 30 or 60 (the game runs its physics once a frame, so no higher)"},
