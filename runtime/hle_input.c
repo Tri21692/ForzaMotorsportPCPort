@@ -311,9 +311,9 @@ static void host_pad(uint32_t pad) {
         static int let_off;
         if (rt_qr_auto == 2) let_off = 0, rt_qr_auto = 1;
         int took = 0;
-        if (analog[A_RT] < 30) let_off = 1;
+        if (analog[A_RT] < 100) let_off = 1; /* (eased off: a partial lift counts) */
         else if (let_off && !rt_qr_cam_active()) took = 1;
-        if (!rt_qr_cam_active() && (abs(thumbs[0]) > 8000 || analog[A_LT] > 60)) took = 1;
+        if (!rt_qr_cam_active() && (abs(thumbs[0]) > 3300 || analog[A_LT] > 40)) took = 1; /* (a tenth of the stick) */
         if (took) rt_qr_auto = 0;
         else thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
     }

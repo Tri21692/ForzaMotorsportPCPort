@@ -89,6 +89,33 @@ static struct {
     int line, kind; /* kind: the player's last hit on it, 1 a slam (side), 2 a shunt (from behind) */
 } cs[MAXCARS];
 
+/* A car's damage (found with XBRT_DMGSCAN and the user's crashes on 3 Nov: after the hard ones, three floats of
+ * 0..1 at +0x70, +0x74 and +0x78 of 128-byte records from car+0x4380 to +0x5A80 stood and stayed, none before).
+ * A takedown's wreck wrecked (the user's: "extremely damaged"), every record at DMG_FULL; back to none on its
+ * respawn. XBRT_DMGMAX=<s>: the player's car so that long into a race (testing: what it looks like). */
+#define DMG_FIRST 0x4380u
+#define DMG_LAST 0x5A80u
+#define DMG_FULL 0.95f
+#define DMG_N (((DMG_LAST - DMG_FIRST) / 0x80 + 1) * 3)
+/* Only the damage the game itself has set, raised (every field written, the second wreck of the user's test, another
+ * car, went over something else and the game stopped with a bad push buffer: its car has fewer such records),
+ * and those same fields put back to none on the respawn. */
+static struct { uint32_t car, at[DMG_N]; int n; } dmg[MAXCARS];
+static void damage_set(int slot, uint32_t car, float amount) {
+    if (slot < 0 || slot >= MAXCARS) return;
+    if (amount > 0) {
+        dmg[slot].car = car, dmg[slot].n = 0;
+        for (uint32_t r = DMG_FIRST; r <= DMG_LAST; r += 0x80)
+            for (uint32_t k = 0x70; k <= 0x78; k += 4) {
+                float v = rdf(car + r + k);
+                if (v > 0.0005f && v < amount) wrf(car + r + k, amount), dmg[slot].at[dmg[slot].n++] = car + r + k;
+            }
+    } else if (dmg[slot].car == car) {
+        for (int j = 0; j < dmg[slot].n; j++) wrf(dmg[slot].at[j], 0);
+        dmg[slot].n = 0, dmg[slot].car = 0;
+    }
+}
+
 /* The car rolled by a radians about its own forward axis (the blown-up wreck's tumble). */
 static void roll(uint32_t car, float a) {
     float c = cosf(a), s = sinf(a), r[3], u[3];
@@ -247,11 +274,33 @@ static void cam_debug_tick(void) {
  * and racer record's addresses, and given a rival's (a test, XBRT_CAMSCAN=3) the camera rode with the rival. They
  * are found once a race on the grid: the camera's position (rt_cam_pos) in the game's committed memory, then the
  * player's addresses within 8 KB of those copies on the heap (the objects move from run to run). */
-#define TDCAM_S 2.6
-#define TDCAM_SLOW 0.3
+#define TDCAM_S 3.0
+#define TDCAM_SLOW 0.5 /* (30 frames a second, the user's: the game steps its race a frame at a time, so half speed) */
 static uint32_t cslot[16], cslot_was[16], cslot_now[16];
+static uint32_t td_from, td_to; /* the cars the camera cut between */
 static int ncslot = -1;      /* -1: not looked for yet this race */
+static uint32_t cam_lo, cam_hi; /* the camera's object: the bunch of its position's copies found on the grid */
+
+/* The camera cut to another car instead of swinging over (the user's: "camera still not cutting over"): within
+ * the camera's own object only (1 KB round its position's copies: over 8 KB, 347 places moved and the rival froze),
+ * every three floats standing within 15 m of the car it leaves (its places, where it looks, its smoothing's
+ * state) moved by the way from that car to the other. */
+static void cam_cut(uint32_t from, uint32_t to) {
+    static int on = -1; /* (XBRT_CAMCUT=1 only, for testing: once, the rival went 570 m in the 3 s; unproven) */
+    if (on < 0) on = getenv("XBRT_CAMCUT") && atoi(getenv("XBRT_CAMCUT"));
+    if (!on || !cam_hi || !from || !to) return;
+    float f[3] = {rdf(from + 0x14), rdf(from + 0x18), rdf(from + 0x1C)}, d[3] = {rdf(to + 0x14) - f[0], rdf(to + 0x18) - f[1], rdf(to + 0x1C) - f[2]};
+    int n = 0;
+    for (uint32_t a = (cam_lo - 0x400) & ~3u; a < cam_hi + 0x400; a += 4) {
+        float x = rdf(a), y = rdf(a + 4), z = rdf(a + 8);
+        if (!(fabsf(x - f[0]) < 15 && fabsf(z - f[2]) < 15 && fabsf(y - f[1]) < 8)) continue;
+        wrf(a, x + d[0]), wrf(a + 4, y + d[1]), wrf(a + 8, z + d[2]);
+        a += 8, n++;
+    }
+    fprintf(stderr, "xbrt: quick race: the camera cut, %d places moved %.0f m\n", n, sqrtf(d[0] * d[0] + d[2] * d[2]));
+}
 static uint64_t tdcam_until; /* real time */
+static uint64_t auto_until;  /* real time: the autopilot let go by then at the latest (4 s after the camera is back) */
 volatile int rt_qr_auto;     /* the autopilot: 2 just started, 1 on (hle_input.c ends it) */
 static float auto_speed, auto_p[2];
 static int auto_k = -1;
@@ -260,30 +309,44 @@ int rt_qr_cam_active(void) { return tdcam_until != 0; }
 
 static void find_cam_slots(uint32_t me, uint32_t rme) {
     float cx = rt_cam_pos[0], cy = rt_cam_pos[1], cz = rt_cam_pos[2];
-    uint32_t lo = ~0u, hi = 0, at = RT_USER_BASE, b, sz, pr, st;
-    while (at < RT_USER_LIMIT) {
+    uint32_t copy[32], at = RT_USER_BASE, b, sz, pr, st;
+    int nc = 0;
+    while (at < RT_USER_LIMIT && nc < 32) { /* (in address order: the regions come so) */
         if (!rt_user_query(at, &b, &sz, &pr, &st) || !sz) { at = b + (sz ? sz : 0x1000); continue; }
         if (at < b) at = b;
         uint32_t end = b + sz;
         if (st == 0x1000 && at >= 0x01000000)
-            for (uint32_t a = at; a + 12 <= end; a += 4)
-                if (fabsf(rdf(a) - cx) <= 0.05f && fabsf(rdf(a + 4) - cy) <= 0.05f && fabsf(rdf(a + 8) - cz) <= 0.05f)
-                    lo = a < lo ? a : lo, hi = a > hi ? a : hi;
+            for (uint32_t a = at; a + 12 <= end && nc < 32; a += 4)
+                if (fabsf(rdf(a) - cx) <= 0.05f && fabsf(rdf(a + 4) - cy) <= 0.05f && fabsf(rdf(a + 8) - cz) <= 0.05f) copy[nc++] = a;
         at = end;
     }
+    /* the camera's objects: the closest bunch of those copies (each within 4 KB of the next), and only 2 KB round
+     * it: from the lowest copy to the highest, another run took in the race's and the HUD's hold on the player's
+     * car too (16 places), and given the rival, takedowns stopped counting and the camera went wrong */
+    int best = 0, bestn = 0;
+    for (int i = 0; i < nc; i++) {
+        int j = i;
+        while (j + 1 < nc && copy[j + 1] - copy[j] < 0x1000) j++;
+        if (j - i + 1 > bestn) best = i, bestn = j - i + 1;
+    }
+    uint32_t lo = nc ? copy[best] : 0, hi = nc ? copy[best + bestn - 1] : 0;
+    cam_lo = lo, cam_hi = hi;
     ncslot = 0;
-    for (uint32_t a = (lo - 0x2000) & ~3u; hi && a < hi + 0x2000 && ncslot < 16; a += 4) {
+    for (uint32_t a = (lo - 0x800) & ~3u; hi && a < hi + 0x800 && ncslot < 8; a += 4) {
         uint32_t w = xb_rd32(a);
         if (w == me || w == rme) cslot[ncslot] = a, cslot_was[ncslot++] = w;
     }
-    fprintf(stderr, "xbrt: quick race: the camera's hold on the player's car: %d places\n", ncslot);
+    fprintf(stderr, "xbrt: quick race: the camera's hold on the player's car: %d places (%d copies, %d together over %u bytes)\n",
+            ncslot, nc, bestn, hi - lo);
 }
 
 static void tdcam_end(void) {
     if (!tdcam_until) return;
     for (int i = 0; i < ncslot; i++)
         if (xb_rd32(cslot[i]) == cslot_now[i]) xb_wr32(cslot[i], cslot_was[i]);
+    cam_cut(td_to, td_from); /* (straight back behind the player's car) */
     rt_time_scale(1.0), rt_vblank_rate = 1.0f;
+    auto_until = rt_now_100ns() + 40000000; /* (held on the line past that, takedowns stopped counting: the user's) */
     tdcam_until = 0;
 }
 
@@ -293,6 +356,8 @@ static void tdcam_start(uint32_t car, uint32_t racer, uint32_t me, float speed) 
         cslot_now[i] = cslot_was[i] == me ? car : racer;
         xb_wr32(cslot[i], cslot_now[i]);
     }
+    td_from = me, td_to = car;
+    cam_cut(me, car); /* (straight onto the wreck) */
     rt_time_scale(TDCAM_SLOW), rt_vblank_rate = (float)TDCAM_SLOW; /* (the blanks slow the race; the clock our nudges' steps) */
     tdcam_until = rt_now_100ns() + (uint64_t)(TDCAM_S * 1e7);
     rt_qr_auto = 2, auto_speed = speed < 15 ? 15 : speed, auto_k = -1;
@@ -403,6 +468,7 @@ void rt_qr_tick(void) {
     double dt = last ? (now - last) / 1e7 : 0;
     last = now;
     if (tdcam_until && rt_now_100ns() >= tdcam_until) tdcam_end();
+    if (rt_qr_auto && !tdcam_until && auto_until && rt_now_100ns() >= auto_until) rt_qr_auto = 0, auto_until = 0;
     if (!xb_rd32(0x592984) || !active()) {
         tdcam_end(), rt_qr_auto = 0, ncslot = -1;
         memset(cs, 0, sizeof cs); takedowns = 0, tank = 1; return;
@@ -433,12 +499,20 @@ void rt_qr_tick(void) {
         static float td_p[3], td_sp;
         if (on_grid || !rme) race_since = 0;
         else if (!race_since) race_since = now;
+        const char *dm = getenv("XBRT_DMGMAX");
+        static int dm_done;
+        if (!race_since) dm_done = 0;
+        if (dm && race_since && !dm_done && now - race_since > (uint64_t)(atof(dm) * 1e7) && me) {
+            dm_done = 1, damage_set(im, me, DMG_FULL);
+            fprintf(stderr, "xbrt: dmg test: the player's car wrecked\n");
+        }
         const char *tt = getenv("XBRT_TD_TEST");
         if (tt && race_since && !td_real && now - race_since > (uint64_t)(atof(tt) * 1e7) && tm) {
             for (uint32_t i = 0; i < n; i++) {
                 uint32_t r = xb_rd32(arr + 4 * i);
                 if (r && r != rme && r < RT_USER_LIMIT) {
                     tdcam_start(xb_rd32(r + 0xA0), r, me, 30);
+                    damage_set((int)i, xb_rd32(r + 0xA0), DMG_FULL); /* (the damage path too, on what it has) */
                     td_real = rt_now_100ns(), td_clock = xb_rd32(tm + 0xA0), td_car = xb_rd32(r + 0xA0);
                     td_p[0] = rdf(td_car + 0x14), td_p[2] = rdf(td_car + 0x1C);
                     td_sp = sqrtf(rdf(td_car + 0x44) * rdf(td_car + 0x44) + rdf(td_car + 0x4C) * rdf(td_car + 0x4C));
@@ -571,6 +645,7 @@ void rt_qr_tick(void) {
                 say(wall ? "WALL TAKEDOWN!" : cs[i].kind == 2 ? "SHUNT TAKEDOWN!" : "SLAM TAKEDOWN!");
                 fprintf(stderr, "xbrt: quick race: takedown %d (racer %u, %s)\n", takedowns, i, wall ? "wall" : cs[i].kind == 2 ? "shunt" : "slam");
                 tdcam_start(car, r, me, sqrtf(mv0[0] * mv0[0] + mv0[2] * mv0[2])); /* the camera on the wreck, slowed, the player's car on the line */
+                damage_set((int)i, car, DMG_FULL); /* (wrecked; repaired on its respawn) */
                 if (wall) { /* blown up (the user's: "explodes" on the wall): thrown up off the wall, rolling, for 1.2 s */
                     v[1] += 7.0f, v[0] -= dv[0] * 0.3f, v[2] -= dv[2] * 0.3f;
                     wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
@@ -587,6 +662,7 @@ void rt_qr_tick(void) {
                 int at = k;
                 if (cs[i].down_at && me) at = behind(xs, zs, np, nearest(xs, zs, np, mp[0], mp[2]), 60); /* the wreck: back behind the player */
                 respawn(car, xs, zs, ys, np, at);
+                if (cs[i].down_at && car != me) damage_set((int)i, car, 0); /* (the wreck back as new) */
                 if (cs[i].down_at && car != me) cs[i].chase_until = now + 200000000; /* then a hard chase back to the player, up to 20 s */
                 cs[i].still_since = cs[i].down_at = cs[i].spin_until = cs[i].tumble_until = 0;
                 if (car == me) say("RESPAWN");
