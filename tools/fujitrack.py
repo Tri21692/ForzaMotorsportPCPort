@@ -49,6 +49,7 @@ GROW = 2           # cells the edge surfaces are thickened by: drawn at RES, the
 TARMAC, KERB, GRASS, GRAVEL, LINE = 0, 1, 2, 3, 0x0A
 TREE = 0x63  # (drawn only: GT4's tree cards)
 FOREST = 0x64  # (drawn only: the woods' canopy)
+ARMCO, FENCE = 0x65, 0x66  # (drawn only: along the walls)
 
 
 def read_runway_obj(path):
@@ -283,8 +284,10 @@ GT4_MIDDLE = (111.4, 106.7)     # the Fuji runway's (x, z): x -797..1020, z -195
 # the materials: a Road Atlanta mesh of plain 24-byte vertices whose way of drawing it takes (flags, lightmap,
 # shader 13407, a lit diffuse), the texture (None: that mesh's own) and the metres a repeat. Road Atlanta's kerbs
 # and gravel traps have richer vertices (flags 0x2000), so their textures are drawn the tarmac's way.
-MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, None, 8.0),
-             TREE: (5628, None, 1.0), FOREST: (83, 430, 40.0)}  # (the woods: terrain_hillside_distantbrush_001)  # (the trees: foliagefacade01's card material, its texture GT4's trees: TREE_TEX)
+MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, 2180, 4.0),
+             TREE: (5628, None, 1.0), FOREST: (83, 430, 40.0),
+             ARMCO: (130, 107, 1.0), FENCE: (130, 319, 1.0)}  # (guardrail_white_001, racedeco catchfence_001 on a railing's
+                                                              # material: 24-byte vertices, cut out; theirs take 20-byte ones)  # (the woods: terrain_hillside_distantbrush_001)  # (the trees: foliagefacade01's card material, its texture GT4's trees: TREE_TEX)
 # a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
 # a black, clear texel at the lightmap's edge)
@@ -308,6 +311,10 @@ SLIVER = 0.02                   # m2: thinner triangles not drawn
 # (from and to as shares of the lap, side, metres beyond the runway kept clear)). Trees line its edge.
 FOREST_FROM, FOREST_RAMP, CANOPY_H, CANOPY_BUMPS = 50.0, 14.0, 13.0, 3.0
 CLEARINGS = [(0.88, 0.06, 'in', 170.0), (0.88, 0.06, 'out', 70.0)]
+# The walls dressed (the user's photo: armco and catch fence round the track): on each wall (its line along the
+# runway's outline) an armco rail ARMCO_H m and a catch fence FENCE_H m (from, to over the edge), a texture repeat
+# every RAIL_REPEAT m along, both faces.
+ARMCO_H, FENCE_H, RAIL_REPEAT = (0.3, 1.0), (1.0, 4.0), 4.0
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -414,7 +421,7 @@ def build(disc, runway_dir, out):
     n = np.cross(Vf[T[:, 1]] - Vf[T[:, 0]], Vf[T[:, 2]] - Vf[T[:, 0]])
     flip = n[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
-    kinds = np.where(F[:, 3] == LINE, TARMAC, F[:, 3])
+    kinds = F[:, 3].copy()  # (the painted lines drawn as lines: LINE_PAINT; tarmac to the cars, COLLISION)
     kinds = np.where(np.isin(kinds, list(MATERIALS)), kinds, GRASS)
 
     # what is drawn: all but far grass and slivers (the collision keeps every triangle)
@@ -425,6 +432,7 @@ def build(disc, runway_dir, out):
     area = np.linalg.norm(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), axis=1) / 2
     drawn = (area >= SLIVER) & ~((kinds == GRASS) & (dist > GRASS_REACH))
     print('drawn: %d of %d triangles (grass beyond %.0f m and slivers left out)' % (drawn.sum(), len(T), GRASS_REACH))
+    walls = outside_walls(Vf, T, F)
     # and the ground beyond, drawn only: Vd and Td the drawn vertices and faces (the runway's first)
     cf = to_forza(E['centre'])
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
@@ -433,12 +441,16 @@ def build(disc, runway_dir, out):
     Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON, ground_at)
     Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
     Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear, (top_near, top_far))
-    Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr])
+    Vw, Tw, UVw, Kw = dressing(walls)
+    Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
     o_t = o_f + len(Vfar)
-    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t])
-    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE)])
+    o_w = o_t + len(Vtr)
+    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t, Tw + o_w])
+    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw])
     given_uv = {o_t + i: (int(u * 512) - 32768, int(v * 512) - 32768) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet)
+    given_uv.update({o_w + i: (int(u * 512) - 32768, int(v * 512) - 32768) for i, (u, v) in enumerate(UVw)})  # (the rails and fences)
+    print('walls dressed: %d armco and fence quads' % (len(Tw) // 4))
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
     # each vertex's place along the lap (m from the lap line) and across it (m left of the centre line): the
@@ -491,7 +503,8 @@ def build(disc, runway_dir, out):
     ground = []
     for k_, tris, bsize in ((GRASS, (Tt + len(Vf))[Kt == GRASS], 8 * TERRAIN_CELL), (FOREST, (Tt + len(Vf))[Kt == FOREST], 8 * TERRAIN_CELL),
                             (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, (Tfar + o_f)[Kfar == GRASS], 8 * FAR_CELL),
-                            (FOREST, (Tfar + o_f)[Kfar == FOREST], 8 * FAR_CELL), (TREE, Ttr + o_t, 8 * TERRAIN_CELL)):  # (the woods, the apron, the far ground, the trees)
+                            (FOREST, (Tfar + o_f)[Kfar == FOREST], 8 * FAR_CELL), (TREE, Ttr + o_t, 8 * TERRAIN_CELL),
+                            (ARMCO, (Tw + o_w)[Kw == ARMCO], 8 * TERRAIN_CELL), (FENCE, (Tw + o_w)[Kw == FENCE], 8 * TERRAIN_CELL)):  # (the woods, the apron, the far ground, the trees)
         if not len(tris): continue
         block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / bsize).astype(int)
         for bk in sorted({tuple(b) for b in block}):
@@ -514,8 +527,6 @@ def build(disc, runway_dir, out):
         if k == TREE: tex = TREE_SHEET
         mat_at, (mfl, _, _, _, _, _, _, mt0, mt1, msh) = record(res, model, mat)
         mt0 = tex or mt0
-        mo = names[record(res, model, mat)[1][4] - 9][3]
-        mst = np.frombuffer(bytes(res[mo:mo + 24 * record(res, model, mat)[1][3] // 24]), '<i2').reshape(-1, 12)[:, 8:12]
         mt1, light = LIGHTMAP[0], {GRASS: GRASS_LIGHT, FOREST: FOREST_LIGHT}.get(k, LIGHTMAP[1:])
         at, (fl, ab, nidx, vbytes, vbr, stride, prim, t0, t1, sh) = record(res, model, mesh)
         pts = np.vstack([Vd[s] for s in strips])
@@ -574,6 +585,7 @@ def build(disc, runway_dir, out):
     retexture(res, names, stx, os.path.join(runway_dir, 'art'))
     tree_sheet(res, names, stx, os.path.join(runway_dir, 'trees'))
     kerb_colour(res, names, stx)
+    line_paint(res, names, stx)
 
     # Road Atlanta's buildings, stands and props set round Fuji (ROWS, SCATTER), drawn in every cell with their
     # buffers streamed in
@@ -597,7 +609,6 @@ def build(disc, runway_dir, out):
     col.blocks = []
     for (a, b, c_), k in zip(T, kinds):
         col.add_ground(COLLISION.get(int(k), 0x0200), Vf[[a, b, c_]])
-    walls = outside_walls(Vf, T, F)
     for q in walls:
         col.add(WALL, q[:3]); col.add(WALL, q[[0, 2, 3]])
     col_bytes = col.to_bytes()
@@ -1334,6 +1345,18 @@ def retexture(res, names, stx, art_dir):
         print('texture %d (%s): %s at %d x %d, DXT%d' % (t, names[t - 9][0][-40:], name, w, h, kind))
 
 
+def line_paint(res, names, stx, t=2180, white=232.0):
+    """Road Atlanta's road line texture (roadline_whole: worn light grey) as fresh white paint for GT4's painted
+    lines (the grid, the start line): its brightness scaled to `white`, its wear kept."""
+    w, h, kind = texture_shape(res, names, stx, t)
+    o, n = names[t - 9][3], names[t - 9][4]
+    img = np.asarray(forzaxpr.dxt(bytes(res[o:o + n]), w, h, kind)).astype(np.float32)
+    img[..., :3] *= white / max(1.0, img[..., :3].mean())
+    img[..., 3] = 255
+    res[o:o + n] = forzaxpr.encode_with_mips(img.clip(0, 255).astype(np.uint8), kind, n)
+    print('lines: texture %d painted white' % t)
+
+
 def kerb_colour(res, names, stx, t=497):
     """Road Atlanta's kerb texture (road_curbing_standard_001: green and white stripes) red and white as Fuji's:
     its red and green swapped (white stays white), written back with its mips."""
@@ -1582,6 +1605,23 @@ def pack_strips(jobs, Vf, pool, reach=REACH):
                 took.append(s); have |= set(s); ix += join + len(s); alive[i] = False
             if took: out.append((mesh, sp, vb, k, took))
     return out, 0
+
+
+def dressing(walls):
+    """Armco and catch fence on the walls: (vertices, triangles, texture coordinates, kinds per triangle), each
+    quad both faces."""
+    V, T, UV, K = [], [], [], []
+    for q in walls:
+        p0, p1 = q[0], q[1]
+        ln = float(np.linalg.norm((p1 - p0)[[0, 2]]))
+        for kind, (y0, y1) in ((ARMCO, ARMCO_H), (FENCE, FENCE_H)):
+            b = len(V)
+            V += [p0 + (0, y0, 0), p1 + (0, y0, 0), p1 + (0, y1, 0), p0 + (0, y1, 0)]
+            u1 = ln / RAIL_REPEAT
+            UV += [(0, 1), (u1, 1), (u1, 0), (0, 0)]
+            T += [(b, b + 1, b + 2), (b, b + 2, b + 3), (b, b + 2, b + 1), (b, b + 3, b + 2)]
+            K += [kind] * 4
+    return np.array(V, float), np.array(T, int), np.array(UV, float), np.array(K, int)
 
 
 def outside_walls(Vf, T, F=None, h=WALL_H):
