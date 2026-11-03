@@ -50,6 +50,7 @@ TARMAC, KERB, GRASS, GRAVEL, LINE = 0, 1, 2, 3, 0x0A
 TREE = 0x63  # (drawn only: GT4's tree cards)
 FOREST = 0x64  # (drawn only: the woods' canopy)
 ARMCO, FENCE = 0x65, 0x66  # (drawn only: along the walls)
+FAR_KIND = 0x70  # (drawn only: GT4's far ring, a kind for each of its pictures from here)
 
 
 def read_runway_obj(path):
@@ -286,7 +287,8 @@ GT4_MIDDLE = (111.4, 106.7)     # the Fuji runway's (x, z): x -797..1020, z -195
 # and gravel traps have richer vertices (flags 0x2000), so their textures are drawn the tarmac's way.
 MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24.0), GRAVEL: (64, 508, 10.0), LINE: (64, 2180, 4.0),
              TREE: (5628, None, 1.0), FOREST: (83, 430, 40.0),
-             ARMCO: (130, 107, 1.0), FENCE: (130, 319, 1.0)}  # (guardrail_white_001, racedeco catchfence_001 on a railing's
+             ARMCO: (130, 107, 1.0), FENCE: (130, 319, 1.0)}
+MATERIALS.update({FAR_KIND + i: (5628, None, 1.0) for i in range(11)})  # (their textures: FAR_SLOTS)  # (guardrail_white_001, racedeco catchfence_001 on a railing's
                                                               # material: 24-byte vertices, cut out; theirs take 20-byte ones)  # (the woods: terrain_hillside_distantbrush_001)  # (the trees: foliagefacade01's card material, its texture GT4's trees: TREE_TEX)
 # a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
@@ -458,14 +460,17 @@ def build(disc, runway_dir, out):
     Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
     Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear, (top_near, top_far))
     Vw, Tw, UVw, Kw = dressing(walls, cf)
-    Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw])
+    Vr, Tr, UVr, Kr = far_ring(runway_dir)
+    Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw, Vr])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
     o_t = o_f + len(Vfar)
     o_w = o_t + len(Vtr)
-    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t, Tw + o_w])
-    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw])
+    o_r = o_w + len(Vw)
+    Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t, Tw + o_w, Tr + o_r])
+    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw, Kr])
     given_uv = {o_t + i: (u, v) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet; repeats, set per donor)
     given_uv.update({o_w + i: (u, v) for i, (u, v) in enumerate(UVw)})  # (the rails and fences)
+    given_uv.update({o_r + i: (u, v) for i, (u, v) in enumerate(UVr)})  # (the far ring)
     print('walls dressed: %d armco and fence quads' % (len(Tw) // 4))
     print('terrain: %d vertices, %d triangles' % (len(Vt), len(Tt)))
 
@@ -520,7 +525,8 @@ def build(disc, runway_dir, out):
     for k_, tris, bsize in ((GRASS, (Tt + len(Vf))[Kt == GRASS], 8 * TERRAIN_CELL), (FOREST, (Tt + len(Vf))[Kt == FOREST], 8 * TERRAIN_CELL),
                             (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, (Tfar + o_f)[Kfar == GRASS], 8 * FAR_CELL),
                             (FOREST, (Tfar + o_f)[Kfar == FOREST], 8 * FAR_CELL), (TREE, Ttr + o_t, 8 * TERRAIN_CELL),
-                            (ARMCO, (Tw + o_w)[Kw == ARMCO], 8 * TERRAIN_CELL), (FENCE, (Tw + o_w)[Kw == FENCE], 8 * TERRAIN_CELL)):  # (the woods, the apron, the far ground, the trees)
+                            (ARMCO, (Tw + o_w)[Kw == ARMCO], 8 * TERRAIN_CELL), (FENCE, (Tw + o_w)[Kw == FENCE], 8 * TERRAIN_CELL)) + \
+                           tuple((k_r, (Tr + o_r)[Kr == k_r], 1e6) for k_r in sorted(set(Kr.tolist()))):  # (the woods, the apron, the far ground, the trees)
         if not len(tris): continue
         block = np.floor(Vd[tris].mean(1)[:, [0, 2]] / bsize).astype(int)
         for bk in sorted({tuple(b) for b in block}):
@@ -536,7 +542,8 @@ def build(disc, runway_dir, out):
     if left: raise SystemExit('out of donor meshes: %d strips left over' % left)
     taken = {p_[0] for p_ in placed}
     more, left = pack_strips(ground, Vd, [p_ for p_ in pool if p_[2] not in taken and p_[2] not in keep_],
-                             reach={TARMAC: 150.0, ARMCO: 100.0, FENCE: 100.0, None: GROUND_REACH}, longest={ARMCO: 100.0, FENCE: 100.0, None: 150.0})
+                             reach={TARMAC: 150.0, ARMCO: 100.0, FENCE: 100.0, None: GROUND_REACH, **{FAR_KIND + i: 1e6 for i in range(len(FAR_TEX))}},
+                             longest={ARMCO: 100.0, FENCE: 100.0, None: 150.0, **{FAR_KIND + i: 1e6 for i in range(len(FAR_TEX))}})
     if left: raise SystemExit('out of donor meshes for the ground: %d strips left over' % left)
     placed += more
     from collections import Counter as _C
@@ -548,6 +555,7 @@ def build(disc, runway_dir, out):
     for mesh, sp, vb, k, strips in placed:
         mat, tex, metres = MATERIALS[k]
         if k == TREE: tex = TREE_SHEET
+        if FAR_KIND <= k < FAR_KIND + len(FAR_SLOTS): tex = FAR_SLOTS[k - FAR_KIND]
         mat_at, (mfl, _, _, _, _, _, _, mt0, mt1, msh) = record(res, model, mat)
         mt0 = tex or mt0
         mt1, light = LIGHTMAP[0], {GRASS: GRASS_LIGHT, FOREST: FOREST_LIGHT, TARMAC: TARMAC_LIGHT}.get(k, LIGHTMAP[1:])
@@ -623,6 +631,7 @@ def build(disc, runway_dir, out):
     stx = xb2.unpack(stx_p) if open(stx_p, 'rb').read(1) == b'\x78' else open(stx_p, 'rb').read()
     retexture(res, names, stx, os.path.join(runway_dir, 'art'))
     tree_sheet(res, names, stx, os.path.join(runway_dir, 'trees'))
+    far_pictures(res, names, stx, os.path.join(runway_dir, 'far', 'textures'))
     kerb_colour(res, names, stx)
     line_paint(res, names, stx)
 
@@ -707,6 +716,14 @@ ART_GAIN = 1.8
 # cards of its tree pictures) where GT4 has them, and more of its trees in clusters off the track, each two crossed
 # cards. The pictures (run/gt4_fuji/trees, GT4's texture names) side by side in Road Atlanta's forest card texture
 # (1024 x 256 DXT5, eight 128 x 256 cells), drawn with the forest cards' material.
+# GT4 Fuji's far scenery (its course file's far model set: panorama cards round the circuit some 40 km out, Mt Fuji
+# among them; its clouds left out, Forza has its own sky): scaled about the circuit's middle to FAR_RING m (every
+# angle as GT4's), each picture on a spare texture of Road Atlanta's (its road overlays, 512 x 256), drawn with the
+# forest cards' cut-out material.
+FAR_TEX = ['1_0', '2_0', '2_1', '3_0', '3_1', '4_0', '4_1', '4_2', '5_0', '5_1', '5_2']
+FAR_SLOTS = [2827, 2830, 2833, 2836, 2839, 2842, 2845, 2848, 2851, 2859, 2862]
+FAR_RING = 2500.0
+FAR_BASE = -40.0   # m: the ring's foot (under the hills round the circuit)
 TREE_TEX = ['1_53', '1_54', '1_59', '1_60', '1_33']   # cells 0-4; GT4 materials t<name> (its 7_13, a black
                                                       # silhouette, and 0_34, a door, are not trees)
 TREE_SHEET = 7564          # tree_cardpage_realforrest_tile: the sheet
@@ -1527,6 +1544,53 @@ def kerb_colour(res, names, stx, t=497):
     img[..., 3] = 255
     res[o:o + n] = forzaxpr.encode_with_mips(img.astype(np.uint8), kind, n)
     print('kerbs: texture %d red and white' % t)
+
+
+def far_pictures(res, names, stx, folder):
+    """GT4's far pictures (FAR_TEX) each over its FAR_SLOTS texture, at that texture's size, colours doubled."""
+    for name, t in zip(FAR_TEX, FAR_SLOTS):
+        p_ = os.path.join(folder, name + '.png')
+        if not os.path.exists(p_): continue
+        w, h, kind = texture_shape(res, names, stx, t)
+        img = read_png(p_).astype(np.float32)
+        if img.shape[2] == 3: img = np.concatenate([img, np.full(img.shape[:2] + (1,), 255, np.float32)], 2)
+        ys = (np.arange(h) * img.shape[0] / h).astype(int); xs = (np.arange(w) * img.shape[1] / w).astype(int)
+        img = img[ys][:, xs]
+        img[..., :3] = np.clip(img[..., :3] * ART_GAIN, 0, 255)
+        o, n = names[t - 9][3], names[t - 9][4]
+        res[o:o + n] = forzaxpr.encode_with_mips(img.clip(0, 255).astype(np.uint8), kind, n)
+    print('far: %d pictures on textures %s' % (len(FAR_TEX), FAR_SLOTS))
+
+
+def far_ring(runway_dir):
+    """GT4's far cards (FAR_TEX's materials in far/far.obj) in Forza's frame, scaled about the circuit's middle so
+    their median distance is FAR_RING m: (vertices, triangles both faces, texture coordinates (v down), kinds)."""
+    src = os.path.join(runway_dir, 'far', 'far.obj')
+    if not os.path.exists(src): return np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 2)), np.zeros(0, int)
+    mats = {'t' + t: i for i, t in enumerate(FAR_TEX)}
+    V, VT, P, UV, K, cur = [], [], [], [], [], None
+    for l in open(src):
+        if l.startswith('v '): V.append(list(map(float, l.split()[1:4])))
+        elif l.startswith('vt '): VT.append(list(map(float, l.split()[1:3])))
+        elif l.startswith('usemtl '): cur = mats.get(l.split()[1])
+        elif l.startswith('f ') and cur is not None:
+            ps = [x.split('/') for x in l.split()[1:4]]
+            P.append([V[int(a) - 1] for a, b in ps]); UV.append([(VT[int(b) - 1][0], 1 - VT[int(b) - 1][1]) for a, b in ps]); K.append(FAR_KIND + cur)
+    if not P: return np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 2)), np.zeros(0, int)
+    P = to_forza(np.array(P, float).reshape(-1, 3))
+    mid = np.array([RA_MIDDLE[0], 0.0, RA_MIDDLE[1]])
+    # each point pulled in to FAR_RING m along its own direction, its height kept as the angle it is seen at (GT4's
+    # cards run from 1 to 60 km: scaled as one, the near ends stood among the trees)
+    d = np.hypot(P[:, 0] - mid[0], P[:, 2] - mid[2])
+    f = FAR_RING / np.maximum(d, 1.0)
+    P = np.stack([mid[0] + (P[:, 0] - mid[0]) * f, P[:, 1] * f + FAR_BASE, mid[2] + (P[:, 2] - mid[2]) * f], 1)
+    sc_ = float(np.median(f))
+    n = len(P) // 3
+    T = np.arange(3 * n).reshape(n, 3)
+    T = np.vstack([T, T[:, [0, 2, 1]]])
+    K = np.array(K + K, int)
+    print('far: %d cards\' triangles, scaled by %.3f, %.0f to %.0f m high' % (n, sc_, P[:, 1].min(), P[:, 1].max()))
+    return P, T, np.array(UV, float).reshape(-1, 2), K
 
 
 def tree_sheet(res, names, stx, folder):
