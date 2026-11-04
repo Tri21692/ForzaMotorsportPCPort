@@ -157,7 +157,7 @@ def behind_wall(pts, ring, wall, lo):
     return behind > len(sample) / 2
 
 
-def seal_open_edges(col, ring, least=2, near=25.0):
+def seal_open_edges(col, ring, least=2, near=25.0, margin=MARGIN, one_face=False, lines=None):
     """Walls (both faces, from a metre under the road to 3 m over it) along every edge of the ground a
     car reaches from the loop where it ends with no wall (the void past it): where two walls' ends
     jogged 4 m apart past the hairpin a car went through and fell. Not those behind a wall (the
@@ -165,7 +165,7 @@ def seal_open_edges(col, ring, least=2, near=25.0):
     2's exit short walls between the loop and an edge had it counted behind them, and the edge was
     left open). Returns the metres of wall added."""
     ring = np.asarray(ring, float)
-    lo, hi = ring[:, [0, 2]].min(0) - MARGIN, ring[:, [0, 2]].max(0) + MARGIN
+    lo, hi = ring[:, [0, 2]].min(0) - margin, ring[:, [0, 2]].max(0) + margin
     W, H = grid_of(lo, hi)
     ground, wall, near_y = collision_grids(col, ring, lo, W, H)
     reach = flood(ground, wall, ring, lo)
@@ -180,10 +180,10 @@ def seal_open_edges(col, ring, least=2, near=25.0):
             for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 rr, cc = r + dr, c + dc
                 if not (0 <= rr < H and 0 <= cc < W) or ground[rr, cc]: continue
-                if dr: segs.setdefault(('z', r + (dr > 0)), []).append(c)   # a side at z = lo + line * CELL
-                else: segs.setdefault(('x', c + (dc > 0)), []).append(r)    # a side at x = lo + line * CELL
+                if dr: segs.setdefault(('z', r + (dr > 0), dr), []).append(c)   # a side at z = lo + line * CELL
+                else: segs.setdefault(('x', c + (dc > 0), dc), []).append(r)    # a side at x = lo + line * CELL
     added = 0.0
-    for (axis, line), at in segs.items():
+    for (axis, line, out), at in segs.items():  # (out: which way the void lies, +1 or -1 along the axis)
         at = sorted(set(at))
         runs, start = [], at[0]
         for a, b in zip(at, at[1:] + [None]):
@@ -192,22 +192,62 @@ def seal_open_edges(col, ring, least=2, near=25.0):
             if axis == 'z': p0, p1 = (lo[0] + a * CELL, lo[1] + line * CELL), (lo[0] + b * CELL, lo[1] + line * CELL)
             else: p0, p1 = (lo[0] + line * CELL, lo[1] + a * CELL), (lo[0] + line * CELL, lo[1] + b * CELL)
             y0, y1 = near_y((p0[0], 0, p0[1])), near_y((p1[0], 0, p1[1]))
+            if lines is not None:  # (the walls' foot lines, each with the ground on its left as it runs: they join end to
+                # end round the edge, for drawing something along them, fujitrack's armco)
+                g = np.array([-out, 0.0] if axis == 'x' else [0.0, -out])
+                d = np.array(p1) - np.array(p0)
+                a3, b3 = np.array([p0[0], y0, p0[1]]), np.array([p1[0], y1, p1[1]])
+                lines.append((a3, b3) if d[0] * g[1] - d[1] * g[0] > 0 else (b3, a3))
             q = [(p0[0], y0 - 1, p0[1]), (p1[0], y1 - 1, p1[1]), (p1[0], y1 + 3, p1[1]), (p0[0], y0 + 3, p0[1])]
-            for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
+            tris = [[q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]]
+            if one_face:  # (one face, toward the ground the car is on: the game's walls have one; with both, cars were
+                # pushed out through them, shipyardcircuit's lesson)
+                t0 = np.array(tris[0], float)
+                n = np.cross(t0[1] - t0[0], t0[2] - t0[0])
+                toward = np.array([-out, 0, 0] if axis == 'x' else [0, 0, -out], float)
+                tris = tris[:2] if n @ toward > 0 else tris[2:]
+            for tri in tris:
                 col.add(0x900, tri)
             added += (b - a) * CELL
     return added
 
 
-def audit(mods, out, tag='VancouverLoop'):
+def track_files(mods, tag):
+    """(scenery .res bytes, collision, visibility path) of an installed custom track, found by kind (the Pacific
+    Shipyards Circuit's on vancouver.res and media\\tracks\\VancouverReverse, Fuji's on RoadAtlanta's)."""
     t = os.path.join(mods, 'track', tag)
-    res = open(os.path.join(t, 'hdd', 'Partition4', 'vancouver.res'), 'rb').read()
+    p4 = os.path.join(t, 'hdd', 'Partition4')
+    res = open(os.path.join(p4, next(f for f in os.listdir(p4) if f.lower().endswith('.res'))), 'rb').read()
+    col = open(os.path.join(p4, tag + '.col'), 'rb').read()
+    pvs = next(os.path.join(r, f) for r, _, fs in os.walk(os.path.join(t, 'media', 'tracks')) for f in fs if f == 'QuickPreview1.pvs')
+    return res, col, pvs
+
+
+def edge_splines(res, names):
+    """The six edge splines (road, drivable, curbing; inner and outer), by their buffers' names (Fuji's are as long
+    as Road Atlanta's), else at shipyardloop.SPLINES (the Pacific Shipyards Circuit's)."""
+    out = []
+    for nm in ('roadinner', 'roadouter', 'drivableinner', 'drivableouter', 'curbinginner', 'curbingouter'):
+        r = next((r for r in names if r[0] == 'vbuff_quickpreview_splines_%s_vb0' % nm), None)
+        if r is None: return L.read_splines(bytearray(res))
+        npt = (r[4] + 4) // 16  # (fujitrack: 12 bytes a point; the buffer is sized 16 a point less 4)
+        out.append(np.frombuffer(res, '<f4', count=3 * npt, offset=r[3]).reshape(-1, 3).astype(float))
+    return out
+
+
+def audit(mods, out, tag='VancouverLoop'):
+    res, col_bytes, pvs_path = track_files(mods, tag)
     names, _ = xb2.resources(res)
-    col = coledit.Col(open(os.path.join(t, 'hdd', 'Partition4', tag + '.col'), 'rb').read())
-    _, cells, _ = L.parse_pvs(open(os.path.join(t, 'media', 'tracks', 'VancouverReverse', 'QuickPreview1.pvs'), 'rb').read())
-    sp = L.read_splines(bytearray(res))
-    ring = (sp[4] + sp[5]) / 2
-    lo, hi = ring[:, [0, 2]].min(0) - MARGIN, ring[:, [0, 2]].max(0) + MARGIN
+    L.MODEL = next(r[3] for r in names if r[0] == 'model_quickpreview')  # (blender_export's mesh_geometry reads it)
+    col = coledit.Col(col_bytes)
+    _, cells, _ = L.parse_pvs(open(pvs_path, 'rb').read())
+    sp = edge_splines(res, names)
+    if len(sp[4]) == len(sp[5]): ring = (sp[4] + sp[5]) / 2
+    else:  # (Fuji's edges have their own counts: each inner point with the outer nearest it)
+        j = np.argmin(np.hypot(sp[4][:, None, 0] - sp[5][None, :, 0], sp[4][:, None, 2] - sp[5][None, :, 2]), axis=1)
+        ring = (sp[4] + sp[5][j]) / 2
+    margin = MARGIN if len(sp[4]) == len(sp[5]) else 160.0  # (Fuji: paved run-off and grass 100 m and more off its line)
+    lo, hi = ring[:, [0, 2]].min(0) - margin, ring[:, [0, 2]].max(0) + margin
     W, H = grid_of(lo, hi)
     ground, wall, near_y = collision_grids(col, ring, lo, W, H)
     # what is drawn standing: any upright face from a kerb's height to a car's roof
@@ -275,7 +315,7 @@ def audit(mods, out, tag='VancouverLoop'):
         taken.append(p)
         r, c = int((p[1] - lo[1]) / CELL), int((p[0] - lo[0]) / CELL)
         # out: away from the reachable ground round it
-        rr, cc = np.mgrid[max(r - 8, 0):r + 9, max(c - 8, 0):c + 9]
+        rr, cc = np.mgrid[max(r - 8, 0):min(r + 9, H), max(c - 8, 0):min(c + 9, W)]  # (held in the grid: a point on its border)
         inside = reach[rr, cc]
         d = np.array([(cc[inside] - c).mean(), (rr[inside] - r).mean()])
         d = -d / (np.linalg.norm(d) or 1)
