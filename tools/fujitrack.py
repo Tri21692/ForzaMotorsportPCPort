@@ -369,6 +369,7 @@ TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest card
 TERRAIN_DROP = 0.3              # m: and this far under it (under the runway at its crests too: the lowest runway near)
 GROUND_FLAT = 0.5               # GT4's world model's triangles taken as ground: |normal y| over this
 GROUND_SLOPE = 0.4              # the ground's steepest rise (m a metre) off the runway
+MEET_BLEND, MEET_UNDER = 96.0, 0.5  # m: the far ground meets the near grid's top this far beyond its reach, this far under it
 FAR_CELL, FAR_REACH, FAR_DROP = 48.0, 1000.0, 1.0   # the far ground: a coarser grid out to FAR_REACH m (the map's
                                                   # edge showed past the near one), FAR_DROP m under the near grid
 GROUND_NEAR = 3000.0           # m: and their middles this near the runway's middle (the far hills are its own model)
@@ -487,7 +488,7 @@ def build(disc, runway_dir, out):
     clear = clearings(cf, sides(cf)[1], reach[:, 0], reach[:, 1])
     Vt, Tt, ground_at, Kt, top_near = terrain(Vf, F, drawn, cf, read_ground(runway_dir), clear)
     Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON, ground_at)
-    Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear)
+    Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear, meet=top_near)
     Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear, (top_near, top_far))
     Vw, Tw, UVw, Kw = dressing(walls, cf)
     rast = Raster(Vf, F, res=0.5)
@@ -1220,11 +1221,16 @@ def clearings(centre, inner, reach_in, reach_out):
     return clear
 
 
-def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH, near=TERRAIN_REACH, drop=TERRAIN_DROP + FAR_DROP):
+def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH, near=TERRAIN_REACH, drop=TERRAIN_DROP + FAR_DROP,
+                meet=None):
     """The ground from the near grid's edge (terrain's) out to `reach` m beyond the runway, outside the loop: a grid of
     `cell` m squares at GT4's ground's height (its far hills too) where it has some, else the runway's spread
     outward; no steeper than GROUND_SLOPE; `drop` m down (the near grid draws over it where they overlap).
-    (vertices, triangles wound as the runway's)."""
+    meet: the near grid's top (terrain's sampler, its woods included): within the near grid's reach the far ground
+    takes its height (a little under it) and blends to its own over MEET_BLEND m beyond. (The two grids' heights came
+    from their own spreads: by the main straight the near ground lay in a dip at 1 m where the far woods' canopy stood
+    at 35, an open step there, the sky seen under the woods, the trees on them in the air; the user's 'huge gaps of
+    missing geometry'.) (vertices, triangles wound as the runway's)."""
     g = 8.0
     r = Raster(Vf, F, res=g, pad=reach + 2 * cell)
     y = r.y.astype(float).copy()
@@ -1262,6 +1268,10 @@ def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH,
     keep = (a_ <= reach) & ~inside(corner, loop[:, [0, 2]])
     deep = a_ < near - 2 * TERRAIN_CELL  # (well inside the near grid)
     can = canopy(corner, a_, clear) if clear else np.zeros(gx.shape)
+    Y = y[zi, xi] - drop + can  # (each corner's height)
+    if meet is not None:
+        w = np.clip((a_ - near) / MEET_BLEND, 0, 1)
+        Y = (1 - w) * (meet(corner) - MEET_UNDER) + w * Y
     vid = -np.ones(gx.shape, int)
     V, T, K = [], [], []
     for a in range(nz - 1):
@@ -1271,7 +1281,7 @@ def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH,
             q = []
             for u, v in q4:
                 if vid[u, v] < 0:
-                    vid[u, v] = len(V); V.append((gx[u, v], y[zi[u, v], xi[u, v]] - drop + can[u, v], gz[u, v]))
+                    vid[u, v] = len(V); V.append((gx[u, v], Y[u, v], gz[u, v]))
                 q.append(vid[u, v])
             T += [(q[0], q[1], q[2]), (q[0], q[2], q[3])]
             K += [FOREST if max(can[u, v] for u, v in q4) > 1.0 else GRASS] * 2
@@ -1280,7 +1290,7 @@ def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH,
     flip = nrm[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
     print('far ground: %d vertices, %d triangles (%d woods), %.0f to %.0f m high' % (len(V), len(T), (K == FOREST).sum(), V[:, 1].min(), V[:, 1].max()))
-    return V, T, K, grid_sampler(y[zi, xi] - drop + can, lo, cell)
+    return V, T, K, grid_sampler(Y, lo, cell)
 
 
 def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
