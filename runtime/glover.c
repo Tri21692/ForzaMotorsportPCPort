@@ -276,7 +276,7 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     ov_rect(0, 400, W, 404, olive);
     ov_rect(0, 404, W, H, black);
     ov_text(OVF_TITLE, X0 + 64, 22, "OPTIONS", white, 0);
-    ov_text(OVF_MENU, X0 + 590, 26, "PC Settings", white, 1);
+    if (rt_overlay_page() != 2) ov_text(OVF_MENU, X0 + 590, 26, "PC Settings", white, 1);
     int n = rt_overlay_items(), sel = rt_overlay_selected();
     /* The tabs (Display, Graphics, HDR, Game, Audio), the one shown picked out; Q / E, Tab or the triggers switch */
     const char *tabs[8];
@@ -327,7 +327,7 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
         }
         char t[48];
         snprintf(t, sizeof t, "%d of %d unlocked", got, nm);
-        ov_text(OVF_ITEM, X0 + 574, 76, t, ink, 1); /* (by the tabs: the to-do's line is long) */
+        ov_text(OVF_MENU, X0 + 590, 26, t, white, 1); /* (in the title bar, for PC Settings: by the tabs it ran over them) */
     } else if (!n) { /* the achievements' tab: each one's name and what it asks, earned or how far along */
         int na = rt_ach_count(), top = rt_overlay_scroll(), got = 0;
         for (int i = 0; i < na; i++) {
@@ -368,7 +368,7 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     /* What the chosen setting does, and whether it waits for a restart. */
     ov_text(OVF_TEXT, X0 + 64, 362, rt_overlay_help(sel), grey, 0);
     if (rt_overlay_needs_restart()) ov_text(OVF_TEXT, X0 + 64, 378, "Restart the game for the new settings to take effect.", amber, 0);
-    ov_button(X0 + 64, 428, "A", green, "Change");
+    if (n) ov_button(X0 + 64, 428, "A", green, "Change"); /* (none on the pages without settings: achievements, Moments) */
     ov_button(X0 + 190, 428, "B", red, "Back");
     ov_text(OVF_MENU, X0 + 590, 425, "F1  Close", white, 1);
     ov_text(OVF_MENU, X0 + 450, 425, "Q / E  Tabs", white, 1);

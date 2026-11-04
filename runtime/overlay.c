@@ -66,7 +66,7 @@ static const OvItem items[] = {
      {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}, 1, "Sound volume."},
     {"background_mute", "Mute in Background", {"0", "1"}, {"Off", "On"}, 1, "Silent while the game's window is not in front."},
     {NULL, "Achievements", {NULL}, {NULL}, 0, NULL}, /* (no settings: glover.c lists rt_ach_get's) */
-    {NULL, "Mayhem Moments", {NULL}, {NULL}, 0, NULL}, /* (none either: glover.c shows rt_mm_get's, with their photographs) */
+    {NULL, "Moments", {NULL}, {NULL}, 0, NULL}, /* (none either: glover.c shows rt_mm_get's, with their photographs) */
 };
 #define NITEMS (int)(sizeof items / sizeof items[0])
 
@@ -98,7 +98,7 @@ int rt_overlay_tabs(const char **names, int max, int *cur) {
 }
 int rt_overlay_selected(void) { return sel; }
 /* the page shown: 0 settings, 1 the achievements, 2 the Mayhem Moments */
-int rt_overlay_page(void) { tabs_init(); return tab_n[tab] ? 0 : strcmp(items[tab_head[tab]].label, "Mayhem Moments") ? 1 : 2; }
+int rt_overlay_page(void) { tabs_init(); return tab_n[tab] ? 0 : strcmp(items[tab_head[tab]].label, "Moments") ? 1 : 2; /* (the Mayhem Moments: "Moments", all the tabs in 4:3) */ }
 int rt_overlay_needs_restart(void) { return changed_restart; }
 
 static int nvalues(const OvItem *it) {
