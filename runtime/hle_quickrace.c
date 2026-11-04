@@ -705,16 +705,22 @@ void rt_qr_tick(void) {
     double dt = last ? (now - last) / 1e7 : 0;
     last = now;
     { /* a race begun: Mayhem's, when on and a career menu was up within the minute before */
-        static uint32_t race_was;
+        static uint32_t race_was, ev_was;
         uint32_t race = xb_rd32(0x592984);
-        if (race != race_was) {
+        uint32_t ev = race ? xb_rd32(race + 0x318) : 0;
+        if (ev >= RT_USER_LIMIT) ev = 0;
+        /* (decided again when the race or its event changes: the race is there before its event is, a grid's
+         * worth of ticks, so deciding only when the race appeared saw no event and no career race was Mayhem's) */
+        if (race != race_was || ev != ev_was) {
             mayhem_load();
-            uint32_t ev = race ? xb_rd32(race + 0x318) : 0, ord = ev && ev < RT_USER_LIMIT ? xb_rd32(ev + 0x10) : 0xFFFFFFFFu;
+            uint32_t ord = ev ? xb_rd32(ev + 0x10) : 0xFFFFFFFFu;
+            int was = race == race_was && mayhem_race;
             mayhem_race = 0;
             for (int k = 0; race && k < nmayhem_ev; k++) mayhem_race |= mayhem_ev[k] == ord; /* (one of the Mayhem category's events) */
             if (race && getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST"))) mayhem_race = 1; /* (any race, testing) */
-            if (race && mayhem_race) fprintf(stderr, "xbrt: mayhem: this race\n");
-            race_was = race;
+            if (race && mayhem_race && !was) fprintf(stderr, "xbrt: mayhem: this race (event %u)\n", ord);
+            if (race && ev && ev != ev_was) fprintf(stderr, "xbrt: race's event ordinal %u\n", ord);
+            race_was = race, ev_was = ev;
         }
     }
     if (tdcam_until && rt_now_100ns() >= tdcam_until) tdcam_end();
