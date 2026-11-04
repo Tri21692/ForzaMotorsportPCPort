@@ -11,7 +11,7 @@ Writes <out prefix>_<view>.png for the views front, rear, left, fside.
 Env: VIEWS=front,rear,...  (also lclose, rclose, fclose, rtop, cabin, rearc)  ALL=1 every part
      ICON=1 the car-select tile's view (icon: a front three-quarter, no ground, a clear background, 512 x 256)
      PARTS=1 a flat colour a part (the names printed)   ONLYP=<regex> only those parts   PICK=<name,...> add these
-     BACKRED=1 back faces (by the carbin's winding) red
+     BACKRED=1 back faces (by the carbin's winding) red   LEVEL=<n> that detail level instead of the finest
 
 It found the Celica GT-Four still on its template's body, the Underground 2 decals as black boxes and the MX-5's
 squashed cabin (1 Nov), none of which the unlit preview (carobj.py) showed plainly."""
@@ -110,7 +110,7 @@ for p in car['parts']:
     shown.append(p['name'])
     faces, fmat, order = [], [], []
     for sp in p['subparts']:
-        if sp['id'] != 1: continue
+        if sp['id'] != int(os.environ.get('LEVEL', '1')): continue  # (LEVEL=2..4: a far detail level, tools/carlods.py's)
         if sp['material'] not in order: order.append(sp['material'])
         ix = sp['indices']
         for k in range(len(ix) - 2):
