@@ -23,6 +23,9 @@ import shipyardloop as L
 import xb2
 
 
+COUNT_CAP, BYTE_CAP = 330, 12 * 2 ** 20
+
+
 def plan(res, pvs, ppw, model=None):
     """(the texture list for every cell, info lines)"""
     names, _ = xb2.resources(bytes(res))
@@ -34,7 +37,7 @@ def plan(res, pvs, ppw, model=None):
     drawn = sorted({struct.unpack_from('<H', e)[0] for c in cells for e in c[0]})
     streamed = [[struct.unpack_from('<H', e)[0] for e in c[1]] for c in cells]
     size = lambda t: names[t - 9][4] if 9 <= t < len(names) + 9 else 0
-    near = {}
+    near, rank = {}, {}
     for m in drawn:
         try: info = fujitrack.mesh_info(res, names, model, m)
         except Exception: continue
@@ -42,6 +45,7 @@ def plan(res, pvs, ppw, model=None):
         r, cx, cy, cz = struct.unpack_from('<4f', ppw, offs[m])
         if not np.isfinite([r, cx, cz]).all(): continue
         d = max(0.0, float(np.min(np.hypot(ring[:, 0] - cx, ring[:, 2] - cz))) - r)
+        ext = 2 * r
         vb, nidx, vbytes, vsize = info[:4]
         if vsize == 24 and vbytes:  # (its nearest vertex, where the vertices are plain: a building's sphere reaches the road)
             o = names[vb - 9][3]
@@ -50,21 +54,30 @@ def plan(res, pvs, ppw, model=None):
                 q = p[:: max(1, len(p) // 400)]
                 dd = np.hypot(q[:, None, 0] - ring[None, ::4, 0], q[:, None, 2] - ring[None, ::4, 2])
                 d = float(dd.min())
+                ext = float(np.linalg.norm(p.max(0) - p.min(0)))
+        # (how much of the view it can fill: its size over its distance from the road; a building's front 15 m off
+        # before a sign at 3 m. Ranked by distance alone, fronts set back stayed blurred)
+        score = ext / max(d, 4.0)
         for t in info[4]:
-            if 9 <= t < len(names) + 9 and names[t - 9][0].startswith('tex_'): near[t] = min(near.get(t, 1e9), d)
-    count_cap = max(len(s) for s in streamed)
-    byte_cap = max(sum(size(t) for t in s) for s in streamed)
-    core = set.intersection(*[set(s) for s in streamed])
-    out = sorted(core, key=lambda t: near.get(t, 1e9))
+            if 9 <= t < len(names) + 9 and names[t - 9][0].startswith('tex_'):
+                near[t] = min(near.get(t, 1e9), d)
+                rank[t] = max(rank.get(t, 0.0), score)
+    # (the game's texture pool: at 13.3 MB the garage's tin, 171 KB, drew its 32-texel copy though listed early; at
+    # 11 MB it was sharp. The disc's cells stream 332 and 12.4 MB at most: these caps stay under them)
+    count_cap, byte_cap = COUNT_CAP, BYTE_CAP
+    core = {t for s in streamed for t in s if t not in near}  # (listed, but no drawn mesh's: the sky and such, kept)
+    out = sorted(core)
     total = sum(size(t) for t in out)
+    # (by size over distance instead, 4 Nov: one or two more textures at fronts set back, two fewer in the garage)
     for t in sorted(near, key=lambda t: near[t]):
-        if t in core: continue
-        if len(out) >= count_cap or total + size(t) > byte_cap: break
+        if len(out) >= count_cap or total + size(t) > byte_cap: continue  # (a smaller one further off may still fit)
         out.append(t); total += size(t)
-    reach = max((near[t] for t in out if t in near and t not in core), default=0)
-    info = ['cells %d; before: %d-%d textures, %.1f-%.1f MB; core (every cell) %d' % (
-        len(cells), min(map(len, streamed)), count_cap, min(sum(size(t) for t in s) for s in streamed) / 2**20, byte_cap / 2**20, len(core)),
-        'now: %d textures, %.1f MB, every cell; all used within %.0f m of the loop' % (len(out), total / 2**20, reach)]
+    left = [t for t in near if t not in out]
+    reach = min((near[t] for t in left), default=1e9)
+    info = ['cells %d; before: %d-%d textures, %.1f-%.1f MB; kept as not a drawn mesh\'s: %d' % (
+        len(cells), min(map(len, streamed)), max(map(len, streamed)), min(sum(size(t) for t in s) for s in streamed) / 2**20,
+        max(sum(size(t) for t in s) for s in streamed) / 2**20, len(core)),
+        'now: %d textures, %.1f MB, every cell; everything used within %.0f m of the loop listed' % (len(out), total / 2**20, reach)]
     return out, info
 
 
