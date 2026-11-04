@@ -1013,6 +1013,9 @@ static int gl_show_ram(void) {
 static void gl_present_vblank(uint32_t fb) {
     if (gl_ready < 0) gl_ready = gl_setup();
     if (gl_ready <= 0) return;
+    /* the last picture kept a moment (hle_quickrace.c's camera probe on the grid: it turns the camera to rivals for
+     * a few frames each, which showed as flicker at the start: the user's); 3 s at most */
+    if (rt_present_hold_until && rt_now_100ns() < rt_present_hold_until) return;
     gl_present_poll(0);
     fb &= RT_PHYS_SIZE - 1;
     GlSurf *s = NULL;

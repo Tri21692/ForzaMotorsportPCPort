@@ -264,6 +264,8 @@ static void scripted(uint16_t *buttons, uint8_t analog[8], int16_t thumbs[4]) {
     }
 }
 
+volatile float rt_pad_steer, rt_pad_throttle, rt_pad_brake; /* (rt.h) */
+
 static void host_pad(uint32_t pad) {
     static int autopress = -1;
     if (autopress < 0) {
@@ -297,6 +299,8 @@ static void host_pad(uint32_t pad) {
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
     }
+    /* what the game is given to drive with (Mayhem's arcade handling, hle_quickrace.c, works from it) */
+    rt_pad_steer = thumbs[0] / 32767.0f, rt_pad_throttle = analog[A_RT] / 255.0f, rt_pad_brake = analog[A_LT] / 255.0f;
     if (rt_mayhem_pad(buttons, analog)) { /* hle_quickrace.c: Mayhem's code on the career menus (its last B not the game's) */
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);

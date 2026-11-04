@@ -127,6 +127,8 @@ float rt_qr_tank(void);
 extern volatile int rt_qr_auto; /* Quick Race's takedown autopilot on (2 just started); hle_input.c ends it */
 int rt_qr_cam_active(void);     /* the takedown camera on the wreck */
 int rt_mayhem_pad(uint16_t buttons, const uint8_t analog[8]); /* Mayhem's code on the career menus; 1: swallow the pad */
+extern volatile uint64_t rt_present_hold_until; /* the shown picture held until then (glfill.c; the camera probe) */
+extern volatile float rt_pad_steer, rt_pad_throttle, rt_pad_brake; /* the pad as given to the game: -1..1 (right +), 0..1, 0..1 (hle_input.c) */
 extern volatile float rt_vblank_rate; /* vertical blanks at this share of 59.94 Hz (nv2a.c): the game's slow motion */
 void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */
 extern char rt_toast_text[64];

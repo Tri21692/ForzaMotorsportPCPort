@@ -357,6 +357,7 @@ static void cam_cut(uint32_t from, uint32_t to) {
     }
     fprintf(stderr, "xbrt: quick race: the camera cut, %d places moved %.0f m\n", n, sqrtf(d[0] * d[0] + d[2] * d[2]));
 }
+volatile uint64_t rt_present_hold_until; /* (rt.h, glfill.c) */
 static uint32_t cand[24], cand_was[24]; /* the places to try (find_cam_slots), the camera's among them (cam_probe_tick) */
 static int ncand, probe_i, probe_stage;
 static uint64_t tdcam_until; /* real time */
@@ -396,6 +397,7 @@ static void find_cam_slots(uint32_t me, uint32_t rme) {
         uint32_t w = xb_rd32(a);
         if (w == me || w == rme) cand[ncand] = a, cand_was[ncand++] = w;
     }
+    if (ncand) rt_present_hold_until = rt_now_100ns() + 30000000; /* (the picture held while they are tried: no flicker; 3 s at most) */
     fprintf(stderr, "xbrt: quick race: the camera's hold on the player's car, %d places to try (%d copies, %d together over %u bytes)\n",
             ncand, nc, bestn, hi - lo);
 }
@@ -422,7 +424,10 @@ static void cam_probe_tick(uint32_t me, uint32_t rme, uint32_t them, uint32_t rt
         frame = f, probe_stage = 2;
     } else if (probe_stage == 2 && f - frame >= 3) { /* back where it was: the next */
         probe_i++, probe_stage = 0;
-        if (probe_i >= ncand) fprintf(stderr, "xbrt: quick race: the camera follows %d of the %d places\n", ncslot, ncand);
+        if (probe_i >= ncand) {
+            rt_present_hold_until = 0; /* (the picture moves on) */
+            fprintf(stderr, "xbrt: quick race: the camera follows %d of the %d places\n", ncslot, ncand);
+        }
     }
     (void)rme;
 }
@@ -610,7 +615,7 @@ void rt_qr_tick(void) {
         uint32_t race = xb_rd32(0x592984);
         if (race != race_was) {
             mayhem_load();
-            mayhem_race = race && mayhem_on && rt_mg_menu_age() < 600000000ull;
+            mayhem_race = race && ((mayhem_on && rt_mg_menu_age() < 600000000ull) || (getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST")))); /* (the variable: any race, testing) */
             if (race && mayhem_race) fprintf(stderr, "xbrt: mayhem: this race\n");
             race_was = race;
         }
@@ -652,7 +657,7 @@ void rt_qr_tick(void) {
             cam_probe_tick(me, rme, them, rthem);
         } else if (probe_i < ncand && !on_grid && probe_stage) { /* (the start came first: what was being tried put back) */
             xb_wr32(cand[probe_i], cand_was[probe_i]);
-            probe_stage = 0, probe_i = ncand;
+            probe_stage = 0, probe_i = ncand, rt_present_hold_until = 0;
             fprintf(stderr, "xbrt: quick race: the camera probe cut short by the start: %d places\n", ncslot);
         }
         /* testing: XBRT_TD_TEST=<s>: that long into the race, the takedown camera on the first rival; the race clock
@@ -746,6 +751,32 @@ void rt_qr_tick(void) {
                 tank -= (float)(dt / 4.0); /* 4 s a tank */
                 if (tank < 0) tank = 0;
             } else if (!nitro_y && tank < 1) tank += (float)(dt / 30.0); /* filled again in 30 s, while not held */
+        }
+        if (mayhem_race && car == me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.5f) {
+            /* Mayhem's arcade handling (the user's: "completely overhaul the handling, very arcadey"), on top of the
+             * game's physics, the player's car only, nothing of the car's data changed: the slide across its heading
+             * mostly taken out (it goes where it points), more turn from the stick (rising with speed to 20 m/s) with
+             * the speed carried round, a strong pull from the throttle and a strong brake, held down over crests */
+            float hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
+            if (hl > 0.1f) {
+                hx /= hl, hz /= hl;
+                float rx = hz, rz = -hx; /* (its right: the pose's first row) */
+                float vf = v[0] * hx + v[2] * hz, vl = v[0] * rx + v[2] * rz;
+                float steer = rt_pad_steer, thr = rt_pad_throttle, brk = rt_pad_brake;
+                float turn = steer * 1.1f * (vf > 20 ? 1.0f : vf > 0 ? vf / 20 : 0); /* rad/s */
+                if (turn > 0.001f || turn < -0.001f) {
+                    yaw(car, turn * (float)dt);
+                    hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
+                    if (hl > 0.1f) hx /= hl, hz /= hl;
+                    rx = hz, rz = -hx;
+                }
+                vl *= expf(-7.0f * (float)dt); /* (grip: a slide gone in a fraction of a second) */
+                if (thr > 0.05f && vf > -1 && vf < 95) vf += 7.0f * thr * (float)dt;
+                if (brk > 0.05f && vf > 0) vf -= (vf < 12.0f * brk * (float)dt ? vf : 12.0f * brk * (float)dt);
+                v[0] = hx * vf + rx * vl, v[2] = hz * vf + rz * vl;
+                v[1] -= (float)(4.0 * dt); /* (planted) */
+                wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
+            }
         }
         if (mayhem_race && car != me && me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.7f && have_line) {
             /* Mayhem's rivals: faster (a push along their heading, 3 m/s^2, under 85 m/s) and at the player (within
