@@ -321,7 +321,9 @@ static void host_pad(uint32_t pad) {
         if (took) rt_qr_auto = 0;
         else thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
     }
-    if (rt_photo_lookback) analog[A_Y] = 255; /* (hle_quickrace.c's photographs: the game looking back) */
+    if (rt_photo_lookback == 1) analog[A_Y] = 255; /* (hle_quickrace.c's photographs: the game looking back, or aside) */
+    else if (rt_photo_lookback <= 3) thumbs[2] = rt_photo_lookback == 2 ? 32767 : -32767;
+    else thumbs[2] = rt_photo_lookback & 1 ? -23170 : 23170, thumbs[3] = rt_photo_lookback <= 5 ? -23170 : 23170; /* (4-7: diagonals, back or ahead) */
     set_pad(pad, buttons, analog, thumbs);
 }
 

@@ -98,6 +98,7 @@ void rt_ach_reach(const char *id, int v);
 int rt_ach_count(void);
 void rt_ach_get(int i, const char **name, const char **desc, int *progress, int *goal, int *earned);
 const char *rt_ach_banner(void);                /* the one just earned, for a few seconds; else NULL */
+int rt_catchup_event(void);  /* hle_career.c: the race is a Catch-Up event (Caught You) */
 int rt_catchup_active(void);                    /* hle_career.c: a Catch-Up race is on */
 int rt_tt_running(void);                        /* hle_career.c: a career time trial is on */
 /* hle_minigame.c: Prize Match, a turn every 5 levels on the career's Race Type screen */
@@ -128,6 +129,7 @@ extern volatile int rt_qr_auto; /* Quick Race's takedown autopilot on (2 just st
 int rt_qr_cam_active(void);     /* the takedown camera on the wreck */
 int rt_mm_count(void); /* Mayhem Moments (hle_quickrace.c): how many, each one's name, what to do, unlocked */
 void rt_mm_get(int i, const char **name, const char **todo, int *got);
+float rt_mm_flash_age(int *is_new); /* the Moment's banner: seconds since, and whether it unlocked it */
 const char *rt_mm_flash(void); /* the Moment just made, while its banner shows */
 extern volatile char rt_photo_path[512];
 extern volatile int rt_photo_lookback; /* XBRT_MM_PHOTO: Y held for the game's look back (hle_input.c) */ /* a picture to save, as shown, once (glfill.c clears it): XBRT_MM_PHOTO */

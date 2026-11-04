@@ -80,9 +80,12 @@ static uint32_t mayhem_ev[32];
 static int nmayhem_ev;
 static char mm_flash[64]; /* the last Moment's banner, MAYHEM MOMENT! and its name */
 static uint64_t mm_flash_until;
+static int mm_flash_new; /* (unlocked by it: the banner says so) */
 static const char *mods_dir(void) { return getenv("XBRT_MODS") && *getenv("XBRT_MODS") ? getenv("XBRT_MODS") : "mods"; }
-static void mayhem_load(void) {
-    if (mm_loaded) return;
+static void mayhem_load_once(void);
+static pthread_once_t mm_once = PTHREAD_ONCE_INIT;
+static void mayhem_load(void) { pthread_once(&mm_once, mayhem_load_once); } /* (F1's page on the GPU's thread too: once, whole) */
+static void mayhem_load_once(void) {
     mm_loaded = 1;
     char path[512], line[512];
     const char *p = getenv("XBRT_MAYHEM");
@@ -130,6 +133,11 @@ void rt_mm_get(int i, const char **name, const char **todo, int *got) {
     *name = mm[i].name, *todo = mm[i].todo, *got = mm[i].got;
 }
 const char *rt_mm_flash(void) { return mm_flash_until && rt_now_100ns() < mm_flash_until ? mm_flash : NULL; }
+/* The banner's age in seconds (its flash and pop) and whether the Moment was new. */
+float rt_mm_flash_age(int *is_new) {
+    *is_new = mm_flash_new;
+    return mm_flash_until ? (float)(5.0 - (double)(mm_flash_until - rt_now_100ns()) / 1e7) : 99.0f;
+}
 /* Whether (x, y, z) is in one of Moment i's places. */
 static int mm_in(int i, float x, float y, float z) {
     for (int k = 0; k < mm[i].nz; k++) {
@@ -145,7 +153,7 @@ static int mayhem_moment(float x, float y, float z) {
     for (int i = 0; i < nmm; i++) {
         if (mm[i].track != track || !mm_in(i, x, y, z)) continue;
         snprintf(mm_flash, sizeof mm_flash, "%s", mm[i].name);
-        mm_flash_until = rt_now_100ns() + 50000000;
+        mm_flash_until = rt_now_100ns() + 50000000, mm_flash_new = !mm[i].got;
         fprintf(stderr, "xbrt: mayhem: moment %s%s\n", mm[i].name, mm[i].got ? "" : " (unlocked)");
         if (!mm[i].got) {
             mm[i].got = 1;
@@ -419,7 +427,8 @@ static void cam_cut(uint32_t from, uint32_t to) {
 }
 volatile uint64_t rt_present_hold_until; /* (rt.h, glfill.c) */
 volatile char rt_photo_path[512];
-volatile int rt_photo_lookback; /* (rt.h, hle_input.c: Y held, the game looking back) */
+static uint64_t qr_ticks; /* rt_qr_tick's that acted (the handling's state dropped when it missed one)*/
+volatile int rt_photo_lookback; /* (rt.h, hle_input.c: 1 Y held, the game looking back; 2 right, 3 left: the right stick) */
 volatile float rt_toon; /* (rt.h: Mayhem's cartoon look, glfill.c) */
 static uint64_t flame_until; /* real time: the boost burning (its flame drawn by glover.c) */
 static uint32_t flame_car;
@@ -444,6 +453,7 @@ static int auto_k = -1;
 
 int rt_qr_cam_active(void) { return tdcam_until != 0; }
 
+static uint64_t probe_began; /* (the probe's hold renewed as it goes, 10 s at most: 24 places at 30 fps outran 3 s) */
 static void find_cam_slots(uint32_t me, uint32_t rme) {
     float cx = rt_cam_pos[0], cy = rt_cam_pos[1], cz = rt_cam_pos[2];
     uint32_t copy[32], at = RT_USER_BASE, b, sz, pr, st;
@@ -473,7 +483,7 @@ static void find_cam_slots(uint32_t me, uint32_t rme) {
         uint32_t w = xb_rd32(a);
         if (w == me || w == rme) cand[ncand] = a, cand_was[ncand++] = w;
     }
-    if (ncand) rt_present_hold_until = rt_now_100ns() + 30000000; /* (the picture held while they are tried: no flicker; 3 s at most) */
+    if (ncand) rt_present_hold_until = rt_now_100ns() + 30000000, probe_began = rt_now_100ns(); /* (the picture held while they are tried: no flicker) */
     fprintf(stderr, "xbrt: quick race: the camera's hold on the player's car, %d places to try (%d copies, %d together over %u bytes)\n",
             ncand, nc, bestn, hi - lo);
 }
@@ -491,6 +501,7 @@ static void cam_probe_tick(uint32_t me, uint32_t rme, uint32_t them, uint32_t rt
         base[0] = rt_cam_pos[0], base[1] = rt_cam_pos[1], base[2] = rt_cam_pos[2];
         xb_wr32(cand[probe_i], cand_was[probe_i] == me ? them : rthem);
         frame = f, probe_stage = 1;
+        if (rt_now_100ns() - probe_began < 100000000) rt_present_hold_until = rt_now_100ns() + 20000000;
     } else if (probe_stage == 1 && f - frame >= 6) { /* moved? (6 frames: the camera catches up) */
         float dx = rt_cam_pos[0] - base[0], dy = rt_cam_pos[1] - base[1], dz = rt_cam_pos[2] - base[2], d = sqrtf(dx * dx + dy * dy + dz * dz);
         xb_wr32(cand[probe_i], cand_was[probe_i]);
@@ -543,7 +554,8 @@ static void cam_restore(uint32_t me) {
             k += 2, moved++;
             continue;
         }
-        xb_wr32(snap_lo + 4 * k, w);
+        float a = fabsf(x);
+        if (a > 1e-6f && a < 1e6f) xb_wr32(snap_lo + 4 * k, w); /* (floats only: no pointer, count or flag of then over now's) */
     }
     fprintf(stderr, "xbrt: quick race: the camera put back (%u bytes, %d places moved %.0f m)\n", snap_n * 4, moved, sqrtf(d[0] * d[0] + d[2] * d[2]));
     snap_n = 0;
@@ -570,6 +582,12 @@ static void tdcam_start(uint32_t car, uint32_t racer, uint32_t me, float speed) 
         return;
     }
     if (ncslot <= 0) return;
+    for (int i = 0; i < ncslot; i++)
+        if (xb_rd32(cslot[i]) != cslot_was[i]) { /* (not the player's any more: the camera's object gone or remade) */
+            fprintf(stderr, "xbrt: quick race: the camera's places changed; no takedown camera until the next race\n");
+            ncslot = -1;
+            return;
+        }
     cam_snapshot(me);
     for (int i = 0; i < ncslot; i++) {
         cslot_now[i] = cslot_was[i] == me ? car : racer;
@@ -702,7 +720,9 @@ void rt_qr_tick(void) {
     if (tdcam_until && rt_now_100ns() >= tdcam_until) tdcam_end();
     if (rt_qr_auto && !tdcam_until && auto_until && rt_now_100ns() >= auto_until) rt_qr_auto = 0, auto_until = 0;
     if (!xb_rd32(0x592984) || !active()) {
-        tdcam_end(), rt_qr_auto = 0, ncslot = -1, rt_toon = 0;
+        if (probe_i < ncand && probe_stage == 1) xb_wr32(cand[probe_i], cand_was[probe_i]); /* (quit mid-probe: put back) */
+        probe_i = ncand = 0, probe_stage = 0;
+        tdcam_end(), rt_qr_auto = 0, ncslot = -1, rt_toon = 0, rt_view_cam.on = 0, rt_photo_lookback = 0;
         memset(cs, 0, sizeof cs); takedowns = 0, tank = 1; return;
     }
     if (dt <= 0 || dt > 0.25) return;
@@ -754,6 +774,13 @@ void rt_qr_tick(void) {
             dm_done = 1, damage_set(im, me, DMG_FULL);
             fprintf(stderr, "xbrt: dmg test: the player's car wrecked\n");
         }
+        const char *bt = getenv("XBRT_MM_BANNER_TEST"); /* testing: that many seconds in, a Mayhem Moment's banner (as new) */
+        static int bt_done;
+        if (!race_since) bt_done = 0;
+        if (bt && race_since && !bt_done && nmm && now - race_since > (uint64_t)(atof(bt) * 1e7)) {
+            bt_done = 1, say("MAYHEM MOMENT!");
+            snprintf(mm_flash, sizeof mm_flash, "%s", mm[0].name), mm_flash_until = rt_now_100ns() + 50000000, mm_flash_new = 1;
+        }
         const char *tt = getenv("XBRT_TD_TEST");
         if (tt && race_since && !td_real && now - race_since > (uint64_t)(atof(tt) * 1e7) && tm) {
             for (uint32_t i = 0; i < n; i++) {
@@ -779,6 +806,33 @@ void rt_qr_tick(void) {
                     sqrtf(ddx * ddx + ddz * ddz), td_sp, td_sp * (rt_now_100ns() - td_real) / 1e7);
         }
     }
+    { /* a restart makes the racers again: the camera's places, the count, the boost and our record of the cars
+       * afresh (the audit: the camera wrote into the old ones) */
+        static uint32_t rme_was;
+        if (rme && rme_was && rme != rme_was) {
+            tdcam_end(), rt_qr_auto = 0, ncslot = -1, takedowns = 0, tank = 1;
+            memset(cs, 0, sizeof cs);
+            fprintf(stderr, "xbrt: quick race: a new run (restart): ours afresh\n");
+        }
+        if (rme) rme_was = rme;
+    }
+    { /* paused (the race's clock stands while its menu is up and the game steps nothing), or the player's race done
+       * (+0x1B8: the cool-down lap, the replay): nothing of ours acts (the audit: low gravity and the pushes piled
+       * up in the frozen velocities and launched the cars on unpause; the menu's stick turned the car) */
+        static uint32_t clock_racer;
+        static float clock_was;
+        uint32_t tmr = rme ? xb_rd32(rme + 0xC0) : 0;
+        float clock = tmr && tmr < RT_USER_LIMIT ? rdf(tmr + 0xA0) : 0;
+        int paused = rme && rme == clock_racer && clock > 0 && clock == clock_was;
+        clock_racer = rme, clock_was = clock;
+        if (paused) return;
+        if (rme && (xb_rd32(rme + 0x1B8) & 0xFF) && !getenv("XBRT_MM_PHOTO")) {
+            if (tdcam_until) tdcam_end();
+            rt_qr_auto = 0;
+            return;
+        }
+    }
+    qr_ticks++;
     float mp[3] = {0, 0, 0}, mdv[3] = {0, 0, 0}, mjolt = 0, mv0[3] = {0, 0, 0};
     if (me) {
         mp[0] = rdf(me + 0x14), mp[1] = rdf(me + 0x18), mp[2] = rdf(me + 0x1C);
@@ -803,19 +857,19 @@ void rt_qr_tick(void) {
                                                      * before the Moment's place and driven on, a rival put by it there and
                                                      * thrown as a wall takedown throws one, and the picture saved 12 times
                                                      * as it flies, <folder>/mm<i>_<angle>_<k>.ppm, to pick from. Angles:
-                                                     * 0 looking back (Y held) at the rival thrown behind; 1 and 2 a camera
-                                                     * at the roadside across from the landmark (rt_view_cam), ahead of the
-                                                     * place looking back at it, and behind it looking on */
+                                                     * 0 looking back (Y held) at the rival thrown behind; 1 and 2 the
+                                                     * camera looking to the landmark's side (the right stick) at a rival
+                                                     * thrown off that way just ahead and level */
         if (photo == (const char *)1) photo = getenv("XBRT_MM_PHOTO");
         if (photo && car == me && have_line) { /* (the race on: its clock started, above; the car still behind the line) */
-            static int stage, target_k, shots, mi = -1, angle, rj;
+            static int stage, target_k, shots, mi = -1, angle;
             static float side;
             static uint64_t next_shot;
             uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
             int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
             if (mi < 0)
                 for (int k = 0; k < nmm && mi < 0; k++) if (mm[k].track == track) mi = k;
-            if (mi >= 0 && stage == 0 && angle < 3) { /* the line's point nearest the place's middle (and under its top) */
+            if (mi >= 0 && stage == 0 && angle < 5) { /* the line's point nearest the place's middle (and under its top) */
                 const float *zn = mm[mi].zone[0];
                 float best = 1e30f;
                 for (int k = 0; k < (int)np; k++) {
@@ -830,47 +884,43 @@ void rt_qr_tick(void) {
             }
             int ahead = auto_k >= 0 ? (target_k - auto_k + (int)np) % (int)np : 1 << 30; /* (line points to the place) */
             int past = auto_k >= 0 ? (auto_k - target_k + (int)np) % (int)np : 1 << 30;
-            if (stage == 1 && ((angle == 0 && past >= 6 && past < 40) || (angle > 0 && ahead <= 10))) {
+            int behind = angle == 0 || angle == 3; /* (the looks back: the rival thrown behind the player, past the place) */
+            if (stage == 1 && ((behind && past >= 6 && past < 40) || (!behind && ahead <= 10))) {
                 int found = 0;
                 for (uint32_t j = 0, nth = 0; j < n && !found; j++) { /* a rival (another each angle): put by the player and thrown */
                     uint32_t r2 = xb_rd32(arr + 4 * j), c2 = r2 && r2 < RT_USER_LIMIT ? xb_rd32(r2 + 0xA0) : 0;
                     if (!c2 || c2 == me || c2 >= RT_USER_LIMIT || (int)j >= MAXCARS || nth++ != (uint32_t)angle) continue;
                     found = 1;
-                    /* angle 0: 10 m behind the player, slower, falling back past the place; else 12 m ahead, as fast */
-                    int k2 = (auto_k + (angle == 0 ? -5 : 6) + (int)np) % (int)np, k3 = (k2 + 3) % (int)np;
+                    /* angle 0: 10 m behind the player, slower, falling back past the place; 1: 6 m ahead and thrown off to
+                     * the landmark's side, the camera looking that way; 2: level with the player, the same */
+                    int k2 = (auto_k + (angle == 0 ? -5 : angle == 3 ? -3 : angle == 1 ? 3 : angle == 4 ? 6 : 1) + (int)np) % (int)np, k3 = (k2 + 3) % (int)np;
                     respawn(c2, xs, zs, ys, np, (k2 - 4 + (int)np) % (int)np);
                     float fx = rdf(xs + 4 * k3) - rdf(xs + 4 * k2), fz = rdf(zs + 4 * k3) - rdf(zs + 4 * k2), fl = sqrtf(fx * fx + fz * fz);
                     if (fl < 0.1f) break;
                     fx /= fl, fz /= fl;
                     const float *zn = mm[mi].zone[0]; /* (thrown towards the landmark's side of the road) */
                     side = (zn[0] - rdf(xs + 4 * k2)) * fz - (zn[1] - rdf(zs + 4 * k2)) * fx >= 0 ? 1.0f : -1.0f;
-                    float sx = fz * side, sz = -fx * side, fwd = angle == 0 ? 16.0f : 27.0f;
-                    wrf(c2 + 0x44, fx * fwd + sx * 6), wrf(c2 + 0x48, 8.0f), wrf(c2 + 0x4C, fz * fwd + sz * 6);
+                    float sx = fz * side, sz = -fx * side, fwd = behind ? 16.0f : 25.0f, lat = angle == 0 ? 6.0f : 9.0f;
+                    if (angle > 0) wrf(c2 + 0x14, rdf(c2 + 0x14) + sx * 4), wrf(c2 + 0x1C, rdf(c2 + 0x1C) + sz * 4); /* (beside, a lane over) */
+                    wrf(c2 + 0x44, fx * fwd + sx * lat), wrf(c2 + 0x48, 8.0f), wrf(c2 + 0x4C, fz * fwd + sz * lat);
                     cs[j].car = c2, cs[j].down_at = now, cs[j].hit_at = 0;
                     cs[j].tumble_until = now + 12000000, cs[j].spin = side * 3.0f, cs[j].spin_until = cs[j].tumble_until;
                     damage_set((int)j, c2, DMG_FULL);
-                    rj = (int)j;
-                    if (angle == 0) rt_photo_lookback = 1;
-                    else { /* the roadside camera: across the road from the landmark, 9 m out, 14 m ahead (1) or 12 behind (2) */
-                        int kt = (target_k + (angle == 1 ? 7 : -6) + (int)np) % (int)np;
-                        rt_view_cam.pos[0] = rdf(xs + 4 * kt) - sx * 9, rt_view_cam.pos[2] = rdf(zs + 4 * kt) - sz * 9;
-                        rt_view_cam.pos[1] = rdf(ys + 4 * kt) + 2.2f;
-                    }
+
+                    /* the game's own looks: Y back; the right stick to the landmark's side (the free camera,
+                     * rt_view_cam, moved nothing in a race) */
+                    rt_photo_lookback = angle == 0 ? 1 : angle == 3 ? (side > 0 ? 4 : 5) : angle == 4 ? (side > 0 ? 6 : 7) : side > 0 ? 2 : 3; /* (3, 4: the diagonals, the user's) */
                     stage = 2, next_shot = now + 1000000; /* (the first a moment in) */
                 }
                 if (!found) stage = 0, angle++; /* (no such rival: the next angle) */
-            }
-            if (stage == 2 && angle > 0 && rj < MAXCARS && cs[rj].car) { /* the roadside camera kept on the wreck */
-                rt_view_cam.target[0] = rdf(cs[rj].car + 0x14), rt_view_cam.target[1] = rdf(cs[rj].car + 0x18), rt_view_cam.target[2] = rdf(cs[rj].car + 0x1C);
-                rt_view_cam.on = 1;
             }
             if (stage == 2 && now >= next_shot && !rt_photo_path[0]) {
                 snprintf((char *)rt_photo_path, sizeof rt_photo_path, "%s/mm%d_%d_%02d.ppm", photo, mi, angle, shots++);
                 next_shot = now + 800000; /* (0.08 s apart: the wreck's flight) */
                 if (shots == 12) {
-                    rt_view_cam.on = 0, rt_photo_lookback = 0;
+                    rt_photo_lookback = 0;
                     stage = 0, angle++;
-                    if (angle == 3) fprintf(stderr, "xbrt: mm photo: done\n");
+                    if (angle == 5) fprintf(stderr, "xbrt: mm photo: done\n");
                 }
             }
         }
@@ -914,7 +964,7 @@ void rt_qr_tick(void) {
                 flame_until = rt_now_100ns() + 1500000, flame_car = car;
             } else if (!nitro_y && tank < 1) tank += (float)(dt / (mayhem_race ? 40.0 : 30.0)); /* filled again, while not held */
         }
-        if (mayhem_race && car == me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.5f) {
+        if (mayhem_race && car == me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.5f && v[1] < 2.5f && v[1] > -4.0f) { /* (on the ground: in the air, the game's own, falling at Mayhem's 80%) */
             /* Mayhem's handling (the user's: an arcade racer's, "grippy but not insane", brake to drift), on top of
              * the game's physics, the player's car only, nothing of the car's data changed:
              *  - grip: most of a slide across the heading taken out (a third a 1/8 s), so it goes where it points;
@@ -934,7 +984,9 @@ void rt_qr_tick(void) {
             static float drift_dir, dsp, vdx, vdz, lhx, lhz;
             static uint64_t straight_since, out_until; /* out_until: the way out of a drift, blended (the user's "smoother") */
             static uint32_t drift_car;
-            if (drift_car != car || cs[i].still_since) drifting = 0, out_until = 0, drift_car = car; /* (a new car, or stuck: none) */
+            static uint64_t drift_tick;
+            if (drift_car != car || cs[i].still_since || drift_tick + 1 != qr_ticks) drifting = 0, out_until = 0, drift_car = car; /* (a new car, stuck, or the handling missed a tick: the autopilot, a wreck) */
+            drift_tick = qr_ticks;
             float hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
             if (hl > 0.1f) {
                 hx /= hl, hz /= hl;
@@ -1049,7 +1101,7 @@ void rt_qr_tick(void) {
             int fresh = cs[i].hit_at && now - cs[i].hit_at < 30000000; /* the player's hit, under 3 s ago */
             /* a touch: both cars jolted this tick, side by side or nose to tail (the user's: it fired without
              * one, on a rival's own knock near the player) */
-            int touch = car != me && me && dd < 6.0f && dd > 0.1f && jolt > 40 && mjolt > 25; /* (6 m: nose to tail the middles are 4.5 apart; 4 missed most shunts) */
+            int touch = !photo && car != me && me && dd < 6.0f && dd > 0.1f && jolt > 40 && mjolt > 25; /* (none in the photo runs: a real takedown there froze the shots) */ /* (6 m: nose to tail the middles are 4.5 apart; 4 missed most shunts) */
             if (touch) { /* and pushed apart along the line between them, as a collision does: the rival away from the
                           * player, the player back from it (the user's: no takedown without contact; two cars side by
                           * side each striking a wall or a kerb jolt too, but not so) */
@@ -1269,17 +1321,32 @@ int rt_qr_apply(uint32_t textid, uint32_t track, uint32_t laps) {
     return 1;
 }
 
-/* Testing: XBRT_QR_TEST=<name id>,<track>,<laps> once the menus are up (an event record found). */
+/* Testing: XBRT_QR_TEST=<name id>[/<name id>...],<track>,<laps> once the menus are up (the event records found):
+ * more than one, each of them (the photo runs: whichever arcade event the menu opens on, a profile's own). */
 void rt_qr_test_tick(void) {
-    static int done;
-    static uint64_t next;
+    static int done, got[32];
+    static uint64_t next, first;
     const char *e = getenv("XBRT_QR_TEST");
     if (done || !e) return;
     uint64_t now = rt_now_100ns();
     if (now < next) return;
-    next = now + 50000000; /* (every 5 s until it is found) */
-    unsigned id = 0, track = 0, laps = 0;
-    if (sscanf(e, "%u,%u,%u", &id, &track, &laps) == 3 && rt_qr_apply(id, track, laps)) done = 1;
+    next = now + 50000000; /* (every 5 s until they are found) */
+    const char *c = strchr(e, ',');
+    unsigned track = 0, laps = 0, ids[32];
+    int n = 0, left = 0;
+    if (!c || sscanf(c, ",%u,%u", &track, &laps) != 2) return;
+    for (const char *s = e; s < c && n < 32; s++) {
+        char *end;
+        unsigned long v = strtoul(s, &end, 10);
+        if (end == s) continue;
+        ids[n++] = (unsigned)v, s = end;
+        if (*s != '/') s--;
+    }
+    for (int i = 0; i < n; i++) {
+        if (!got[i] && rt_qr_apply(ids[i], track, laps)) got[i] = 1, first = first ? first : now;
+        left += !got[i];
+    }
+    if (n && (!left || (first && now - first > 600000000))) done = 1; /* (all, or a minute after the first) */
 }
 
 /* ---- the Quick Race menu (X on the arcade screens; glover.c draws it) ---- */
@@ -1361,7 +1428,7 @@ static void menu_key(int key) {
     }
 }
 
-/* The pad (hle_input.c, every poll): Y the nitro; X opens the menu off the track once the arcade's events are
+/* The pad (hle_input.c, every poll): R3 (N) the nitro; X opens the menu off the track once the arcade's events are
  * loaded (the menus of Arcade Race); while open it takes the pad (1). */
 int rt_qr_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]) {
     static uint16_t was;

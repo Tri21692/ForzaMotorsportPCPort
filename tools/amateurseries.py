@@ -37,7 +37,8 @@ EVENT_ORDINAL = 371
 SERIES_ID = 229          # after the Forced Induction Cup's 228
 
 # AI fields: eight cars, raced by the drivers given for Easy, Medium and Hard
-TUNER_CARS = [107, 110, 114, 109, 124, 102, 208, 207]    # Civic Type R, RSX Type S, Celica GTS, Integra Type R, Eclipse GSX, Focus SVT, Mini Cooper S, Mazda 3
+TUNER_CARS = [107, 120, 125, 109, 124, 102, 208, 207]    # Civic Type R, VW R32, Peugeot 206, Integra Type R, Eclipse GSX, Focus SVT, Mini Cooper S, Mazda 3
+# (the RSX Type S and Celica GTS were here, family none: cars the player could not enter with; the audit, 3 Nov)
 BEETLE_CARS = [148, 1148, 2148, 3148, 148, 1148, 2148, 3148]  # the Beetle at each upgrade stage
 JAPAN_CARS = [192, 113, 106, 253, 116, 105, 127, 191]    # Skyline R34, Supra, RX-7, NSX-R, Evo VIII, WRX STi, 350Z, S2000
 # Class S at its lower end, S3 and S4 stock (gamecars.dat's subclass at byte 100: 17 S4, 18 S3, 19 S2,
@@ -48,22 +49,23 @@ LOWER_S_CARS = [137, 143, 168, 139, 138, 285, 242, 232]
 # who may enter: a list of alternatives, each a list of (attribute, func, value) that all hold
 # (no more than three alternatives, as the disc's series have at most: with thirteen, ten cars by
 # id besides, the game crashed when the Amateur list was shown)
-TUNER = [[('family', '=', f)] for f in ('Hatch', 'Integra', 'Eclipse')]
+NOT_B_UP = [('perfclass', '<>', c) for c in ('B', 'A', 'S', 'R')]  # (Class D and C: a B4 Integra had beaten the D field)
+TUNER = [[('family', '=', f)] + NOT_B_UP for f in ('Hatch', 'Integra', 'Eclipse')]
 BEETLE = [[('carid', '=', 48)]]
-JAPAN = [[('location', '=', 'Japan')]]
+JAPAN = [[('location', '=', 'Japan'), ('perfclass', '<>', 'S'), ('perfclass', '<>', 'R')]]  # (Class A and below: S and race cars had beaten its B/C field)
 CLASS_A_OR_BELOW = [[('perfclass', '<>', 'S'), ('perfclass', '<>', 'R')]]  # (all to hold, as the Forced Induction Cup's aspiration)
 
 # (name, level, description, logo (its art: an official tile with rows painted out, emblems and
 #  flames, or the flag; its captions [(text, y, size, style)]), the car won (ordinal), who may enter, the AI field, the
 #  drivers (Easy, Medium, Hard), duplicates, 1st place's xp, events (track ordinal, laps))
 SERIES = [
-    ('Sunday Stroll', 0, 'Open to tuner and compact cars: hatchbacks, Integras and Eclipses.',
+    ('Sunday Stroll', 0, 'Open to Class C and D tuner and compact cars: hatchbacks, Integras and Eclipses.',
      (dict(tile=27, clear=[(5, 40)]), [('SUNDAY STROLL', 7, 28, 'category')]), 174, TUNER, TUNER_CARS, (22, 36, 50), False, 3000,
      [(26, 3), (47, 3), (46, 2)]),                      # Tsukuba, Silverstone Club, Road Atlanta Club
     ('Beetle Face Off', 5, 'Open to Volkswagen New Beetle models, upgrades allowed.',
      (dict(tile=34, clear=[(8, 34), (86, 107)], emblems=[(5, 32, 58, 30), (5, 178, 58, 30)]), [('BEETLE', 9, 24, 'faceoff'), ('BEETLE', 86, 24, 'faceoff')]), 203, BEETLE, BEETLE_CARS, (25, 36, 50), True, 5000,
      [(1, 2), (26, 3), (27, 2)]),                       # Laguna Seca, Tsukuba, Alpine Ring
-    ('Japanese Showdown', 10, 'Open to cars originating from Japan.',
+    ('Japanese Showdown', 10, 'Open to Class A and below cars originating from Japan.',
      (dict(flag=True), [('JAPANESE', 6, 22, 'faceoff'), ('SHOWDOWN', 88, 22, 'faceoff')]), 194, JAPAN, JAPAN_CARS, (21, 35, 49), False, 7000,
      [(3, 2), (26, 3), (4, 3), (83, 2)]),               # Fujimi Kaido, Tsukuba, Fujimi Kaido Short, Pacific Shipyards Circuit II
     ('Underdog Challenge', 30, 'Open to Class A cars and below, against a field of Class S cars.',

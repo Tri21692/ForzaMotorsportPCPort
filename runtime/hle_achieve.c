@@ -208,7 +208,7 @@ void rt_ach_tick(void) {
             add("wins25", 1);
             if (clean) reach("clean_win", 1);
             if (field >= 4 && lap1_place == field) reach("comeback", 1);
-            if (rt_catchup_active()) reach("catchup", 1);
+            if (rt_catchup_event()) reach("catchup", 1); /* (the event's: cu_active ends seconds in, so it never counted) */
         }
         if (rt_tt_running() && place == 1) reach("tt_gold", 1);
         dirty = 1;

@@ -332,10 +332,11 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (k >= 0) rt_overlay_key(k);
             return 0;
         }
-        if (wp == VK_F11) {
-            static int fs = -1;
-            if (fs < 0) fs = getenv("XBRT_FULLSCREEN") && atoi(getenv("XBRT_FULLSCREEN"));
-            set_fullscreen(fs = !fs);
+        if (wp == VK_F11) { /* (from the setting, and saved: F1's Fullscreen and F11 kept in step) */
+            const char *v = rt_settings_get("fullscreen");
+            int fs = !(v && atoi(v));
+            rt_settings_set("fullscreen", fs ? "1" : "0");
+            set_fullscreen(fs);
             return 0;
         }
         debug_key(wp);

@@ -575,6 +575,15 @@ void rt_career_tick(void) {
  * +0x70: laps begun less one plus the lap's fraction) and the lap's length (its racing line's
  * points, about 2 m apart). */
 int rt_catchup_active(void) { return cu_active; }
+/* Whether the race is one of the Catch-Up events (cu_active ends seconds in, once the laps are begun). */
+int rt_catchup_event(void) {
+    pthread_once(&cu_once, cu_load);
+    uint32_t g = xb_rd32(0x592984), ev = g ? xb_rd32(g + 0x318) : 0;
+    if (!ncu || !ev || ev >= RT_USER_LIMIT) return 0;
+    for (int i = 0; i < ncu; i++)
+        if (cu[i].ordinal == xb_rd32(ev + 0x10)) return 1;
+    return 0;
+}
 int rt_tt_running(void) { return tt_event() >= 0; }
 
 int rt_catchup_hud(int *metres) {

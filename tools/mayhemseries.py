@@ -36,27 +36,31 @@ CATEGORY = ('Mayhem', 'Mayhem', 'Takedowns, boost and over-the-top physics: smas
 # (series name, track ordinal, laps, the disc series whose restrictions and AI field it takes, its rules said
 # in words, the Mayhem Moment on it (name, what to do, its places: (x, z, radius, top y or None) in the game's
 # coordinates, found in the disc's scenery by name (tunnel ceiling, trailers, bridge, storefront, sign, bleachers,
-# ambulance) and checked against the AI line; Rio's bend the lap's clearest lone kink, its line points 606-617))
+# ambulance) and checked against the AI line; Rio's bend the S-jog at its line points 750-777, the user's ("slightly
+# further down the road" than the lone kink at 606-617)), and a restriction added to the disc series' if any
+# (the audit, 3 Nov: the level-0 Opens' Class D fields met whatever a level-35 player brought, so the donors are
+# now series whose fields fit their restrictions)
 SERIES = [
-    ('Tunnel Vision', 17, 3, r'events\club\ser00002.xml', 'Asian cars only.',
+    ('Tunnel Vision', 17, 3, r'events\club\ser00016.xml', 'Supras and RX-7s only.',
      ('Ari-Wall-to', 'Take down an opponent in the Tokyo Tunnel.',
       [(151.1, -206.2, 180, -7.0), (483.9, -319.0, 180, -7.0)])),  # (the only stretch under y -7: the road beside it is above)
-    ('Dockyard Demolition', 20, 2, r'events\club\ser00018.xml', 'Heavyweights only.',
-     ('Mother Trucker', 'Take down an opponent into the Pacific Shipyards trailers.', [(-490.0, -403.0, 45, None)])),
-    ('Mountain Wreckage', 10, 1, r'events\club\ser00005.xml', 'All-wheel drive only.',
+    ('Dockyard Demolition', 20, 1, r'events\club\ser00018.xml', 'Heavyweights only.',  # (1 lap: point to point)
+     ('Mother Trucker', 'Take down an opponent into the Pacific Shipyards trailers.', [(-503.0, -567.0, 22, None)])),  # (the parked semi's trailer at the road's edge, line points 3397-3415: the only trailer with collision a car can reach; the user's 'trailers you can crash into')
+    ('Mountain Wreckage', 10, 1, r'events\club\ser00014.xml', 'Imprezas and Lancers only.',
      ('Suspended', 'Take down an opponent on the bridge in Fujimi Kaido.', [(2152.5, -49.4, 78, None)])),
-    ('Big Apple Brawl', 18, 2, r'events\club\ser00015.xml', 'American muscle from before 1975.',
-     ("Crash 'R Us", "Take down an opponent in front of the Toys 'R Us in New York.", [(-180.0, -46.0, 22, None)])),  # (the storefront's side, not the pass across the median)
+    ('Big Apple Brawl', 18, 2, r'events\club\ser00015.xml', 'American muscle from before 1975, Class A and below.',
+     ("Crash 'R Us", "Take down an opponent in front of the Toys 'R Us in New York.", [(-173.0, -28.0, 30, None)])),  # (by the storefront, at its far end: the whole front within, the camera passing it; the pass across the median 32 m off)
     ('Peach State Pileup', 9, 3, r'events\spec\ser00008.xml', 'Class A only.',
      ('Land-Filled Up', 'Take down an opponent in front of the Sunoco sign at Road Atlanta.', [(-577.0, -299.0, 30, None)])),
-    ('Rio Rumble', 25, 2, r'events\club\ser00001.xml', 'European cars only.',
-     ("Stick It To 'Em", 'Take down an opponent on the small bend in Rio.', [(-324.4, -843.4, 35, None)])),
-    ('Infield Insanity', 5, 3, r'events\club\ser00006.xml', 'Front-engine, rear-wheel drive only.',
+    ('Rio Rumble', 25, 2, r'events\spec\ser00011.xml', 'Stock Ferrari 360 Modenas only.',
+     ("Stick It To 'Em", 'Take down an opponent on the small bend in Rio.', [(-625.1, -807.4, 35, None)])),
+    ('Infield Insanity', 5, 3, r'events\club\ser00019.xml', 'Corvettes only.',
      ('Standing Crashvation', 'Take down an opponent in front of the bleachers in the Sunset Peninsula infield.', [(171.0, -400.0, 40, None)])),
     ('Valley of Carnage', 3, 2, r'events\spec\ser00015.xml', 'Class S only.',
      ('Wham-Bulance', 'Take down an opponent in front of the ambulance at Maple Valley.', [(42.0, -448.0, 30, None)])),
 ]
 XP = 6000  # a win's (the level-35 disc series' run 5000-8000)
+EXTRA = {'Big Apple Brawl': [('perfclass', '<>', 'S'), ('perfclass', '<>', 'R')]}  # (the GT40 Mk II, S3, against a Class B field)
 
 
 def build(mega):
@@ -65,6 +69,8 @@ def build(mega):
         tag = 'Mayhem%d' % k
         src = next(v for n, v in mega.disc.items() if n.lower() == donor.lower()).decode('latin-1')
         restr = re.search(r'\t<Restrictions>.*?</Restrictions>', src, re.S).group(0)
+        for a, f, v in EXTRA.get(name, ()):  # (top level: all of them hold, with the donor's)
+            restr = restr.replace('\t</Restrictions>', '\t\t<Restriction Attrib="%s" Func="%s" Value="%s" />\r\n\t</Restrictions>' % (a, f, v))
         field = re.search(r'\t<AIField>.*?</AIField>', src, re.S).group(0)
         ordinal = EVENT_ORDINAL + k
         events.append((ordinal, track, moment))

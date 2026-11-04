@@ -22,20 +22,24 @@ T = 256          # a tile (square: the photo tilted inside it, with its shadow)
 COLS = 4
 PW, PH = 196, 232           # the instant photo's card
 IW, IH = 172, 150           # its picture, 12 in from the sides and top
-CROP = (0.18, 0.10, 0.82, 0.62)  # the part of the game's picture kept (its HUD sits in the corners)
+CROP = (0.04, 0.06, 0.96, 0.97)  # the part of the game's picture kept (the HUD off in the photo runs; the frame counter in the corner cut)
 HAND = r'C:\Windows\Fonts\Inkfree.ttf'
 TRACKS = {17: 'Tokyo', 20: 'Pacific Shipyards', 10: 'Fujimi Kaido', 18: 'New York', 9: 'Road Atlanta',
           25: 'Rio de Janeiro', 5: 'Sunset Peninsula', 3: 'Maple Valley'}
 
 
 def picture(path):
+    """path, or path@shift: the 16:9-ish window slid across the picture, -1 its left edge .. 1 its right (the
+    landmark at a side kept: Maple Valley's ambulance)."""
+    shift = 0.0
+    if '@' in path: path, shift = path.rsplit('@', 1); shift = float(shift)
     im = Image.open(path).convert('RGB')
     w, h = im.size
     l, t, r, b = CROP
     box = [w * l, h * t, w * r, h * b]
     want = IW / IH
     cw, ch = box[2] - box[0], box[3] - box[1]
-    if cw / ch > want: d = (cw - ch * want) / 2; box[0] += d; box[2] -= d
+    if cw / ch > want: d = (cw - ch * want) / 2; box[0] += d * (1 + shift); box[2] -= d * (1 - shift)
     else: d = (ch - cw / want) / 2; box[1] += d; box[3] -= d
     a = np.asarray(im.crop(tuple(int(round(v)) for v in box)).resize((IW, IH), Image.LANCZOS), float) / 255
     a = a * np.array([1.05, 1.0, 0.9]) + np.array([0.03, 0.015, 0.0])   # an instant film's warmth
@@ -65,14 +69,15 @@ def card(path, name, track, seed):
     f = fit_font(d, name.upper(), (PW - 24) * K, 30 * K)
     d.text((PW * K / 2, (12 + IH + 26) * K), name.upper(), font=f, fill=ink, anchor='mm')
     d.text((PW * K / 2, (12 + IH + 54) * K), track, font=ImageFont.truetype(HAND, 14 * K), fill=(60, 64, 80, 255), anchor='mm')
-    # the Forza touch: a red rubber stamp in the picture's top right corner
+    # the Forza touch: a red rubber stamp in the picture's bottom right corner (over the road: at the top it hid
+    # the flying wreck)
     st = Image.new('RGBA', (84 * K, 28 * K), (0, 0, 0, 0))
     sd = ImageDraw.Draw(st)
     red = (200, 30, 24, 210)
     sd.rounded_rectangle([2 * K, 2 * K, 82 * K, 26 * K], radius=4 * K, outline=red, width=2 * K)
     sd.text((42 * K, 14 * K), 'MAYHEM', font=ImageFont.truetype(r'C:\Windows\Fonts\impact.ttf', 16 * K), fill=red, anchor='mm')
     st = st.rotate(rnd.uniform(8, 14), resample=Image.BICUBIC, expand=True)
-    c.alpha_composite(st, ((12 + IW) * K - st.width - 6 * K, 16 * K))
+    c.alpha_composite(st, ((12 + IW) * K - st.width - 4 * K, (12 + IH) * K - st.height - 4 * K))
     c = c.resize((PW, PH), Image.LANCZOS)
     # tilted, with a soft shadow, on a clear tile; a paperclip over the top edge
     ang = rnd.uniform(-7, 7)
@@ -90,8 +95,8 @@ def card(path, name, track, seed):
     for (x0, y0, x1, y1) in ((4, 4, 34, 76), (10, 14, 28, 62)):  # the wire's two loops
         cd.rounded_rectangle([x0 * K, y0 * K, x1 * K, y1 * K], radius=(x1 - x0) // 2 * K, outline=steel, width=3 * K)
     cd.rectangle([0, 40 * K, 40 * K, 46 * K], fill=(0, 0, 0, 0))  # (its lower half behind the card: cut)
-    clip = clip.resize((40, 80), Image.LANCZOS).rotate(ang + rnd.uniform(-10, 4), resample=Image.BICUBIC, expand=True)
-    tile.alpha_composite(clip, (int(T * 0.24), 2))
+    clip = clip.resize((30, 60), Image.LANCZOS).rotate(ang + rnd.uniform(-10, 4), resample=Image.BICUBIC, expand=True)
+    tile.alpha_composite(clip, (int(T * 0.64), 4))  # (smaller, right of the middle: over the left it hid the wreck)
     return np.asarray(tile)
 
 

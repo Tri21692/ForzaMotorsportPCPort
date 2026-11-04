@@ -85,7 +85,7 @@ def series_xml(mega, k, ordinal, name, level, allowed, field, n_ai, events):
               '\t\t<AIModeSettings>\r\n\t\t\t<pitting aipitting tire="%s" fuel="%s" engine="0.5" transmission="0.5" suspension="0.5" spreadpercent="0" />\r\n'
               '\t\t</AIModeSettings>\r\n\t\t<Scoring>\r\n'
               % (ordinal, name, ordinal, track, laps, n_ai, 'true' if n_ai == 1 else 'false',
-                 '1.0' if laps >= 3 and track == 19 else '0.01', '1.0' if laps >= 3 and track == 19 else '0.01') +
+                 '0.35' if laps >= 3 and track == 19 else '0.01', '0.25' if laps >= 3 and track == 19 else '0.01') +
               ''.join('\t\t\t<score pos="%d" pts="%d" xp="%d"></score>\r\n' % (p + 1, pts, int(round(xp * share / 500)) * 500)
                       for p, (pts, share) in enumerate(places)) +
               '\t\t</Scoring>\r\n\t</event>\r\n')

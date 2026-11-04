@@ -852,7 +852,7 @@ static void gl_hdr_present(int W, int H, GLuint vao) {
     rt_hdr_present(vsync);
 }
 
-static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
+static int gl_window_show(GLuint tex, GLuint fbo, int w, int h, int game) { /* game: the game's own picture (the post effects), not RAM's menus */
     static GLuint prog, empty_vao;
     static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step, u_ramp_mix, u_post, u_px, u_bloom, u_sharpen, u_bloom_amt, u_vibrance, u_toon;
     static GLuint gamma_tex, bloom_tex, bloom_fbo;
@@ -906,7 +906,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     glClear(GL_COLOR_BUFFER_BIT);
     GLint linked = 0;
     glGetProgramiv(prog, GL_LINK_STATUS, &linked);
-    int post = tex && linked && w > 640; /* (the game's own picture: not the RAM's menus and movies) */
+    int post = tex && linked && game; /* (the game's own picture at any resolution: w > 640 left 1x without them) */
     float bloom = post ? rt_post_bloom : 0;
     if (bloom > 0) { /* the bloom's source: the picture at half size, every mip level made by the GPU */
         int bw = w / 2 > 1 ? w / 2 : 1, bh = h / 2 > 1 ? h / 2 : 1;
@@ -958,7 +958,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         /* Not on the 640x480 pictures from RAM (boot, menus, movies):
          * smoothing edges that small smeared text and logos. */
-        glUniform1i(u_src, 0), glUniform2fv(u_rcp, 1, (float[2]){1.0f / (float)w, 1.0f / (float)h}), glUniform1i(u_fxaa, rt_display_fxaa && w > 640), glUniform1i(u_gamma, 1);
+        glUniform1i(u_src, 0), glUniform2fv(u_rcp, 1, (float[2]){1.0f / (float)w, 1.0f / (float)h}), glUniform1i(u_fxaa, rt_display_fxaa && game), glUniform1i(u_gamma, 1);
         glUniform2fv(u_step, 1, (float[2]){(float)w / (float)cw, (float)h / (float)ch});
         glUniform1f(u_ramp_mix, rt_brightness_mix());
         glUniform1i(u_post, post);
@@ -1034,7 +1034,7 @@ static int gl_show_ram(void) {
     glBindTexture(GL_TEXTURE_2D, tex);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 640, 480, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, px);
-    int ok = gl_window_show(tex, fbo, 640, 480);
+    int ok = gl_window_show(tex, fbo, 640, 480, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
     return ok;
 }
@@ -1092,7 +1092,7 @@ static void gl_present_vblank(uint32_t fb) {
      * few frames each, which showed as flicker at the start: the user's), 3 s at most; only the showing is held, the
      * frames go on (skipped whole, the probe saw the camera late and missed its hold on the car) */
     int held = rt_present_hold_until && rt_now_100ns() < rt_present_hold_until;
-    if (!held && gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h)) {
+    if (!held && gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h, 1)) {
         rt_gl_shown = rt_now_100ns();
         glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
         if (!rt_display_wants_pixels()) return;

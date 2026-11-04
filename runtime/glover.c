@@ -95,12 +95,13 @@ static void ov_quad(float x0, float y0, float x1, float y1, float u0, float v0, 
 
 static void ov_rect(float x0, float y0, float x1, float y1, const float c[4]) { ov_quad(x0, y0, x1, y1, 0, 0, 1, 1, c, 0); }
 
+static float ov_mul = 1; /* (text drawn bigger: the Mayhem Moment's name) */
 static float ov_width(const OvFont *f, const char *s) {
     float w = 0;
     for (; *s; s++) {
         int k = (unsigned char)*s - 32;
         if (k < 0 || k >= 96) continue;
-        w += (float)(f->a[k] + f->b[k] + f->c[k]) * f->scale;
+        w += (float)(f->a[k] + f->b[k] + f->c[k]) * f->scale * ov_mul;
     }
     return w;
 }
@@ -114,10 +115,10 @@ static void ov_text(int font, float x, float y, const char *s, const float c[4],
     for (; *s; s++) {
         int k = (unsigned char)*s - 32;
         if (k < 0 || k >= 96) continue;
-        float gx = x + (float)f->a[k] * f->scale, sz = 32 * f->scale;
+        float gx = x + (float)f->a[k] * f->scale * ov_mul, sz = 32 * f->scale * ov_mul;
         float u0 = (float)(k % 16 * 34 + 1) / (16 * 34), v0 = (float)(k / 16 * 34 + 1) / (6 * 34);
         if (*s != ' ') ov_quad(gx, y, gx + sz, y + sz, u0, v0, u0 + 32.0f / (16 * 34), v0 + 32.0f / (6 * 34), c, 1 + font);
-        x += (float)(f->a[k] + f->b[k] + f->c[k]) * f->scale;
+        x += (float)(f->a[k] + f->b[k] + f->c[k]) * f->scale * ov_mul;
     }
 }
 
@@ -282,9 +283,9 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     int cur, nt = rt_overlay_tabs(tabs, 8, &cur);
     float tx = X0 + 56;
     for (int i = 0; i < nt; i++) {
-        float w = ov_width(&ov_font[OVF_ITEM], tabs[i]) + 28;
+        float w = ov_width(&ov_font[OVF_ITEM], tabs[i]) + (nt > 6 ? 14 : 28); /* (narrower with many: all in 4:3) */
         if (i == cur) ov_rect(tx, 72, tx + w, 96, ink), ov_rect(tx, 94, tx + w, 97, green);
-        ov_text(OVF_ITEM, tx + 14, 74, tabs[i], i == cur ? white : grey, 0);
+        ov_text(OVF_ITEM, tx + (nt > 6 ? 7 : 14), 74, tabs[i], i == cur ? white : grey, 0);
         tx += w + 6;
     }
     float y = 106, row = 30;
@@ -313,7 +314,8 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
             float px = X0 + 66 + (i % 4) * (pw + 14), py = y - 6 + (i / 4) * (ph + 2), g = i == pick ? 8 : 0; /* (the one picked a little bigger) */
             if (i == pick) ov_rect(px + 10, py + ph + 1, px + pw - 10, py + ph + 4, green);
             float u0 = (float)(i % ov_photo_cols) / ov_photo_cols, v0 = (float)(i / ov_photo_cols) / ov_photo_rows;
-            ov_quad(px - g, py - g, px + pw + g, py + ph + g, u0, v0, u0 + 1.0f / ov_photo_cols, v0 + 1.0f / ov_photo_rows, white, e ? 5 : 6);
+            if (ov_photos) ov_quad(px - g, py - g, px + pw + g, py + ph + g, u0, v0, u0 + 1.0f / ov_photo_cols, v0 + 1.0f / ov_photo_rows, white, e ? 5 : 6);
+            else ov_rect(px - g + 8, py - g + 8, px + pw + g - 8, py + ph + g - 8, e ? amber : grey); /* (no photographs: a card) */
             if (!e) ov_text(OVF_ITEM, px + pw / 2, py + ph / 2 - 9, "LOCKED", white, 2);
             if (!ov_photos) ov_text(OVF_TEXT, px + pw / 2, py + ph - 20, nmn, e ? ink : grey, 2); /* (no photographs: the names) */
         }
@@ -325,7 +327,7 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
         }
         char t[48];
         snprintf(t, sizeof t, "%d of %d unlocked", got, nm);
-        ov_text(OVF_ITEM, X0 + 574, 337, t, ink, 1);
+        ov_text(OVF_ITEM, X0 + 574, 76, t, ink, 1); /* (by the tabs: the to-do's line is long) */
     } else if (!n) { /* the achievements' tab: each one's name and what it asks, earned or how far along */
         int na = rt_ach_count(), top = rt_overlay_scroll(), got = 0;
         for (int i = 0; i < na; i++) {
@@ -483,8 +485,10 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     int toast = rt_toast_until && rt_now_100ns() < rt_toast_until;
     const char *ach = rt_ach_banner();
     int mg = rt_mg_hint();
-    const char *qn = rt_qr_note();
-    int qtd = rt_qr_takedowns();
+    static int photo = -1; /* (the Moments' photo runs, XBRT_MM_PHOTO: none of our race HUD in the pictures) */
+    if (photo < 0) photo = getenv("XBRT_MM_PHOTO") != NULL;
+    const char *qn = photo ? NULL : rt_qr_note();
+    int qtd = photo ? 0 : rt_qr_takedowns();
     float tank = rt_qr_tank();
     int qr_hud = ((rt_qr_mods & QR_NITRO) || rt_qr_mayhem()) && tank < 0.999f;
     int qcam = rt_qr_cam_active();
@@ -595,11 +599,14 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
             else pts[e][0] = sx * W / 640, pts[e][1] = sy; /* (already the screen's) */
             ws[e] = cw;
         }
-        if (!ok || pts[0][0] < -W || pts[0][0] > 2 * W || pts[0][1] < -H || pts[0][1] > 2 * H) {
-            /* (the frame's camera rows put the pipe off the screen, the first test: the chase camera's car, its tail
-             * at the bottom middle, the flame towards the camera) */
+        { /* the frame's camera rows never put the pipe on the screen (the first tests): drawn where the chase
+           * camera shows the car's tail, the bottom middle, and only with the camera there, 2-15 m behind the car
+           * (in the other views and the look back, none) */
+            float dx = rt_cam_pos[0] - fpos[0], dy = rt_cam_pos[1] - fpos[1], dz = rt_cam_pos[2] - fpos[2];
+            float d = sqrtf(dx * dx + dy * dy + dz * dz), along = dx * fback[0] + dy * fback[1] + dz * fback[2];
+            ok = d > 2 && d < 15 && along > 0.7f * d;
             pts[0][0] = W * 0.5f, pts[0][1] = H * 0.8f, pts[1][0] = W * 0.5f, pts[1][1] = H * 0.8f + 46;
-            ws[0] = 4, ok = 1;
+            ws[0] = 4;
         }
         if (ok) {
             static const float core[4] = {1, 0.97f, 0.75f, 0.95f}, mid[4] = {1, 0.62f, 0.12f, 0.85f}, tip[4] = {0.9f, 0.18f, 0.05f, 0.6f};
@@ -623,16 +630,30 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
         char t[32];
         if (qcam) { /* the takedown camera (the user's: an overlay "like in the video", our own): bars top and bottom,
                      * an IMPACT tag in the top one, the takedown's name large in the bottom one */
-            ov_rect(0, 0, W, 54, bars), ov_rect(0, H - 64, W, H, bars);
+            const char *mmf = rt_mm_flash();
+            ov_rect(0, 0, W, 54, bars), ov_rect(0, H - (mmf ? 104 : 64), W, H, bars);
             ov_rect(R - 120, 16, R, 40, red);
             ov_text(OVF_ITEM, R - 60, 18, "IMPACT", white2, 2);
-            if (qn) ov_text(OVF_TITLE, W / 2 + 2, H - 50, qn, shade, 2), ov_text(OVF_TITLE, W / 2, H - 52, qn, orange, 2);
-            const char *mmf = rt_mm_flash();
-            if (mmf) { /* a Mayhem Moment: its name, gold, in the top bar */
-                static const float gold[4] = {0.98f, 0.80f, 0.20f, 1};
-                ov_text(OVF_MENU, W / 2 + 2, 18, mmf, shade, 2), ov_text(OVF_MENU, W / 2, 16, mmf, gold, 2);
+            if (qn && !mmf) ov_text(OVF_TITLE, W / 2 + 2, H - 50, qn, shade, 2), ov_text(OVF_TITLE, W / 2, H - 52, qn, orange, 2);
+        } else if (qn && !rt_mm_flash()) ov_text(OVF_TITLE, W / 2 + 2, 152, qn, shade, 2), ov_text(OVF_TITLE, W / 2, 150, qn, orange, 2);
+        const char *mmf = photo ? NULL : rt_mm_flash();
+        if (mmf) { /* a Mayhem Moment (the user's: bigger, bottom left, "make it known that you got it"): a white flash,
+                    * MAYHEM MOMENT! over its name large in gold, popping in, and UNLOCKED! the first time */
+            static const float gold[4] = {0.98f, 0.80f, 0.20f, 1}, lime[4] = {0.30f, 0.80f, 0.20f, 1};
+            int is_new;
+            float age = rt_mm_flash_age(&is_new), x0 = 26, by = qcam ? H - 100 : H - 170;
+            if (age < 0.35f) { float fl[4] = {1, 1, 1, 0.75f * (1 - age / 0.35f)}; ov_rect(0, 0, W, H, fl); }
+            ov_text(OVF_TITLE, x0 + 2, by + 2, "MAYHEM MOMENT!", shade, 0), ov_text(OVF_TITLE, x0, by, "MAYHEM MOMENT!", orange, 0);
+            ov_mul = age < 0.25f ? 2.6f - 0.8f * (age / 0.25f) : 1.8f; /* (a pop: big, then settled) */
+            ov_text(OVF_TITLE, x0 + 3, by + 31, mmf, shade, 0), ov_text(OVF_TITLE, x0, by + 28, mmf, gold, 0);
+            float nw = ov_width(&ov_font[OVF_TITLE], mmf);
+            ov_mul = 1;
+            if (is_new && age > 0.4f && fmodf(age, 0.6f) < 0.45f) { /* (blinking) */
+                float tx = x0 + nw + 16, ty = by + 40;
+                ov_rect(tx, ty, tx + 112, ty + 26, lime);
+                ov_text(OVF_ITEM, tx + 56, ty + 3, "UNLOCKED!", white2, 2);
             }
-        } else if (qn) ov_text(OVF_TITLE, W / 2 + 2, 152, qn, shade, 2), ov_text(OVF_TITLE, W / 2, 150, qn, orange, 2);
+        }
         if (qtd) { /* top left, large: the run's takedowns (in the bar while the camera is on a wreck) */
             snprintf(t, sizeof t, "TAKEDOWNS  %d", qtd);
             float ty = qcam ? 16 : 70;
