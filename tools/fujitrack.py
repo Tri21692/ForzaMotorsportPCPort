@@ -3,6 +3,7 @@ build it from Forza's own models; GT4's only for what identifies the track).
 
   python tools/fujitrack.py layout <gt4 runway folder (tools/gt4runway.py's)> <out folder>
   python tools/fujitrack.py build <disc> <gt4 runway folder> <out folder>
+  python tools/fujitrack.py install|update <disc> <build folder> <mods folder>   (update: the track files only)
 
 layout: the track's centre line and edges, a point every STEP m round the lap in the driving direction,
 from the GT4 runway's surface (gt4runway.py's road.obj: a group per surface, the first byte 0 tarmac,
@@ -314,7 +315,11 @@ GRASS_LIGHT = (int(127 / 255 * 512) - 32768, int(144 / 255 * 512) - 32768)  # th
 RAMP_ROWS = (0, 64)
 SUN = (-0.45, 0.70, 0.55)
 SUN_GAIN = 0.9
-SHADE_BASE = {GRASS: 95.0, FOREST: 64.0, TARMAC: 72.0}   # (the asphalt darker than its texel's 87: it read pale)
+# The asphalt's darkness in its texture, not its light (the 4 Nov audit): the cars' shadows draw the texture at a fixed
+# shade whatever the light, and with the asphalt lit at 72 they came out as bright as the road and blue (a pale disc
+# round every car); its texture at ASPHALT_TONE and its light raised as much, the road looks as it did
+ASPHALT_TONE = 0.55
+SHADE_BASE = {GRASS: 95.0, FOREST: 64.0, TARMAC: 72.0 / ASPHALT_TONE}   # (the asphalt darker than its texel's 87: it read pale)
 SHADE_PATCHES = {GRASS: ((70.0, 0.12), (18.0, 0.07)), FOREST: ((50.0, 0.16), (12.0, 0.10)), TARMAC: ((45.0, 0.06), (9.0, 0.04))}
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
@@ -492,6 +497,17 @@ def build(disc, runway_dir, out):
     Tw, Vw = np.vstack([Tw.reshape(-1, 3), Tb + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vb])
     UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVb]), np.concatenate([Kw, Kb])
     Vk, Tk, UVk = more_kerbs(cf, lef_f, rig_f, rast, Vf[T[kinds == KERB]].mean(1) if (kinds == KERB).any() else np.zeros((0, 3)))
+    # the walls that will close the ground's open edges (the collision's below: collision_audit.seal_open_edges, on
+    # the same collision made now), armco drawn along them as along the outline's
+    col = collision_of(files, Vf, T, kinds, Vk, Tk, walls + bwalls)
+    import collision_audit
+    seal_lines = []
+    collision_audit.seal_open_edges(col, cf, margin=160.0, one_face=True, lines=seal_lines)
+    seal_quads = [np.array([a_, b_, b_ + (0, WALL_H, 0), a_ + (0, WALL_H, 0)]) for a_, b_ in seal_lines]
+    Vs, Ts, UVs, Ks = dressing(seal_quads, cf, fence=False)
+    Tw, Vw = np.vstack([Tw.reshape(-1, 3), Ts.reshape(-1, 3) + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vs.reshape(-1, 3)])
+    UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVs.reshape(-1, 2)]), np.concatenate([Kw, Ks])
+    print('sealed edges dressed: %d armco quads along %.0f m' % (len(Ts) // 4, sum(np.linalg.norm((b_ - a_)[[0, 2]]) for a_, b_ in seal_lines)))
     Vr, Tr, UVr, Kr = far_ring(runway_dir)
     Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw, Vr, Vk])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
@@ -684,6 +700,7 @@ def build(disc, runway_dir, out):
     tree_sheet(res, names, stx, os.path.join(runway_dir, 'trees'))
     far_pictures(res, names, stx, os.path.join(runway_dir, 'far', 'textures'))
     kerb_colour(res, names, stx)
+    asphalt_tone(res, names, stx, record(res, model, MATERIALS[TARMAC][0])[1][7])
     light_ramp(res, names, stx)
     line_paint(res, names, stx)
 
@@ -700,19 +717,10 @@ def build(disc, runway_dir, out):
         cell.append(struct.pack('<I', len(objs)) + b''.join(struct.pack('<HH', o_, 0xFFFF) + rest for o_ in objs))
     pvs = head + struct.pack('<I', len(cells)) + b''.join(cell) * len(cells) + tail
 
-    # the collision: Road Atlanta's file emptied, its grid grown over Fuji
-    col = coledit.Col(open(files['quickpreview1.col'], 'rb').read())
-    lo = np.floor((Vf[:, [0, 2]].min(0) - 30) / 100) * 100
-    hi = np.ceil((Vf[:, [0, 2]].max(0) + 30) / 100) * 100
-    col.cols, col.rows = int((hi[0] - lo[0]) // 100), int((hi[1] - lo[1]) // 100)
-    col.box = (float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1]))
-    col.blocks = []
-    for (a, b, c_), k in zip(T, kinds):
-        col.add_ground(COLLISION.get(int(k), 0x0200), Vf[[a, b, c_]])
-    for t_ in Tk:
-        col.add_ground(COLLISION[KERB], Vk[t_])
-    for q in walls + bwalls:
-        col.add(WALL, q[:3]); col.add(WALL, q[[0, 2, 3]])
+    # the collision: Road Atlanta's file emptied, its grid grown over Fuji (made above, with the walls)
+    # and the ground's edges a car reaches with nothing past them (outside_walls left 3,753 outline edges open, taken
+    # for seams with ground beyond; the 4 Nov audit, tools/collision_audit.py, found 2.5 km of them open to the void)
+    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, to_forza(E['centre']), margin=160.0, one_face=True))
     col_bytes = col.to_bytes()
     big = max(len(col.block_bytes(b)) for b in col.blocks)
     print('collision: grid %d x %d, %d blocks, the largest %d KB; %d wall quads' % (col.cols, col.rows, len(col.blocks), big >> 10, len(walls)))
@@ -1577,6 +1585,16 @@ def retexture(res, names, stx, art_dir):
         print('texture %d (%s): %s at %d x %d, DXT%d' % (t, names[t - 9][0][-40:], name, w, h, kind))
 
 
+def asphalt_tone(res, names, stx, t, tone=ASPHALT_TONE):
+    """The asphalt's texture (t) darkened to `tone` of itself, its alpha (a gloss mask) kept: ASPHALT_TONE."""
+    w, h, kind = texture_shape(res, names, stx, t)
+    o, n = names[t - 9][3], names[t - 9][4]
+    img = np.asarray(forzaxpr.dxt(bytes(res[o:o + n]), w, h, kind)).astype(np.float32).copy()
+    img[..., :3] *= tone
+    res[o:o + n] = forzaxpr.encode_with_mips(img.clip(0, 255).astype(np.uint8), kind, n)
+    print('asphalt: texture %d at %.2f of its brightness, its light %.0f' % (t, tone, SHADE_BASE[TARMAC]))
+
+
 def line_paint(res, names, stx, t=2180, white=232.0):
     """Road Atlanta's road line texture (roadline_whole: worn light grey) as fresh white paint for GT4's painted
     lines (the grid, the start line): its brightness scaled to `white`, its wear kept."""
@@ -1941,8 +1959,9 @@ def outline_runs(walls, centre):
     seen, runs = set(), []
     for start in list(nxt):
         if start in seen: continue
-        s0 = start  # (back to the run's beginning, or once round a loop)
-        while s0 in prv and prv[s0] not in seen and prv[s0] != start: s0 = prv[s0]
+        s0 = start  # (back to the run's beginning, or once round a loop; at most once per point: where two walls
+        guard = 0   # leave one point, nxt and prv disagree and the walk back could circle forever, the sealed edges' corners)
+        while s0 in prv and prv[s0] not in seen and prv[s0] != start and guard <= len(prv): s0 = prv[s0]; guard += 1
         run, k = [], s0
         while k is not None and k not in seen:
             seen.add(k); run.append(pts[k]); k = nxt.get(k)
@@ -2121,7 +2140,7 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
     return V, T, np.array(UV, float).reshape(-1, 2)
 
 
-def dressing(walls, centre=None):
+def dressing(walls, centre=None, fence=True):
     """Armco and catch fence along the walls (on outline_runs' smoothed line): (vertices, triangles, texture
     coordinates, kinds per triangle), each quad both faces."""
     V, T, UV, K = [], [], [], []
@@ -2129,21 +2148,24 @@ def dressing(walls, centre=None):
         runs = []
         c2 = centre[:, [0, 2]]
         split = []
-        for r in outline_runs(walls, centre):  # only where the outline runs near the track: GT4's runway's grass runs up
-            jn = [int(np.argmin(np.hypot(*(c2 - q[[0, 2]]).T))) for q in r]  # the embankments, its fence
+        for r in outline_runs(walls, centre):  # the fence only where the outline runs near the track: GT4's runway's
+            jn = [int(np.argmin(np.hypot(*(c2 - q[[0, 2]]).T))) for q in r]  # grass runs up the embankments, its fence
             near = np.array([np.hypot(*(c2[j] - q[[0, 2]])) <= FENCE_NEAR and abs(q[1] - centre[j, 1]) <= FENCE_RISE for q, j in zip(r, jn)])
-            cur = []                                                                     # floated over the hills
+            # (floated over the hills); elsewhere the armco alone, on the wall's own line (the 4 Nov audit: 3.7 km of
+            # the outline's walls stood with nothing drawn, invisible walls across the run-off's grass)
+            cur, cur_near = [], None
             for q, ok in zip(r, near):
-                if ok: cur.append(q)
-                elif len(cur) >= 2: split.append(np.array(cur)); cur = []
-                else: cur = []
-            if len(cur) >= 2: split.append(np.array(cur))
-        for r in split:  # (pieces of at most 200 m, each its texture from 0: a loop's two ends
+                if cur and bool(ok) != cur_near:
+                    if len(cur) >= 2: split.append((np.array(cur + [q]), cur_near))
+                    cur = []
+                cur.append(q); cur_near = bool(ok)
+            if len(cur) >= 2: split.append((np.array(cur), cur_near))
+        for r, nr in split:  # (pieces of at most 200 m, each its texture from 0: a loop's two ends
             k_ = max(1, int(200 / RAIL_STEP))   # meet, a donor holding both ran past s16's coordinates)
-            runs += [r[i:i + k_ + 1] for i in range(0, len(r) - 1, k_)]
-        for r in runs:
+            runs += [(r[i:i + k_ + 1], nr) for i in range(0, len(r) - 1, k_)]
+        for r, nr in runs:
             u = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(r[:, [0, 2]], axis=0), axis=1))]) / RAIL_REPEAT
-            for kind, (y0, y1) in ((ARMCO, ARMCO_H), (FENCE, FENCE_H)):
+            for kind, (y0, y1) in ((ARMCO, ARMCO_H), (FENCE, FENCE_H)) if nr and fence else ((ARMCO, ARMCO_H),):
                 b = len(V)
                 for p_, uu in zip(r, u):
                     V += [p_ + (0, y0, 0), p_ + (0, y1, 0)]; UV += [(uu, 1), (uu, 0)]
@@ -2163,6 +2185,25 @@ def dressing(walls, centre=None):
             T += [(b, b + 1, b + 2), (b, b + 2, b + 3), (b, b + 2, b + 1), (b, b + 3, b + 2)]
             K += [kind] * 4
     return np.array(V, float), np.array(T, int), np.array(UV, float), np.array(K, int)
+
+
+def collision_of(files, Vf, T, kinds, Vk, Tk, walls):
+    """Road Atlanta's collision file emptied, its grid grown over Fuji: the runway's ground by surface, the added
+    kerbs, the walls (quads, both triangles)."""
+    import coledit
+    col = coledit.Col(open(files['quickpreview1.col'], 'rb').read())
+    lo = np.floor((Vf[:, [0, 2]].min(0) - 30) / 100) * 100
+    hi = np.ceil((Vf[:, [0, 2]].max(0) + 30) / 100) * 100
+    col.cols, col.rows = int((hi[0] - lo[0]) // 100), int((hi[1] - lo[1]) // 100)
+    col.box = (float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1]))
+    col.blocks = []
+    for (a, b, c_), k in zip(T, kinds):
+        col.add_ground(COLLISION.get(int(k), 0x0200), Vf[[a, b, c_]])
+    for t_ in Tk:
+        col.add_ground(COLLISION[KERB], Vk[t_])
+    for q in walls:
+        col.add(WALL, q[:3]); col.add(WALL, q[[0, 2, 3]])
+    return col
 
 
 def outside_walls(Vf, T, F=None, h=WALL_H):
@@ -2489,6 +2530,20 @@ def install(disc, build_dir, mods):
         if f.lower() == 'audiospline.bin':  # Road Atlanta's sounds, a record per Fuji waypoint (the nearest's)
             ref = mega.files['ai' + B + 'drivatarv2' + B + DONOR_TRACK.lower() + 'geometry.bin']
             open(os.path.join(d, 'AudioSpline.bin'), 'wb').write(aitrack.audio_spline(wps, ref, open(os.path.join(ra, f), 'rb').read()))
+    track_files_in(disc, build_dir, mods)
+    print('"%s": track %d, Hot Lap %d, name string %d, %.0f m' % (NAME, ordinal, hotlap, nid, length))
+
+
+def track_files_in(disc, build_dir, mods):
+    """The build's track files into the mods folder (track\\FujiSpeedway\\ and its collision under media\\tracks): what
+    a rebuild of the same layout changes. `update` does only this (install refuses a track listed already)."""
+    import zlib
+    import addcar
+    d = os.path.join(mods, 'media', 'tracks', TAG)
+    os.makedirs(d, exist_ok=True)
+    col = open(os.path.join(build_dir, 'QuickPreview1.col'), 'rb').read()
+    open(os.path.join(d, 'QuickPreview1.col'), 'wb').write(col)
+    ra = addcar.disc_file(disc, 'media', 'tracks', DONOR_TRACK)
     res = open(os.path.join(build_dir, 'roadatlanta.res'), 'rb').read()
     cbx_disc = next(os.path.join(ra, f) for f in os.listdir(ra) if f.lower() == 'quickpreview1.xbp.cbx')
     cbx = zlib.decompress(open(cbx_disc, 'rb').read())
@@ -2503,7 +2558,7 @@ def install(disc, build_dir, mods):
                       (('media', 'tracks', DONOR_TRACK, 'quickpreview1.xbp.cbx'), cbx)):
         os.makedirs(os.path.join(t, *rel[:-1]), exist_ok=True)
         open(os.path.join(t, *rel), 'wb').write(data)
-    print('"%s": track %d, Hot Lap %d, name string %d, %.0f m' % (NAME, ordinal, hotlap, nid, length))
+    print('track files: %s' % t)
 
 
 if __name__ == '__main__':
@@ -2515,5 +2570,9 @@ if __name__ == '__main__':
         if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(sys.argv[4]).split(os.sep)):
             raise SystemExit('%s: a save folder' % sys.argv[4])
         install(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif len(sys.argv) >= 5 and sys.argv[1] == 'update':  # (the same layout rebuilt: the track files only)
+        if any(part.lower() in ('udata', 'tdata', 'partition1', 'partition2') for part in os.path.abspath(sys.argv[4]).split(os.sep)):
+            raise SystemExit('%s: a save folder' % sys.argv[4])
+        track_files_in(sys.argv[2], sys.argv[3], sys.argv[4])
     else:
         raise SystemExit(__doc__)
