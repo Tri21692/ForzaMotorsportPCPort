@@ -133,6 +133,7 @@ static struct {
     uint64_t still_since, off_since, hit_at, spin_until, down_at, tumble_until, chase_until;
     float spin;   /* radians a second about the up axis, until spin_until */
     float impact; /* the closing speed of the player's last hit on it, m/s */
+    float push[2]; uint64_t push_until; /* a hit's shove, m/s, given over 0.2 s (at once it jolted) */
     int line, kind; /* kind: the player's last hit on it, 1 a slam (side), 2 a shunt (from behind) */
 } cs[MAXCARS];
 
@@ -180,6 +181,16 @@ static void yaw(uint32_t car, float a) {
         float x = rdf(at), z = rdf(at + 8);
         wrf(at, x * c + z * s), wrf(at + 8, -x * s + z * c);
     }
+}
+
+/* How much the racing line turns over the next stretch from point k (radians, from its heading 5 points on to
+ * 20 on): Mayhem's pushes stay off in the corners (where they put the rivals off their lines). */
+static float line_turn(uint32_t xs, uint32_t zs, uint32_t np, int k) {
+    int a = k, b = (k + 5) % (int)np, c = (k + 20) % (int)np;
+    float x1 = rdf(xs + 4 * b) - rdf(xs + 4 * a), z1 = rdf(zs + 4 * b) - rdf(zs + 4 * a);
+    float x2 = rdf(xs + 4 * c) - rdf(xs + 4 * b), z2 = rdf(zs + 4 * c) - rdf(zs + 4 * b);
+    float t = atan2f(x1 * z2 - z1 * x2, x1 * x2 + z1 * z2);
+    return t < 0 ? -t : t;
 }
 
 /* The racing line's point about m metres behind point k (the takedown wreck's place: behind the player). */
@@ -736,14 +747,20 @@ void rt_qr_tick(void) {
                 if (tank < 0) tank = 0;
             } else if (!nitro_y && tank < 1) tank += (float)(dt / 30.0); /* filled again in 30 s, while not held */
         }
-        if (mayhem_race && car != me && me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.7f) {
+        if (mayhem_race && car != me && me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.7f && have_line) {
             /* Mayhem's rivals: faster (a push along their heading, 3 m/s^2, under 85 m/s) and at the player (within
-             * 14 m and not far ahead of it, a pull across towards the player's line, 3 m/s^2) */
+             * 14 m and not far ahead of it, a pull across, 1.5 m/s^2), both only where the line runs nearly straight
+             * and the rival is on it (the user's: "AI seems to go off their lines": everywhere, they overshot the
+             * corners); off its line by 3 m or more, a pull back to it */
+            int lk = nearest(xs, zs, np, p[0], p[2]);
+            float lxp = rdf(xs + 4 * lk) - p[0], lzp = rdf(zs + 4 * lk) - p[2], loff = sqrtf(lxp * lxp + lzp * lzp);
+            int straight = line_turn(xs, zs, np, lk) < 0.12f && loff < 4;
             float hx = rdf(car + 0x38), hz = rdf(car + 0x40), sp = sqrtf(v[0] * v[0] + v[2] * v[2]);
-            if (sp > 8 && sp < 85) v[0] += hx * (float)(3.0 * dt), v[2] += hz * (float)(3.0 * dt);
+            if (straight && sp > 8 && sp < 85) v[0] += hx * (float)(3.0 * dt), v[2] += hz * (float)(3.0 * dt);
             float ax = mp[0] - p[0], az = mp[2] - p[2], d = sqrtf(ax * ax + az * az), along = ax * hx + az * hz;
             float lx = ax - along * hx, lz = az - along * hz, ll = sqrtf(lx * lx + lz * lz);
-            if (d > 2 && d < 14 && sp > 12 && along > -6 && ll > 0.3f) v[0] += lx / ll * (float)(3.0 * dt), v[2] += lz / ll * (float)(3.0 * dt);
+            if (straight && d > 2 && d < 14 && sp > 12 && along > -6 && ll > 0.3f) v[0] += lx / ll * (float)(1.5 * dt), v[2] += lz / ll * (float)(1.5 * dt);
+            if (loff > 3 && loff < 25) v[0] += lxp / loff * (float)(2.0 * dt), v[2] += lzp / loff * (float)(2.0 * dt);
             wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
         }
         if (mods & QR_TAKEDOWNS) {
@@ -754,7 +771,6 @@ void rt_qr_tick(void) {
             float dv[3] = {v[0] - cs[i].v[0], v[1] - cs[i].v[1], v[2] - cs[i].v[2]};
             float jolt = sqrtf(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]) / (float)dt;
             float dx = p[0] - mp[0], dz = p[2] - mp[2], dd = sqrtf(dx * dx + dz * dz);
-            int near_me = car != me && me && dd < 8;
             int fresh = cs[i].hit_at && now - cs[i].hit_at < 30000000; /* the player's hit, under 3 s ago */
             /* a touch: both cars jolted this tick, side by side or nose to tail (the user's: it fired without
              * one, on a rival's own knock near the player) */
@@ -777,10 +793,8 @@ void rt_qr_tick(void) {
             }
             if (theirs) { /* the player slammed: thrown away from the rival, out of grip; a takedown if a wall or a stop follows */
                 float ux = dx / dd, uz = dz / dd, s = closing / 18 > 1 ? 1 : closing / 18, w[3];
-                for (int j = 0; j < 3; j++) w[j] = rdf(me + 0x44 + 4 * (uint32_t)j);
-                w[0] -= ux * 2.5f * s, w[2] -= uz * 2.5f * s;
-                wrf(me + 0x44, w[0]), wrf(me + 0x4C, w[2]);
-                cs[im].v[0] = w[0], cs[im].v[2] = w[2];
+                (void)w;
+                cs[im].push[0] = -ux * 2.5f * s, cs[im].push[1] = -uz * 2.5f * s, cs[im].push_until = now + 2000000; /* (over 0.2 s) */
                 cs[im].hit_at = now, cs[im].impact = closing, cs[im].kind = 1;
                 cs[im].spin = (rand() & 1 ? 1 : -1) * 1.5f * s, cs[im].spin_until = now + 5000000;
                 cs[i].hit_at = now, cs[i].impact = 0; /* (its own crash after is no takedown of the player's) */
@@ -791,28 +805,33 @@ void rt_qr_tick(void) {
                 float ahead = ux * fx + uz * fz, s = closing / 18 > 1 ? 1 : closing / 18;
                 if (ahead > 0.8f) { /* a shunt: punted on, along the player's heading */
                     cs[i].kind = 2;
-                    v[0] += fx * 1.5f * s, v[2] += fz * 1.5f * s;
+                    cs[i].push[0] = fx * 1.5f * s, cs[i].push[1] = fz * 1.5f * s;
                     cs[i].spin = (rand() & 1 ? 1 : -1) * 0.8f * s;
                     say("SHUNT!");
                 } else { /* a slam: across, away from the player (the side of the heading it is on) */
                     float lx = ux - ahead * fx, lz = uz - ahead * fz, ll = sqrtf(lx * lx + lz * lz);
                     if (ll > 0.01f) lx /= ll, lz /= ll;
                     cs[i].kind = 1;
-                    v[0] += lx * 2 * s, v[2] += lz * 2 * s;
+                    cs[i].push[0] = lx * 2 * s, cs[i].push[1] = lz * 2 * s;
                     cs[i].spin = (lx * fz - lz * fx > 0 ? 1 : -1) * 1.2f * s; /* (its nose turned towards where it is thrown) */
                     say("SLAM!");
                 }
                 cs[i].impact = closing;
-                wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
+                cs[i].push_until = now + 2000000; /* (the shove over 0.2 s, not at once: the user's "smoother, same weight") */
                 cs[i].hit_at = now, cs[i].spin_until = now + 5000000;
                 fresh = 0; /* (this tick's jolt is the hit, not a wall) */
-                if (!touched) { /* the player's car heavier: 30% of the knock it took given back (half let it shove through) */
+                if (!touched) { /* the player's car heavier: 60% of the knock it took given back (the user's: "less recoil";
+                                 * 30% bounced it back off, half earlier let it shove through when the rivals were lighter) */
                     touched = 1;
                     float w[3];
-                    for (int j = 0; j < 3; j++) w[j] = rdf(me + 0x44 + 4 * (uint32_t)j) - 0.3f * mdv[j];
+                    for (int j = 0; j < 3; j++) w[j] = rdf(me + 0x44 + 4 * (uint32_t)j) - 0.6f * mdv[j];
                     wrf(me + 0x44, w[0]), wrf(me + 0x4C, w[2]); /* (not the up: no lift) */
                     if (im >= 0 && cs[im].car == me) cs[im].v[0] = w[0], cs[im].v[2] = w[2];
                 }
+            }
+            if (cs[i].push_until > now) { /* a hit's shove, a share a tick */
+                v[0] += cs[i].push[0] * (float)(dt / 0.2), v[2] += cs[i].push[1] * (float)(dt / 0.2);
+                wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
             }
             if (cs[i].spin_until > now) yaw(car, cs[i].spin * (float)dt);
             float sp = sqrtf(v[0] * v[0] + v[2] * v[2]);
@@ -821,8 +840,20 @@ void rt_qr_tick(void) {
             if (k >= 0) { float lx = rdf(xs + 4 * k) - p[0], lz = rdf(zs + 4 * k) - p[2]; off = sqrtf(lx * lx + lz * lz); }
             int stuck = sp < 2.0f || off > 25.0f || rdf(car + 0x30) < 0.3f; /* (stopped, far off the line, or on its side) */
             float flat = sqrtf(dv[0] * dv[0] + dv[2] * dv[2]) / (float)dt; /* (along the ground: a landing is no wall) */
-            int wall = fresh && flat > 150 && !near_me && now - cs[i].hit_at > 1500000; /* a hard knock away from the player soon after the player's hit (not the hit's own, the tick it came) */
-            if (car == me && mayhem_race && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || stuck)) {
+            /* a wall: a hard knock with no other car within 5 m (so not a car's), soon after the hit but not the hit's
+             * own tick (the user's: "wall takedowns should only happen if they hit a wall") */
+            int car_near = 0;
+            for (uint32_t j = 0; j < n && !car_near; j++) {
+                uint32_t r2 = xb_rd32(arr + 4 * j), c2 = r2 && r2 < RT_USER_LIMIT ? xb_rd32(r2 + 0xA0) : 0;
+                if (!c2 || c2 == car || c2 >= RT_USER_LIMIT) continue;
+                float ex = rdf(c2 + 0x14) - p[0], ez = rdf(c2 + 0x1C) - p[2];
+                car_near = ex * ex + ez * ez < 25;
+            }
+            int wall = fresh && flat > 150 && !car_near && now - cs[i].hit_at > 1500000;
+            /* a crash: rolled onto its side or roof, or spun to a stop (not merely shoved wide: those counted, the
+             * user's "takedowns are a little buggy") */
+            int crashed = sp < 3.0f || rdf(car + 0x30) < 0.3f;
+            if (car == me && mayhem_race && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || crashed)) {
                 /* Mayhem: the player taken down: wrecked, slow motion on its own crash (the camera already on it), then
                  * back on the line ahead, repaired (below) */
                 cs[i].down_at = now;
@@ -833,12 +864,12 @@ void rt_qr_tick(void) {
             }
             /* a takedown only after a real impact (the user's: "a few where it was too soft"): the player's hit at
              * 9 m/s (20 mph) or more closing, and the wall's knock over 150 m/s^2 (was 6 m/s and 100) */
-            if (car != me && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || stuck)) {
+            if (car != me && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || crashed)) {
                 cs[i].down_at = now;
                 takedowns++;
                 tank = tank + 0.5f > 1 ? 1 : tank + 0.5f; /* (a takedown fills the boost, as Burnout's) */
-                say(wall ? "WALL TAKEDOWN!" : cs[i].kind == 2 ? "SHUNT TAKEDOWN!" : "SLAM TAKEDOWN!");
-                fprintf(stderr, "xbrt: quick race: takedown %d (racer %u, %s)\n", takedowns, i, wall ? "wall" : cs[i].kind == 2 ? "shunt" : "slam");
+                say(wall ? "WALL TAKEDOWN!" : "TAKEDOWN!");
+                fprintf(stderr, "xbrt: quick race: takedown %d (racer %u, %s)\n", takedowns, i, wall ? "wall" : rdf(car + 0x30) < 0.3f ? "rolled" : "stopped");
                 tdcam_start(car, r, me, sqrtf(mv0[0] * mv0[0] + mv0[2] * mv0[2])); /* the camera on the wreck, slowed, the player's car on the line */
                 damage_set((int)i, car, DMG_FULL); /* (wrecked; repaired on its respawn) */
                 if (wall) { /* blown up (the user's: "explodes" on the wall): thrown up off the wall, rolling, for 1.2 s */
@@ -869,8 +900,8 @@ void rt_qr_tick(void) {
                 float hx = rdf(car + 0x38), hz = rdf(car + 0x40), ax = mp[0] - p[0], az = mp[2] - p[2], d = sqrtf(ax * ax + az * az);
                 float msp = sqrtf(rdf(me + 0x44) * rdf(me + 0x44) + rdf(me + 0x4C) * rdf(me + 0x4C)), csp = sqrtf(v[0] * v[0] + v[2] * v[2]);
                 if (d < 25 || ax * hx + az * hz < 0) cs[i].chase_until = 0; /* caught up, or past: racing as before */
-                else if (csp < msp + 15) { /* up to 15 m/s faster than the player */
-                    v[0] += hx * (float)(14.0 * dt), v[2] += hz * (float)(14.0 * dt);
+                else if (csp < msp + 15 && k >= 0 && line_turn(xs, zs, np, k) < 0.12f) { /* up to 15 m/s faster than the player, on the straights (it overshot the corners) */
+                    v[0] += hx * (float)(8.0 * dt), v[2] += hz * (float)(8.0 * dt);
                     wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
                 }
             }
