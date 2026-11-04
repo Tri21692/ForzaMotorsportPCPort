@@ -949,6 +949,17 @@ void rt_qr_tick(void) {
                 }
             }
         }
+        { /* XBRT_AUTODRIVE=<m/s> (testing: the custom tracks' audits): the player's car on the autopilot all race, along
+           * the AI line at that speed, the camera behind it as when driven (XBRT_QR_ALWAYS=1 to run outside Quick Race) */
+            static int autod = -1;
+            if (autod < 0) autod = getenv("XBRT_AUTODRIVE") ? atoi(getenv("XBRT_AUTODRIVE")) : 0;
+            if (autod > 0 && car == me && have_line && !rt_qr_auto && !tdcam_until)
+                rt_qr_auto = 1, auto_until = 0, auto_k = -1, auto_speed = (float)autod;
+            static int looks = -1; /* XBRT_AUTODRIVE_LOOKS=1: the camera turned round the car's looks, 1.5 s each (ahead,
+                                    * back, the sides, the diagonals), for things drawn or not by the angle (the garage) */
+            if (looks < 0) looks = getenv("XBRT_AUTODRIVE_LOOKS") && atoi(getenv("XBRT_AUTODRIVE_LOOKS"));
+            if (looks && autod > 0 && car == me) rt_photo_lookback = (int)((rt_now_100ns() / 15000000) % 8);
+        }
         if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
             autopilot(car, xs, zs, np, dt);
             cs[i].v[0] = rdf(car + 0x44), cs[i].v[1] = rdf(car + 0x48), cs[i].v[2] = rdf(car + 0x4C);

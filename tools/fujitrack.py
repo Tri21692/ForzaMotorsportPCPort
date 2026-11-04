@@ -801,7 +801,9 @@ def ppw_records(ppw):
         offs.append(o)
         w = struct.unpack_from('<I', ppw, o + 16)[0]
         o += 21
-        if w & 512: o += 4 + 2 * struct.unpack_from('<I', ppw, o)[0]
+        if w & 512:
+            if o + 4 > len(ppw): break  # (a short tail after the last mesh's: Pacific Shipyards')
+            o += 4 + 2 * struct.unpack_from('<I', ppw, o)[0]
     return offs
 
 

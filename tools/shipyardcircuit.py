@@ -2274,6 +2274,13 @@ def build(disc, mods, preview_png=None, reverse=False):
     cbx = zlib.compress(cbx, 9)
     print('solid props: %d boxes on the off-course road dropped' % dropped)
     if preview_png: L.preview(preview_png, sp, loop, np.mean([loop[4], loop[5]], 0), col)
+    import spherefix  # every mesh's sphere holding its vertices (sphere_at's search by value missed some donors' records:
+    ppw, fixed = spherefix.fix(res_bytes, ppw, L.MODEL, quiet=True)  # the garage went at some angles, 4 Nov)
+    print('bounding spheres: %d fixed by the mesh\'s own record' % len(fixed))
+    import cellstream  # every cell one texture list, the textures nearest the loop (walls by the road blurred, 4 Nov)
+    tex, info = cellstream.plan(res_bytes, pvs, ppw, L.MODEL)
+    pvs = cellstream.apply(pvs, tex)
+    print('textures: ' + info[1])
     L.install(disc, mods, loop, col_bytes, res_bytes, pvs, ppw, cbx, length)
     t = os.path.join(mods, 'track', L.TAG, 'media', 'tracks', 'Vancouver')
     open(os.path.join(t, 'quickpreview1.xbp.svb'), 'wb').write(zlib.compress(bytes(svb_raw), 9))
