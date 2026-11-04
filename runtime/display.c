@@ -205,6 +205,8 @@ void rt_toast(const char *msg) {
 static HWND window;
 static HANDLE new_frame; /* set by rt_display_new_frame */
 static volatile int shot_wanted; /* F12 pressed, with the window drawn by the GPU: the next picture read back is saved */
+static char shot_pending[256];   /* F12's picture as shown, asked of glfill.c (rt_photo_path), to make a .png of */
+static DWORD shot_asked;
 
 void rt_display_new_frame(void) {
     if (new_frame) SetEvent(new_frame);
@@ -224,12 +226,13 @@ volatile int rt_gpu_dump_wanted; /* F3: nv2a.c writes the next frame's GPU metho
  * 2560x1920 BMP is 15 MB, its PNG a third of that or less. No ffmpeg: the BMP stays. */
 static void shot_to_png(const char *bmp) {
     const char *fmt = getenv("XBRT_SCREENSHOT_FORMAT");
-    if (fmt && !strcmp(fmt, "bmp")) return;
+    int to_bmp = fmt && !strcmp(fmt, "bmp"); /* (a .ppm from the GPU's window, F12: made a .bmp then) */
+    if (to_bmp && strlen(bmp) > 4 && !strcmp(bmp + strlen(bmp) - 4, ".bmp")) return;
     const char *ff = getenv("XBRT_FFMPEG") && *getenv("XBRT_FFMPEG") ? getenv("XBRT_FFMPEG") : "ffmpeg";
     char win[256], png[256], cmd[1400];
     snprintf(win, sizeof win, "%s", bmp);
     for (char *c = win; *c; c++) if (*c == '/') *c = '\\';
-    snprintf(png, sizeof png, "%.*s.png", (int)strlen(win) - 4, win);
+    snprintf(png, sizeof png, "%.*s.%s", (int)strlen(win) - 4, win, to_bmp ? "bmp" : "png");
     snprintf(cmd, sizeof cmd, "cmd /c \"\"%s\" -v error -y -i \"%s\" \"%s\" && del \"%s\"\"", ff, win, png, win);
     STARTUPINFOA si;
     memset(&si, 0, sizeof si), si.cb = sizeof si;
@@ -249,6 +252,18 @@ static void debug_key(WPARAM vk) {
     }
     static const char *names[] = {"no culling", "no depth test", "no alpha test", "no depth clip", "CPU vertex programs"};
     if (vk == VK_F12) {
+        if (rt_gl_shown && !rt_photo_path[0] && !shot_pending[0]) { /* the window drawn by the GPU: the picture as shown,
+            * after the post effects (sharpening, bloom, vibrance; the audit: F12's had none), saved by glfill.c's present
+            * as a .ppm, made a .png once it is there (WM_TIMER) */
+            CreateDirectoryA("screenshots", NULL);
+            snprintf(shot_pending, sizeof shot_pending, "screenshots/shot_%06.1fs.ppm", rt_now_100ns() / 1e7);
+            char cst[256];
+            snprintf(cst, sizeof cst, "%.*s.cst", (int)strlen(shot_pending) - 4, shot_pending);
+            rt_save_constants(cst);
+            snprintf((char *)rt_photo_path, sizeof rt_photo_path, "%s", shot_pending);
+            shot_asked = GetTickCount();
+            return;
+        }
         if (rt_gl_shown) { /* the window is drawn by the GPU: frame[] is not kept up to date */
             shot_wanted = 1;
             return;
@@ -302,6 +317,14 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_TIMER:
+        if (shot_pending[0] && !rt_photo_path[0]) { /* F12's picture written by glfill.c */
+            shot_to_png(shot_pending);
+            rt_toast("Screenshot saved");
+            rt_ach_add("shots25", 1);
+            shot_pending[0] = 0;
+        } else if (shot_pending[0] && GetTickCount() - shot_asked > 3000) { /* (no frame drawn since: as before) */
+            rt_photo_path[0] = 0, shot_pending[0] = 0, shot_wanted = 1;
+        }
         if (gl_showing() && !rt_display_wants_pixels()) return 0;
         rt_display_compose_best(frame, &frame_w, &frame_h);
         maybe_screenshot(frame, frame_w, frame_h);

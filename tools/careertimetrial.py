@@ -38,6 +38,7 @@ EVENT_ORDINAL = 355      # after the custom cup's 351-354; the profile keeps 512
 PACE = 0.865
 MARGIN = (1.05, 1.02)
 SPREAD = (1.0, 1.04, 1.08)
+TOP_SHARE = 0.93  # 1st's average speed at most this share of the class's top speed
 
 # (class, restriction, level, icon (the Spec series' class logos), tracks (tracklist ordinals), the
 # car won (its ordinal; none a prize anywhere else in the career), the Spec series of the class
@@ -155,8 +156,12 @@ def build(disc, mods, mega, tracks):
         events = []
         margin = MARGIN[0] + (MARGIN[1] - MARGIN[0]) * k / (len(LADDER) - 1)
         for i, t in enumerate(ts):
-            est, _ = laptime.lap(mega, names[t], SIM_CLASS.get(cls, cls))
-            ms = [int(round(est * PACE * margin * f * 10)) * 100 for f in SPREAD]
+            rs = re.search(r'startwaypoint="(-?\d+)" speed="([\d.]+)"', starts[t][1])  # (the lap begins rolling: 2 m a waypoint)
+            est, length = laptime.lap(mega, names[t], SIM_CLASS.get(cls, cls), rolling=(float(rs.group(2)), 2.0 * abs(int(rs.group(1)))) if rs else None)
+            # (PACE is for the estimate's careful cornering, not straights: 1st at most TOP_SHARE of the top speed on
+            # average; the oval's Class B 1st was 222 km/h against 225: tools/ttfix.py, 4 Nov)
+            first = max(est * PACE * margin, length / (laptime.CLASSES[SIM_CLASS.get(cls, cls)][2] / 3.6 * TOP_SHARE))
+            ms = [int(round(first * f * 10)) * 100 for f in SPREAD]
             targets.append('%d %d %d %d' % (ordinal, *ms))
             desc = 'IDS_Mod_TT%s_Event%d' % (tag, i)
             strings.append((desc, 'Targets: 1st %s, 2nd %s, 3rd %s. First place in both events receives the %s.' % (*(clock(m) for m in ms), cars[prize])))

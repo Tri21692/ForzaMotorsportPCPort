@@ -55,8 +55,10 @@ def curvature(p, closed, span=6):
     return k
 
 
-def lap(mega, track, cls, start_speed=None):
-    """Seconds round the line in a car of the class (from the line at speed for a circuit)."""
+def lap(mega, track, cls, start_speed=None, rolling=None):
+    """Seconds round the line in a car of the class (from the line at speed for a circuit; rolling=(m/s, m): from a
+    rolling start that far before the line, as the time trials begin: their flying-lap targets were seconds too fast
+    on the fast short laps, the oval's Class B target 223 km/h on average)."""
     mu, pw, vtop = CLASSES[cls]
     vtop /= 3.6
     p, h, closed = line(mega, track)
@@ -90,6 +92,18 @@ def lap(mega, track, cls, start_speed=None):
             room = np.sqrt(max(0.0, 1 - lat ** 2))
             b = mu * G * max(room, 0.25) + (pw / vtop) * (v[j] / vtop) ** 2
             v[i] = min(v[i], np.sqrt(v[j] ** 2 + 2 * b * ds))
+    if closed and rolling:  # (the time trials' rolling start: from rolling[0] m/s, rolling[1] m before the line)
+        v0, run = rolling
+        vi, x = v0, 0.0
+        while x < run: a = accel(vi, 0); vi = np.sqrt(max(vi ** 2 + 2 * a * 2.0, 0.0)); x += 2.0
+        w = v.copy()
+        w[0] = min(v[0], vi)
+        for i in range(n - 1):  # (one lap on from there, never over the flying lap's speeds: its braking kept)
+            ds = seg[i]
+            lat = min(1.0, (w[i] ** 2 * k[i]) / (mu * G))
+            a = min(accel(w[i], i), mu * G * np.sqrt(max(0.0, 1 - lat ** 2)) + 0.15 * G)
+            w[i + 1] = min(v[i + 1], np.sqrt(max(w[i] ** 2 + 2 * a * ds, 0.0)))
+        v = w
     vm = (v + np.roll(v, -1)) / 2 if closed else (v[:-1] + v[1:]) / 2
     return float(np.sum(seg[:len(vm)] / np.maximum(vm[:len(seg)], 1.0))), float(seg.sum())
 
