@@ -59,6 +59,9 @@ def fit_font(draw, text, width, size):
 
 
 def card(path, name, track, seed):
+    """path[@shift][#corner]: the stamp's corner tl, tr, bl or br (br if none: over the road), where it hides no car."""
+    corner = 'br'
+    if '#' in path: path, corner = path.rsplit('#', 1)
     rnd = random.Random(seed)
     K = 3  # drawn three times as big, then down (smooth edges and lettering)
     c = Image.new('RGBA', (PW * K, PH * K), (246, 244, 236, 255))
@@ -77,7 +80,9 @@ def card(path, name, track, seed):
     sd.rounded_rectangle([2 * K, 2 * K, 82 * K, 26 * K], radius=4 * K, outline=red, width=2 * K)
     sd.text((42 * K, 14 * K), 'MAYHEM', font=ImageFont.truetype(r'C:\Windows\Fonts\impact.ttf', 16 * K), fill=red, anchor='mm')
     st = st.rotate(rnd.uniform(8, 14), resample=Image.BICUBIC, expand=True)
-    c.alpha_composite(st, ((12 + IW) * K - st.width - 4 * K, (12 + IH) * K - st.height - 4 * K))
+    sx = 16 * K if corner[1] == 'l' else (12 + IW) * K - st.width - 4 * K
+    sy = 16 * K if corner[0] == 't' else (12 + IH) * K - st.height - 4 * K
+    c.alpha_composite(st, (sx, sy))
     c = c.resize((PW, PH), Image.LANCZOS)
     # tilted, with a soft shadow, on a clear tile; a paperclip over the top edge
     ang = rnd.uniform(-7, 7)

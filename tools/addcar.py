@@ -319,7 +319,9 @@ def car_name(disc, mods, ordinal):
     p = os.path.join(mods, 'media', 'Loc', 'en', 'CarDataStrings.str')
     e1, text, _, _ = read_strings(open(p if os.path.exists(p) else disc_file(disc, 'media', 'Loc', 'en', 'CarDataStrings.str'), 'rb').read())
     s = {i: text[o * 2:o2 * 2].decode('utf-16-le').rstrip('\0') for (i, o), (_, o2) in zip(e1, e1[1:])}
-    return '%s %s' % (s[make], s[struct.unpack_from('<H', m, row + 12)[0]])
+    mk_name, model = s[make], s[struct.unpack_from('<H', m, row + 12)[0]]
+    if mk_name.lower() in model.lower().split(): return model  # (the model's own name has its make: 'Enzo Ferrari', not 'Ferrari Enzo Ferrari')
+    return '%s %s' % (mk_name, model)
 
 
 def write_strings(d, add):

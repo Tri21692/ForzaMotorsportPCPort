@@ -491,7 +491,7 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     int qtd = photo ? 0 : rt_qr_takedowns();
     float tank = rt_qr_tank();
     int qr_hud = ((rt_qr_mods & QR_NITRO) || rt_qr_mayhem()) && tank < 0.999f;
-    int qcam = rt_qr_cam_active();
+    int qcam = photo ? 0 : rt_qr_cam_active(); /* (the photo runs' wreck camera: no bars in the picture) */
     float fpos[3], fback[3], fpow;
     int flame = rt_qr_flame(fpos, fback, &fpow);
     if (rt_show_fps < 0) rt_show_fps = getenv("XBRT_SHOW_FPS") && atoi(getenv("XBRT_SHOW_FPS"));

@@ -866,16 +866,28 @@ void rt_qr_tick(void) {
                                                      * 0 looking back (Y held) at the rival thrown behind; 1 and 2 the
                                                      * camera looking to the landmark's side (the right stick) at a rival
                                                      * thrown off that way just ahead and level */
+        /* (XBRT_MM_PHOTO_ANGLES=5,6,7: just those, in that order; 3 and 4 the diagonals, back and ahead; 5-7 the wreck
+         * camera, the camera put on the thrown rival as a takedown's is: 5 looking back across at the player's car
+         * on the landmark's side, 6 the same the other side, 7 looking aside at the player's car. The game's own
+         * camera view, chase, far chase or bumper, is the one the run's menu presses left it in.) */
+        static int angles[16], nangles = -1, ai;
+        if (nangles < 0) {
+            const char *s = getenv("XBRT_MM_PHOTO_ANGLES");
+            nangles = 0;
+            for (; s && *s && nangles < 16; s++) if (*s >= '0' && *s <= '9') angles[nangles++] = *s - '0';
+            if (!nangles) for (; nangles < 5; nangles++) angles[nangles] = nangles;
+        }
         if (photo == (const char *)1) photo = getenv("XBRT_MM_PHOTO");
         if (photo && car == me && have_line) { /* (the race on: its clock started, above; the car still behind the line) */
-            static int stage, target_k, shots, mi = -1, angle;
+            static int stage, target_k, shots, mi = -1;
             static float side;
             static uint64_t next_shot;
+            int angle = ai < nangles ? angles[ai] : -1, wreckcam = angle >= 5;
             uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
             int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
             if (mi < 0)
                 for (int k = 0; k < nmm && mi < 0; k++) if (mm[k].track == track) mi = k;
-            if (mi >= 0 && stage == 0 && angle < 5) { /* the line's point nearest the place's middle (and under its top) */
+            if (mi >= 0 && stage == 0 && ai < nangles) { /* the line's point nearest the place's middle (and under its top) */
                 const float *zn = mm[mi].zone[0];
                 float best = 1e30f;
                 for (int k = 0; k < (int)np; k++) {
@@ -895,11 +907,11 @@ void rt_qr_tick(void) {
                 int found = 0;
                 for (uint32_t j = 0, nth = 0; j < n && !found; j++) { /* a rival (another each angle): put by the player and thrown */
                     uint32_t r2 = xb_rd32(arr + 4 * j), c2 = r2 && r2 < RT_USER_LIMIT ? xb_rd32(r2 + 0xA0) : 0;
-                    if (!c2 || c2 == me || c2 >= RT_USER_LIMIT || (int)j >= MAXCARS || nth++ != (uint32_t)angle) continue;
+                    if (!c2 || c2 == me || c2 >= RT_USER_LIMIT || (int)j >= MAXCARS || nth++ != (uint32_t)ai) continue;
                     found = 1;
                     /* angle 0: 10 m behind the player, slower, falling back past the place; 1: 6 m ahead and thrown off to
                      * the landmark's side, the camera looking that way; 2: level with the player, the same */
-                    int k2 = (auto_k + (angle == 0 ? -5 : angle == 3 ? -3 : angle == 1 ? 3 : angle == 4 ? 6 : 1) + (int)np) % (int)np, k3 = (k2 + 3) % (int)np;
+                    int k2 = (auto_k + (angle == 0 ? -5 : angle == 3 ? -3 : angle == 1 || wreckcam ? 3 : angle == 4 ? 6 : 1) + (int)np) % (int)np, k3 = (k2 + 3) % (int)np;
                     respawn(c2, xs, zs, ys, np, (k2 - 4 + (int)np) % (int)np);
                     float fx = rdf(xs + 4 * k3) - rdf(xs + 4 * k2), fz = rdf(zs + 4 * k3) - rdf(zs + 4 * k2), fl = sqrtf(fx * fx + fz * fz);
                     if (fl < 0.1f) break;
@@ -915,18 +927,21 @@ void rt_qr_tick(void) {
 
                     /* the game's own looks: Y back; the right stick to the landmark's side (the free camera,
                      * rt_view_cam, moved nothing in a race) */
-                    rt_photo_lookback = angle == 0 ? 1 : angle == 3 ? (side > 0 ? 4 : 5) : angle == 4 ? (side > 0 ? 6 : 7) : side > 0 ? 2 : 3; /* (3, 4: the diagonals, the user's) */
+                    rt_photo_lookback = angle == 0 ? 1 : angle == 3 || angle == 5 ? (side > 0 ? 4 : 5) : angle == 6 ? (side > 0 ? 5 : 4) :
+                        angle == 4 ? (side > 0 ? 6 : 7) : angle == 7 ? (side > 0 ? 3 : 2) : side > 0 ? 2 : 3; /* (3, 4: the diagonals, the user's) */
+                    if (wreckcam && ncslot > 0) tdcam_start(c2, r2, me, auto_speed); /* (the camera on the wreck, in slow motion) */
                     stage = 2, next_shot = now + 1000000; /* (the first a moment in) */
                 }
-                if (!found) stage = 0, angle++; /* (no such rival: the next angle) */
+                if (!found) stage = 0, ai++; /* (no such rival: the next angle) */
             }
             if (stage == 2 && now >= next_shot && !rt_photo_path[0]) {
                 snprintf((char *)rt_photo_path, sizeof rt_photo_path, "%s/mm%d_%d_%02d.ppm", photo, mi, angle, shots++);
                 next_shot = now + 800000; /* (0.08 s apart: the wreck's flight) */
                 if (shots == 12) {
                     rt_photo_lookback = 0;
-                    stage = 0, angle++;
-                    if (angle == 5) fprintf(stderr, "xbrt: mm photo: done\n");
+                    if (wreckcam) tdcam_end();
+                    stage = 0, ai++;
+                    if (ai == nangles) fprintf(stderr, "xbrt: mm photo: done\n");
                 }
             }
         }
