@@ -49,7 +49,7 @@ SERIES = [
     ('Mountain Wreckage', 10, 1, r'events\club\ser00014.xml', 'Imprezas and Lancers only.',
      ('Suspended', 'Take down an opponent on the bridge in Fujimi Kaido.', [(2152.5, -49.4, 78, None)])),
     ('Big Apple Brawl', 18, 2, r'events\club\ser00015.xml', 'American muscle from before 1975, Class A and below.',
-     ("Crash 'R Us", "Take down an opponent in front of the Toys 'R Us in New York.", [(-173.0, -28.0, 30, None)])),  # (by the storefront, at its far end: the whole front within, the camera passing it; the pass across the median 32 m off)
+     ("Crash 'R Us", "Take down an opponent in front of the Toys 'R Us in New York.", [(-180.0, -80.0, 30, None)])),  # (the store's south corner: its TOYS R US sign is the building's south face, z -87..-59, 8-18 m up (vbuff toysrus_vb1, texture toys_r_us_002); the road side, z -60..-31, is its Swatch and Foot Locker shops (toys_r_us_001), where it was first put)
     ('Peach State Pileup', 9, 3, r'events\spec\ser00008.xml', 'Class A only.',
      ('Land-Filled Up', 'Take down an opponent in front of the Sunoco sign at Road Atlanta.', [(-577.0, -299.0, 30, None)])),
     ('Rio Rumble', 25, 2, r'events\spec\ser00011.xml', 'Stock Ferrari 360 Modenas only.',

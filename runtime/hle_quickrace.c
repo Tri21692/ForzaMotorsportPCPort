@@ -889,9 +889,13 @@ void rt_qr_tick(void) {
                 for (int k = 0; k < nmm && mi < 0; k++) if (mm[k].track == track) mi = k;
             if (mi >= 0 && stage == 0 && ai < nangles) { /* the line's point nearest the place's middle (and under its top) */
                 const float *zn = mm[mi].zone[0];
-                float best = 1e30f;
+                float best = 1e30f, at[2] = {zn[0], zn[1]};
+                /* (XBRT_MM_PHOTO_AT=x,z: the line's point nearest there instead, the landmark still the zone's: New
+                 * York's Toys R Us sign is 8-20 m up, seen only from the far pass, 30 m across) */
+                const char *ats = getenv("XBRT_MM_PHOTO_AT");
+                if (ats) sscanf(ats, "%f,%f", &at[0], &at[1]);
                 for (int k = 0; k < (int)np; k++) {
-                    float ex = rdf(xs + 4 * k) - zn[0], ez = rdf(zs + 4 * k) - zn[1], d = ex * ex + ez * ez;
+                    float ex = rdf(xs + 4 * k) - at[0], ez = rdf(zs + 4 * k) - at[1], d = ex * ex + ez * ez;
                     if (d < best && rdf(ys + 4 * k) < zn[3]) best = d, target_k = k;
                 }
                 respawn(car, xs, zs, ys, np, (target_k - 34 + (int)np) % (int)np); /* (30 points on: 60 m before) */
