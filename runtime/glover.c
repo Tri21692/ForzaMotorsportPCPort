@@ -145,9 +145,15 @@ static const char *ov_fs =
     "#version 430\n"
     "in vec2 v_uv; in vec4 v_c; flat in int v_k; in vec2 v_p;\n"
     "out vec4 o;\n"
-    "uniform sampler2D u_f0, u_f1, u_f2, u_f3;\n"
+    "uniform sampler2D u_f0, u_f1, u_f2, u_f3, u_f4;\n"
     "void main() {\n"
     "    vec4 c = v_c;\n"
+    "    if (v_k == 5 || v_k == 6) {\n" /* a Mayhem Moment's photograph (u_f4, the photographs' sheet): lit, or grey and dark */
+    "        vec3 p = texture(u_f4, v_uv).rgb;\n"
+    "        if (v_k == 6) p = vec3(dot(p, vec3(0.299, 0.587, 0.114))) * 0.45;\n"
+    "        o = vec4(p * c.rgb, c.a * texture(u_f4, v_uv).a);\n"
+    "        return;\n"
+    "    }\n"
     "    if (v_k == 1) c.a *= texture(u_f0, v_uv).r;\n"
     "    else if (v_k == 2) c.a *= texture(u_f1, v_uv).r;\n"
     "    else if (v_k == 3) c.a *= texture(u_f2, v_uv).r;\n"
@@ -163,6 +169,34 @@ static const char *ov_fs =
 static GLuint ov_prog, ov_vao, ov_vbo;
 static GLint ov_u_size;
 
+/* The Mayhem Moments' photographs: one sheet, <mods>/moments/photos.rgba (tools/mayhemphotos.py: "MMPH", then
+ * u32s width, height, columns, rows, then RGBA rows top first), a tile a Moment in order; loaded once. */
+static GLuint ov_photos;
+static int ov_photo_cols = 1, ov_photo_rows = 1;
+static void ov_photos_load(void) {
+    static int tried;
+    if (tried) return;
+    tried = 1;
+    char path[512];
+    snprintf(path, sizeof path, "%s/moments/photos.rgba", getenv("XBRT_MODS") && *getenv("XBRT_MODS") ? getenv("XBRT_MODS") : "mods");
+    long n = 0;
+    uint8_t *d = ov_read(path, &n);
+    uint32_t hd[5];
+    if (!d || n < 24 || memcmp(d, "MMPH", 4)) { free(d); return; }
+    memcpy(hd, d + 4, sizeof hd);
+    if (!hd[0] || !hd[1] || hd[0] > 4096 || hd[1] > 4096 || (long)(24 + (size_t)hd[0] * hd[1] * 4) > n) { free(d); return; }
+    glGenTextures(1, &ov_photos);
+    glBindTexture(GL_TEXTURE_2D, ov_photos);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, (GLsizei)hd[0], (GLsizei)hd[1]);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)hd[0], (GLsizei)hd[1], GL_RGBA, GL_UNSIGNED_BYTE, d + 24);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    ov_photo_cols = (int)hd[2] ? (int)hd[2] : 1, ov_photo_rows = (int)hd[3] ? (int)hd[3] : 1;
+    free(d);
+}
+
 /* The shader, buffers and fonts, made once: 0 if they could not be. */
 static int ov_init(void) {
     GLuint prog = ov_prog, vao, vbo;
@@ -173,8 +207,8 @@ static int ov_init(void) {
         glAttachShader(prog, vs), glAttachShader(prog, fs), glLinkProgram(prog);
         ov_u_size = glGetUniformLocation(prog, "u_size");
         glUseProgram(prog);
-        static const char *fn[4] = {"u_f0", "u_f1", "u_f2", "u_f3"};
-        for (int i = 0; i < 4; i++) glUniform1i(glGetUniformLocation(prog, fn[i]), i);
+        static const char *fn[5] = {"u_f0", "u_f1", "u_f2", "u_f3", "u_f4"};
+        for (int i = 0; i < 5; i++) glUniform1i(glGetUniformLocation(prog, fn[i]), i);
         glGenVertexArrays(1, &vao), glGenBuffers(1, &vbo);
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -212,6 +246,9 @@ static void ov_submit(int vx, int vy, int vw, int vh, float W, float H) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, ov_photos ? ov_photos : gl_dummy2d);
+    glBindSampler(4, 0);
     glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(ov_vao);
     glBindBuffer(GL_ARRAY_BUFFER, ov_vbo);
@@ -263,7 +300,33 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
         ov_rect(X0 + 598, top, X0 + 602, top + len, grey); /* the scroll bar: the whole list, and the part shown */
         ov_rect(X0 + 597, top + len * (float)first / (float)n, X0 + 603, top + len * (float)(first + VISIBLE) / (float)n, green);
     }
-    if (!n) { /* the achievements' tab: each one's name and what it asks, earned or how far along */
+    if (!n && rt_overlay_page() == 2) { /* the Mayhem Moments: their photographs, four a row, lit once made (the user's:
+                                        * "It can be seen prior to unlocking it, but once you unlock it, it lights up") */
+        ov_photos_load();
+        int nm = rt_mm_count(), pick = rt_overlay_scroll(), got = 0;
+        float pw = 116, ph = 116; /* (the instant photos: square tiles, tilted inside them, see-through about) */
+        for (int i = 0; i < nm; i++) {
+            const char *nmn, *todo;
+            int e;
+            rt_mm_get(i, &nmn, &todo, &e);
+            got += e;
+            float px = X0 + 66 + (i % 4) * (pw + 14), py = y - 6 + (i / 4) * (ph + 2), g = i == pick ? 8 : 0; /* (the one picked a little bigger) */
+            if (i == pick) ov_rect(px + 10, py + ph + 1, px + pw - 10, py + ph + 4, green);
+            float u0 = (float)(i % ov_photo_cols) / ov_photo_cols, v0 = (float)(i / ov_photo_cols) / ov_photo_rows;
+            ov_quad(px - g, py - g, px + pw + g, py + ph + g, u0, v0, u0 + 1.0f / ov_photo_cols, v0 + 1.0f / ov_photo_rows, white, e ? 5 : 6);
+            if (!e) ov_text(OVF_ITEM, px + pw / 2, py + ph / 2 - 9, "LOCKED", white, 2);
+            if (!ov_photos) ov_text(OVF_TEXT, px + pw / 2, py + ph - 20, nmn, e ? ink : grey, 2); /* (no photographs: the names) */
+        }
+        if (pick < nm) {
+            const char *nmn, *todo;
+            int e;
+            rt_mm_get(pick, &nmn, &todo, &e);
+            ov_text(OVF_TEXT, X0 + 66, 338, todo, e ? ink : grey, 0);
+        }
+        char t[48];
+        snprintf(t, sizeof t, "%d of %d unlocked", got, nm);
+        ov_text(OVF_ITEM, X0 + 574, 337, t, ink, 1);
+    } else if (!n) { /* the achievements' tab: each one's name and what it asks, earned or how far along */
         int na = rt_ach_count(), top = rt_overlay_scroll(), got = 0;
         for (int i = 0; i < na; i++) {
             const char *nm, *ds;
@@ -423,11 +486,13 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     const char *qn = rt_qr_note();
     int qtd = rt_qr_takedowns();
     float tank = rt_qr_tank();
-    int qr_hud = (rt_qr_mods & QR_NITRO) && tank < 0.999f;
+    int qr_hud = ((rt_qr_mods & QR_NITRO) || rt_qr_mayhem()) && tank < 0.999f;
     int qcam = rt_qr_cam_active();
+    float fpos[3], fback[3], fpow;
+    int flame = rt_qr_flame(fpos, fback, &fpow);
     if (rt_show_fps < 0) rt_show_fps = getenv("XBRT_SHOW_FPS") && atoi(getenv("XBRT_SHOW_FPS"));
     int fps = rt_show_fps && rt_fps_shown > 0;
-    if (!(tt || cu || drift || toast || fps || ach || mg || qn || qtd || qr_hud || qcam) || !ov_init()) return;
+    if (!(tt || cu || drift || toast || fps || ach || mg || qn || qtd || qr_hud || qcam || flame) || !ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
     static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
                        gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1},
@@ -512,6 +577,46 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
         ov_rect(W - 300, 72, W - 20, 98, bg);
         ov_text(OVF_ITEM, W - 160, 76, t, gold, 2);
     }
+    if (flame) { /* Mayhem's boost: a flame at the exhaust, the point and one 1.2 m behind it through the frame's camera
+                  * (rows 166-169: clip space), drawn as flickering bands, white-hot at the pipe to red at the tip */
+        float pts[2][2], ws[2];
+        int ok = 1;
+        for (int e = 0; e < 2 && ok; e++) {
+            float q[3] = {fpos[0] + fback[0] * 1.2f * e, fpos[1] + fback[1] * 1.2f * e, fpos[2] + fback[2] * 1.2f * e};
+            float cx = rt_cam_vp[0][0] * q[0] + rt_cam_vp[0][1] * q[1] + rt_cam_vp[0][2] * q[2] + rt_cam_vp[0][3];
+            float cy = rt_cam_vp[1][0] * q[0] + rt_cam_vp[1][1] * q[1] + rt_cam_vp[1][2] * q[2] + rt_cam_vp[1][3];
+            float cw = rt_cam_vp[3][0] * q[0] + rt_cam_vp[3][1] * q[1] + rt_cam_vp[3][2] * q[2] + rt_cam_vp[3][3];
+            if (!(cw > 0.1f)) { ok = 0; break; }
+            float sx = cx / cw, sy = cy / cw;
+            static int flog = -1;
+            if (flog < 0) flog = getenv("XBRT_FLAMELOG") != NULL;
+            if (flog) fprintf(stderr, "xbrt: flame %d: (%.2f %.2f %.2f) clip %.3f %.3f %.3f -> %.3f %.3f (W %g H %g)\n", e, q[0], q[1], q[2], cx, cy, cw, sx, sy, (double)W, (double)H);
+            if (sx > -1.6f && sx < 1.6f && sy > -1.6f && sy < 1.6f) pts[e][0] = (sx + 1) * 0.5f * W, pts[e][1] = (1 - sy) * 0.5f * H; /* (normalised) */
+            else pts[e][0] = sx * W / 640, pts[e][1] = sy; /* (already the screen's) */
+            ws[e] = cw;
+        }
+        if (!ok || pts[0][0] < -W || pts[0][0] > 2 * W || pts[0][1] < -H || pts[0][1] > 2 * H) {
+            /* (the frame's camera rows put the pipe off the screen, the first test: the chase camera's car, its tail
+             * at the bottom middle, the flame towards the camera) */
+            pts[0][0] = W * 0.5f, pts[0][1] = H * 0.8f, pts[1][0] = W * 0.5f, pts[1][1] = H * 0.8f + 46;
+            ws[0] = 4, ok = 1;
+        }
+        if (ok) {
+            static const float core[4] = {1, 0.97f, 0.75f, 0.95f}, mid[4] = {1, 0.62f, 0.12f, 0.85f}, tip[4] = {0.9f, 0.18f, 0.05f, 0.6f};
+            float len = sqrtf((pts[1][0] - pts[0][0]) * (pts[1][0] - pts[0][0]) + (pts[1][1] - pts[0][1]) * (pts[1][1] - pts[0][1]));
+            float r = 26.0f / (ws[0] > 1 ? ws[0] : 1) * 4; /* (the pipe's flame about 0.3 m across) */
+            if (r > 26) r = 26;
+            if (r < 3) r = 3;
+            uint64_t t = rt_now_100ns() / 300000; /* (a flicker 33 times a second) */
+            float jit = (float)((t * 2654435761u >> 13) % 100) / 100.0f;
+            for (int b = 0; b < 6; b++) { /* bands from the pipe back to the tip, each narrower and redder */
+                float u = b / 6.0f, x = pts[0][0] + (pts[1][0] - pts[0][0]) * u, y = pts[0][1] + (pts[1][1] - pts[0][1]) * u;
+                float rr = r * (1.0f - u * 0.7f) * (0.85f + 0.3f * jit), hh = rr * 0.7f + len / 12;
+                const float *col = b < 2 ? core : b < 4 ? mid : tip;
+                ov_rect(x - rr, y - hh, x + rr, y + hh, col);
+            }
+        }
+    }
     if (qn || qtd || qr_hud || qcam) { /* Quick Race: a TAKEDOWN! / RESPAWN note, the takedowns so far, the nitro left */
         static const float orange[4] = {1.0f, 0.55f, 0.15f, 1}, shade[4] = {0, 0, 0, 0.7f}, track[4] = {1, 1, 1, 0.18f}, blue[4] = {0.35f, 0.75f, 1, 0.9f},
                            bars[4] = {0, 0, 0, 1}, red[4] = {0.85f, 0.12f, 0.10f, 1}, white2[4] = {1, 1, 1, 1};
@@ -522,6 +627,11 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
             ov_rect(R - 120, 16, R, 40, red);
             ov_text(OVF_ITEM, R - 60, 18, "IMPACT", white2, 2);
             if (qn) ov_text(OVF_TITLE, W / 2 + 2, H - 50, qn, shade, 2), ov_text(OVF_TITLE, W / 2, H - 52, qn, orange, 2);
+            const char *mmf = rt_mm_flash();
+            if (mmf) { /* a Mayhem Moment: its name, gold, in the top bar */
+                static const float gold[4] = {0.98f, 0.80f, 0.20f, 1};
+                ov_text(OVF_MENU, W / 2 + 2, 18, mmf, shade, 2), ov_text(OVF_MENU, W / 2, 16, mmf, gold, 2);
+            }
         } else if (qn) ov_text(OVF_TITLE, W / 2 + 2, 152, qn, shade, 2), ov_text(OVF_TITLE, W / 2, 150, qn, orange, 2);
         if (qtd) { /* top left, large: the run's takedowns (in the bar while the camera is on a wreck) */
             snprintf(t, sizeof t, "TAKEDOWNS  %d", qtd);

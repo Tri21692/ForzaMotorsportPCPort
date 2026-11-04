@@ -66,6 +66,7 @@ static const OvItem items[] = {
      {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}, 1, "Sound volume."},
     {"background_mute", "Mute in Background", {"0", "1"}, {"Off", "On"}, 1, "Silent while the game's window is not in front."},
     {NULL, "Achievements", {NULL}, {NULL}, 0, NULL}, /* (no settings: glover.c lists rt_ach_get's) */
+    {NULL, "Mayhem Moments", {NULL}, {NULL}, 0, NULL}, /* (none either: glover.c shows rt_mm_get's, with their photographs) */
 };
 #define NITEMS (int)(sizeof items / sizeof items[0])
 
@@ -96,6 +97,8 @@ int rt_overlay_tabs(const char **names, int max, int *cur) {
     return ntabs;
 }
 int rt_overlay_selected(void) { return sel; }
+/* the page shown: 0 settings, 1 the achievements, 2 the Mayhem Moments */
+int rt_overlay_page(void) { tabs_init(); return tab_n[tab] ? 0 : strcmp(items[tab_head[tab]].label, "Mayhem Moments") ? 1 : 2; }
 int rt_overlay_needs_restart(void) { return changed_restart; }
 
 static int nvalues(const OvItem *it) {
@@ -124,7 +127,12 @@ void rt_overlay_item(int i, const char **label, const char **value, int *live) {
     *live = it->live;
 }
 
-const char *rt_overlay_help(int i) { tabs_init(); return tab_n[tab] ? at(i)->help : "What you have earned so far. Up and down scroll the list."; }
+const char *rt_overlay_help(int i) {
+    tabs_init();
+    if (tab_n[tab]) return at(i)->help;
+    return rt_overlay_page() == 2 ? "Take an opponent down at each place in a Mayhem race to light its photograph up."
+                                  : "What you have earned so far. Up and down scroll the list.";
+}
 int rt_overlay_scroll(void) { return scroll; }
 
 static void apply(const OvItem *it, const char *v) {
@@ -152,11 +160,23 @@ void rt_overlay_key(int key) {
     if (!open_) return;
     tabs_init();
     int m = tab_n[tab];
+    if (!m && rt_overlay_page() == 2) { /* the Mayhem Moments: a photograph picked, four a row */
+        int nm = rt_mm_count(), s = scroll < nm ? scroll : 0;
+        if (key == RT_OV_LEFT && s > 0) s--;
+        else if (key == RT_OV_RIGHT && s + 1 < nm) s++;
+        else if (key == RT_OV_UP && s >= 4) s -= 4;
+        else if (key == RT_OV_DOWN && s + 4 < nm) s += 4;
+        else if (key == RT_OV_TAB_PREV) tab = (tab + ntabs - 1) % ntabs, sel = 0, s = 0;
+        else if (key == RT_OV_TAB_NEXT) tab = (tab + 1) % ntabs, sel = 0, s = 0;
+        else if (key == RT_OV_BACK) open_ = 0;
+        scroll = s;
+        return;
+    }
     if (!m) { /* the achievements' tab: scrolled, or another tab */
         if (key == RT_OV_UP && scroll > 0) scroll--;
         else if (key == RT_OV_DOWN && scroll < rt_ach_count() - 1) scroll++;
-        else if (key == RT_OV_TAB_PREV) tab = (tab + ntabs - 1) % ntabs, sel = 0;
-        else if (key == RT_OV_TAB_NEXT) tab = (tab + 1) % ntabs, sel = 0;
+        else if (key == RT_OV_TAB_PREV) tab = (tab + ntabs - 1) % ntabs, sel = 0, scroll = 0;
+        else if (key == RT_OV_TAB_NEXT) tab = (tab + 1) % ntabs, sel = 0, scroll = 0;
         else if (key == RT_OV_BACK) open_ = 0;
         return;
     }

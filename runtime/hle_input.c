@@ -162,7 +162,7 @@ static int parse_step(char *line, int live, Step *st) {
     static const struct { const char *name; uint16_t button; int analog; } names[] = {
         {"A", 0, A_A}, {"B", 0, A_B}, {"X", 0, A_X}, {"Y", 0, A_Y}, {"BLACK", 0, A_BLACK}, {"WHITE", 0, A_WHITE},
         {"LT", 0, A_LT}, {"RT", 0, A_RT}, {"UP", 0x1, -1}, {"DOWN", 0x2, -1}, {"LEFT", 0x4, -1}, {"RIGHT", 0x8, -1},
-        {"START", 0x10, -1}, {"BACK", 0x20, -1},
+        {"START", 0x10, -1}, {"BACK", 0x20, -1}, {"L3", 0x40, -1}, {"R3", 0x80, -1},
     };
     char *hash = strchr(line, '#');
     if (hash) *hash = 0;
@@ -301,10 +301,6 @@ static void host_pad(uint32_t pad) {
     }
     /* what the game is given to drive with (Mayhem's arcade handling, hle_quickrace.c, works from it) */
     rt_pad_steer = thumbs[0] / 32767.0f, rt_pad_throttle = analog[A_RT] / 255.0f, rt_pad_brake = analog[A_LT] / 255.0f;
-    if (rt_mayhem_pad(buttons, analog)) { /* hle_quickrace.c: Mayhem's code on the career menus (its last B not the game's) */
-        buttons = 0;
-        memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
-    }
     /* Our menus (F1, Quick Race, Prize Match) open, or closed with something still held: the game sees nothing
      * until every button and stick is let go (the B or Esc that closed F1, still down, backed the game's screen out) */
     static int held;
@@ -325,6 +321,7 @@ static void host_pad(uint32_t pad) {
         if (took) rt_qr_auto = 0;
         else thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
     }
+    if (rt_photo_lookback) analog[A_Y] = 255; /* (hle_quickrace.c's photographs: the game looking back) */
     set_pad(pad, buttons, analog, thumbs);
 }
 

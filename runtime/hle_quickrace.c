@@ -32,6 +32,13 @@ static float rdf(uint32_t a) {
     return f;
 }
 static void wrf(uint32_t a, float f) {
+    /* never a NaN or an infinity, nor a speed or place past any track's, into a car (the user's crash of 3 Nov: the
+     * game's collision went round for good on NaNs in a car); one such refused said once */
+    if (!(f > -20000.0f && f < 20000.0f)) {
+        static int told;
+        if (!told++) fprintf(stderr, "xbrt: quick race: a bad value (%g) not written at %08x\n", (double)f, a);
+        return;
+    }
     uint32_t b;
     memcpy(&b, &f, 4);
     xb_wr32(a, b);
@@ -54,53 +61,106 @@ static void say(const char *m) {
 }
 const char *rt_qr_note(void) { return note_until && rt_now_100ns() < note_until ? note : NULL; }
 
-/* ---- Mayhem (the user's secret mode, 3 Nov): RT, LT, Left, Right, Y, B in that order on the career's event menus
- * toggles it (kept in mayhem.txt beside forza.ini, XBRT_MAYHEM names another; never the save). In a career race with
- * it on, takedowns are always on, the rivals are faster and drive at the player, and the player can be taken down
- * too: hit hard by a rival and then a wall or a stop within 3 s, slow motion on the player's own wreck, then back on
- * the line, repaired. A race is the career's when a career menu (its level and credits bar) was up within a minute
- * before it began. */
-static int mayhem_on = -1, mayhem_race;
-static const char *mayhem_path(void) { const char *p = getenv("XBRT_MAYHEM"); return p && *p ? p : "mayhem.txt"; }
+/* ---- Mayhem (the user's, 3 Nov): a career category of its own (tools/mayhemseries.py; first a secret code on
+ * the event menus). <mods>/mayhem.txt names its events ("events <ordinal>..."): a race of one of them is Mayhem's:
+ * takedowns always on, the rivals faster and driving at the player, the player able to be taken down too (hit hard
+ * by a rival and then a wall or a stop within 3 s: slow motion on its own wreck, then back on the line, repaired),
+ * the boost, the arcade handling and the cartoon look. XBRT_MAYHEM names another file; XBRT_MAYHEM_TEST=1 makes
+ * any race Mayhem's (testing).
+ *
+ * Mayhem Moments (the user's): a takedown at a named place on a track ("moment <track> <x> <z> <radius> <top y
+ * or -> <name>|<what to do>" lines: a place within the radius, and below that height if given; a name on more
+ * lines, more places for it) is labelled with its name, and unlocks it: kept in <mods>/mayhem_moments.txt (a name
+ * a line; never the save), shown lit in F1's Mayhem Moments page (glover.c) with its photograph. */
+static int mayhem_race;
+#define MM_MAX 16
+static struct { int track, nz; float zone[4][4]; char name[40], todo[120]; int got; } mm[MM_MAX]; /* zone: x, z, radius, top y */
+static int nmm, mm_loaded;
+static uint32_t mayhem_ev[32];
+static int nmayhem_ev;
+static char mm_flash[64]; /* the last Moment's banner, MAYHEM MOMENT! and its name */
+static uint64_t mm_flash_until;
+static const char *mods_dir(void) { return getenv("XBRT_MODS") && *getenv("XBRT_MODS") ? getenv("XBRT_MODS") : "mods"; }
 static void mayhem_load(void) {
-    if (mayhem_on >= 0) return;
-    mayhem_on = 0;
-    FILE *f = fopen(mayhem_path(), "r");
-    if (f) { if (fscanf(f, "on %d", &mayhem_on) != 1) mayhem_on = 0; fclose(f); }
-}
-
-int rt_mayhem_pad(uint16_t buttons, const uint8_t analog[8]) {
-    static const int seq[6] = {7, 6, -4, -8, 3, 1}; /* RT, LT, D-pad left, right, Y, B (n: analog n; -m: the buttons' bit m) */
-    static int at, was[6], eat;
-    static uint64_t last;
-    mayhem_load();
-    int now_down[6];
-    for (int k = 0; k < 6; k++) now_down[k] = seq[k] >= 0 ? analog[seq[k]] > 128 : (buttons & -seq[k]) != 0;
-    if (eat) { /* the B that finished the code, still held: not the game's (it would go back a screen) */
-        if (now_down[5]) return 1;
-        eat = 0;
-    }
-    if (xb_rd32(0x592984) || !rt_mg_career_menu_recent()) { at = 0; memcpy(was, now_down, sizeof was); return 0; }
-    uint64_t t = rt_now_100ns();
-    if (at && t - last > 30000000) at = 0; /* (3 s between presses at most) */
-    for (int k = 0; k < 6; k++) {
-        if (!now_down[k] || was[k]) continue; /* a new press */
-        if (k == at) at++, last = t;
-        else at = k == 0 ? 1 : 0, last = t;
-        if (at == 6) {
-            at = 0, mayhem_on = !mayhem_on, eat = 1;
-            FILE *f = fopen(mayhem_path(), "w");
-            if (f) fprintf(f, "on %d\n", mayhem_on), fclose(f);
-            say(mayhem_on ? "MAYHEM MODE ON" : "MAYHEM MODE OFF");
-            fprintf(stderr, "xbrt: mayhem: %s\n", mayhem_on ? "on" : "off");
-            memcpy(was, now_down, sizeof was);
-            return 1;
+    if (mm_loaded) return;
+    mm_loaded = 1;
+    char path[512], line[512];
+    const char *p = getenv("XBRT_MAYHEM");
+    if (p && *p) snprintf(path, sizeof path, "%s", p);
+    else snprintf(path, sizeof path, "%s/mayhem.txt", mods_dir());
+    FILE *f = fopen(path, "r");
+    while (f && fgets(line, sizeof line, f)) {
+        if (!strncmp(line, "events", 6)) {
+            char *s = line + 6, *e;
+            for (unsigned long v; nmayhem_ev < 32 && (v = strtoul(s, &e, 10), e != s); s = e) mayhem_ev[nmayhem_ev++] = (uint32_t)v;
+        } else if (!strncmp(line, "moment ", 7) && nmm < MM_MAX) {
+            int n = 0, track;
+            float x, z, r;
+            char top[16];
+            if (sscanf(line + 7, "%d %f %f %f %15s %n", &track, &x, &z, &r, top, &n) < 5 || !n) continue;
+            char *t = line + 7 + n, *bar = strchr(t, '|');
+            t[strcspn(t, "\r\n")] = 0;
+            if (bar) *bar = 0;
+            int k = 0;
+            while (k < nmm && strcmp(mm[k].name, t)) k++; /* (a name seen: another place for it) */
+            if (k == nmm) {
+                memset(&mm[k], 0, sizeof mm[k]), mm[k].track = track, nmm++;
+                snprintf(mm[k].name, sizeof mm[k].name, "%s", t);
+                if (bar) snprintf(mm[k].todo, sizeof mm[k].todo, "%s", bar + 1);
+            }
+            if (mm[k].nz < 4) {
+                float *zn = mm[k].zone[mm[k].nz++];
+                zn[0] = x, zn[1] = z, zn[2] = r, zn[3] = strcmp(top, "-") ? (float)atof(top) : 1e9f;
+            }
         }
     }
-    memcpy(was, now_down, sizeof was);
+    if (f) fclose(f);
+    snprintf(path, sizeof path, "%s/mayhem_moments.txt", mods_dir());
+    f = fopen(path, "r");
+    while (f && fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        for (int i = 0; i < nmm; i++) if (!strcmp(line, mm[i].name)) mm[i].got = 1;
+    }
+    if (f) fclose(f);
+    fprintf(stderr, "xbrt: mayhem: %d events, %d moments from %s\n", nmayhem_ev, nmm, path);
+}
+int rt_mm_count(void) { mayhem_load(); return nmm; }
+void rt_mm_get(int i, const char **name, const char **todo, int *got) {
+    mayhem_load();
+    *name = mm[i].name, *todo = mm[i].todo, *got = mm[i].got;
+}
+const char *rt_mm_flash(void) { return mm_flash_until && rt_now_100ns() < mm_flash_until ? mm_flash : NULL; }
+/* Whether (x, y, z) is in one of Moment i's places. */
+static int mm_in(int i, float x, float y, float z) {
+    for (int k = 0; k < mm[i].nz; k++) {
+        const float *zn = mm[i].zone[k];
+        if ((x - zn[0]) * (x - zn[0]) + (z - zn[1]) * (z - zn[1]) <= zn[2] * zn[2] && y < zn[3]) return 1;
+    }
     return 0;
 }
+/* A takedown at (x, y, z) on the race's track: a Mayhem Moment's place? Its banner, and unlocked if new. 1 if one. */
+static int mayhem_moment(float x, float y, float z) {
+    uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
+    int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
+    for (int i = 0; i < nmm; i++) {
+        if (mm[i].track != track || !mm_in(i, x, y, z)) continue;
+        snprintf(mm_flash, sizeof mm_flash, "%s", mm[i].name);
+        mm_flash_until = rt_now_100ns() + 50000000;
+        fprintf(stderr, "xbrt: mayhem: moment %s%s\n", mm[i].name, mm[i].got ? "" : " (unlocked)");
+        if (!mm[i].got) {
+            mm[i].got = 1;
+            char path[512];
+            snprintf(path, sizeof path, "%s/mayhem_moments.txt", mods_dir());
+            FILE *f = fopen(path, "a");
+            if (f) fprintf(f, "%s\n", mm[i].name), fclose(f);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 int rt_qr_takedowns(void) { return takedowns; }
+int rt_qr_mayhem(void) { return mayhem_race && xb_rd32(0x592984); }
 float rt_qr_tank(void) { return tank; }
 
 
@@ -130,7 +190,7 @@ static int nearest(uint32_t xs, uint32_t zs, uint32_t np, float x, float z) {
 static struct {
     uint32_t car;
     float v[3], pos[3];
-    uint64_t still_since, off_since, hit_at, spin_until, down_at, tumble_until, chase_until;
+    uint64_t still_since, off_since, hit_at, spin_until, down_at, tumble_until, chase_until, spun_since;
     float spin;   /* radians a second about the up axis, until spin_until */
     float impact; /* the closing speed of the player's last hit on it, m/s */
     float push[2]; uint64_t push_until; /* a hit's shove, m/s, given over 0.2 s (at once it jolted) */
@@ -358,6 +418,22 @@ static void cam_cut(uint32_t from, uint32_t to) {
     fprintf(stderr, "xbrt: quick race: the camera cut, %d places moved %.0f m\n", n, sqrtf(d[0] * d[0] + d[2] * d[2]));
 }
 volatile uint64_t rt_present_hold_until; /* (rt.h, glfill.c) */
+volatile char rt_photo_path[512];
+volatile int rt_photo_lookback; /* (rt.h, hle_input.c: Y held, the game looking back) */
+volatile float rt_toon; /* (rt.h: Mayhem's cartoon look, glfill.c) */
+static uint64_t flame_until; /* real time: the boost burning (its flame drawn by glover.c) */
+static uint32_t flame_car;
+
+/* The boost's flame: the player's car's tail, low and in the middle (2.1 m back, 0.35 m up), and the way back. */
+int rt_qr_flame(float pos[3], float back[3], float *power) {
+    uint32_t car = flame_car;
+    if (!flame_until || rt_now_100ns() > flame_until || !car || car >= RT_USER_LIMIT || !xb_rd32(0x592984)) return 0;
+    float fx = rdf(car + 0x38), fy = rdf(car + 0x3C), fz = rdf(car + 0x40), ux = rdf(car + 0x2C), uy = rdf(car + 0x30), uz = rdf(car + 0x34);
+    pos[0] = rdf(car + 0x14) - fx * 2.1f + ux * 0.35f, pos[1] = rdf(car + 0x18) - fy * 2.1f + uy * 0.35f, pos[2] = rdf(car + 0x1C) - fz * 2.1f + uz * 0.35f;
+    back[0] = -fx, back[1] = -fy, back[2] = -fz;
+    *power = 1.0f;
+    return 1;
+}
 static uint32_t cand[24], cand_was[24]; /* the places to try (find_cam_slots), the camera's among them (cam_probe_tick) */
 static int ncand, probe_i, probe_stage;
 static uint64_t tdcam_until; /* real time */
@@ -415,12 +491,12 @@ static void cam_probe_tick(uint32_t me, uint32_t rme, uint32_t them, uint32_t rt
         base[0] = rt_cam_pos[0], base[1] = rt_cam_pos[1], base[2] = rt_cam_pos[2];
         xb_wr32(cand[probe_i], cand_was[probe_i] == me ? them : rthem);
         frame = f, probe_stage = 1;
-    } else if (probe_stage == 1 && f - frame >= 4) { /* moved? */
+    } else if (probe_stage == 1 && f - frame >= 6) { /* moved? (6 frames: the camera catches up) */
         float dx = rt_cam_pos[0] - base[0], dy = rt_cam_pos[1] - base[1], dz = rt_cam_pos[2] - base[2], d = sqrtf(dx * dx + dy * dy + dz * dz);
         xb_wr32(cand[probe_i], cand_was[probe_i]);
-        if (d > 0.5f && ncslot < 16) cslot[ncslot] = cand[probe_i], cslot_was[ncslot++] = cand_was[probe_i];
+        if (d > 3.0f && ncslot < 16) cslot[ncslot] = cand[probe_i], cslot_was[ncslot++] = cand_was[probe_i];
         fprintf(stderr, "xbrt: quick race: camera probe %08x (%s): the camera moved %.2f m%s\n", cand[probe_i],
-                cand_was[probe_i] == me ? "car" : "racer", d, d > 0.5f ? ": the camera's" : "");
+                cand_was[probe_i] == me ? "car" : "racer", d, d > 3.0f ? ": the camera's" : "");
         frame = f, probe_stage = 2;
     } else if (probe_stage == 2 && f - frame >= 3) { /* back where it was: the next */
         probe_i++, probe_stage = 0;
@@ -615,7 +691,10 @@ void rt_qr_tick(void) {
         uint32_t race = xb_rd32(0x592984);
         if (race != race_was) {
             mayhem_load();
-            mayhem_race = race && ((mayhem_on && rt_mg_menu_age() < 600000000ull) || (getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST")))); /* (the variable: any race, testing) */
+            uint32_t ev = race ? xb_rd32(race + 0x318) : 0, ord = ev && ev < RT_USER_LIMIT ? xb_rd32(ev + 0x10) : 0xFFFFFFFFu;
+            mayhem_race = 0;
+            for (int k = 0; race && k < nmayhem_ev; k++) mayhem_race |= mayhem_ev[k] == ord; /* (one of the Mayhem category's events) */
+            if (race && getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST"))) mayhem_race = 1; /* (any race, testing) */
             if (race && mayhem_race) fprintf(stderr, "xbrt: mayhem: this race\n");
             race_was = race;
         }
@@ -623,11 +702,12 @@ void rt_qr_tick(void) {
     if (tdcam_until && rt_now_100ns() >= tdcam_until) tdcam_end();
     if (rt_qr_auto && !tdcam_until && auto_until && rt_now_100ns() >= auto_until) rt_qr_auto = 0, auto_until = 0;
     if (!xb_rd32(0x592984) || !active()) {
-        tdcam_end(), rt_qr_auto = 0, ncslot = -1;
+        tdcam_end(), rt_qr_auto = 0, ncslot = -1, rt_toon = 0;
         memset(cs, 0, sizeof cs); takedowns = 0, tank = 1; return;
     }
     if (dt <= 0 || dt > 0.25) return;
-    int mods = mayhem_race ? QR_TAKEDOWNS : rt_qr_mods; /* (Mayhem: takedowns, whatever Quick Race's menu has) */
+    int mods = mayhem_race ? QR_TAKEDOWNS | QR_NITRO : rt_qr_mods; /* (Mayhem: takedowns and the boost, whatever Quick Race's menu has) */
+    rt_toon = mayhem_race ? 1.0f : 0.0f; /* (Mayhem's cartoon look: glfill.c) */
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
     if (!arr || arr >= RT_USER_LIMIT || n > MAXCARS) return;
     uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
@@ -717,6 +797,83 @@ void rt_qr_tick(void) {
         float v[3] = {rdf(car + 0x44), rdf(car + 0x48), rdf(car + 0x4C)}, p[3] = {rdf(car + 0x14), rdf(car + 0x18), rdf(car + 0x1C)};
         if (cs[i].car != car) { memset(&cs[i], 0, sizeof cs[i]); cs[i].car = car; memcpy(cs[i].v, v, sizeof v); memcpy(cs[i].pos, p, sizeof p); continue; }
         if (lap < 0 && rdf(timing + 0xA0) <= 0) { memcpy(cs[i].v, v, sizeof v); memcpy(cs[i].pos, p, sizeof p); continue; } /* (the grid: the race's clock not yet started) */
+        static const char *photo = (const char *)1; /* XBRT_MM_PHOTO=<folder> (tools/mayhemphotos.py): a Mayhem Moment staged for
+                                                     * its photographs, three times, a camera each (the user's: "a mix of
+                                                     * everything but straight on"): the player's car put on the line 60 m
+                                                     * before the Moment's place and driven on, a rival put by it there and
+                                                     * thrown as a wall takedown throws one, and the picture saved 12 times
+                                                     * as it flies, <folder>/mm<i>_<angle>_<k>.ppm, to pick from. Angles:
+                                                     * 0 looking back (Y held) at the rival thrown behind; 1 and 2 a camera
+                                                     * at the roadside across from the landmark (rt_view_cam), ahead of the
+                                                     * place looking back at it, and behind it looking on */
+        if (photo == (const char *)1) photo = getenv("XBRT_MM_PHOTO");
+        if (photo && car == me && have_line) { /* (the race on: its clock started, above; the car still behind the line) */
+            static int stage, target_k, shots, mi = -1, angle, rj;
+            static float side;
+            static uint64_t next_shot;
+            uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
+            int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
+            if (mi < 0)
+                for (int k = 0; k < nmm && mi < 0; k++) if (mm[k].track == track) mi = k;
+            if (mi >= 0 && stage == 0 && angle < 3) { /* the line's point nearest the place's middle (and under its top) */
+                const float *zn = mm[mi].zone[0];
+                float best = 1e30f;
+                for (int k = 0; k < (int)np; k++) {
+                    float ex = rdf(xs + 4 * k) - zn[0], ez = rdf(zs + 4 * k) - zn[1], d = ex * ex + ez * ez;
+                    if (d < best && rdf(ys + 4 * k) < zn[3]) best = d, target_k = k;
+                }
+                respawn(car, xs, zs, ys, np, (target_k - 34 + (int)np) % (int)np); /* (30 points on: 60 m before) */
+                rt_qr_auto = 1, auto_until = 0, auto_k = -1, auto_speed = 26.0f;
+                stage = 1, shots = 0;
+                fprintf(stderr, "xbrt: mm photo: %s, line point %d, angle %d\n", mm[mi].name, target_k, angle);
+                continue;
+            }
+            int ahead = auto_k >= 0 ? (target_k - auto_k + (int)np) % (int)np : 1 << 30; /* (line points to the place) */
+            int past = auto_k >= 0 ? (auto_k - target_k + (int)np) % (int)np : 1 << 30;
+            if (stage == 1 && ((angle == 0 && past >= 6 && past < 40) || (angle > 0 && ahead <= 10))) {
+                int found = 0;
+                for (uint32_t j = 0, nth = 0; j < n && !found; j++) { /* a rival (another each angle): put by the player and thrown */
+                    uint32_t r2 = xb_rd32(arr + 4 * j), c2 = r2 && r2 < RT_USER_LIMIT ? xb_rd32(r2 + 0xA0) : 0;
+                    if (!c2 || c2 == me || c2 >= RT_USER_LIMIT || (int)j >= MAXCARS || nth++ != (uint32_t)angle) continue;
+                    found = 1;
+                    /* angle 0: 10 m behind the player, slower, falling back past the place; else 12 m ahead, as fast */
+                    int k2 = (auto_k + (angle == 0 ? -5 : 6) + (int)np) % (int)np, k3 = (k2 + 3) % (int)np;
+                    respawn(c2, xs, zs, ys, np, (k2 - 4 + (int)np) % (int)np);
+                    float fx = rdf(xs + 4 * k3) - rdf(xs + 4 * k2), fz = rdf(zs + 4 * k3) - rdf(zs + 4 * k2), fl = sqrtf(fx * fx + fz * fz);
+                    if (fl < 0.1f) break;
+                    fx /= fl, fz /= fl;
+                    const float *zn = mm[mi].zone[0]; /* (thrown towards the landmark's side of the road) */
+                    side = (zn[0] - rdf(xs + 4 * k2)) * fz - (zn[1] - rdf(zs + 4 * k2)) * fx >= 0 ? 1.0f : -1.0f;
+                    float sx = fz * side, sz = -fx * side, fwd = angle == 0 ? 16.0f : 27.0f;
+                    wrf(c2 + 0x44, fx * fwd + sx * 6), wrf(c2 + 0x48, 8.0f), wrf(c2 + 0x4C, fz * fwd + sz * 6);
+                    cs[j].car = c2, cs[j].down_at = now, cs[j].hit_at = 0;
+                    cs[j].tumble_until = now + 12000000, cs[j].spin = side * 3.0f, cs[j].spin_until = cs[j].tumble_until;
+                    damage_set((int)j, c2, DMG_FULL);
+                    rj = (int)j;
+                    if (angle == 0) rt_photo_lookback = 1;
+                    else { /* the roadside camera: across the road from the landmark, 9 m out, 14 m ahead (1) or 12 behind (2) */
+                        int kt = (target_k + (angle == 1 ? 7 : -6) + (int)np) % (int)np;
+                        rt_view_cam.pos[0] = rdf(xs + 4 * kt) - sx * 9, rt_view_cam.pos[2] = rdf(zs + 4 * kt) - sz * 9;
+                        rt_view_cam.pos[1] = rdf(ys + 4 * kt) + 2.2f;
+                    }
+                    stage = 2, next_shot = now + 1000000; /* (the first a moment in) */
+                }
+                if (!found) stage = 0, angle++; /* (no such rival: the next angle) */
+            }
+            if (stage == 2 && angle > 0 && rj < MAXCARS && cs[rj].car) { /* the roadside camera kept on the wreck */
+                rt_view_cam.target[0] = rdf(cs[rj].car + 0x14), rt_view_cam.target[1] = rdf(cs[rj].car + 0x18), rt_view_cam.target[2] = rdf(cs[rj].car + 0x1C);
+                rt_view_cam.on = 1;
+            }
+            if (stage == 2 && now >= next_shot && !rt_photo_path[0]) {
+                snprintf((char *)rt_photo_path, sizeof rt_photo_path, "%s/mm%d_%d_%02d.ppm", photo, mi, angle, shots++);
+                next_shot = now + 800000; /* (0.08 s apart: the wreck's flight) */
+                if (shots == 12) {
+                    rt_view_cam.on = 0, rt_photo_lookback = 0;
+                    stage = 0, angle++;
+                    if (angle == 3) fprintf(stderr, "xbrt: mm photo: done\n");
+                }
+            }
+        }
         if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
             autopilot(car, xs, zs, np, dt);
             cs[i].v[0] = rdf(car + 0x44), cs[i].v[1] = rdf(car + 0x48), cs[i].v[2] = rdf(car + 0x4C);
@@ -724,6 +881,7 @@ void rt_qr_tick(void) {
             continue;
         }
         if (mods & QR_LOWGRAVITY) v[1] += (float)(9.81 * 0.6 * dt), wrf(car + 0x48, v[1]); /* (60% of the pull given back) */
+        else if (mayhem_race) v[1] += (float)(9.81 * 0.2 * dt), wrf(car + 0x48, v[1]); /* (Mayhem's over-the-top physics: 80% of the pull, longer flights) */
         if (mods & QR_SLIPSTREAM) { /* a tow from any car close ahead, in line */
             float sp = sqrtf(v[0] * v[0] + v[2] * v[2]);
             for (uint32_t j = 0; j < n && sp > 10; j++) {
@@ -741,48 +899,134 @@ void rt_qr_tick(void) {
             }
         }
         if ((mods & QR_NITRO) && car == me) {
+            /* the boost: hold R3 (N). Mayhem's is stronger and fills itself (slowly, faster in a drift, half a tank a
+             * takedown): an arcade racer's nitrous, its flame at the exhaust (rt_qr_flame, glover.c) */
             static int dry; /* emptied: none until let go and a quarter back (held on empty, it refilled a tick and pushed again) */
+            float push = mayhem_race ? 13.0f : 9.0f, last = mayhem_race ? 3.0f : 4.0f; /* m/s^2; seconds a tank lasts */
             if (tank <= 0) dry = 1;
             if (dry && !nitro_y && tank >= 0.25f) dry = 0;
-            if (nitro_y && !dry) {
+            if (nitro_y && !dry && !cs[i].down_at) {
                 float fx = rdf(car + 0x38), fz = rdf(car + 0x40);
-                v[0] += fx * (float)(9.0 * dt), v[2] += fz * (float)(9.0 * dt);
+                v[0] += fx * (float)(push * dt), v[2] += fz * (float)(push * dt);
                 wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
-                tank -= (float)(dt / 4.0); /* 4 s a tank */
+                tank -= (float)(dt / last);
                 if (tank < 0) tank = 0;
-            } else if (!nitro_y && tank < 1) tank += (float)(dt / 30.0); /* filled again in 30 s, while not held */
+                flame_until = rt_now_100ns() + 1500000, flame_car = car;
+            } else if (!nitro_y && tank < 1) tank += (float)(dt / (mayhem_race ? 40.0 : 30.0)); /* filled again, while not held */
         }
         if (mayhem_race && car == me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.5f) {
-            /* Mayhem's arcade handling (the user's: "completely overhaul the handling, very arcadey"), on top of the
-             * game's physics, the player's car only, nothing of the car's data changed: the slide across its heading
-             * mostly taken out (it goes where it points), more turn from the stick (rising with speed to 20 m/s) with
-             * the speed carried round, a strong pull from the throttle and a strong brake, held down over crests */
+            /* Mayhem's handling (the user's: an arcade racer's, "grippy but not insane", brake to drift), on top of
+             * the game's physics, the player's car only, nothing of the car's data changed:
+             *  - grip: most of a slide across the heading taken out (a third a 1/8 s), so it goes where it points;
+             *  - turn: a little more from the stick, rising with speed to 25 m/s, the speed carried round;
+             *  - more pull from the throttle, a firmer brake (not in a drift), a little held down over crests;
+             *  - drift (rewritten after the user's "brake to drift does not work at all": the game's tyres took a slide
+             *    out at about 1 g a tick and our 0.9/s let-off was nothing against it, the brake held slowed it under
+             *    12 m/s, and the stick through the middle, as in any counter-steer, ended it): a tap of the brake while
+             *    turned in over 15 m/s and the drift is ours alone until it ends: the heading turned by us (into the
+             *    corner 0.6 rad/s and up to 0.9 more with the stick held in), the game's own turn
+             *    taken back out, the way it goes trailing the heading (a third of the slip closed a 1/9 s: some 20-40
+             *    degrees held), the speed ours (the throttle holds it, off it a gentle loss, the brake 6 m/s^2), the
+             *    boost filling; the stick let go (or out of the corner) ends it and the car shoots out the way it
+             *    points with all of the speed (the user's: "grip is never lost"), as do under 10 m/s or a knock (a wall, a car: 15% of the speed gone in a tick; the jolt over 60 m/s^2 fired on
+             *    the game's own tyres every tick). */
+            static int drifting;
+            static float drift_dir, dsp, vdx, vdz, lhx, lhz;
+            static uint64_t straight_since, out_until; /* out_until: the way out of a drift, blended (the user's "smoother") */
+            static uint32_t drift_car;
+            if (drift_car != car || cs[i].still_since) drifting = 0, out_until = 0, drift_car = car; /* (a new car, or stuck: none) */
             float hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
             if (hl > 0.1f) {
                 hx /= hl, hz /= hl;
                 float rx = hz, rz = -hx; /* (its right: the pose's first row) */
-                float vf = v[0] * hx + v[2] * hz, vl = v[0] * rx + v[2] * rz;
+                float vf = v[0] * hx + v[2] * hz, vl = v[0] * rx + v[2] * rz, sp = sqrtf(v[0] * v[0] + v[2] * v[2]);
                 float steer = rt_pad_steer, thr = rt_pad_throttle, brk = rt_pad_brake;
-                float turn = steer * 1.1f * (vf > 20 ? 1.0f : vf > 0 ? vf / 20 : 0); /* rad/s */
-                if (turn > 0.001f || turn < -0.001f) {
-                    yaw(car, turn * (float)dt);
+                float as = steer < 0 ? -steer : steer;
+                static int dlog = -1;
+                if (dlog < 0) dlog = getenv("XBRT_DRIFTLOG") != NULL;
+                if (!drifting && brk > 0.06f && as > 0.3f && vf > 15 && sp > 1) { /* (a tap or a light hold: the user's) */
+                    drifting = 1, drift_dir = steer > 0 ? 1.0f : -1.0f, dsp = sp, vdx = v[0] / sp, vdz = v[2] / sp, straight_since = 0;
+                    lhx = hx, lhz = hz;
+                    if (dlog) fprintf(stderr, "xbrt: drift: in (%s, %.1f m/s)\n", drift_dir > 0 ? "right" : "left", sp);
+                }
+                if (drifting) {
+                    /* the game's own turn since the last tick taken out (its tyres pull the nose straight) */
+                    float gturn = atan2f(lhz * hx - lhx * hz, lhx * hx + lhz * hz); /* (+: to the right, as yaw()) */
+                    float into = steer * drift_dir > 0 ? steer * drift_dir : 0;
+                    float rot = drift_dir * (0.6f + 0.9f * into) * (dsp > 20 ? 1.0f : dsp / 20);
+                    yaw(car, rot * (float)dt - gturn);
                     hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
                     if (hl > 0.1f) hx /= hl, hz /= hl;
-                    rx = hz, rz = -hx;
+                    lhx = hx, lhz = hz;
+                    /* the way it goes, turned towards the heading by a share of the slip (at most 65 degrees behind) */
+                    float slip = atan2f(vdz * hx - vdx * hz, vdx * hx + vdz * hz); /* (heading from the way: +: right) */
+                    float a = slip * (1 - expf(-3.0f * (float)dt));
+                    if (slip - a > 1.13f) a = slip - 1.13f;
+                    if (slip - a < -1.13f) a = slip + 1.13f;
+                    float c = cosf(a), s = sinf(a), nx = vdx * c + vdz * s, nz = -vdx * s + vdz * c;
+                    vdx = nx, vdz = nz;
+                    dsp += (float)dt * (thr > 0.05f ? (dsp < 90 ? 2.5f * thr : 0) : -1.5f) - (float)dt * 6.0f * brk;
+                    if (mods & QR_NITRO) tank = tank + (float)(dt / 4.0) > 1 ? 1 : tank + (float)(dt / 4.0); /* (a drift fills the boost: 4 s a tank) */
+                    (void)straight_since;
+                    const char *why = dsp < 10 ? "slow" : sp < dsp * 0.85f - 1 ? "knock" : steer * drift_dir < 0.15f ? "let go" : NULL;
+                    if (dlog && (int)(now / 2500000) != (int)((now - (uint64_t)(dt * 1e7)) / 2500000))
+                        fprintf(stderr, "xbrt: drift: slip %.0f deg, speed %.1f, turn %.2f (the game's %.2f) rad/s, steer %.2f, ang +0x50 %.2f %.2f %.2f\n",
+                                slip * 57.3f, dsp, rot, gturn / dt, steer, rdf(car + 0x50), rdf(car + 0x54), rdf(car + 0x58));
+                    if (why) {
+                        drifting = 0;
+                        if (dlog) fprintf(stderr, "xbrt: drift: out (%s)\n", why);
+                        if (why[0] == 'l') out_until = now + 3000000; /* shot out: the speed kept, swung to the way it points over 0.3 s (the user's: grip never lost; at once it jerked) */
+                    } else {
+                        v[0] = vdx * dsp, v[2] = vdz * dsp;
+                        v[1] -= (float)(2.5 * dt);
+                        wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
+                    }
+                } else if (out_until > now && dsp > 1) {
+                    /* out of a drift: the way it goes swung to the heading (half of the slip a 1/16 s), all of the
+                     * drift's speed kept and more with the throttle; the stick steers as on the road */
+                    float slip = atan2f(vdz * hx - vdx * hz, vdx * hx + vdz * hz);
+                    float a = slip * (1 - expf(-11.0f * (float)dt)), c = cosf(a), s = sinf(a);
+                    float nx = vdx * c + vdz * s, nz = -vdx * s + vdz * c;
+                    vdx = nx, vdz = nz;
+                    if (thr > 0.05f && dsp < 90) dsp += 5.0f * thr * (float)dt;
+                    if (brk > 0.05f) dsp -= 14.0f * brk * (float)dt;
+                    float turn = steer * 0.55f * (dsp > 25 ? 1.0f : dsp / 25);
+                    if (turn > 0.001f || turn < -0.001f) {
+                        yaw(car, turn * (float)dt);
+                        float tc = cosf(turn * (float)dt), ts = sinf(turn * (float)dt), tx = vdx * tc + vdz * ts, tz = -vdx * ts + vdz * tc;
+                        vdx = tx, vdz = tz;
+                    }
+                    if (sp < dsp * 0.85f - 1) out_until = 0; /* (a knock: the game's again) */
+                    else {
+                        v[0] = vdx * dsp, v[2] = vdz * dsp;
+                        v[1] -= (float)(2.5 * dt);
+                        wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
+                    }
+                } else {
+                    float ramp = vf > 25 ? 1.0f : vf > 0 ? vf / 25 : 0;
+                    float turn = steer * 0.55f * ramp; /* rad/s */
+                    if (turn > 0.001f || turn < -0.001f) {
+                        yaw(car, turn * (float)dt);
+                        hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
+                        if (hl > 0.1f) hx /= hl, hz /= hl;
+                        rx = hz, rz = -hx; /* (vf and vl kept: the velocity turns with the car, the speed carried round) */
+                    }
+                    vl *= expf(-3.2f * (float)dt);
+                    if (thr > 0.05f && vf > -1 && vf < 95) vf += 5.0f * thr * (float)dt;
+                    if (brk > 0.05f && vf > 0) vf -= (vf < 14.0f * brk * (float)dt ? vf : 14.0f * brk * (float)dt); /* (14 m/s^2 on the game's: the user's "more effective"; was 8) */
+                    v[0] = hx * vf + rx * vl, v[2] = hz * vf + rz * vl;
+                    v[1] -= (float)(2.5 * dt); /* (planted) */
+                    wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
                 }
-                vl *= expf(-7.0f * (float)dt); /* (grip: a slide gone in a fraction of a second) */
-                if (thr > 0.05f && vf > -1 && vf < 95) vf += 7.0f * thr * (float)dt;
-                if (brk > 0.05f && vf > 0) vf -= (vf < 12.0f * brk * (float)dt ? vf : 12.0f * brk * (float)dt);
-                v[0] = hx * vf + rx * vl, v[2] = hz * vf + rz * vl;
-                v[1] -= (float)(4.0 * dt); /* (planted) */
-                wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
             }
         }
-        if (mayhem_race && car != me && me && lap >= 0 && !cs[i].down_at && rdf(car + 0x30) > 0.7f && have_line) {
+        int hit_lately = cs[i].hit_at && cs[i].impact > 0 && now - cs[i].hit_at < 30000000; /* (the player's hit, under 3 s ago) */
+        if (mayhem_race && car != me && me && lap >= 0 && !cs[i].down_at && !hit_lately && rdf(car + 0x30) > 0.7f && have_line) {
             /* Mayhem's rivals: faster (a push along their heading, 3 m/s^2, under 85 m/s) and at the player (within
              * 14 m and not far ahead of it, a pull across, 1.5 m/s^2), both only where the line runs nearly straight
              * and the rival is on it (the user's: "AI seems to go off their lines": everywhere, they overshot the
-             * corners); off its line by 3 m or more, a pull back to it */
+             * corners); off its line by 3 m or more, a pull back to it. Not for 3 s after the player's hit (the audit of
+             * the user's "takedowns are barely registering": it steered a slammed rival back before it could crash) */
             int lk = nearest(xs, zs, np, p[0], p[2]);
             float lxp = rdf(xs + 4 * lk) - p[0], lzp = rdf(zs + 4 * lk) - p[2], loff = sqrtf(lxp * lxp + lzp * lzp);
             int straight = line_turn(xs, zs, np, lk) < 0.12f && loff < 4;
@@ -805,7 +1049,7 @@ void rt_qr_tick(void) {
             int fresh = cs[i].hit_at && now - cs[i].hit_at < 30000000; /* the player's hit, under 3 s ago */
             /* a touch: both cars jolted this tick, side by side or nose to tail (the user's: it fired without
              * one, on a rival's own knock near the player) */
-            int touch = car != me && me && dd < 4.0f && dd > 0.1f && jolt > 40 && mjolt > 25;
+            int touch = car != me && me && dd < 6.0f && dd > 0.1f && jolt > 40 && mjolt > 25; /* (6 m: nose to tail the middles are 4.5 apart; 4 missed most shunts) */
             if (touch) { /* and pushed apart along the line between them, as a collision does: the rival away from the
                           * player, the player back from it (the user's: no takedown without contact; two cars side by
                           * side each striking a wall or a kerb jolt too, but not so) */
@@ -834,17 +1078,18 @@ void rt_qr_tick(void) {
             } else if (touch && closing >= 4.5f && now - cs[i].hit_at > 10000000 && !cs[i].down_at) {
                 float fx = rdf(me + 0x38), fz = rdf(me + 0x40), ux = dx / dd, uz = dz / dd; /* the player's heading; the way to the rival */
                 float ahead = ux * fx + uz * fz, s = closing / 18 > 1 ? 1 : closing / 18;
+                float big = mayhem_race ? 1.8f : 1.0f, spinx = mayhem_race ? 1.6f : 1.0f; /* (Mayhem's over the top: thrown further, spun more) */
                 if (ahead > 0.8f) { /* a shunt: punted on, along the player's heading */
                     cs[i].kind = 2;
-                    cs[i].push[0] = fx * 1.5f * s, cs[i].push[1] = fz * 1.5f * s;
-                    cs[i].spin = (rand() & 1 ? 1 : -1) * 0.8f * s;
+                    cs[i].push[0] = fx * 1.5f * s * big, cs[i].push[1] = fz * 1.5f * s * big;
+                    cs[i].spin = (rand() & 1 ? 1 : -1) * 0.8f * s * spinx;
                     say("SHUNT!");
                 } else { /* a slam: across, away from the player (the side of the heading it is on) */
                     float lx = ux - ahead * fx, lz = uz - ahead * fz, ll = sqrtf(lx * lx + lz * lz);
                     if (ll > 0.01f) lx /= ll, lz /= ll;
                     cs[i].kind = 1;
-                    cs[i].push[0] = lx * 2 * s, cs[i].push[1] = lz * 2 * s;
-                    cs[i].spin = (lx * fz - lz * fx > 0 ? 1 : -1) * 1.2f * s; /* (its nose turned towards where it is thrown) */
+                    cs[i].push[0] = lx * 2 * s * big, cs[i].push[1] = lz * 2 * s * big;
+                    cs[i].spin = (lx * fz - lz * fx > 0 ? 1 : -1) * 1.2f * s * spinx; /* (its nose turned towards where it is thrown) */
                     say("SLAM!");
                 }
                 cs[i].impact = closing;
@@ -873,17 +1118,26 @@ void rt_qr_tick(void) {
             float flat = sqrtf(dv[0] * dv[0] + dv[2] * dv[2]) / (float)dt; /* (along the ground: a landing is no wall) */
             /* a wall: a hard knock with no other car within 5 m (so not a car's), soon after the hit but not the hit's
              * own tick (the user's: "wall takedowns should only happen if they hit a wall") */
-            int car_near = 0;
-            for (uint32_t j = 0; j < n && !car_near; j++) {
+            int car_near = 0; /* a car within 5 m it was knocked away from (the knock that car's); a knock towards one is
+                               * a wall's (the audit: a rival pinned on the wall by the player never counted, the player near) */
+            float fl = sqrtf(dv[0] * dv[0] + dv[2] * dv[2]);
+            for (uint32_t j = 0; j < n && !car_near && fl > 1e-4f; j++) {
                 uint32_t r2 = xb_rd32(arr + 4 * j), c2 = r2 && r2 < RT_USER_LIMIT ? xb_rd32(r2 + 0xA0) : 0;
                 if (!c2 || c2 == car || c2 >= RT_USER_LIMIT) continue;
-                float ex = rdf(c2 + 0x14) - p[0], ez = rdf(c2 + 0x1C) - p[2];
-                car_near = ex * ex + ez * ez < 25;
+                float ex = p[0] - rdf(c2 + 0x14), ez = p[2] - rdf(c2 + 0x1C), el = sqrtf(ex * ex + ez * ez);
+                car_near = el < 5 && el > 0.01f && (dv[0] * ex + dv[2] * ez) / el > 0.3f * fl;
             }
             int wall = fresh && flat > 150 && !car_near && now - cs[i].hit_at > 1500000;
             /* a crash: rolled onto its side or roof, or spun to a stop (not merely shoved wide: those counted, the
              * user's "takedowns are a little buggy") */
-            int crashed = sp < 3.0f || rdf(car + 0x30) < 0.3f;
+            /* or spun out (the audit: a rival spun round and still rolling never counted): its nose over 90 degrees off
+             * the way it goes, or over 55 for 0.4 s */
+            float hx2 = rdf(car + 0x38), hz2 = rdf(car + 0x40), hl2 = sqrtf(hx2 * hx2 + hz2 * hz2);
+            float hv = sp > 4 && hl2 > 0.1f ? (hx2 * v[0] + hz2 * v[2]) / (hl2 * sp) : 1;
+            if (hv < 0.57f) { if (!cs[i].spun_since) cs[i].spun_since = now; }
+            else cs[i].spun_since = 0;
+            int spun = hv < 0 || (cs[i].spun_since && now - cs[i].spun_since > 4000000);
+            int crashed = sp < 3.0f || rdf(car + 0x30) < 0.3f || spun;
             if (car == me && mayhem_race && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || crashed)) {
                 /* Mayhem: the player taken down: wrecked, slow motion on its own crash (the camera already on it), then
                  * back on the line ahead, repaired (below) */
@@ -894,17 +1148,25 @@ void rt_qr_tick(void) {
                 tdcam_start(car, r, me, 0);
             }
             /* a takedown only after a real impact (the user's: "a few where it was too soft"): the player's hit at
-             * 9 m/s (20 mph) or more closing, and the wall's knock over 150 m/s^2 (was 6 m/s and 100) */
-            if (car != me && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || crashed)) {
+             * 7.5 m/s (17 mph) or more closing (9 before the audit: with the other fixes it barely registered), and the
+             * wall's knock over 150 m/s^2 */
+            static int tdlog = -1;
+            if (tdlog < 0) tdlog = getenv("XBRT_TDLOG") != NULL;
+            if (tdlog && car != me && (touch || (fresh && (wall || crashed || flat > 100))))
+                fprintf(stderr, "xbrt: td: racer %u dd %.1f jolt %.0f/%.0f touch %d closing %.1f impact %.1f flat %.0f near %d sp %.1f hv %.2f wall %d crashed %d\n",
+                        i, dd, jolt, mjolt, touch, closing, cs[i].impact, flat, car_near, sp, hv, wall, crashed);
+            if (car != me && fresh && cs[i].impact >= 7.5f && !cs[i].down_at && (wall || crashed)) {
                 cs[i].down_at = now;
                 takedowns++;
                 tank = tank + 0.5f > 1 ? 1 : tank + 0.5f; /* (a takedown fills the boost, as Burnout's) */
-                say(wall ? "WALL TAKEDOWN!" : "TAKEDOWN!");
+                int moment = mayhem_race && mayhem_moment(p[0], p[1], p[2]); /* (a Mayhem Moment's place: its own banner, glover.c) */
+                say(moment ? "MAYHEM MOMENT!" : wall ? "WALL TAKEDOWN!" : "TAKEDOWN!");
+                if (moment) tank = 1; /* (a full boost) */
                 fprintf(stderr, "xbrt: quick race: takedown %d (racer %u, %s)\n", takedowns, i, wall ? "wall" : rdf(car + 0x30) < 0.3f ? "rolled" : "stopped");
                 tdcam_start(car, r, me, sqrtf(mv0[0] * mv0[0] + mv0[2] * mv0[2])); /* the camera on the wreck, slowed, the player's car on the line */
                 damage_set((int)i, car, DMG_FULL); /* (wrecked; repaired on its respawn) */
                 if (wall) { /* blown up (the user's: "explodes" on the wall): thrown up off the wall, rolling, for 1.2 s */
-                    v[1] += 7.0f, v[0] -= dv[0] * 0.3f, v[2] -= dv[2] * 0.3f;
+                    v[1] += mayhem_race ? 11.0f : 7.0f, v[0] -= dv[0] * 0.3f, v[2] -= dv[2] * 0.3f; /* (Mayhem's thrown higher) */
                     wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
                     cs[i].tumble_until = now + 12000000, cs[i].spin = (rand() & 1 ? 1 : -1) * 4.0f, cs[i].spin_until = cs[i].tumble_until;
                 }

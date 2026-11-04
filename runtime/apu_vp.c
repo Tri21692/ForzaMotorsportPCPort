@@ -617,6 +617,10 @@ static void voice_process(unsigned v, float mix[BINS][FRAME]) {
     int16_t pitch = (int16_t)(vget(v, V_TAR_PITCH_LINK) >> 16);
     int8_t pscale = (int8_t)(vget(v, V_CFG_ENV0) >> 24);
     double step = pow(2.0, (pitch + pscale * 32 * ef) / 4096.0);
+    /* the takedown's slow motion (rt_vblank_rate, hle_quickrace.c): every voice played slower and deeper with it.
+     * The game feeds its streams by its slowed steps; played at full rate they ran dry, and the engine's voice,
+     * a stream that ends when dry, went out for good (the user's "engine sound seems to be going out") */
+    if (rt_vblank_rate > 0.1f && rt_vblank_rate < 1.0f) step *= rt_vblank_rate;
     float ea = envelope(v, 1);
     if (!(vget(v, V_PAR_STATE) & STATE_ACTIVE)) return;
 

@@ -710,6 +710,7 @@ static const char *present_fs =
     "uniform vec2 u_px;\n" /* one window pixel, in the picture's coordinates */
     "uniform sampler2D u_bloom;\n" /* the picture at half size with every mip level (gl_window_show) */
     "uniform float u_sharpen, u_bloom_amt, u_vibrance;\n"
+    "uniform float u_toon;\n" /* Mayhem's cartoon look (rt_toon, hle_quickrace.c): bold colour in bands, dark outlines */
     "vec3 shrink(vec2 uv) {\n" /* shrinking the supersampled picture: n x n bilinear taps (2 x 2 texels each) cover each pixel's area, where one skipped rows */
     "    vec2 st = max(u_step, vec2(1.0));\n"
     "    ivec2 n = clamp(ivec2(ceil(st * 0.5)), ivec2(2), ivec2(4));\n" /* (4 taps up to 4 texels a pixel; more at 5x and 6x) */
@@ -757,6 +758,19 @@ static const char *present_fs =
     "        if (u_vibrance > 0.0) {\n" /* more colour where there is little (asphalt, grass, dull paint), saturated colours alone */
     "            float l = luma(c), sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));\n"
     "            c = clamp(mix(vec3(l), c, 1.0 + u_vibrance * (1.0 - sat)), 0.0, 1.0);\n"
+    "        }\n"
+    "        if (u_toon > 0.0) {\n" /* the cartoon look: colour pushed, the light in five bands, outlines where brightness jumps */
+    "            vec2 d = u_px * 1.5;\n"
+    "            float ln = luma(pick(v_uv - vec2(0.0, d.y))), ls = luma(pick(v_uv + vec2(0.0, d.y)));\n"
+    "            float le = luma(pick(v_uv + vec2(d.x, 0.0))), lw = luma(pick(v_uv - vec2(d.x, 0.0)));\n"
+    "            float edge = abs(ln - ls) + abs(le - lw);\n"
+    "            float l = luma(c);\n"
+    "            vec3 bold = clamp(mix(vec3(l), c, 1.3), 0.0, 1.0);\n" /* (toned down, the user's "too strong": less colour, */
+    "            float lb = floor(l * 6.0 + 0.5) / 6.0;\n"             /*  softer bands, outlines on the strong edges only) */
+    "            vec3 band = bold * (lb + 0.04) / max(l, 0.04);\n"
+    "            vec3 t = clamp(mix(bold, band, 0.3), 0.0, 1.0);\n"
+    "            t *= 1.0 - smoothstep(0.30, 0.55, edge) * 0.5;\n"
+    "            c = mix(c, t, u_toon);\n"
     "        }\n"
     "    }\n"
     "    o = vec4(ramp(c), 1.0);\n"
@@ -840,7 +854,7 @@ static void gl_hdr_present(int W, int H, GLuint vao) {
 
 static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     static GLuint prog, empty_vao;
-    static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step, u_ramp_mix, u_post, u_px, u_bloom, u_sharpen, u_bloom_amt, u_vibrance;
+    static GLint u_src, u_rcp, u_fxaa, u_gamma, u_step, u_ramp_mix, u_post, u_px, u_bloom, u_sharpen, u_bloom_amt, u_vibrance, u_toon;
     static GLuint gamma_tex, bloom_tex, bloom_fbo;
     static int bloom_w, bloom_h;
     static uint32_t gamma_seq = ~0u;
@@ -864,6 +878,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         u_post = glGetUniformLocation(prog, "u_post"), u_px = glGetUniformLocation(prog, "u_px"), u_bloom = glGetUniformLocation(prog, "u_bloom");
         u_sharpen = glGetUniformLocation(prog, "u_sharpen"), u_bloom_amt = glGetUniformLocation(prog, "u_bloom_amt");
         u_vibrance = glGetUniformLocation(prog, "u_vibrance");
+        u_toon = glGetUniformLocation(prog, "u_toon");
         GLint ok = 0;
         glGetProgramiv(prog, GL_LINK_STATUS, &ok);
         if (!ok) {
@@ -950,6 +965,7 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
         glUniform2fv(u_px, 1, (float[2]){1.0f / (float)cw, 1.0f / (float)ch});
         glUniform1i(u_bloom, 2);
         glUniform1f(u_sharpen, post ? rt_post_sharpen : 0), glUniform1f(u_bloom_amt, bloom), glUniform1f(u_vibrance, post ? rt_post_vibrance : 0);
+        glUniform1f(u_toon, post ? rt_toon : 0);
         glBindVertexArray(empty_vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(gl_vao);
@@ -961,6 +977,19 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h) {
     else if (rt_mg_open()) gl_mg_draw(x, H - y - ch, cw, ch);
     else if (rt_qr_menu_open()) gl_qr_draw(x, H - y - ch, cw, ch);
     else gl_tt_hud_draw(x, H - y - ch, cw, ch);
+    if (rt_photo_path[0]) { /* one picture asked for (hle_quickrace.c's XBRT_MM_PHOTO) */
+        uint8_t *px = malloc((size_t)cw * ch * 3);
+        FILE *f = px ? fopen((const char *)rt_photo_path, "wb") : NULL;
+        if (f) {
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(x, H - y - ch, cw, ch, GL_RGB, GL_UNSIGNED_BYTE, px);
+            fprintf(f, "P6\n%d %d\n255\n", cw, ch);
+            for (int r = ch - 1; r >= 0; r--) fwrite(px + (size_t)r * cw * 3, 1, (size_t)cw * 3, f);
+            fclose(f);
+        }
+        free(px);
+        rt_photo_path[0] = 0;
+    }
     static const char *pshot = (const char *)1;
     if (pshot == (const char *)1) pshot = getenv("XBRT_PRESENT_SHOT"); /* the shown picture, after the post effects, as <file>_<n>.ppm every 5 s, or XBRT_PRESENT_SHOT_MS (testing) */
     static uint64_t pshot_next, pshot_every;
@@ -1013,9 +1042,6 @@ static int gl_show_ram(void) {
 static void gl_present_vblank(uint32_t fb) {
     if (gl_ready < 0) gl_ready = gl_setup();
     if (gl_ready <= 0) return;
-    /* the last picture kept a moment (hle_quickrace.c's camera probe on the grid: it turns the camera to rivals for
-     * a few frames each, which showed as flicker at the start: the user's); 3 s at most */
-    if (rt_present_hold_until && rt_now_100ns() < rt_present_hold_until) return;
     gl_present_poll(0);
     fb &= RT_PHYS_SIZE - 1;
     GlSurf *s = NULL;
@@ -1062,7 +1088,11 @@ static void gl_present_vblank(uint32_t fb) {
     if (fifo_on && nv2a.drained && gl_fifo_n)
         gl_fifo_shown = gl_fifo_head, gl_fifo_head = (gl_fifo_head + 1) % GL_FIFO, gl_fifo_n--, nv2a_trace('D', gl_fifo[gl_fifo_shown].seq);
     GlSnap *fs = fifo_on && gl_fifo_shown >= 0 && gl_fifo[gl_fifo_shown].w == w ? &gl_fifo[gl_fifo_shown] : NULL;
-    if (gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h)) {
+    /* the window keeps its last picture a moment (hle_quickrace.c's camera probe on the grid turns the camera to rivals a
+     * few frames each, which showed as flicker at the start: the user's), 3 s at most; only the showing is held, the
+     * frames go on (skipped whole, the probe saw the camera late and missed its hold on the car) */
+    int held = rt_present_hold_until && rt_now_100ns() < rt_present_hold_until;
+    if (!held && gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h)) {
         rt_gl_shown = rt_now_100ns();
         glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
         if (!rt_display_wants_pixels()) return;

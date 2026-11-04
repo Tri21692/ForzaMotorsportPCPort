@@ -243,10 +243,13 @@ def install(disc, mods, logo_dir=None):
             d = addseries.put_tile(d, DRIFT_CATEGORY[3], addseries.image(os.path.join(logo_dir, art), *size[:2]), size)
             open(os.path.join(ev, n), 'wb').write(d)
     shutil.copyfile(addcar.disc_file(disc, 'media', 'Events', 'Club.bik'), os.path.join(ev, DRIFT_CATEGORY[0] + '.bik'))
-    open(os.path.join(mods, 'categories.txt'), 'w').write(
+    cp = os.path.join(mods, 'categories.txt')  # (other categories' lines kept: Mayhem's, tools/mayhemseries.py)
+    others = [l for l in (open(cp).read().splitlines() if os.path.exists(cp) else []) if l.strip() and not l.startswith(('#', DRIFT_CATEGORY[0] + ' '))]
+    open(cp, 'w').write(
         '# career categories after the six (runtime/hle_career_cats.c): folder, kind (2 club), title id (GameStrings),\n'
         '# description id (UIStrings), icon (a tile of media/Events/Events.xpr), place in the list (0 first)\n'
-        '%s 2 %d %d %d %d\n' % (DRIFT_CATEGORY[0], cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3], DRIFT_CATEGORY[4]))
+        '%s 2 %d %d %d %d\n' % (DRIFT_CATEGORY[0], cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3], DRIFT_CATEGORY[4])
+        + ''.join(l + '\n' for l in others))
     print('Drift category: strings %d, %d, icon %d' % (cat_ids['GameStrings.str'], cat_ids['UIStrings.str'], DRIFT_CATEGORY[3]))
     if logo_dir:  # the drift series' logo on tile DRIFT_ICON of both strips in every language, the small one grown a row for it
         import addseries

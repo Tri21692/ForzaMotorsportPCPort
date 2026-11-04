@@ -643,9 +643,12 @@ void rt_save_constants(const char *path) {
  * where rows 0, 1 and 3 as planes meet, as tools/shotpos.py finds it), for the takedown camera's search. */
 volatile float rt_cam_pos[3];
 volatile uint32_t rt_cam_frame;
+volatile float rt_cam_vp[4][4]; /* the world's view and projection (rows 166-169), for drawing at a world point (glover.c) */
 static void camera_of_constants(void) {
     float m[4][4];
     memcpy(m, constants[166], sizeof m);
+    for (int r = 0; r < 4; r++)
+        for (int k = 0; k < 4; k++) rt_cam_vp[r][k] = m[r][k];
     float a[3][3] = {{m[0][0], m[0][1], m[0][2]}, {m[1][0], m[1][1], m[1][2]}, {m[3][0], m[3][1], m[3][2]}};
     float b[3] = {-m[0][3], -m[1][3], -m[3][3]};
     float det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
