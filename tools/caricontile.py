@@ -6,6 +6,7 @@ over again. Options a car (by ordinal):
 
   --form        the disc's form: a cut-out laid on the grey (and the car fitted inside the edge), the edge line, alpha 127
   --badge       a small D-SPEC badge in the top left corner (the D-Specs: else the same tile as their base car's)
+  --dlc         a small blue DLC badge in the top right corner (cars added to the game, not the disc's)
 
   python tools/caricontile.py <disc> <mods folder> [--preview <png>] <ordinal>[:form][:badge] ...
 """
@@ -52,15 +53,17 @@ def form(t):
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def badge(t):
-    """A D-SPEC badge, top left, inside the edge."""
+def badge(t, text='D-SPEC', colour=(200, 30, 24, 255), right=False):
+    """A small badge inside the edge: D-SPEC top left (red); DLC top right (the user's, 4 Nov: the cars added to the
+    game, blue), so a custom D-Spec shows both."""
     K = 4
     im = Image.new('RGBA', (TW * K, TH * K), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     f = ImageFont.truetype(r'C:\Windows\Fonts\ariblk.ttf', 8 * K)
-    w = d.textlength('D-SPEC', font=f)
-    d.rounded_rectangle([3 * K, 3 * K, 3 * K + w + 6 * K, 3 * K + 11 * K], radius=2 * K, fill=(200, 30, 24, 255), outline=(255, 255, 255, 255), width=K)
-    d.text((6 * K, 3 * K + 5.5 * K), 'D-SPEC', font=f, fill=(255, 255, 255, 255), anchor='lm')
+    w = d.textlength(text, font=f)
+    x0 = (TW - 3) * K - w - 6 * K if right else 3 * K
+    d.rounded_rectangle([x0, 3 * K, x0 + w + 6 * K, 3 * K + 11 * K], radius=2 * K, fill=colour, outline=(255, 255, 255, 255), width=K)
+    d.text((x0 + 3 * K, 3 * K + 5.5 * K), text, font=f, fill=(255, 255, 255, 255), anchor='lm')
     b = np.asarray(im.resize((TW, TH), Image.LANCZOS), float)
     a = b[..., 3:4] / 255
     out = t.astype(float)
@@ -83,6 +86,7 @@ def main(disc, mods, specs, preview=None):
         tile = img[(o % 64) * TH:(o % 64 + 1) * TH].copy()
         if 'form' in ops: tile = form(tile)
         if 'badge' in ops: tile = badge(tile)
+        if 'dlc' in ops: tile = badge(tile, 'DLC', (20, 110, 210, 255), right=True)
         img[(o % 64) * TH:(o % 64 + 1) * TH] = tile
         enc = fx.encode_dxt5(np.ascontiguousarray(tile))
         assert len(enc) == addcar.TILE
