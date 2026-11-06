@@ -112,7 +112,8 @@ MERGE = {  # bodies spread over other parts (a port's way past a part's size): j
 }
 # parts left out (merged into a name the converter never takes): the Countach's (from CSR2) chassis frame in its lamp
 # glass parts and its engine in the rear window and right lamp, 80,000 vertices under the body at every level
-DROP = {'countach': ['KIT00_REAR_WINDOW', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_HEADLIGHT_GLASS', 'KIT00_RIGHT_HEADLIGHT_GLASS']}
+DROP = {'countach': ['KIT00_REAR_WINDOW', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_HEADLIGHT_GLASS', 'KIT00_RIGHT_HEADLIGHT_GLASS',
+                     'BASE', 'BASE_E', 'KIT00_FRONT_WINDOW']}  # (6 Nov: BASE and the glass read as scattered spikes and shards, in the game too; KIT00_BODY has the whole shell)
 # the car's own cabin (merged into the body above): the template's interior not fitted in as well
 OWN_CABIN = {'jesko', 'zr1', 'gt2rs', 'f8', 'slrmoss', '335i', '190e', 'brera', 'chiron', 'fordgt17', 'huracan'}  # (the SLR Stirling Moss: no roof, and the coupe template's headliner fitted under none stood over its cockpit in black)
 THIN = {}  # dense ports whose levels are all one mesh, thinned (cartoolkit "decimate"; its levels then share no vertices)

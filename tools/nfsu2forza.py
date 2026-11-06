@@ -889,6 +889,43 @@ def auto_materials(nparts, textures, prefix):
     if renamed: print('materials: %d groups named only "Material" named by their textures' % renamed)
 
 
+def sliver(p, t, base):
+    """A triangle over 15 cm long and under 1 cm high."""
+    import numpy as np
+    V = np.array([p['verts'][i - base][:3] for i in t], float)
+    e = [np.linalg.norm(V[b] - V[a]) for a, b in ((0, 1), (1, 2), (2, 0))]
+    area = np.linalg.norm(np.cross(V[1] - V[0], V[2] - V[0])) / 2
+    return max(e) > 0.15 and 2 * area / max(max(e), 1e-9) < 0.01
+
+
+def two_sided(p, tris, base):
+    """A glass group modelled with its inside (the Countach's, from CSR2): most triangles have another straight across
+    (within 5 cm) on a parallel plane 2 to 20 mm away, the glass's thickness. Then only its outer layer, the triangles
+    with their twin on the cabin's side, as triangles to keep; else None."""
+    import numpy as np
+    if len(tris) < 8: return None
+    V = np.array([p['verts'][i - base][:3] for t in tris for i in t], float).reshape(-1, 3, 3)
+    C = V.mean(1)
+    n = np.cross(V[:, 1] - V[:, 0], V[:, 2] - V[:, 0])
+    ok = np.linalg.norm(n, axis=1) > 1e-9  # (the Countach's glass: 732 of its 1,726 triangles have no area)
+    tris, V, C, n = [t for t, k in zip(tris, ok) if k], V[ok], C[ok], n[ok]
+    if len(tris) < 8: return None
+    n /= np.linalg.norm(n, axis=1, keepdims=True)
+    mid = C.mean(0)
+    u = n * np.sign(np.einsum('ij,ij->i', n, C - mid))[:, None]  # (each normal turned away from the cabin's middle)
+    has, inner = np.zeros(len(C), bool), np.zeros(len(C), bool)
+    for i in range(len(C)):
+        d = C - C[i]
+        off = d @ u[i]
+        side = np.linalg.norm(d - off[:, None] * u[i], axis=1)  # (straight across: on curved glass a neighbour 10 cm along sits a few mm off its plane)
+        m = (side < 0.05) & (np.abs(n @ n[i]) > 0.95) & (np.abs(off) > 0.002) & (np.abs(off) < 0.02)
+        if m.any():
+            has[i] = True
+            inner[i] = (off[m] > 0).mean() > 0.5  # (its twin further out: this one is the inside)
+    if has.mean() <= 0.4: return None  # (the Countach's glass 0.72, the other cars' 0.11 at most)
+    return [t for t, k in zip(tris, inner) if not k]
+
+
 def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None, stock_wing=True, clear_livery=False, vinyl=None):
     import numpy as np
     car = carbin.read(open(template_path, 'rb').read())
@@ -1313,6 +1350,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     m = WINDOW
                     # (no window has a side over 1.8 m: the Countach's glass held spikes to 4 m, from bad indices)
                     tris = [t for t in tris if max(sum((p['verts'][t[a] - base][c] - p['verts'][t[b] - base][c]) ** 2 for c in range(3)) for a, b in ((0, 1), (1, 2), (0, 2))) < 1.8 ** 2]
+                    outer = two_sided(p, tris, base)  # (glass modelled with its inside already, the Countach's: its outer layer only,
+                    if outer is not None: tris = [t for t in outer if not sliver(p, t, base)]  # doubled as the rest; all four layers
+                    # fought as crumpled shards, and its slivers, a metre long and millimetres high, crossed the windows as streaks)
                     tris = tris + [(x, z, y) for x, y, z in tris]
                 if tris and m == TAILLIGHTS and th in textures:
                     # Lamp triangles on black texels (the S13's centre garnish between
@@ -1836,6 +1876,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 th = q['textures'][ti] if ti < len(q['textures']) else 0
                 sh = q['shaders'][si] if si < len(q['shaders']) else 0
                 if material_for(names.get(th, ''), sh) in (WINDOW, BLACKGLASS, None): continue
+                tn = str(textures.get(th, {}).get('name', '')).upper()
+                if ('LIGHT' in tn and ('GLASS' in tn or tn.endswith('_G'))) or (si < len(q.get('materials', [])) and str(q['materials'][si]).upper().endswith('GLASS')):
+                    continue  # (a lamp's cover, by its sheet's name, cut short at 24 letters: left out, as in the lamps' own parts; the Countach's 2,076 drew as black)
                 if 'INTERIOR' in str(textures.get(th, {}).get('name', '')).upper() and not OWN_INTERIOR: continue
                 keep = [idx[k_:k_ + 3] for k_ in range(first, first + cnt - 2, 3) if max(idx[k_:k_ + 3]) < len(q['verts'])]
                 keep = [t_ for t_ in keep if max(sum((q['verts'][t_[a]][c] - q['verts'][t_[b]][c]) ** 2 for c in range(3)) for a, b in ((0, 1), (1, 2), (0, 2))) < 1.8 ** 2]  # (the Countach's spikes)

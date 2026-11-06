@@ -929,3 +929,21 @@ foil. nfsu2forza.smooth_normals makes them again from the triangles round
 each position (within 50 degrees, area-weighted), which cartoolkit.py turns
 on for a "decimate" plan; tools/fixnormals.py --smooth does it to an
 installed cab (done for the MX-5, its D-Spec and the SC63).
+
+## The class the game works out (6 Nov)
+
+forza.exe's f_0016CFF0 (recompiled out/code_0022.c) gives a car its performance figure, and the bounds table
+at 0x52CA00 (file offset 0x5288C0) its class: D4 up to 0.239, D3 0.250, D2 0.261, D1 0.271, C4 0.274, C3 0.277,
+C2 0.281, C1 0.286, B4 0.293, B3 0.302, B2 0.315, B1 0.333, A4 0.348, A3 0.363, A2 0.391, A1 0.419, S4 0.475,
+S3 0.555, S2 0.645, S1 above. The figure:
+
+    round3( 0.25 (1 - (lbs - 1200) / 4100) + 0.025 (ft-lb - 90) / 910 + 0.125 (W - 0.15) / 0.29
+          + 0.55 (hp - 100) / 1000 + 0.05 E^2 / 9 ) + model.dat's float at 100
+
+W is the stock tyres' wider width in metres; E a byte of the car's record, 0 on every stock car; model.dat 100 a
+per-car offset (0 for most; the Enzo +0.082, Koenigsegg +0.072). It gives gamecars.dat's stored figure (at 120)
+for 229 of the disc's 231 cars (the Bentley Speed 8 and Porsche 962 are off). The lists show gamecars.dat's
+class at 100 and the store its torque (20, 100 N m), weight (36, 100 kg) and bars (124-136); addcar's
+--stats-like copied all of them from the template, so the new cars listed their template's class. The race
+classes GT, GTS and P1 (ids 21-23) are set, not worked out. docs/research/newcars/classcalc.py works out every
+add-on's class; classfix.py writes it into gamecars.dat.
