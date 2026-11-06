@@ -538,7 +538,7 @@ def main(disc, mods, src, new, ordinal=None, name=None, short=None, restore=Fals
                 cars.files[t] = caridentity.raise_torque(x, k2).encode('latin-1')
         print('engine %s: %s\'s (%s), %.0f hp x%.3f%s, torque to %.0f lb-ft (x%.3f below the power peak)'
               % (ename, engine_like, eng, hp0, k1, ' = %.0f hp' % power if power else '', caridentity.peak_torque(l0) * k1 * k2 / 1.3558179, k2))
-        donor = disc_file(disc, 'media', 'cabs', 'car_%s.cab' % engine_like)
+        donor = disc_file(disc, 'media', 'cabs', 'car_%s.cab' % engine_like) or disc_file(mods, 'media', 'cabs', 'car_%s.cab' % engine_like)  # (an add-on's engine: its cab in the mods folder)
         dfiles, _ = cab_files(open(donor, 'rb').read())
         ea = B.join(('engines', eng.lower(), 'audio')) + B
         for k, v in dfiles.items():
