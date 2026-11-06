@@ -10,3 +10,5 @@ BDCE0   # the replay keeps an AI racer's seed (10 of them): hle_career.c, a big 
 BDD00   # the replay reads one back: hle_career.c, past the 10th the one ten before
 16D130  # the subclass from the performance figure: hle_fclass.c, class F above S1 (S1 past 0.700)
 171000  # a car unlocked in a query's bitset: hle_unlock.c, the add-on cars in Free Run and the arcade
+3726D0  # the Advanced Search applied: hle_unlock.c, its "DLC Cars" entry
+1767A0  # a query condition (field, comparison, value): hle_unlock.c, that entry's turned to the add-on cars
