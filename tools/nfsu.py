@@ -90,6 +90,10 @@ def read(path):
                     for mid, mo, msize in chunks(d, so, so + ssize):
                         if mid == 0x00134b01:
                             a, end = unpadded(d, mo, msize)
+                            if (end - a) % 36:  # (zeros, not 0x11, to a 128-byte boundary: the Countach's exporter)
+                                pad = (-a) % 128
+                                if (end - a - pad) % 36 == 0 and not any(d[a:a + pad]):
+                                    a += pad
                             n = (end - a) // 36
                             part['verts'] = [struct.unpack_from('<6fI2f', d, a + 36 * k) for k in range(n)]
                         elif mid == 0x00134b03:
@@ -98,16 +102,26 @@ def read(path):
                             part['tris'] = [idx[k:k + 3] for k in range(0, len(idx) - 2, 3)]
                         elif mid == 0x00134b02:
                             a, end = unpadded(d, mo, msize)
+                            if (end - a) % 104 == 8 and not any(d[a:a + 8]):  # (the same zero padding before Most Wanted's groups)
+                                a += 8
                             raw_groups = d[a:end]
                         elif mid == 0x00134c02:  # Most Wanted: a group's material name, one per group in order
                             part['materials'].append(d[mo:d.index(b'\0', mo)].decode('latin-1'))
             mw = bool(part['materials'])
             if head is not None:
                 at = head + (0xA0 if mw else 0x94)
-                part['name'] = d[at:d.index(b'\0', at)].decode('latin-1')
-                if not part['name'] and not mw:  # Underground 2: Underground's groups, the name at 0xA4
-                    at = head + 0xA4
-                    part['name'] = d[at:d.index(b'\0', at)].decode('latin-1')
+                part['name'] = d[at:d.index(b'\0', at)].decode('latin-1').strip()  # (the 190E's had a space before them)
+                if not part['name'] and not mw:
+                    a0 = d[head + 0xA0:d.index(b'\0', head + 0xA0)].decode('latin-1').strip()
+                    if a0 and a0[0].isalnum() and raw_groups and len(raw_groups) % 104 == 0:
+                        # Most Wanted's layout with no group names (some exporters': the Diablo SV, the Charger, the
+                        # Evora...): read as Underground 2's, their names lost four letters (DIABLO_ as LO_) and their
+                        # groups were cut at 60 bytes. Its groups "Material", named by texture by the converter
+                        part['name'], mw = a0, True
+                        part['materials'] = ['Material'] * (len(raw_groups) // 104)
+                    else:  # Underground 2: Underground's groups, the name at 0xA4
+                        at = head + 0xA4
+                        part['name'] = d[at:d.index(b'\0', at)].decode('latin-1').strip()
             if not mw:
                 part['groups'] = [raw_groups[k:k + 0x3C] for k in range(0, len(raw_groups) - 0x3B, 0x3C)]
             else:

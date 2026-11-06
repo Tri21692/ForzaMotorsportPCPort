@@ -148,7 +148,7 @@ for p in car['parts']:
     o = bpy.data.objects.new(p['name'], me)
     scene.collection.objects.link(o)
 print('SHOWN', ' '.join(shown))
-if os.environ.get('ICON'):  # the tile's car stands on wheels: tyres and rims in its arches (the carbin has none), each arch
+if os.environ.get('ICON') or os.environ.get('HUBS'):  # the tile's car stands on wheels: tyres and rims in its arches (the carbin has none), each arch
     # where the body's lower edge along its sides rises (the middle of each raised run), the tyre to its top
     import numpy as np
     P = np.array([tuple(o.matrix_world @ v.co) for o in scene.objects if o.type == 'MESH' for v in o.data.vertices])
@@ -175,11 +175,18 @@ if os.environ.get('ICON'):  # the tile's car stands on wheels: tyres and rims in
     alloy.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.32, 0.33, 0.35, 1)
     alloy.node_tree.nodes['Principled BSDF'].inputs['Metallic'].default_value = 0.9
     alloy.node_tree.nodes['Principled BSDF'].inputs['Roughness'].default_value = 0.25
-    for ax, top, width in axles:
-        r = 0.074 * L  # (a 0.31 m tyre on a 4.2 m car)
+    radii = [0.074 * L] * len(axles)  # (a 0.31 m tyre on a 4.2 m car)
+    centres = [None] * len(axles)
+    if os.environ.get('HUBS'):  # HUBS=hf,hr,ride_f,ride_r,dia_f,dia_r: the wheels where the game puts them (model units for the
+        # hubs, metres for the rest: the template's physics and tyres), to check a car's arches against them
+        hf_, hr_, rf_, rr_, df_, dr_ = (float(x) for x in os.environ['HUBS'].split(','))
+        axles = [(hf_ * 4096 * S, 0, 0), (hr_ * 4096 * S, 0, 0)]
+        radii = [df_ / 2, dr_ / 2]
+        centres = [-rf_ + df_ / 2, -rr_ + dr_ / 2]
+    for (ax, top, width), r, zc0 in zip(axles, radii, centres):
         for sgn in (-1, 1):
             y = (y0 + y1) / 2 + sgn * (Wd / 2 - 0.14 * Wd)
-            zc = sill + 0.3 * r  # (from the sill: the arch liners hang low and hide the arch top)
+            zc = sill + 0.3 * r if zc0 is None else zc0  # (from the sill: the arch liners hang low and hide the arch top)
             bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=0.15 * Wd, location=(ax, y, zc), rotation=(math.pi / 2, 0, 0), vertices=48)
             bpy.context.object.data.materials.append(rubber)
             bpy.ops.mesh.primitive_cylinder_add(radius=r * 0.64, depth=0.15 * Wd + 0.01, location=(ax, y, zc), rotation=(math.pi / 2, 0, 0), vertices=48)

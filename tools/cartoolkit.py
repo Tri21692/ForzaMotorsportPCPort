@@ -230,14 +230,20 @@ def join_parts(ps):
         base, first = len(m['verts']), 3 * len(m['tris'])
         m['verts'] += p['verts']
         m['tris'] += [tuple(i + base for i in t) for t in p['tris']]
-        for grp in p['groups']:
+        for gi, grp in enumerate(p['groups']):
             r = bytearray(grp)
             ti, si = struct.unpack_from('<II', r, 0x1C)
             th = p['textures'][ti] if ti < len(p['textures']) else 0
             sh = p['shaders'][si] if si < len(p['shaders']) else 0
             if th not in m['textures']: m['textures'].append(th)
-            if sh not in m['shaders']: m['shaders'].append(sh)
-            struct.pack_into('<II', r, 0x1C, m['textures'].index(th), m['shaders'].index(sh))
+            if p['materials']:  # (Most Wanted's: a material name and shader a group, kept in step with the groups)
+                m['materials'].append(p['materials'][gi] if gi < len(p['materials']) else 'Material')
+                m['shaders'].append(sh)
+                si2 = len(m['shaders']) - 1
+            else:
+                if sh not in m['shaders']: m['shaders'].append(sh)
+                si2 = m['shaders'].index(sh)
+            struct.pack_into('<II', r, 0x1C, m['textures'].index(th), si2)
             struct.pack_into('<I', r, 0x34, struct.unpack_from('<I', r, 0x34)[0] + first)
             m['groups'].append(bytes(r))
     return m
@@ -252,7 +258,7 @@ def merge(parts, prefix, plan):
     def levels(src):
         pairs = src.endswith('*2')  # both sides cut to one name (the Celica's HEADLIGHT_): a level is the next two by size
         full = prefix + '_' + src.rstrip('*2')
-        hit = [p for p in parts if any((full + s)[:27] == p['name'] for s in ('_A', '_B', '_C', '_D', ''))]
+        hit = [p for p in parts if any((full + s)[:27] == p['name'] or full + s == p['name'] for s in ('_A', '_B', '_C', '_D', ''))]  # (a Most Wanted car's names whole)
         lettered = all(re.search(r'_[A-D]$', p['name']) for p in hit)
         lv = sorted(hit, key=(lambda p: p['name']) if lettered else (lambda p: -len(p['verts'])))
         if pairs:
@@ -403,5 +409,5 @@ if __name__ == '__main__':
     nfsu2forza.SCALE = plan.get('scale', 1.0)
     nfsu2forza.OWN_INTERIOR = bool(plan.get('interior'))
     nfsu2forza.SMOOTH = 'decimate' in plan  # (thinned: the dense model's normals no longer fit)
-    nfsu2forza.UV32 = 'merge' in plan  # (an Underground 2 car's texels at the game's reading)
+    nfsu2forza.UV32 = 'merge' in plan and not plan.get('most_wanted')  # (an Underground 2 car's texels at the game's reading; a Most Wanted car's parts merged keep their own)
     nfsu2forza.main([sys.argv[0]] + sys.argv[2:])

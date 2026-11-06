@@ -837,13 +837,64 @@ def dark_uv(xpr_path):
     return (int((best[0] + 0.5) / w * 65536), int((best[1] + 0.5) / h * 65536))
 
 
+def part_prefix(nparts, folder):
+    """The car's name before its parts' (CHIRON_KIT00_BODY_A): the folder's, unless no part has it, as for an add-on in
+    another car's folder (CARS_REPLACE/GALLARDO holding the Huracan's parts) or one named apart (the Senna's A_...);
+    then the commonest before _KITnn_ or _BASE."""
+    import collections
+    if any(p['name'].startswith(folder + '_') for p in nparts): return folder
+    c = collections.Counter(m.group(1) for p in nparts for m in [re.match(r'(.+?)_(?:KIT\d\d|BASE)', p['name'])] if m)
+    return c.most_common(1)[0][0] if c else folder
+
+
+def auto_materials(nparts, textures, prefix):
+    """Groups named only "Material" (the nfs.com.ru pack's cars, made in ZModeler: nothing then read as paint and the
+    whole body came out black trim, the BMW M2 of 5 Nov) named from their texture: the car's SKIN1 (made at run time)
+    paint, its other SKINs black trim, BADGING and MISC decals, the lamp sheets head or brake lights by the group's
+    end of the car, the interior's sheet drawn as it is; Most Wanted's shared role textures (windows, lamps) by name."""
+    import struct as st
+    names = {h: t['name'] for h, t in textures.items()}
+    roles = ['WINDOW_FRONT', 'WINDOW_REAR', 'WINDOW_LEFT_FRONT', 'WINDOW_RIGHT_FRONT', 'WINDOW_LEFT_REAR', 'WINDOW_RIGHT_REAR',
+             'HEADLIGHT_LEFT', 'HEADLIGHT_RIGHT', 'BRAKELIGHT_LEFT', 'BRAKELIGHT_RIGHT', 'HEADLIGHT_GLASS_LEFT',
+             'HEADLIGHT_GLASS_RIGHT', 'BRAKELIGHT_GLASS_LEFT', 'BRAKELIGHT_GLASS_RIGHT', 'DOORLINE', 'LICENSEPLATE',
+             'BLACK', 'CHROME', 'GRILL', 'INTERIOR', 'DRIVER', 'TIRE', prefix + '_SKIN1']
+    for r in roles: names.setdefault(bhash(r), r)
+    renamed = 0
+    for p in nparts:
+        if not p['materials'] or not all(re.match(r'(Material|$)', m) for m in p['materials']): continue
+        idx = [i for t in p['tris'] for i in t]
+        for gi, g in enumerate(p['groups']):
+            if gi >= len(p['materials']): break
+            ti, _ = st.unpack_from('<II', g, 0x1C)
+            n = names.get(p['textures'][ti] if ti < len(p['textures']) else 0, '').upper()
+            cnt, = st.unpack_from('<I', g, 12); first, = st.unpack_from('<I', g, 0x34)
+            xs = [p['verts'][i][0] for i in idx[first:first + cnt] if i < len(p['verts'])]
+            front = bool(xs) and sum(xs) / len(xs) > 0
+            if n.endswith('_SKIN1') or n == 'SKIN1': m = 'BODY'
+            elif re.search(r'_SKIN\d', n): m = 'BODY_BLACK'
+            elif 'BADGING' in n or n.endswith('_MISC') or 'LOGO' in n: m = 'BADGING'
+            elif 'INTERIOR' in n: m = 'BADGING'
+            elif 'DRIVER' in n: m = 'DRIVER'
+            elif 'TIRE' in n or 'RIM' in n: m = 'TIRE'
+            elif 'WINDOW' in n: m = 'WINDOW_FRONT'
+            elif 'GLASS' in n and ('HEADLIGHT' in n or 'BRAKELIGHT' in n): m = 'LEFT_HEADLIGHT_GLASS' if front else 'DECAL_BRAKELIGHT_LENS'
+            elif 'HEADLIGHT' in n or 'BRAKELIGHT' in n or 'LIGHT' in n: m = 'LEFT_HEADLIGHT_BULB' if front else 'BRAKELIGHT'
+            elif n in ('DOORLINE', 'LICENSEPLATE'): m = n
+            elif 'CHROME' in n: m = 'CHROME'
+            else: continue
+            p['materials'][gi] = m
+            p['shaders'][gi] = bhash(m)
+            renamed += 1
+    if renamed: print('materials: %d groups named only "Material" named by their textures' % renamed)
+
+
 def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None, stock_wing=True, clear_livery=False, vinyl=None):
     import numpy as np
     car = carbin.read(open(template_path, 'rb').read())
     tlayout, tcover = template_layout(car)  # (before its parts are replaced)
     nparts = nfsu.read(os.path.join(nfsu_dir, 'GEOMETRY.BIN'))
     textures = nfsu.read_textures(os.path.join(nfsu_dir, 'TEXTURES.BIN'))
-    prefix = os.path.basename(os.path.normpath(nfsu_dir)).upper()
+    prefix = part_prefix(nparts, os.path.basename(os.path.normpath(nfsu_dir)).upper())
     names = {bhash(prefix + '_SKIN1'): prefix + '_SKIN1'}
     names.update({h: t['name'] for h, t in textures.items()})
     # Underground 2's shared lamp textures (its global files, not an add-on car's pack: the Neon's). Missing,
@@ -882,6 +933,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     # own, and materials named per group (see mw_material)
     mw = any(p['materials'] for p in nparts)
     if mw:
+        auto_materials(nparts, textures, prefix)
         for p in nparts:
             for name in p['materials']: SHADERS.setdefault(bhash(name), mw_material(name))
         # Its parts name textures by role, resolved to the car's own at run time:
@@ -1066,6 +1118,17 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     # wheels standing behind their arches.
     hubs = [(min(v[2] for v in p['verts']) + max(v[2] for v in p['verts'])) / 2 / 4096
             for p in car['parts'] if p['name'].startswith('rotor') or '_rotor' in p['name']]  # (a race car's: 14_rotor_steelLF)
+    if not hubs:  # a template with no brake rotors in its model (the Enzo, the Zonda, the DB9, the 996 GT2...): its hubs
+        # from its physics, the wheelbase about its middle (maxdata.xml: Wheelbase, BottomCenterWheelbasePos z, metres), at
+        # 1.602 model units a metre (the street cars with rotors, the C32 to the SLR, to a few mm; the 5 Nov audit)
+        mx = os.path.join(os.path.dirname(template_path), 'physics', 'maxdata.xml')
+        if os.path.exists(mx):
+            t = open(mx, encoding='latin-1').read()
+            wb, zc = re.search(r'Wheelbase="([^"]+)"', t), re.search(r'BottomCenterWheelbasePos[^>]*z="([^"]+)"', t)
+            if wb and zc:
+                wb, zc = float(wb.group(1)), float(zc.group(1))
+                hubs = [(zc + wb / 2) * 1.602, (zc - wb / 2) * 1.602]
+                print('wheels: the template hubs from its physics: %.3f, %.3f' % tuple(hubs))
     nbody = find('BODY')[0]
     nidx = [i for t in nbody['tris'] for i in t]
     liner = [nbody['verts'][i][0] for g in nbody['groups'] if nbody['shaders'][struct.unpack_from('<I', g, 0x20)[0]] == 0x010CB64A
@@ -1097,12 +1160,22 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         print('wheels: arches at %.3f, %.3f go to the hubs at %.3f, %.3f (between them x%.3f)' % (k * af + dz, k * ar + dz, hf, hr, (hf - hr) / (af - ar)))
     else:
         af = ar = None
-    if ARCHES:
+    if af is not None and af != ar and not 0.85 < (hf - hr) / (af - ar) / k < 1.15:
+        # (an arch read wrongly, a body spread over other parts or a door's trim taken for one: the Impala's 1.3 and -0.1
+        # asked a stretch of x5; past 15% of the fit's scale it is not trusted, the length fit kept)
+        print('wheels: the arches read (%.3f, %.3f) are not trusted (x%.3f against the fit\'s %.3f): not stretched' % (k * af + dz, k * ar + dz, (hf - hr) / (af - ar), k))
+        af = ar = None
+    if os.environ.get('NFSU_ARCHES'):  # (as the plan's "arches": the car's arch middles as the fit puts them, and the hubs')
+        ARCHES_ = [float(x) for x in os.environ['NFSU_ARCHES'].split(',')]
+        if len(ARCHES_) == 2 and hubs: ARCHES_ += [max(hubs), min(hubs)]
+    else:
+        ARCHES_ = ARCHES
+    if ARCHES_:
         # The plan's arches (an Underground 2 add-on: no liners, and its sides' lower edge read badly by rule): its
         # own arch middles as the length fit puts them, and the template body's (over the hubs its physics has),
         # both read off the side's lower edge in the template's units. The user's of 5 Nov: the Neon's rear wheel
         # stood ahead of its arch, the Silvia's front behind it.
-        cf, cr, hf, hr = ARCHES
+        cf, cr, hf, hr = ARCHES_
         af, ar = (cf - dz) / k, (cr - dz) / k
         print('wheels: the plan\'s arches at %.3f, %.3f go to the template\'s at %.3f, %.3f (between them x%.3f)' % (cf, cr, hf, hr, (hf - hr) / (af - ar)))
 
@@ -1743,7 +1816,17 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             continue
         for key, (src, side, glass, inner) in plan.items():
             if part['name'].startswith(key) and part['name'].endswith('_LOD1') and all(src):
-                if key not in built: built[key] = build(src, side, glass, inner)
+                if key not in built:
+                    # (a Forza part holds 65536 vertices: a dense body's levels together, doubled for their black
+                    # insides and split along the vinyl layout's seams, ran past it, the BMW M2's 24,000 of 5 Nov.
+                    # Its second-finest levels left out until it fits: the finest near, the coarse ones far)
+                    cap = 21000 if inner else 42000
+                    src = [list(lv) for lv in src]
+                    for lv in src:
+                        while len(lv) > 1 and sum(len(q['verts']) for q in lv) > cap: del lv[1]
+                    if inner and sum(len(lv[0]['verts']) for lv in src if lv) > 26000:
+                        inner = False  # (the finest level alone too big to double: no black insides, the Impala's merged body)
+                    built[key] = build(src, side, glass, inner)
                 put(part, *built[key])
                 done.append(part['name'])
                 break
@@ -1751,7 +1834,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         fit_glass()
     # The side skirts' ends by the wheels, below the sill: stretched to the template's
     # wheelbase, the front ones hung down behind the front wheels as black flaps
-    hub_y = min(sum(v[1] for v in p['verts']) / len(p['verts']) for p in car['parts'] if p['name'].startswith('rotor') or '_rotor' in p['name']) / 4096 if hubs else None
+    rotors_ = [sum(v[1] for v in p['verts']) / len(p['verts']) for p in car['parts'] if p['name'].startswith('rotor') or '_rotor' in p['name']]
+    hub_y = min(rotors_) / 4096 if hubs and rotors_ else None  # (hubs from the physics have no rotors to give their height)
     for part in car['parts']:
         if hub_y is None or not part['name'].startswith('skirt') or not part['name'].endswith('_LOD1'): continue
         V = [(v[0] / 4096, v[1] / 4096, v[2] / 4096) for v in part['verts']]
@@ -2025,7 +2109,7 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     part = tire['parts'][0]
     nparts = nfsu.read(os.path.join(nfsu_dir, 'GEOMETRY.BIN'))
     textures = nfsu.read_textures(os.path.join(nfsu_dir, 'TEXTURES.BIN'))
-    prefix = os.path.basename(os.path.normpath(nfsu_dir)).upper()
+    prefix = part_prefix(nparts, os.path.basename(os.path.normpath(nfsu_dir)).upper())
     levels = sorted([p for p in nparts if p['name'].startswith(prefix + '_KIT00_WHEEL')], key=lambda p: -len(p['verts']))
     if not levels:  # Most Wanted: the rim is in the tyre part, its groups RIM_KIT00_SILVER, _BLACK, ...
         levels = sorted([p for p in nparts if re.fullmatch(re.escape(prefix) + '_KIT00_FRONT_TIRE_[A-D]', p['name'])], key=lambda p: -len(p['verts']))
