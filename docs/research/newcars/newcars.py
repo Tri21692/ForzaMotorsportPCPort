@@ -163,7 +163,8 @@ def convert(key):
     else:
         cmd = [sys.executable, '-W', 'ignore', os.path.join(T, 'nfsu2forza.py'), carbin_t, sd, os.path.join(out, 'car.carbin')]
     if lv: cmd += ['--liveries', lv]
-    if tmpl in ('BMWM3GTR42',): cmd += ['--no-stock-wing', '--clear-livery']
+    if tmpl in ('BMWM3GTR42',): cmd += ['--no-stock-wing']
+    cmd += ['--clear-livery']  # (the template's own badges and lamps out of the atlas, but for the parts it keeps: they left the car's lamps a few texels, dark blobs, 6 Nov)
     env = dict(os.environ, **({'NFSU_ARCHES': ','.join(map(str, ARCHES[key]))} if key in ARCHES else {}))
     rc = run(cmd, log, env)
     print('%-9s convert %s' % (key, 'ok' if rc == 0 and os.path.exists(os.path.join(out, 'car.carbin')) else 'FAILED (see %s)' % log), flush=True)
