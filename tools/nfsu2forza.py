@@ -477,6 +477,7 @@ def mw_material(name):
     """A Most Wanted group's material name -> Forza's; None leaves it out."""
     n = name.upper()
     if n.startswith('WINDOW'): return WINDOWS if n.endswith('_MASK') else WINDOW  # the masks are the black frit round the glass
+    if n == 'REAR_DEFROSTER': return WINDOW  # (the rear glass, by its heater lines' role texture)
     if 'HEADLIGHT' in n:
         if n.endswith('GLASS'): return None  # the cover: Forza's headlight glass (30) is not on the template, so it took a stray texel and drew a white shell over the lamp
         if n.endswith('BULB'): return HEADLIGHTS
@@ -857,7 +858,7 @@ def auto_materials(nparts, textures, prefix):
     roles = ['WINDOW_FRONT', 'WINDOW_REAR', 'WINDOW_LEFT_FRONT', 'WINDOW_RIGHT_FRONT', 'WINDOW_LEFT_REAR', 'WINDOW_RIGHT_REAR',
              'HEADLIGHT_LEFT', 'HEADLIGHT_RIGHT', 'BRAKELIGHT_LEFT', 'BRAKELIGHT_RIGHT', 'HEADLIGHT_GLASS_LEFT',
              'HEADLIGHT_GLASS_RIGHT', 'BRAKELIGHT_GLASS_LEFT', 'BRAKELIGHT_GLASS_RIGHT', 'DOORLINE', 'LICENSEPLATE',
-             'BLACK', 'CHROME', 'GRILL', 'INTERIOR', 'DRIVER', 'TIRE', prefix + '_SKIN1']
+             'BLACK', 'CHROME', 'GRILL', 'INTERIOR', 'DRIVER', 'TIRE', 'REAR_DEFROSTER', prefix + '_SKIN1']
     for r in roles: names.setdefault(bhash(r), r)
     renamed = 0
     for p in nparts:
@@ -876,7 +877,7 @@ def auto_materials(nparts, textures, prefix):
             elif 'INTERIOR' in n: m = 'BADGING'
             elif 'DRIVER' in n: m = 'DRIVER'
             elif 'TIRE' in n or 'RIM' in n: m = 'TIRE'
-            elif 'WINDOW' in n: m = 'WINDOW_FRONT'
+            elif 'WINDOW' in n or n == 'REAR_DEFROSTER': m = 'WINDOW_FRONT'  # (the rear glass's role texture, its heater lines: as black trim, the LF-A's, M2's, 190E's rear window was a hole, 6 Nov)
             elif 'GLASS' in n and ('HEADLIGHT' in n or 'BRAKELIGHT' in n): m = 'LEFT_HEADLIGHT_GLASS' if front else 'DECAL_BRAKELIGHT_LENS'
             elif 'HEADLIGHT' in n or 'BRAKELIGHT' in n or 'LIGHT' in n: m = 'LEFT_HEADLIGHT_BULB' if front else 'BRAKELIGHT'
             elif n in ('DOORLINE', 'LICENSEPLATE'): m = n
@@ -1050,7 +1051,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                                   (x1 - x0 + 1, y1 - y0 + 1))
                 img[y0:y1 + 1, x0:x1 + 1] = logo
             images[h] = img.astype(np.uint8)
-    if UV32:  # an Underground 2 car's decal sheets, drawn as Body (see UV32 and BADGE in the parts)
+    ready = set()  # decal sheets made ready for Body
+    if UV32 or mw:  # an Underground 2 car's decal sheets, drawn as Body (see UV32 and BADGE in the parts); a Most Wanted car's BADGING sheet too (the Charger's door handles and fuel flap were dark boxes, 6 Nov)
         uses = {}
         for p in nparts:
             for g in p['groups']:
@@ -1059,7 +1061,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     th = p['textures'][ti]
                     uses.setdefault(th, set()).add(material_for(names.get(th, ''), p['shaders'][si]))
         for h in images:
-            if uses.get(h) == {BADGE}: images[h] = paint_ready(images[h])
+            if uses.get(h) == {BADGE} and (UV32 or 'BADGING' in str(textures.get(h, {}).get('name', '')).upper()):
+                images[h] = paint_ready(images[h]); ready.add(h)
     images.update(extra)
     bands = canvas_bands(nparts) if vinyl or SKIN else []
     for j, (r0, r1, c0, c1) in enumerate(bands):  # (not k: the fit's scale)
@@ -1278,7 +1281,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 if role and sh in LAMP_GLASS: continue  # (a lamp's see-through cover)
                 if role in made_pic and m in (HEADLIGHTS, TAILLIGHTS):  # a lit face: the lamp's own colour, its made picture
                     m, th = (HEADLIGHTS, made_pic[role]) if role == 'HEADLIGHT' else (TAILLIGHTS, made_pic[role])
-                if UV32 and m == BADGE:
+                if (UV32 or th in ready) and m == BADGE:
                     # An Underground 2 car's decals (door handles, side markers, badges) are see-through
                     # overlays on the paint; Badge drew their clear texels black, as black boxes. As
                     # Body, on their sheet made ready for it (paint_ready), the paint shows through.
@@ -1308,6 +1311,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 if glass is not None and is_glass != glass: continue
                 if glass:  # windows drawn from both sides: NFSU's face either way
                     m = WINDOW
+                    # (no window has a side over 1.8 m: the Countach's glass held spikes to 4 m, from bad indices)
+                    tris = [t for t in tris if max(sum((p['verts'][t[a] - base][c] - p['verts'][t[b] - base][c]) ** 2 for c in range(3)) for a, b in ((0, 1), (1, 2), (0, 2))) < 1.8 ** 2]
                     tris = tris + [(x, z, y) for x, y, z in tris]
                 if tris and m == TAILLIGHTS and th in textures:
                     # Lamp triangles on black texels (the S13's centre garnish between
@@ -1321,7 +1326,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     if trim:
                         tris = [t for t in tris if not dark(t)]
                         subs.append((lod, WINDOWS, strip(trim)))
-                if tris and th in atlas:  # its texture is in the livery atlas: its own coordinates, moved there
+                if tris and th in atlas and not (m == WINDOW and th == bhash('REAR_DEFROSTER')):  # its texture is in the livery atlas: its own coordinates, moved there (not the rear glass's heater lines: stretched, two orange streaks over the LF-A's)
                     u0, v0, u1, v1 = atlas[th]
                     one = BADGE_UV if m == BADGE or mw or UV32 else 65536  # (see BADGE_UV and ATLAS_UV)
                     for i in {i for t in tris for i in t}:
@@ -1796,18 +1801,119 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             shop_plan[slot] = ([got], side, None, inner) if inner else ([got], side)
             print('shop: %s <- %s (%d levels)' % (slot, src, len(got)))
         plan = {**shop_plan, **plan}
+    if mw:
+        # The template's glass by its own names: the Enzo's, Elise's and Carrera GT's are glass_F, glass_LF ...
+        # (glassF matched none of them: the Chiron, Senna, Terzo, SVJ, 4C, Huayra kept the template's windows,
+        # their own left out, 6 Nov)
+        names_ = {p_['name'] for p_ in car['parts']}
+        for key in [k for k in plan if re.match(r'[a-z]+[A-Z]+$', k)]:  # (the Elise's and Carrera GT's lamps too: headlight_L)
+            alt = re.sub(r'^([a-z]+)([A-Z]+)$', r'\1_\2', key)
+            if key + '_LOD1' not in names_ and alt + '_LOD1' in names_: plan[alt] = plan.pop(key)
+        def pos_sig(q):  # a part's shape regardless of its vertices' order (cartoolkit's merged cars reorder them)
+            return np.sort(np.array([v_[:3] for v_ in q['verts']], float), axis=0)
+        def seen_in(sig, seen):  # (within a millimetre: the Huracan's two copies differ in the seventh place)
+            return any(o.shape == sig.shape and np.abs(o - sig).max() < 1e-3 for o in seen)
+        gkeys = [k for k in plan if re.match(r'glass_?(F|R|LF|RF|LR|RR)$', k)]
+        # A window part the same as one already placed (the nfs.com.ru pack's FRONT_WINDOW and REAR_WINDOW are
+        # each the whole greenhouse): its slot left empty (hidden), not the glass drawn twice over, darker
+        seen = []
+        for key in gkeys:
+            src = plan[key][0][0]
+            if not src: continue
+            sig = pos_sig(src[0])  # (positions: the parts' other vertex data differ)
+            if seen_in(sig, seen): plan[key] = ([[]], 0, True); print('glass: %s the same as another window part, left empty' % key)
+            seen.append(sig)
+        # The rest of the window parts: the porters' (past a part's size) engine bays, tail-light bars, trims, the
+        # Chiron's, M2's, Impala's, RS5's, GTX1's, SVJ's, Civic's of 6 Nov (16,000 to 34,000 triangles each). The
+        # window slots keep only glass, so it was left out: the Chiron's engine cover a jagged hole. Their other
+        # groups (not the cabin's, unless the car has its own) go in a template part the car has no use for.
+        def not_glass(q):
+            idx = [i_ for t_ in q['tris'] for i_ in t_]
+            tris_, groups_ = [], []
+            for g in q['groups']:
+                cnt, = struct.unpack_from('<I', g, 12); first, = struct.unpack_from('<I', g, 0x34)
+                ti, si = struct.unpack_from('<II', g, 0x1C)
+                th = q['textures'][ti] if ti < len(q['textures']) else 0
+                sh = q['shaders'][si] if si < len(q['shaders']) else 0
+                if material_for(names.get(th, ''), sh) in (WINDOW, BLACKGLASS, None): continue
+                if 'INTERIOR' in str(textures.get(th, {}).get('name', '')).upper() and not OWN_INTERIOR: continue
+                keep = [idx[k_:k_ + 3] for k_ in range(first, first + cnt - 2, 3) if max(idx[k_:k_ + 3]) < len(q['verts'])]
+                keep = [t_ for t_ in keep if max(sum((q['verts'][t_[a]][c] - q['verts'][t_[b]][c]) ** 2 for c in range(3)) for a, b in ((0, 1), (1, 2), (0, 2))) < 1.8 ** 2]  # (the Countach's spikes)
+                if not keep: continue
+                g2 = bytearray(g); struct.pack_into('<I', g2, 12, 3 * len(keep)); struct.pack_into('<I', g2, 0x34, 3 * len(tris_))
+                groups_.append(bytes(g2)); tris_ += keep
+            return dict(q, tris=tris_, groups=groups_) if tris_ else None
+        def slot_is(name, key):
+            rest_ = name[len(key):] if name.startswith(key) else None
+            return rest_ is not None and not rest_[:1].isupper()
+        rest, sigs = [], []
+        for wk in ('FRONT_WINDOW', 'REAR_WINDOW', 'FRONT_LEFT_WINDOW', 'FRONT_RIGHT_WINDOW', 'REAR_LEFT_WINDOW', 'REAR_RIGHT_WINDOW'):  # (not k: the fit's scale)
+            lv = find(wk)
+            if not lv: continue
+            sig = pos_sig(lv[0])
+            if seen_in(sig, sigs): continue
+            sigs.append(sig)
+            got = [q for q in (not_glass(q) for q in lv) if q]
+            if got and sum(len(q['tris']) for q in got[:1]) >= 8:
+                rest.append(got)
+                print('windows: %d triangles of %s that are not glass' % (len(got[0]['tris']), lv[0]['name']))
+        if rest:
+            # (a stock choice only on a Most Wanted car, so drawn whatever the shop: the trunk, else a rear bumper or skirt,
+            # by the template's own name, the Civic's bumperRa)
+            spare = sorted((n[:-5] for n in names_ if re.match(r'(trunk|bumperR|skirt[LR])[a-z]?_LOD1$', n)), key=lambda n: (not n.startswith('trunk'), not n.startswith('bumperR'), n))
+            slot = next((n for n in spare if not any(slot_is(n + '_LOD1', k) or slot_is(k, n) for k in plan)), None)
+            if slot: plan[slot] = (rest, 0, False, False); print('windows: those in %s' % slot)
+            else: print('windows: no spare part for them')
+        # Glass only the body has (the porters': the 335i's, Brera's and Eclipse's windows all in the roof part
+        # BASE, the XK's and ZR1's rear glass, the SLR's screen in its kit bodies): the body slots are built without
+        # glass, so they were holes. Its triangles that no window part has (centroids 3 cm apart) go with the
+        # windscreen's slot, the finest level only.
+        def glass_tris(q):
+            idx = [i_ for t_ in q['tris'] for i_ in t_]
+            for g in q['groups']:
+                cnt, = struct.unpack_from('<I', g, 12); first, = struct.unpack_from('<I', g, 0x34)
+                ti, si = struct.unpack_from('<II', g, 0x1C)
+                th = q['textures'][ti] if ti < len(q['textures']) else 0
+                sh = q['shaders'][si] if si < len(q['shaders']) else 0
+                if material_for(names.get(th, ''), sh) in (WINDOW, BLACKGLASS):
+                    yield g, [idx[k_:k_ + 3] for k_ in range(first, first + cnt - 2, 3) if max(idx[k_:k_ + 3]) < len(q['verts'])]
+        def tri_mid(q, t_): return np.mean([q['verts'][i_][:3] for i_ in t_], axis=0)
+        win_cent = [tri_mid(q[0], t_) for k in ('FRONT_WINDOW', 'REAR_WINDOW', 'FRONT_LEFT_WINDOW', 'FRONT_RIGHT_WINDOW', 'REAR_LEFT_WINDOW', 'REAR_RIGHT_WINDOW')
+                 for q in [find(k)] if q for _, ts in glass_tris(q[0]) for t_ in ts]
+        win_cent = np.array(win_cent) if win_cent else np.zeros((0, 3))
+        body_glass = []
+        for q in [lv[0] for lv in ([base] + [find('BODY')]) if lv]:
+            tris_, groups_ = [], []
+            for g, ts in glass_tris(q):
+                keep = [t_ for t_ in ts if not len(win_cent) or np.min(np.linalg.norm(win_cent - tri_mid(q, t_), axis=1)) > 0.03]
+                if keep: win_cent = np.concatenate([win_cent, np.array([tri_mid(q, t_) for t_ in keep])])  # (the same glass in BASE and the body, the ZR1's: once)
+                if not keep: continue
+                g2 = bytearray(g); struct.pack_into('<I', g2, 12, 3 * len(keep)); struct.pack_into('<I', g2, 0x34, 3 * len(tris_))
+                groups_.append(bytes(g2)); tris_ += keep
+            if tris_:
+                body_glass.append(dict(q, tris=tris_, groups=groups_))
+                print('glass: %d triangles only in %s, with the windscreen' % (len(tris_), q['name']))
+        if body_glass:
+            fkey = next((k for k in gkeys if k.endswith('F') and len(k) <= 7 and k != 'glassRF' and k != 'glassLF'), None)
+            if fkey is None: print('glass: no windscreen slot for them')
+            elif plan[fkey][0][0]: plan[fkey] = (plan[fkey][0] + [[q] for q in body_glass],) + tuple(plan[fkey][1:])
+            else: plan[fkey] = ([[q] for q in body_glass], 0, True)
     plan = {k: v + (None, False)[len(v) - 2:] for k, v in plan.items()}
     built = {}
     done = []
+    def slot_is(name, key):  # the slot's own part or its shop variants (bumperF: bumperFa_LOD1), not another slot that starts the same (glassR: glassRF, glassRHL, glassRM)
+        rest = name[len(key):] if name.startswith(key) else None
+        return rest is not None and not (rest[:1].isupper())
     # A slot the Most Wanted car has nothing for (the M3 GTR's hood, wing and
     # mirrors are in its body): the template's part hidden, not left as it was
     empty = tuple(k for k, v in plan.items() if not all(v[0])) if mw else ()
     filled = tuple(k for k, v in plan.items() if all(v[0]))
     for part in car['parts']:
         if (part['name'].startswith('glass') and (not keep_glass or 'HL_' in part['name']) and not mw  # the template's glass stood out of a lower NFSU roof; its headlight glass never fits
+                or mw and re.match(r'glass[LR](HL|TL|M)_', part['name'])  # Most Wanted: the template's lamp covers and mirror glass where its own lamps and mirrors were (glassR's slot took the right ones, the left stood as they were, 6 Nov)
                 or mw and part['name'].startswith(('glassT', 'bumperR', 'bumperFg', 'bumperFrace', 'skirt', 'trunk', 'wingraceB', 'wingraceC', 'lampglass'))  # Most Wanted: in the kits, or none (a race car's lamp covers too)
                 and not part['name'].startswith(filled)  # (unless a shop slot, or the tail lights' place)
-                or part['name'].startswith(empty) and part['name'].endswith('_LOD1')
+                or any(slot_is(part['name'], k) for k in empty) and part['name'].endswith('_LOD1')
                 or HIDE and part['name'].startswith(HIDE) and part['name'].endswith('_LOD1') and not (SHOP and part['name'].startswith(tuple(SHOP)))  # (the plan's: a template part the car has nothing for, the SRT-4's wing on the Neon)
                 or part['name'].startswith(('BADGE', 'bands', 'exhaust', 'cagerace'))):  # (the race cage too: not on a stock car, and its bars showed through the glass)  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
@@ -1815,7 +1921,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             done.append(part['name'] + '(hidden)')
             continue
         for key, (src, side, glass, inner) in plan.items():
-            if part['name'].startswith(key) and part['name'].endswith('_LOD1') and all(src):
+            if slot_is(part['name'], key) and part['name'].endswith('_LOD1') and all(src):
                 if key not in built:
                     # (a Forza part holds 65536 vertices: a dense body's levels together, doubled for their black
                     # insides and split along the vinyl layout's seams, ran past it, the BMW M2's 24,000 of 5 Nov.
