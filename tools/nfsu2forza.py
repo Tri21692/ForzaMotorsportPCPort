@@ -1553,6 +1553,28 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     old_fit = roof(old_shell), sides(old_shell)
     floor = min(ty)
 
+    def on_trunk(levels):
+        """An Underground 2 spoiler on the trunk lid: its parts stand at the origin (the game puts them on at run
+        time), so as they were they sat inside the car, unseen (the Silvia's own, the Neon's shop ones, 5 Nov). Its
+        back to the lid's back edge, its foot on the lid's top there. Spoilers already in place are left."""
+        trunk = find('TRUNK')
+        if not levels or not trunk: return levels
+        V0 = np.array([v[:3] for v in levels[0]['verts']])
+        if not (abs((V0[:, 0].min() + V0[:, 0].max()) / 2) < 0.6 and V0[:, 2].min() > -0.2 and V0[:, 2].max() < 0.7):
+            return levels
+        T = np.array([v[:3] for v in trunk[0]['verts']])
+        back, depth = T[:, 0].min(), np.ptp(V0[:, 0])
+        near = T[(T[:, 0] < back + max(depth, 0.15)) & (np.abs(T[:, 1]) < 0.35)]
+        top = near[:, 2].max() if len(near) else T[:, 2].max()
+        dx, dz = back + 0.02 - V0[:, 0].min(), top - 0.01 - V0[:, 2].min()
+        out = []
+        for lv in levels:
+            q = dict(lv)
+            q['verts'] = [(v[0] + dx, v[1], v[2] + dz) + tuple(v[3:]) for v in lv['verts']]
+            out.append(q)
+        print('spoiler on the trunk: %+.2f forward, %+.2f up' % (dx, dz))
+        return out
+
     plan = {
         # (the roof where the car has one of its own: the Celica GT-Four has none, and without it
         # the slot was skipped and the template's body stayed under the new bumpers)
@@ -1566,7 +1588,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         'mirrorL': ([find('LEFT_SIDE_MIRRO')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRR')], 0),
         # every wing the template offers becomes the NFSU car's own spoiler: left
         # as they were, the Civic's floated behind the hatch where its trunk was
-        'wing': ([find('SPOILER')], 0),
+        'wing': ([on_trunk(find('SPOILER')) if UV32 else find('SPOILER')], 0),
     }
     if not mw and find('BRAKELIGHT') and not any(p['name'].startswith('taillight') for p in car['parts']):
         # A template with its lamps in its body (the S15): the tail lights go in the body,
@@ -1670,6 +1692,27 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             if mine + '_LOD1' not in names_ and theirs + '_LOD1' in names_: plan[theirs + '_LOD1'] = plan.pop(mine)
         if not any(n.startswith('taillight') for n in names_) and 'bumperR_LOD1' in names_:
             plan['bumperR_LOD1'] = ([find('LEFT_BRAKELIGHT'), find('RIGHT_BRAKELIGHT')], 0)
+    if SHOP and not mw:
+        # The shop's other choices (cartoolkit.py's plan "shop": {slot: [part, side]}): an Underground 2 car's body
+        # kits, hoods and spoilers in the template's slots that its lists already name (Bumper 1 -> bumperFb ...),
+        # each slot by its own name ahead of the stock part's (a part takes the first key it starts with). The
+        # user's, 5 Nov: "if the recent custom cars had any body kits/hoods/spoilers... add those. Choose a few".
+        def shop_part(src):
+            full = prefix + '_' + src
+            hit = [p for p in nparts if p['name'] in {(full + s)[:27] for s in ('_A', '_B', '_C', '_D', '')}
+                   and 'DAMAGE' not in p['name']]
+            return sorted(hit, key=lambda p: -len(p['verts']))
+        shop_plan = {}
+        for slot, (src, side) in SHOP.items():
+            got = shop_part(src)
+            if 'SPOILER' in src: got = on_trunk(got)
+            if not got:
+                print('shop: %s: no %s in the car' % (slot, src))
+                continue
+            inner = 2 if slot.startswith('bumper') else None
+            shop_plan[slot] = ([got], side, None, inner) if inner else ([got], side)
+            print('shop: %s <- %s (%d levels)' % (slot, src, len(got)))
+        plan = {**shop_plan, **plan}
     plan = {k: v + (None, False)[len(v) - 2:] for k, v in plan.items()}
     built = {}
     done = []
@@ -1682,7 +1725,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 or mw and part['name'].startswith(('glassT', 'bumperR', 'bumperFg', 'bumperFrace', 'skirt', 'trunk', 'wingraceB', 'wingraceC', 'lampglass'))  # Most Wanted: in the kits, or none (a race car's lamp covers too)
                 and not part['name'].startswith(filled)  # (unless a shop slot, or the tail lights' place)
                 or part['name'].startswith(empty) and part['name'].endswith('_LOD1')
-                or HIDE and part['name'].startswith(HIDE) and part['name'].endswith('_LOD1')  # (the plan's: a template part the car has nothing for, the SRT-4's wing on the Neon)
+                or HIDE and part['name'].startswith(HIDE) and part['name'].endswith('_LOD1') and not (SHOP and part['name'].startswith(tuple(SHOP)))  # (the plan's: a template part the car has nothing for, the SRT-4's wing on the Neon)
                 or part['name'].startswith(('BADGE', 'bands', 'exhaust', 'cagerace'))):  # (the race cage too: not on a stock car, and its bars showed through the glass)  # the template's badges floated where its own trunk and flanks were; its bands (under the rear glass, across the trunk) showed as dark strips over the hatch; its tailpipe hung out under the S13's bumper (the NFSU exhaust has no place of its own on the car)
             for sp in part['subparts']:
                 sp['indices'] = [0, 0, 0]
@@ -2056,6 +2099,7 @@ FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoo
 KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
 # rear halves that need bumpers of their own (its kit 1 had no nose, kit 2 came out black)
 HIDE = ()  # template parts hidden by name (cartoolkit.py's plan "hide": ["wing"])
+SHOP = {}  # the shop's other choices: {template slot: [the car's part less its prefix, side -1/0/1]} (cartoolkit.py's plan "shop")
 SMOOTH = False  # the converted parts' normals made again from their surface (cartoolkit.py sets it for a plan that decimates)
 OWN_INTERIOR = False  # a Most Wanted add-on's KIT00_INTERIOR as the cabin, not the template's fitted in (cartoolkit.py's plan
                       # "interior": true): under the roadster MX-5's open top the NB's interior was squashed into black spikes

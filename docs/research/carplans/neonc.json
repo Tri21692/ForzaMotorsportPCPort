@@ -1,38 +1,104 @@
 {
-  "merge": {
-    "KIT00_BODY": [
-      "KIT00_BODY",
-      "KIT00_DOOR_LEFT",
-      "KIT00_DOOR_RIGHT",
-      "KIT00_DOOR_SILL_LEFT",
-      "KIT00_DOOR_SILL_RIGHT",
-      "BASE"
-    ],
-    "KIT00_HEADLIGHT": [
-      "KIT00_HEADLIGHT_LEFT",
-      "KIT00_HEADLIGHT_RIGHT"
-    ],
-    "KIT00_HOOD": [
-      "KIT00_HOOD",
-      "KIT00_HOOD_UNDER"
-    ],
-    "KIT00_TRUNK": [
-      "KIT00_TRUNK",
-      "KIT00_TRUNK_UNDER"
-    ],
-    "UNUSED_TRUNK_AUDIO": [
-      "KIT00_TRUNK_AUDIO",
-      "KIT00_TRUNK_AUDIO_UNLIT"
-    ],
-    "KIT00_LEFT_SIDE_MIRROR": [
-      "KIT00_LEFT_SIDE_MIRROR"
-    ],
-    "KIT00_RIGHT_SIDE_MIRROR": [
-      "KIT00_RIGHT_SIDE_MIRROR"
-    ]
-  },
-  "hide": [
-    "wing"
+ "merge": {
+  "KIT00_BODY": [
+   "KIT00_BODY",
+   "KIT00_DOOR_LEFT",
+   "KIT00_DOOR_RIGHT",
+   "KIT00_DOOR_SILL_LEFT",
+   "KIT00_DOOR_SILL_RIGHT",
+   "BASE"
   ],
-  "fit": "track"
+  "KIT00_HEADLIGHT": [
+   "KIT00_HEADLIGHT_LEFT",
+   "KIT00_HEADLIGHT_RIGHT"
+  ],
+  "KIT00_HOOD": [
+   "KIT00_HOOD",
+   "KIT00_HOOD_UNDER"
+  ],
+  "KIT00_TRUNK": [
+   "KIT00_TRUNK",
+   "KIT00_TRUNK_UNDER"
+  ],
+  "UNUSED_TRUNK_AUDIO": [
+   "KIT00_TRUNK_AUDIO",
+   "KIT00_TRUNK_AUDIO_UNLIT"
+  ],
+  "KIT00_LEFT_SIDE_MIRROR": [
+   "KIT00_LEFT_SIDE_MIRROR"
+  ],
+  "KIT00_RIGHT_SIDE_MIRROR": [
+   "KIT00_RIGHT_SIDE_MIRROR"
+  ]
+ },
+ "hide": [
+  "wing"
+ ],
+ "fit": "track",
+ "shop": {
+  "bumperFb": [
+   "KIT01_FRONT_BUMPER",
+   0
+  ],
+  "bumperRb": [
+   "KIT01_REAR_BUMPER",
+   0
+  ],
+  "skirtLb": [
+   "KIT01_SKIRT",
+   -1
+  ],
+  "skirtRb": [
+   "KIT01_SKIRT",
+   1
+  ],
+  "bumperFc": [
+   "KIT04_FRONT_BUMPER",
+   0
+  ],
+  "bumperRc": [
+   "KIT04_REAR_BUMPER",
+   0
+  ],
+  "skirtLc": [
+   "KIT04_SKIRT",
+   -1
+  ],
+  "skirtRc": [
+   "KIT04_SKIRT",
+   1
+  ],
+  "bumperFd": [
+   "KIT08_FRONT_BUMPER",
+   0
+  ],
+  "bumperRd": [
+   "KIT08_REAR_BUMPER",
+   0
+  ],
+  "skirtLd": [
+   "KIT08_SKIRT",
+   -1
+  ],
+  "skirtRd": [
+   "KIT08_SKIRT",
+   1
+  ],
+  "hoode": [
+   "STYLE01_HOOD",
+   0
+  ],
+  "hoodg": [
+   "STYLE03_HOOD",
+   0
+  ],
+  "wingb": [
+   "STYLE01_SPOILER",
+   0
+  ],
+  "wingc": [
+   "STYLE03_SPOILER",
+   0
+  ]
+ }
 }

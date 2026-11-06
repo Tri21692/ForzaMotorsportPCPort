@@ -398,6 +398,7 @@ if __name__ == '__main__':
     nfsu2forza.LOWER = plan.get('lower', 0.0)
     nfsu2forza.KITS = plan.get('kits')
     nfsu2forza.HIDE = tuple(plan.get('hide', ()))
+    nfsu2forza.SHOP = dict(plan.get('shop', {}))
     nfsu2forza.OWN_INTERIOR = bool(plan.get('interior'))
     nfsu2forza.SMOOTH = 'decimate' in plan  # (thinned: the dense model's normals no longer fit)
     nfsu2forza.UV32 = 'merge' in plan  # (an Underground 2 car's texels at the game's reading)

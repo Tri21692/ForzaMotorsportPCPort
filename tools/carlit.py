@@ -11,6 +11,7 @@ Writes <out prefix>_<view>.png for the views front, rear, left, fside.
 Env: VIEWS=front,rear,...  (also lclose, rclose, fclose, rtop, cabin, rearc)  ALL=1 every part
      ICON=1 the car-select tile's view (icon: a front three-quarter, no ground, a clear background, 512 x 256)
      PARTS=1 a flat colour a part (the names printed)   ONLYP=<regex> only those parts   PICK=<name,...> add these
+     SLOTS=bumperF:b,skirtL:b,hood:e,wing:c  those shop variants instead of the stock ones
      BACKRED=1 back faces (by the carbin's winding) red   LEVEL=<n> that detail level instead of the finest
 
 It found the Celica GT-Four still on its template's body, the Underground 2 decals as black boxes and the MX-5's
@@ -39,8 +40,15 @@ for n in names:  # a slot's variants: the plain one first, then a, b, ...
 PICK = set(os.environ.get('PICK', '').split(','))
 
 
+SLOTS = dict(kv.split(':') for kv in os.environ.get('SLOTS', '').split(',') if ':' in kv)  # SLOTS=bumperF:b,hood:e: that shop variant drawn for the slot
+
+
 def stock(n):
     if os.environ.get('ALL') or n in PICK: return True
+    for f, vs in FAM.items():  # (a shop variant asked for: drawn in its slot's place, wings too)
+        key = next((k for k in SLOTS if f.endswith(k)), None)
+        if key and any(v[1] == n for v in vs) and any(v[0] == SLOTS[key] for v in vs):
+            return any(v[0] == SLOTS[key] and v[1] == n for v in vs)
     if n.startswith(('driver', 'Head', 'Chest', 'Abdomen', 'Left_', 'Right_', 'cagerace', 'nocage', 'aaa_')): return False
     for f, vs in FAM.items():
         if any(v[1] == n for v in vs):
