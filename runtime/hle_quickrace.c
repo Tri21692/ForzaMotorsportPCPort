@@ -282,6 +282,17 @@ static void respawn(uint32_t car, uint32_t xs, uint32_t zs, uint32_t ys, uint32_
     float pose[12] = {x, y + 0.6f, z, fz, 0, -fx, 0, 1, 0, fx, 0, fz};
     for (int j = 0; j < 12; j++) wrf(car + 0x14 + 4 * j, pose[j]);
     wrf(car + 0x44, fx * 15), wrf(car + 0x48, 0), wrf(car + 0x4C, fz * 15);
+    wrf(car + 0x50, 0), wrf(car + 0x54, 0), wrf(car + 0x58, 0); /* (its spin stopped: a blown-up wreck's tumble, kept as
+                                                                 * it was set down on the line, went with it into the
+                                                                 * road; the hang after a takedown of 5 Nov had NaNs) */
+}
+
+/* A car's pose, velocity or spin not a number, or far past any race's (a car's physics gone to NaN: the game's
+ * then ran on with it and stopped drawing, "no frame for 8 s", the user's of 5 Nov, a takedown's respawn before). */
+static int car_broken(uint32_t car) {
+    for (uint32_t j = 0; j < 12; j++) { float f = rdf(car + 0x14 + 4 * j); if (!(f > -1e5f && f < 1e5f)) return 1; }
+    for (uint32_t j = 0; j < 6; j++) { float f = rdf(car + 0x44 + 4 * j); if (!(f > -2e3f && f < 2e3f)) return 1; }
+    return 0;
 }
 
 static uint32_t heapcam[8]; /* the scan's last camera copies on the heap (cam_debug_tick) */
@@ -916,6 +927,17 @@ void rt_qr_tick(void) {
             fprintf(stderr, "xbrt: quick race: a new run (restart): ours afresh\n");
         }
         if (rme) rme_was = rme;
+    }
+    for (uint32_t i = 0; i < n && i < MAXCARS; i++) { /* (before the pause's check: a car gone to NaN stopped the race too) */
+        uint32_t r = xb_rd32(arr + 4 * i), car = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xA0) : 0;
+        if (!car || car >= RT_USER_LIMIT) continue;
+        if (have_line && cs[i].car == car && car_broken(car)) { /* set back on the line where it last was */
+            float lx = cs[i].pos[0], lz = cs[i].pos[2];
+            int at = lx > -1e5f && lx < 1e5f && lz > -1e5f && lz < 1e5f ? nearest(xs, zs, np, lx, lz) : 0;
+            fprintf(stderr, "xbrt: quick race: racer %u's car not a number (%g %g %g, v %g %g %g): set back on the line at point %d\n",
+                    i, rdf(car + 0x14), rdf(car + 0x18), rdf(car + 0x1C), rdf(car + 0x44), rdf(car + 0x48), rdf(car + 0x4C), at);
+            respawn(car, xs, zs, ys, np, at);
+        }
     }
     { /* paused (the race's clock stands while its menu is up and the game steps nothing), or the player's race done
        * (+0x1B8: the cool-down lap, the replay): nothing of ours acts (the audit: low gravity and the pushes piled
