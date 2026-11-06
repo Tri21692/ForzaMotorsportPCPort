@@ -848,7 +848,7 @@ def part_prefix(nparts, folder):
     return c.most_common(1)[0][0] if c else folder
 
 
-def lamp_lens(name, tex=None):
+def lamp_lens(name, tex=None, dark=True):
     """Whether a lamp's sheet is its lens (glass): GLASS in its name, also cut short at 24 letters (_G, _GL, _GLA,
     _GLAS: the nfs.com.ru pack's BMWM2_KIT00_HEADLIGHT_G), or a sheet a lamp's name has that is small (32 at most:
     a tint, 4 x 4 to 16 x 16 at 80-93% opaque) or mostly clear. Drawn as lamps they covered the lamps as dark or
@@ -863,6 +863,8 @@ def lamp_lens(name, tex=None):
         except Exception:
             return False
         if max(img.shape[:2]) <= 32: return True
+        if img[..., :3].reshape(-1, 3).std(0).mean() < 4 and img[..., :3].mean() < 90: return True  # (one flat dark tint: the Brera's 64 x 32 grey over its tail lights, 6 Nov)
+        if dark and img[..., :3].max(-1).mean() < 40: return True  # (near black throughout: the Eclipse's carbon SIDELIGHT strip over its headlights; not at draw time, where the same sheet is its splitter and diffuser)
         if (img[..., 3] < 128).mean() > 0.6: return True
     return False
 
@@ -1003,18 +1005,43 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         for p in nparts:
             for name in p['materials']: SHADERS.setdefault(bhash(name), mw_material(name))
         # Its parts name textures by role, resolved to the car's own at run time:
-        # the unlit lamps (_OFF; the headlights have only _ON, and a small glow
-        # under the same cut-short name), else the largest of the role's
+        # the lit lamps (_ON; the unlit _OFF read as dark grey and dull red in the game, the Brera's, Evora's and
+        # Eclipse's, 6 Nov: Forza's own lamp texels are the lit colours), else the largest of the role's
         for role, own in (('HEADLIGHT', '_KIT00_HEADLIGH'), ('BRAKELIGHT', '_KIT00_BRAKELIG')):
-            hit = next((h for h in (bhash('%s_KIT00_%s_%s' % (prefix, role, s)) for s in ('OFF', 'ON'))
+            hit = next((h for h in (bhash('%s_KIT00_%s_%s' % (prefix, role, s)) for s in ('ON', 'OFF'))
                         if h in textures and textures[h]['data']), None)
             if hit is None:
                 hit = max((h for h, t in textures.items() if t['name'].startswith(prefix + own) and t['data']),
-                          key=lambda h: textures[h]['width'] * textures[h]['height'], default=None)
+                          key=lambda h: (textures[h]['width'] * textures[h]['height'], float(nfsu_rgba(textures[h])[..., :3].mean())),
+                          default=None)  # (of two the same size, the brighter: the lit one, the Brera's _ON under a cut-short name)
             for side in ('LEFT', 'RIGHT'):
                 if hit is not None: textures[bhash('%s_%s' % (role, side))] = textures[hit]
         names.update({h: t['name'] for h, t in textures.items()})
         print('Most Wanted car: %d parts, %d textures' % (len(nparts), len(textures)))
+    # NFSU_COVERS=1 (newcars.py COVERS): a Most Wanted port's lamps under shells of another sheet (the RS5's, its MISC
+    # sheet's dark glass over the lamps, in other parts than theirs, 6 Nov): what is not lamp and lies within a couple of
+    # centimetres of the lamps' surfaces, all three corners, is left out. Cells of 2.5 cm round every lamp vertex (the RS5's
+    # covers stand up to 6 cm off).
+    COVER_CELLS = None
+    if mw and os.environ.get('NFSU_COVERS'):
+        COVER_CELLS = set()
+        def is_lamp(th):
+            n = names.get(th, '').upper()
+            return th in made_lamps or (('HEADLIG' in n or 'BRAKELIG' in n or n.endswith(('_HEAD', '_BRAK'))) and not lamp_lens(n, textures.get(th), dark=False))
+        for p_ in nparts:
+            if 'DAMAGE' in p_['name']: continue
+            idx_ = [i for t in p_['tris'] for i in t]
+            for g in p_['groups']:
+                cnt_, = struct.unpack_from('<I', g, 12); first_, = struct.unpack_from('<I', g, 0x34); ti_, = struct.unpack_from('<I', g, 0x1C)
+                if ti_ < len(p_['textures']) and is_lamp(p_['textures'][ti_]):
+                    for i in idx_[first_:first_ + cnt_]:
+                        if i < len(p_['verts']):
+                            x, y, z = p_['verts'][i][:3]
+                            COVER_CELLS.add((int(np.floor(x / 0.025)), int(np.floor(y / 0.025)), int(np.floor(z / 0.025))))
+        print('covers: %d lamp cells' % len(COVER_CELLS))
+    def near_lamp(v):
+        cx, cy, cz = (int(np.floor(c / 0.025)) for c in v[:3])
+        return any((cx + a, cy + b, cz + c) in COVER_CELLS for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1))
 
     # the fit: template body vs NFSU body (+ roof)
     tbody = next(p for p in car['parts'] if p['name'].startswith('body'))
@@ -1094,6 +1121,10 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         own = {th for p in nparts if ('_KIT00_' in p['name'] or '_BASE' in p['name']) and p['materials']
                for th in drawn_from(p) if th in textures and textures[th]['data']}
     own |= set(made_pic.values())  # (packed though no part names them: the Celica GT-Four's lamps)
+    if mw:  # (a Most Wanted car's lamp faces all draw their end's _LEFT sheet, below (a made picture, or the car's own
+        # lamp sheet put in its place): packed though no group names it; the Evora's, naming only BRAKELIGHT_RIGHT, read
+        # blank atlas and came out grey-white, 6 Nov)
+        own |= {h for h in made_lamps if textures.get(h, {}).get('data')}
     livery_dir = os.path.join(os.path.dirname(template_path), 'liveries', 'standard')
     images = {h: nfsu_rgba(textures[h]) for h in own}
     if mw:  # halved to 128 at most: the atlas's free room is small
@@ -1106,6 +1137,14 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                 # lamp textures are opaque, and drawn so the lamps came out white
                 img = img.copy()
                 img[..., 3] = 0
+                rgb_ = img[..., :3].reshape(-1, 3).astype(float).mean(0)
+                if any(k in textures[h]['name'] for k in ('BRAKELIG', '_BRAK')) or names.get(h, '').startswith('BRAKELIGHT') or rgb_[0] > 1.5 * max(rgb_[1], rgb_[2]):  # (or red throughout: the RS5's tail art is on its HEADLIGHT sheet)
+                    # (Most Wanted's tail-light sheets are dull red under its own glow: drawn as they are the Brera's,
+                    # Evora's read dark in the game, 6 Nov. Lifted, as a lit lamp's red.)
+                    f = img[..., :3].astype(float)
+                    red = f[..., 0] > 1.3 * np.maximum(f[..., 1], f[..., 2]) + 8  # (the lenses: red lifted to a lit lamp's, the rest a little)
+                    f[red, 0] *= 2.2; f[red, 1:] *= 1.2; f[~red] = 255 * (f[~red] / 255) ** 0.8
+                    img[..., :3] = np.clip(f, 0, 255).astype(np.uint8)
             images[h] = img
     extra = badge_images(badges)  # the --badges folder's, by name
     for h in images:
@@ -1345,12 +1384,22 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                     arches.extend(tuple(pos(p['verts'][i - base]) for i in t) for t in tris)
                 m = material_for(names.get(th, ''), sh)
                 if m is None: continue  # (mw_material: left out)
+                if mw and m in (HEADLIGHTS, TAILLIGHTS) and th in textures and th not in made_lamps and lamp_lens(names.get(th, ''), textures[th], dark=False):
+                    continue  # (a lens sheet in a part of mixed materials, which auto_materials leaves be: the Brera's grey tint over its tail lights)
+                if COVER_CELLS and tris and m not in (HEADLIGHTS, TAILLIGHTS) and not (th in made_lamps):
+                    n_ = names.get(th, '').upper()
+                    if not ('HEADLIG' in n_ or 'BRAKELIG' in n_):
+                        tris = [t for t in tris if not all(near_lamp(p['verts'][i - base]) for i in t)]  # (NFSU_COVERS: see COVER_CELLS)
                 if th in no_glass: continue  # (a shared lamp's glass cover: see made_lamps)
                 if th in made_lamps and m != WINDOWS:  # (the reflector, Chrome by its shader, lit as the lamp; the black housing stays)
-                    if mw and tris:  # (a Most Wanted car: the picture for its end of the car, whichever shared sheet it named)
+                    if mw and tris and str(textures[th].get('name', '')).endswith('(made)'):  # (a Most Wanted car: the picture for its end of the car, whichever shared sheet it named; not when the role is the car's own sheet, which its coordinates were made on: the RS5's rear lamps are on its HEADLIGHT sheet, and drawn from the brake sheet came out dark, 6 Nov)
                         fwd = np.mean([p['verts'][i - base][0] for t in tris for i in t]) > 0
                         th = bhash('HEADLIGHT_LEFT' if fwd else 'BRAKELIGHT_LEFT')
                     m = made_lamps[th]
+                if mw and tris and m in (HEADLIGHTS, TAILLIGHTS):
+                    # (a lamp's material by its end of the car: the RS5's rear lamps are on its HEADLIGHT sheet, drawn
+                    # as headlights at the back)
+                    m = HEADLIGHTS if np.mean([p['verts'][i - base][0] for t in tris for i in t]) > 0 else TAILLIGHTS
                 role = next((r for r in ('HEADLIGHT', 'BRAKELIGHT') if '_KIT00_' + r in p['name']), None)
                 if role and sh in LAMP_GLASS: continue  # (a lamp's see-through cover)
                 if mw and tris and th in textures and textures[th].get('data') and th not in made_lamps and (role or 'LIGHT' in names.get(th, '').upper()):
@@ -1408,9 +1457,18 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                         return all(img[min(h - 1, int(min(max(p['verts'][i - base][8], 0), 1) * h)),
                                        min(w - 1, int(min(max(p['verts'][i - base][7], 0), 1) * w)), :3].max() < 24 for i in t)
                     trim = [t for t in tris if dark(t)]
+                    if len(trim) > 0.9 * len(tris): trim = list(tris)  # (a dark sheet all but a few: all trim; the Eclipse's carbon left lit flecks)
                     if trim:
-                        tris = [t for t in tris if not dark(t)]
-                        subs.append((lod, WINDOWS, strip(trim)))
+                        tris = [t for t in tris if t not in set(trim)]
+                        # (on their own copies of the corners they share with the lamp: a vertex takes the material of
+                        # the first piece naming it, and the lamps' edges drew the black texel, the Brera's and Evora's
+                        # tail lights dark smears, 6 Nov)
+                        lit = {i for t in tris for i in t}
+                        copy = {}
+                        for t in trim:
+                            for i in t:
+                                if i in lit and i not in copy: copy[i] = len(verts); verts.append(verts[i])
+                        subs.append((lod, WINDOWS, strip([tuple(copy.get(i, i) for i in t) for t in trim])))
                 if tris and th in atlas and not (m == WINDOW and th == bhash('REAR_DEFROSTER')):  # its texture is in the livery atlas: its own coordinates, moved there (not the rear glass's heater lines: stretched, two orange streaks over the LF-A's)
                     u0, v0, u1, v1 = atlas[th]
                     one = BADGE_UV if m == BADGE or mw or UV32 else 65536  # (see BADGE_UV and ATLAS_UV)
@@ -1761,7 +1819,9 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         'mirrorL': ([find('LEFT_SIDE_MIRRO')], 0), 'mirrorR': ([find('RIGHT_SIDE_MIRR')], 0),
         # every wing the template offers becomes the NFSU car's own spoiler: left
         # as they were, the Civic's floated behind the hatch where its trunk was
-        'wing': ([on_trunk(find('SPOILER')) if UV32 else find('SPOILER')], 0),
+        # (faced away from the car's middle with a black underside: wound as they came, the Celica GT-Four's wing drew
+        # its two end plates and no top in the game, floating, 6 Nov)
+        'wing': ([on_trunk(find('SPOILER')) if UV32 else find('SPOILER')], 0, None, True),
     }
     if not mw and find('BRAKELIGHT') and not any(p['name'].startswith('taillight') for p in car['parts']):
         # A template with its lamps in its body (the S15): the tail lights go in the body,
@@ -1865,6 +1925,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             if mine + '_LOD1' not in names_ and theirs + '_LOD1' in names_: plan[theirs + '_LOD1'] = plan.pop(mine)
         if not any(n.startswith('taillight') for n in names_) and 'bumperR_LOD1' in names_:
             plan['bumperR_LOD1'] = ([find('LEFT_BRAKELIGHT'), find('RIGHT_BRAKELIGHT')], 0)
+        elif not any(n.startswith('taillight') for n in names_):  # (no tail lights and no plain rear bumper either, the
+            # Eclipse GTS's bumperRa-f: the lamps in the always-drawn body; left out, its tail lights were holes, 6 Nov)
+            plan['body'] = (plan['body'][0] + [lv for lv in (find('LEFT_BRAKELIGHT'), find('RIGHT_BRAKELIGHT')) if lv],) + plan['body'][1:]
+        if not any(n.startswith('headlight') for n in names_):  # (the headlights too: the Eclipse GTS has no headlight parts)
+            plan['body'] = (plan['body'][0] + [lv for lv in (find('LEFT_HEADLIGHT'), find('RIGHT_HEADLIGHT')) if lv],) + plan['body'][1:]
     if SHOP and not mw:
         # The shop's other choices (cartoolkit.py's plan "shop": {slot: [part, side]}): an Underground 2 car's body
         # kits, hoods and spoilers in the template's slots that its lists already name (Bumper 1 -> bumperFb ...),
@@ -1882,7 +1947,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
             if not got:
                 print('shop: %s: no %s in the car' % (slot, src))
                 continue
-            inner = 2 if slot.startswith('bumper') else None
+            inner = 2 if slot.startswith('bumper') else True if 'SPOILER' in src else None  # (a spoiler: see 'wing')
             shop_plan[slot] = ([got], side, None, inner) if inner else ([got], side)
             print('shop: %s <- %s (%d levels)' % (slot, src, len(got)))
         plan = {**shop_plan, **plan}

@@ -113,11 +113,17 @@ MERGE = {  # bodies spread over other parts (a port's way past a part's size): j
 # parts left out (merged into a name the converter never takes): the Countach's (from CSR2) chassis frame in its lamp
 # glass parts and its engine in the rear window and right lamp, 80,000 vertices under the body at every level
 DROP = {'countach': ['KIT00_REAR_WINDOW', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_HEADLIGHT_GLASS', 'KIT00_RIGHT_HEADLIGHT_GLASS',
-                     'BASE', 'BASE_E', 'KIT00_FRONT_WINDOW']}  # (6 Nov: BASE and the glass read as scattered spikes and shards, in the game too; KIT00_BODY has the whole shell)
+                     'BASE', 'BASE_E', 'KIT00_FRONT_WINDOW'],  # (tried back 6 Nov: still crumpled shards; the open frames kept)
+        'diablo': ['KIT00_LEFT_HEADLIGHT', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_HEADLIGHT_GLASS', 'KIT00_RIGHT_HEADLIGHT_GLASS']}  # (its pop-up lamps, modelled raised: two boxes on its nose that read as wing pieces, the user's 6 Nov; closed, as parked)  # (6 Nov: BASE and the glass read as scattered spikes and shards, in the game too; KIT00_BODY has the whole shell)
 # the car's own cabin (merged into the body above): the template's interior not fitted in as well
 OWN_CABIN = {'jesko', 'zr1', 'gt2rs', 'f8', 'slrmoss', '335i', '190e', 'brera', 'chiron', 'fordgt17', 'huracan'}  # (the SLR Stirling Moss: no roof, and the coupe template's headliner fitted under none stood over its cockpit in black)
+COVERS = {'rs5'}  # lamps under another sheet's shells: those left out (nfsu2forza NFSU_COVERS)
 THIN = {}  # dense ports whose levels are all one mesh, thinned (cartoolkit "decimate"; its levels then share no vertices)
-ARCHES = {}  # pre-stretch arch middles where the converter's own read is off (NFSU_ARCHES)
+ARCHES = {  # the arch middles as the length fit puts them, where the converter's own read is off (NFSU_ARCHES); from
+  # sideplot.py's measure of each arch against its wheel (the user's 6 Nov screenshots: the M8 GTE's rear wheel behind its arch)
+ 'm8gte': [2.089, -2.084], 'senna': [1.758, -2.413], '190e': [2.562, -1.659], 'eclipse': [1.875, -1.912],
+ 'charger': [2.464, -2.182], 'brera': [1.925, -1.81], 'lfa': [2.172, -2.197], 'xk': [2.294, -1.996], '4c': [1.649, -1.87],
+ 'countach': [2.0, -2.149, 1.834, -2.277]}  # (its template's rotors: the front pair only, so its hubs given)
 PAINT = {'chiron': '0.08,0.16,0.5', 'lfa': '0.85,0.85,0.88', 'm2': '0.1,0.35,0.75', '190e': '0.05,0.05,0.06', 'gt2rs': '0.6,0.6,0.62',
          'xk': '0.12,0.25,0.15', 'huayra': '0.7,0.7,0.72', 'impala': '0.55,0.05,0.05', 'rs5': '0.12,0.3,0.12', 'gtx1': '0.9,0.9,0.92',
          'jesko': '0.85,0.85,0.88', 'terzo': '0.05,0.05,0.06', 'maloo': '0.85,0.45,0.05', 'm8gte': '0.1,0.15,0.4', 'sesto': '0.2,0.2,0.22',
@@ -166,6 +172,7 @@ def convert(key):
     if tmpl in ('BMWM3GTR42',): cmd += ['--no-stock-wing']
     cmd += ['--clear-livery']  # (the template's own badges and lamps out of the atlas, but for the parts it keeps: they left the car's lamps a few texels, dark blobs, 6 Nov)
     env = dict(os.environ, **({'NFSU_ARCHES': ','.join(map(str, ARCHES[key]))} if key in ARCHES else {}))
+    if key in COVERS: env['NFSU_COVERS'] = '1'
     rc = run(cmd, log, env)
     print('%-9s convert %s' % (key, 'ok' if rc == 0 and os.path.exists(os.path.join(out, 'car.carbin')) else 'FAILED (see %s)' % log), flush=True)
     return rc == 0
