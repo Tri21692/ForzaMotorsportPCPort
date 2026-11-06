@@ -909,6 +909,8 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     if FIT_WIDTH:  # as wide as the template (cartoolkit's plan "fit": "width"): fitted to the shorter Bentley's length the SC63
         tx = [v[0] / 4096 for v in tbody['verts']]  # came out 9% narrower and lower than its wheels; its length then follows the hubs
         k = (max(tx) - min(tx)) / (max(v[1] for v in nb) - min(v[1] for v in nb))
+    k *= SCALE  # (the plan's correction: an Underground 2 add-on's body, its bumpers apart, against the template's whole
+                # one: the Silvia S15 Spec-R came out 5% longer and 12% wider than Forza's own S15, the audit of 5 Nov)
     dz = (max(tz) + min(tz)) / 2 - k * (max(nx) + min(nx)) / 2
     dy = min(ty) - k * min(nz) - LOWER
     floor = min(nz)  # (the finest body's lowest point: nothing hangs below it)
@@ -2107,6 +2109,7 @@ FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoo
 KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
 # rear halves that need bumpers of their own (its kit 1 had no nose, kit 2 came out black)
 HIDE = ()  # template parts hidden by name (cartoolkit.py's plan "hide": ["wing"])
+SCALE = 1.0  # the fit's scale times this (cartoolkit.py's plan "scale")
 ARCHES = None  # [the car's front and rear arch middles as the length fit puts them, the template body's] (cartoolkit.py's plan "arches")
 SHOP = {}  # the shop's other choices: {template slot: [the car's part less its prefix, side -1/0/1]} (cartoolkit.py's plan "shop")
 SMOOTH = False  # the converted parts' normals made again from their surface (cartoolkit.py sets it for a plan that decimates)
