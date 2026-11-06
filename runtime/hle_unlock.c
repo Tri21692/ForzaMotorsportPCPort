@@ -11,7 +11,7 @@
  * folder's row 8 is "DLC Cars" (docs/research/newcars/dlcclass.py). f_003726D0 applies the search: the class
  * list's choice (screen +0x2280, of +0x2274 entries) becomes a condition on the screen's query (+0x1C10,
  * f_00173770's) through f_001767A0(field, comparison, value); the last entry was the race class's, "perfclass_id
- * at least 6". When "DLC Cars" (the last row, class 8) is chosen, that condition is "unlocked = 1" here instead,
+ * at least 6"; entry n is otherwise "perfclass_id = row n-1's id". When "DLC Cars" (row id 8) is chosen, that condition is "unlocked = 1" here instead,
  * and for that query f_00171000 says whether the car is an add-on. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,16 +52,16 @@ void f_00171000(XbCtx *c) {
     if (rt_unlock_on && c->eax == 0 && addon) c->eax = 1;
 }
 
-static int last_class_is_dlc(void) {
-    uint32_t begin = xb_rd32(0x5BD6DC), end = xb_rd32(0x5BD6E0); /* performanceclass.dat's rows, 24 bytes */
-    return begin && end >= begin + 24 && xb_rd32(end - 24) == 8;
+static int class_row_is_dlc(uint32_t row) { /* performanceclass.dat's rows, 24 bytes: the row's id is 8 */
+    uint32_t begin = xb_rd32(0x5BD6DC), end = xb_rd32(0x5BD6E0);
+    return begin && begin + 24 * (row + 1) <= end && xb_rd32(begin + 24 * row) == 8;
 }
 
 void orig_f_003726D0(XbCtx *c); /* the Advanced Search applied (wraps.txt) */
 void f_003726D0(XbCtx *c) {
     uint32_t screen = c->ecx;
     uint32_t sel = xb_rd32(screen + 0x2280), count = xb_rd32(screen + 0x2274), query = xb_rd32(screen + 0x1C10);
-    int dlc = sel > 0 && sel + 1 == count && last_class_is_dlc();
+    int dlc = sel > 0 && sel + 1 != count && class_row_is_dlc(sel - 1); /* (entry n is row n-1; the last entry is the game's own) */
     if (rt_dlc_query == query) rt_dlc_query = 0;
     rt_dlc_pending = dlc ? query : 0;
     orig_f_003726D0(c);
