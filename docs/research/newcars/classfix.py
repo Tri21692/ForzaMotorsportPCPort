@@ -23,10 +23,10 @@ for name, r in sorted(calc.items(), key=lambda kv: kv[1]['ordinal']):
     g = bytearray(addcar.row_of(games, r['ordinal']))
     was = struct.unpack_from('<I', g, 100)[0]
     notes = []
-    if was <= 20:  # (GT, GTS, P1: a race class, kept)
+    if was <= 20 or was == 24:  # (GT, GTS, P1: a race class, kept)
         struct.pack_into('<I', g, 100, r['subclass'])
         struct.pack_into('<f', g, 120, r['perf'])
-        notes.append('class %s -> %s' % (SUBS[was - 1], r['name_class']))
+        notes.append('class %s -> %s' % (NAMES[was], r['name_class']))
     if name in NEW:
         v = NEW[name]
         hp, tq, kg, (t60, t100, vmax) = v[6], v[7], v[8], v[12]

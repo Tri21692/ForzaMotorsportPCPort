@@ -51,7 +51,7 @@ for name, o in re.findall(r'<car name="([^"]*)"[^>]*?Ordinal="(\d+)"', xml):
     s = subclass(p)
     listed = struct.unpack_from('<I', g, 100)[0]
     out[name] = dict(ordinal=o, hp=round(hp), ftlb=round(tq), kg=round(kg), rear_tyre=rw, adj=round(adj, 4), perf=round(p, 4),
-                     subclass=s, name_class=SUBS[s - 1], listed=listed, listed_class=SUBS[listed - 1] if listed <= 20 else ('GT', 'GTS', 'P1')[listed - 21])
+                     subclass=s, name_class=NAMES[s], listed=listed, listed_class=NAMES[listed])
     r = out[name]
     print('%3d %-28s %4d hp %4d lb-ft %5d kg rear %.3f adj %+.3f  perf %.3f -> %-3s  (listed %s)%s' % (
         o, name, r['hp'], r['ftlb'], r['kg'], rw, adj, p, r['name_class'], r['listed_class'], '' if r['name_class'] == r['listed_class'] else '  *'))

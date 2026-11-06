@@ -8,3 +8,4 @@
 76370   # the random grid order (racer list, by its vtable): hle_career.c, a big field (over 8) in order instead
 BDCE0   # the replay keeps an AI racer's seed (10 of them): hle_career.c, a big field's 11th on not kept
 BDD00   # the replay reads one back: hle_career.c, past the 10th the one ten before
+16D130  # the subclass from the performance figure: hle_fclass.c, class F above S1 (S1 past 0.700)
