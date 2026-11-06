@@ -1095,6 +1095,14 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         print('wheels: arches at %.3f, %.3f go to the hubs at %.3f, %.3f (between them x%.3f)' % (k * af + dz, k * ar + dz, hf, hr, (hf - hr) / (af - ar)))
     else:
         af = ar = None
+    if ARCHES:
+        # The plan's arches (an Underground 2 add-on: no liners, and its sides' lower edge read badly by rule): its
+        # own arch middles as the length fit puts them, and the template body's (over the hubs its physics has),
+        # both read off the side's lower edge in the template's units. The user's of 5 Nov: the Neon's rear wheel
+        # stood ahead of its arch, the Silvia's front behind it.
+        cf, cr, hf, hr = ARCHES
+        af, ar = (cf - dz) / k, (cr - dz) / k
+        print('wheels: the plan\'s arches at %.3f, %.3f go to the template\'s at %.3f, %.3f (between them x%.3f)' % (cf, cr, hf, hr, (hf - hr) / (af - ar)))
 
     def along(x):
         if af is None: return k * x + dz
@@ -2099,6 +2107,7 @@ FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoo
 KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
 # rear halves that need bumpers of their own (its kit 1 had no nose, kit 2 came out black)
 HIDE = ()  # template parts hidden by name (cartoolkit.py's plan "hide": ["wing"])
+ARCHES = None  # [the car's front and rear arch middles as the length fit puts them, the template body's] (cartoolkit.py's plan "arches")
 SHOP = {}  # the shop's other choices: {template slot: [the car's part less its prefix, side -1/0/1]} (cartoolkit.py's plan "shop")
 SMOOTH = False  # the converted parts' normals made again from their surface (cartoolkit.py sets it for a plan that decimates)
 OWN_INTERIOR = False  # a Most Wanted add-on's KIT00_INTERIOR as the cabin, not the template's fitted in (cartoolkit.py's plan
