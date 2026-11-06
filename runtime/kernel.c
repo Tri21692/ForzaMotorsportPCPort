@@ -640,17 +640,22 @@ static void xrm_heap(XbCtx *c) {
     static int on = -1;
     if (on < 0) on = !getenv("XBRT_XRM_HEAP") || atoi(getenv("XBRT_XRM_HEAP"));
     uint32_t size = ARG(0);
-    if (!on || !rt_frame_interval_at || size >= XRM_BIG || xb_rd32(XRM_SIZE_AT) != size) return;
+    static uint32_t big;
+    if (!big) { /* XBRT_XRM_MB=<MB> (testing: Mayhem's big field, whether its cars want more) */
+        big = getenv("XBRT_XRM_MB") ? (uint32_t)(atof(getenv("XBRT_XRM_MB")) * 1048576.0) & ~0xFFFu : XRM_BIG;
+        if (big < XRM_BIG) big = XRM_BIG;
+    }
+    if (!on || !rt_frame_interval_at || size >= big || xb_rd32(XRM_SIZE_AT) != size) return;
     uint32_t sp = c->esp;
     if (xb_rd32(sp) != 0x00266694u || xb_rd32(sp + 0x20) != 0x00046B5Du || xb_rd32(sp + 0x24) != size || xb_rd32(sp + 0x3C) != 0x00064509u ||
         xb_rd32(sp + 0x40) != size || c->edi != size)
         return;
-    c->edi = XRM_BIG;            /* the heap's setup keeps it here across the call, then stores it */
-    xb_wr32(sp + 4, XRM_BIG);    /* this call's size */
-    xb_wr32(sp + 0x24, XRM_BIG); /* XPhysicalAlloc's */
-    xb_wr32(sp + 0x40, XRM_BIG); /* the heap setup's */
-    xb_wr32(XRM_SIZE_AT, XRM_BIG);
-    fprintf(stderr, "xbrt: Forza's resource heap %.1f MB, not %.1f\n", XRM_BIG / 1048576.0, size / 1048576.0);
+    c->edi = big;            /* the heap's setup keeps it here across the call, then stores it */
+    xb_wr32(sp + 4, big);    /* this call's size */
+    xb_wr32(sp + 0x24, big); /* XPhysicalAlloc's */
+    xb_wr32(sp + 0x40, big); /* the heap setup's */
+    xb_wr32(XRM_SIZE_AT, big);
+    fprintf(stderr, "xbrt: Forza's resource heap %.1f MB, not %.1f\n", big / 1048576.0, size / 1048576.0);
 }
 
 K(MmAllocateContiguousMemoryEx) {

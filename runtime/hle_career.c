@@ -268,11 +268,108 @@ static void cu_load(void) {
     fprintf(stderr, "xbrt: catch-up events: %d from %s\n", ncu, path);
 }
 
+/* Mayhem's big field (the user's, 5 Nov: "20-30 opponents ... they will have a headstart, similar to the catchup
+ * mode. Make them evenly spaced out"; 16, what the game's field holds: its AIField's 16 entries, 0x62960): a race of
+ * more than 8 racers, which only our events make (Mayhem's NumAICars 16). The grid's random order shuffles 8 places
+ * on the stack (0x76370), so such a race takes the in-order one (rt_grid_order below); the track holds 15 grid slots
+ * (+0xAE4, read past by place 16 on), so no car is given a slot: the player the pole, and the rivals, in the racer
+ * list's order, the game's own place part of the way round (a place of -pct: pct percent of the racing line's points
+ * on, as catch-up's), evenly round the whole lap: n rivals 1/(n+1) of it apart (the user's "just space them out
+ * evenly"; 4% on, 2% apart before, the field bunched in the lap's first quarter). Then (big_tick) their laps begun as catch-up's
+ * opponent's, 2 s in, and the player's car kept facing the grid's way on a restart. */
+#define BIG_FIELD 8   /* racers: more is a big field */
+static volatile int big_active;    /* a big field's race is on: big_tick begins its rivals' laps */
+static uint32_t big_player_car, big_grid[12];
+static volatile int big_grid_ok;
+static int big_field(void) {
+    uint32_t n = xb_rd32(0x58DAA0 + 0x10), arr = xb_rd32(0x58DAA0 + 4);
+    return arr && n > BIG_FIELD && n <= 64;
+}
+/* the rivals spread round the lap: a big field, or any Mayhem race (the user's, 5 Nov: "just do 7 and spread them
+ * out", after 12 rivals stalled and the game hung; Mayhem's race is known before its grid is laid, the log shows) */
+static int spread_field(void) {
+    uint32_t n = xb_rd32(0x58DAA0 + 0x10), arr = xb_rd32(0x58DAA0 + 4);
+    return arr && n >= 2 && n <= 64 && (n > BIG_FIELD || rt_qr_mayhem());
+}
+/* the grid's order (0x75050: thiscall on the racer list, the order as its argument: 0 random, 1 and 2 by lists): a
+ * big field's never the random one */
+void orig_f_00075050(XbCtx *c);
+void f_00075050(XbCtx *c) {
+    if (big_field() && xb_rd32(c->esp + 4) == 0) {
+        xb_wr32(c->esp + 4, 1);
+        fprintf(stderr, "xbrt: big field: %u racers, the grid in order (not the random order's 8 places)\n", xb_rd32(0x58DAA0 + 0x10));
+    }
+    orig_f_00075050(c);
+}
+
+/* the random order itself (0x76370, the racer list's, by its vtable too: the order above never came to it as 0, and a
+ * big field still crashed at Start Race, its 8 places on the stack run past): a big field's goes in order (0x76550,
+ * the same thiscall, no argument) */
+void orig_f_00076370(XbCtx *c);
+void f_00076550(XbCtx *c);
+void f_00076370(XbCtx *c) {
+    if (big_field()) {
+        fprintf(stderr, "xbrt: big field: %u racers, the random grid order taken in order (its 8 places)\n", xb_rd32(0x58DAA0 + 0x10));
+        f_00076550(c);
+        return;
+    }
+    orig_f_00076370(c);
+}
+
+/* The replay's seeds (CReplayManager +0x260: 10 words, an AI racer's random seed by its number less one, stored as it
+ * is made (0xBDCE0, from 0x241D6A) and read back for a replay (0xBDD00)): a big field's 11th and 12th rivals wrote past
+ * them, over +0x288 (a pointer the replay's save calls through), and the game crashed after the user's win. Past the
+ * 10th, nothing kept, and a replay given the seed of the one ten before. */
+#define REPLAY_SEEDS 10
+void orig_f_000BDCE0(XbCtx *c);
+void f_000BDCE0(XbCtx *c) {
+    uint32_t i = xb_rd32(c->esp + 8);
+    if (i >= REPLAY_SEEDS) {
+        static int said;
+        if (!said++) fprintf(stderr, "xbrt: big field: the replay keeps 10 rivals' seeds; the %uth's not kept\n", i + 1);
+        c->eax = (c->eax & ~0xFFu) | 1;
+        c->esp += 4 + 8; /* (ret 8) */
+        return;
+    }
+    orig_f_000BDCE0(c);
+}
+void orig_f_000BDD00(XbCtx *c);
+void f_000BDD00(XbCtx *c) {
+    uint32_t i = xb_rd32(c->esp + 4);
+    if (i >= REPLAY_SEEDS) xb_wr32(c->esp + 4, i % REPLAY_SEEDS);
+    orig_f_000BDD00(c);
+}
+
 void orig_f_000410E0(XbCtx *c); /* the game's own (wraps.txt) */
 void f_000410E0(XbCtx *c) {
     pthread_once(&cu_once, cu_load);
     int32_t place = (int32_t)xb_rd32(c->esp + 4);
     uint32_t car = c->ecx;
+    static int nospread = -1;
+    if (nospread < 0) nospread = getenv("XBRT_BIG_NOSPREAD") != NULL; /* (testing: the game's own places) */
+    int big = spread_field() && !nospread;
+    if (big) {
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+        uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+        int32_t points = line ? (int32_t)xb_rd32(line + 8) : 0;
+        int k = -1, ai = 0, mine = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i);
+            if (!r || r >= RT_USER_LIMIT) continue;
+            if (xb_rd32(r + 0x14) == 0) { mine |= xb_rd32(r + 0xA0) == car; continue; }
+            if (xb_rd32(r + 0xA0) == car) k = ai;
+            ai++;
+        }
+        int32_t moved = place;
+        if (mine) moved = 1;
+        else if (k >= 0 && points > 0) {
+            int pct = (int)((k + 1) * 100.0f / (ai + 1) + 0.5f);
+            moved = -(pct > 99 ? 99 : pct);
+        } else if (place > 15) moved = 15; /* (no line: no slot past the track's 15) */
+        if (moved != place) xb_wr32(c->esp + 4, (uint32_t)moved);
+        big_active = 1;
+        fprintf(stderr, "xbrt: big field: %s's grid place %d -> %d\n", mine ? "the player" : "a rival", place, moved);
+    }
     if (ncu) {
         /* a race against one opponent: the racer list holds the player (type 0) and one AI car; the
          * car being placed is the opponent's when the AI racer's record holds it (+0xA0) */
@@ -312,9 +409,9 @@ void f_000410E0(XbCtx *c) {
         fprintf(stderr, "\n");
     }
     orig_f_000410E0(c);
-    if (ncu) { /* the player's car as placed: its pose, for rt_career_tick to keep it on a restart */
+    if (ncu || big) { /* the player's car as placed: its pose, for rt_career_tick to keep it on a restart */
         uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
-        for (uint32_t i = 0; i < n && n == 2 && arr; i++) {
+        for (uint32_t i = 0; i < n && (n == 2 || big) && arr; i++) {
             uint32_t r = xb_rd32(arr + 4 * i);
             if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0 && xb_rd32(r + 0xA0) == car) {
                 /* facing along the racing line where it stands: on a restart the game turned it as the
@@ -347,8 +444,13 @@ void f_000410E0(XbCtx *c) {
                         }
                     }
                 }
-                for (int k = 0; k < 12; k++) cu_grid[k] = xb_rd32(car + 0x14 + 4 * k);
-                cu_player_car = car, cu_grid_ok = 1;
+                if (big) {
+                    for (int k = 0; k < 12; k++) big_grid[k] = xb_rd32(car + 0x14 + 4 * k);
+                    big_player_car = car, big_grid_ok = 1;
+                } else {
+                    for (int k = 0; k < 12; k++) cu_grid[k] = xb_rd32(car + 0x14 + 4 * k);
+                    cu_player_car = car, cu_grid_ok = 1;
+                }
             }
         }
     }
@@ -421,7 +523,144 @@ static void tour_tick(void) {
     fprintf(stderr, "xbrt: tour: point %d of %u view %d: %.1f %.1f %.1f\n", k, np, view, p[0], p[1], p[2]);
 }
 
-void rt_career_tick(void) {
+/* A big field's race (f_000410E0 above), each tick until its laps are under way: the player's car kept facing as
+ * the grid left it while it stands there (a restart turns it as the grid's last placing, a rival's a third of the lap
+ * on: as catch-up's), and 2 s into the race each rival's lap counted as begun, the start line passed and its race
+ * measure a lap on (catch-up's three, for every rival: placed past the line, they never crossed it). */
+static void big_tick(void) {
+    if (!big_active) return;
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+    if (!arr || n < 2 || n > 64 || (n <= BIG_FIELD && !rt_qr_mayhem())) { big_active = 0, big_grid_ok = 0; return; }
+    uint64_t now = rt_now_100ns();
+    /* (2 s after the race's clock runs, the player's (+0xA0, from its first move): from the race's being there
+     * ([0x592984], catch-up's) it was done on the grid's menu, and the game crashed at Start Race, placing the cars
+     * again) */
+    static uint64_t since;
+    float clock = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
+        if (t && t < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) { uint32_t v = xb_rd32(t + 0xA0); memcpy(&clock, &v, 4); if ((int32_t)xb_rd32(t + 0x9C) >= 0 && !(clock > 0)) clock = 1; } /* (or its lap begun: the clock stood at 0 in the arcade's races) */
+    }
+    if (!xb_rd32(0x592984) || !(clock > 0)) since = 0;
+    else if (!since) since = now;
+    static int nolaps = -1;
+    if (nolaps < 0) nolaps = getenv("XBRT_BIG_NOLAPS") != NULL; /* (testing: the laps left to the game) */
+    if (nolaps) since = 0;
+    int me_lap = -9, waiting = 0, begun = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
+        if (!t || t >= RT_USER_LIMIT) continue;
+        int32_t lap = (int32_t)xb_rd32(t + 0x9C);
+        if (xb_rd32(r + 0x14) == 0) {
+            me_lap = lap;
+            uint32_t pcar = xb_rd32(r + 0xA0);
+            if (big_grid_ok && pcar == big_player_car && lap == -1) {
+                float p[3], g[3];
+                for (int k = 0; k < 3; k++) { uint32_t v = xb_rd32(pcar + 0x14 + 4 * k); memcpy(&p[k], &v, 4); memcpy(&g[k], &big_grid[k], 4); }
+                if ((p[0] - g[0]) * (p[0] - g[0]) + (p[2] - g[2]) * (p[2] - g[2]) < 0.25f) {
+                    int off = 0;
+                    for (int k = 3; k < 12; k++) {
+                        float a, b;
+                        uint32_t v = xb_rd32(pcar + 0x14 + 4 * k);
+                        memcpy(&a, &v, 4); memcpy(&b, &big_grid[k], 4);
+                        if (a - b > 0.05f || b - a > 0.05f) off = 1;
+                    }
+                    if (off) for (int k = 3; k < 12; k++) xb_wr32(pcar + 0x14 + 4 * k, big_grid[k]);
+                }
+            }
+            continue;
+        }
+        if (lap != -1) continue;
+        waiting++;
+        if (!since || now - since <= 20000000) continue;
+        xb_wr32(t + 0x9C, 0);
+        /* its checkpoints (the user's, 5 Nov: "give them any checkpoint flags they need"): the lap's are fractions of
+         * it (timing +0x1C their count, +0x20 on), +0x88 the next to cross (-1: the line), +0x8C those crossed (0x5C9E0
+         * counts them on). Placed part of the way round, those before its place counted as crossed: the next the first
+         * past it. (Catch-up's opponent, short of the first, took 0 and 0.) */
+        /* where it is: the nearest of the racing line's points (about 2 m apart from the start line), as a share of
+         * the lap. (Not the timing's own +0x80: on the grid it holds 0.99 for every car, "just short of the line",
+         * and once the lap was begun the game saw 0.99 drop to the car's real 0.25 as the line crossed: a lap
+         * counted 15 s in, the tests of 5 Nov) */
+        double f = 0;
+        { uint64_t v = (uint64_t)xb_rd32(t + 0x80) | (uint64_t)xb_rd32(t + 0x84) << 32; memcpy(&f, &v, 8); }
+        {
+            uint32_t car = xb_rd32(r + 0xA0), track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+            uint32_t np = line ? xb_rd32(line + 8) : 0, xs = line ? xb_rd32(line + 0x30) : 0, zs = line ? xb_rd32(line + 0x44) : 0;
+            if (car && car < RT_USER_LIMIT && np > 2 && np < 100000 && xs && zs) {
+                float cx, cz, best = 1e30f;
+                uint32_t v = xb_rd32(car + 0x14), kb = 0;
+                memcpy(&cx, &v, 4); v = xb_rd32(car + 0x1C); memcpy(&cz, &v, 4);
+                for (uint32_t k = 0; k < np; k++) {
+                    float px, pz;
+                    v = xb_rd32(xs + 4 * k); memcpy(&px, &v, 4); v = xb_rd32(zs + 4 * k); memcpy(&pz, &v, 4);
+                    float d2 = (px - cx) * (px - cx) + (pz - cz) * (pz - cz);
+                    if (d2 < best) best = d2, kb = k;
+                }
+                f = (double)kb / np;
+            }
+        }
+        uint32_t cps = xb_rd32(t + 0x1C), past = 0;
+        if (cps > 16) cps = 0;
+        for (uint32_t k = 0; k < cps; k++) {
+            float cf;
+            uint32_t v = xb_rd32(t + 0x20 + 4 * k);
+            memcpy(&cf, &v, 4);
+            if (cf < f) past++;
+        }
+        xb_wr32(t + 0x88, past >= cps && cps ? 0xFFFFFFFFu : past);
+        xb_wr32(t + 0x8C, past);
+        /* the lap's share (+0x80) and the race's measure (+0x70, the most reached +0x78: laps begun less one plus the
+         * share): its first lap, f of the way round */
+        { uint64_t v; memcpy(&v, &f, 8); for (uint32_t o = 0x70; o <= 0x80; o += 8) xb_wr32(t + o, (uint32_t)v), xb_wr32(t + o + 4, (uint32_t)(v >> 32)); }
+        fprintf(stderr, "xbrt: big field: racer %u %.2f of the lap on: %u of %u checkpoints counted as crossed\n", i, f, past, cps);
+        begun++, waiting--;
+    }
+    if (begun) fprintf(stderr, "xbrt: big field: %d rivals' laps counted as begun, the start line passed\n", begun);
+    if (!waiting && me_lap >= 0) big_active = 0, big_grid_ok = 0;
+}
+
+/* Mayhem's rivals spread round the lap (the user's, 5 Nov: "just do 7 and spread them out"): the grid is laid before
+ * the race is known as Mayhem's (the log: the placings, then "mayhem: this race"), so once it is, still on the grid,
+ * each car is placed again by the game's own CCar::ResetPositionForGrid (0x410E0, thiscall, from this DPC thread as
+ * its calls are made), through f_000410E0 above, which now spreads them: the player on the pole, the rivals evenly
+ * round the lap ahead. Once a race (a restart lays its grid with Mayhem known). */
+static void mayhem_spread(XbCtx *c) {
+    static uint32_t done_for;
+    uint32_t race = xb_rd32(0x592984);
+    if (!race) { done_for = 0; return; }
+    if (!c || done_for == race || !rt_qr_mayhem()) return;
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+    if (!arr || n < 2 || n > 64) return;
+    uint32_t rme = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i);
+        if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) rme = r;
+    }
+    uint32_t tm = rme ? xb_rd32(rme + 0xC0) : 0;
+    if (!tm || tm >= RT_USER_LIMIT) return;
+    done_for = race;
+    float clock;
+    { uint32_t v = xb_rd32(tm + 0xA0); memcpy(&clock, &v, 4); }
+    if ((int32_t)xb_rd32(tm + 0x9C) >= 0 || clock > 0) { /* (under way already: left as it is) */
+        fprintf(stderr, "xbrt: mayhem: the race under way before it was known: the grid left as it is\n");
+        return;
+    }
+    if (big_active) return; /* (spread already: a big field's, known by its size) */
+    int placed = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i), car = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xA0) : 0;
+        if (!car || car >= RT_USER_LIMIT) continue;
+        uint32_t ecx = c->ecx;
+        c->ecx = car;
+        rt_guest_call(c, 0x000410E0u, 1, xb_rd32(r + 0x14) == 0 ? 1u : 2u);
+        c->ecx = ecx;
+        placed++;
+    }
+    fprintf(stderr, "xbrt: mayhem: %d cars placed again, the rivals spread round the lap\n", placed);
+}
+
+void rt_career_tick(XbCtx *c) {
     tour_tick();
     rt_ach_tick();
     rt_qr_tick();
@@ -449,7 +688,7 @@ void rt_career_tick(void) {
         if (now >= next && n && arr && xb_rd32(0x592984)) {
             next = now + 50000000;
             fprintf(stderr, "xbrt: race:");
-            for (uint32_t i = 0; i < n && i < 8; i++) {
+            for (uint32_t i = 0; i < n && i < 32; i++) {
                 uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0, car = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xA0) : 0;
                 float x = 0, z = 0;
                 if (car && car < RT_USER_LIMIT) { uint32_t v = xb_rd32(car + 0x14); memcpy(&x, &v, 4); v = xb_rd32(car + 0x1C); memcpy(&z, &v, 4); }
@@ -457,7 +696,7 @@ void rt_career_tick(void) {
             }
             fprintf(stderr, "\n");
             if (getenv("XBRT_RACE_DUMP")[0] == '2') /* =2: each racer's place, line point, and its timing record's words */
-                for (uint32_t i = 0; i < n && i < 8; i++) {
+                for (uint32_t i = 0; i < n && i < 32; i++) {
                     uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
                     if (!r || r >= RT_USER_LIMIT) continue;
                     fprintf(stderr, "xbrt: racer %u type %u place %u point %u frac %08x timing:", i, xb_rd32(r + 0x14), xb_rd32(r + 0xBC), xb_rd32(r + 0x43C), xb_rd32(r + 0x440));
@@ -488,6 +727,8 @@ void rt_career_tick(void) {
     }
     if (xb_rd32(0x592984)) tt_watch();
     rt_drift_tick();
+    mayhem_spread(c);
+    big_tick();
     if (!cu_active) return;
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
     if (n != 2 || !arr) { cu_active = 0; return; }

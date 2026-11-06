@@ -155,7 +155,7 @@ void rt_ach_tick(void) {
     static uint64_t saved_at;
     if (!xb_rd32(0x592984)) { racer = 0; return; }
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4), r = 0;
-    if (!arr || arr >= RT_USER_LIMIT || n > 16) return;
+    if (!arr || arr >= RT_USER_LIMIT || n > 32) return; /* (32: Mayhem's big field, 17) */
     for (uint32_t k = 0; k < n && !r; k++) {
         uint32_t x = xb_rd32(arr + 4 * k);
         if (x && x < RT_USER_LIMIT && xb_rd32(x + 0x14) == 0) r = x;

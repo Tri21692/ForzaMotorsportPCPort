@@ -486,8 +486,14 @@ uint32_t rt_open(uint32_t *handle, uint32_t oa, uint32_t desired, uint32_t share
     }
     uint8_t access = access_bits(desired);
     if (exists && !is_dir && share_conflict(host, access, (uint8_t)(share & 7))) {
-        fprintf(stderr, "xbrt: open %s: sharing violation (access %x, share %x)\n", xbox, access, share & 7);
-        return STATUS_SHARING_VIOLATION;
+        /* (the race's replay recording, the game's scratch file on its cache drive: still held from the race before
+         * when the next was loaded, its exclusive open refused, and the game said the disc could not be read, 4 Nov
+         * on Pacific Shipyards Circuit II after a race at Fuji. Opened anyway: nothing else reads it) */
+        if (strncasecmp(xbox, "N:\\ReplayStream", 15) != 0) {
+            fprintf(stderr, "xbrt: open %s: sharing violation (access %x, share %x)\n", xbox, access, share & 7);
+            return STATUS_SHARING_VIOLATION;
+        }
+        fprintf(stderr, "xbrt: open %s: held open still (access %x, share %x): opened anyway\n", xbox, access, share & 7);
     }
     uint32_t h;
     if (is_dir || ((options & 0x1) && !exists)) { /* FILE_DIRECTORY_FILE */

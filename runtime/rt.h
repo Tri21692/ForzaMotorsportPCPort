@@ -132,6 +132,9 @@ void rt_mm_get(int i, const char **name, const char **todo, int *got);
 float rt_mm_flash_age(int *is_new); /* the Moment's banner: seconds since, and whether it unlocked it */
 const char *rt_mm_flash(void); /* the Moment just made, while its banner shows */
 extern volatile char rt_photo_path[512];
+extern volatile float rt_drift_look; /* Mayhem's drift: the look wanted (rad, + right: the camera behind the nose); hle_input.c holds the right stick so */
+extern volatile int rt_view_lock;    /* Mayhem: the near chase view forced (hle_quickrace.c), the player's view button ignored (hle_input.c) */
+extern volatile int rt_view_press; /* hle_quickrace.c: BLACK (the view) presses wanted; hle_input.c sends them */
 extern volatile int rt_photo_lookback; /* XBRT_MM_PHOTO: Y held for the game's look back (hle_input.c) */ /* a picture to save, as shown, once (glfill.c clears it): XBRT_MM_PHOTO */
 int rt_overlay_page(void); /* F1's page shown: 0 settings, 1 achievements, 2 Mayhem Moments (overlay.c) */
 extern volatile float rt_cam_vp[4][4]; /* the world's view and projection as the frame drew it (raster.c) */
@@ -384,7 +387,7 @@ void rt_apu_tick(void); /* DPC thread, every millisecond, with rt_gil held */
 void rt_log_tick(void); /* likewise: turns logging on at XBRT_LOG_FROM */
 void nv2a_log_stats(void); /* likewise: the GPU stats line every 5 s at log level 1 */
 int nv2a_raster_indices(uint32_t method, const uint32_t *w, uint32_t n); /* raster.c: a run of ARRAY_ELEMENT16/32 at once */
-void rt_career_tick(void); /* hle_career.c: the catch-up race, from the DPC thread with rt_gil held */
+void rt_career_tick(XbCtx *c); /* hle_career.c: the catch-up race, from the DPC thread with rt_gil held (c: its context, for game calls) */
 void nv2a_zone_lead(void); /* XBRT_ZONE_LEAD, at each pass of the DPC thread, with rt_gil held */
 void rt_thread_dump(void); /* every guest thread's state, to stderr; with rt_gil held */
 uint32_t rt_apu_read(uint32_t off, int bytes);
