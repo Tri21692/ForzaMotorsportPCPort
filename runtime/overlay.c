@@ -1,4 +1,4 @@
-/* The settings overlay: F1 (or Back+Start on the pad) opens a menu over
+/* The settings overlay: F1 (or L3, or Back+Start on the pad) opens a menu over
  * the game, drawn by glfill.c (gl_overlay_draw) in the style of Forza's
  * own menus and with its fonts. Up and down pick a setting, left and right
  * (or A / Enter) change it, B / Esc / F1 close it. Every change is saved
@@ -202,6 +202,13 @@ int rt_overlay_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thum
     static int stick_was;
     int combo = (buttons & 0x30) == 0x30, combo_was = (was & 0x30) == 0x30;
     if (combo && !combo_was) rt_overlay_toggle();
+    /* L3 too (the user's, 7 Nov: "bind the settings menu to R3" — R3 is Mayhem's boost — "Make it L3 then"), as F1:
+     * anywhere, open or close */
+    if ((buttons & 0x40) && !(was & 0x40) && !combo) {
+        rt_overlay_toggle();
+        was = buttons;
+        return 1;
+    }
     if (!open_) {
         was = buttons;
         return 0;

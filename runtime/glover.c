@@ -306,12 +306,23 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
         ov_photos_load();
         int nm = rt_mm_count(), pick = rt_overlay_scroll(), got = 0;
         float pw = 116, ph = 116; /* (the instant photos: square tiles, tilted inside them, see-through about) */
+        /* Two rows at a time, scrolled to the one picked (the user's, 7 Nov: with 12 Moments the third row ran over
+         * the description and off the panel) */
+        int rows = (nm + 3) / 4, top = pick / 4 < 1 ? 0 : pick / 4 - 1;
+        if (top > rows - 2) top = rows - 2;
+        if (top < 0) top = 0;
+        if (rows > 2) {
+            float st = y - 6, len = 2 * (ph + 2) - 4;
+            ov_rect(X0 + 598, st, X0 + 602, st + len, grey);
+            ov_rect(X0 + 597, st + len * (float)top / (float)rows, X0 + 603, st + len * (float)(top + 2) / (float)rows, green);
+        }
         for (int i = 0; i < nm; i++) {
             const char *nmn, *todo;
             int e;
             rt_mm_get(i, &nmn, &todo, &e);
             got += e;
-            float px = X0 + 66 + (i % 4) * (pw + 14), py = y - 6 + (i / 4) * (ph + 2), g = i == pick ? 8 : 0; /* (the one picked a little bigger) */
+            if (i / 4 < top || i / 4 >= top + 2) continue;
+            float px = X0 + 66 + (i % 4) * (pw + 14), py = y - 6 + (i / 4 - top) * (ph + 2), g = i == pick ? 8 : 0; /* (the one picked a little bigger) */
             if (i == pick) ov_rect(px + 10, py + ph + 1, px + pw - 10, py + ph + 4, green);
             float u0 = (float)(i % ov_photo_cols) / ov_photo_cols, v0 = (float)(i / ov_photo_cols) / ov_photo_rows;
             if (ov_photos) ov_quad(px - g, py - g, px + pw + g, py + ph + g, u0, v0, u0 + 1.0f / ov_photo_cols, v0 + 1.0f / ov_photo_rows, white, e ? 5 : 6);
