@@ -74,7 +74,10 @@ const char *rt_qr_note(void) { return note_until && rt_now_100ns() < note_until 
  * a line; never the save), shown lit in F1's Mayhem Moments page (glover.c) with its photograph. */
 static int mayhem_race;
 #define MM_MAX 16
-static struct { int track, nz; float zone[4][4]; char name[40], todo[120]; int got; } mm[MM_MAX]; /* zone: x, z, radius, top y */
+#define MM_ZONES 16 /* (the user's, 7 Nov: Mother Trucker on every trailer of Pacific Shipyards: 10 places) */
+static struct { int track, nz; float zone[MM_ZONES][4]; char name[40], todo[120]; int got; } mm[MM_MAX]; /* zone: x, z, radius, top y */
+static struct { int track; float share; } mspread[32]; /* "spread <track> <percent>": the rivals over that much of the lap */
+static int nmspread;
 static int nmm, mm_loaded;
 static uint32_t mayhem_ev[32];
 static int nmayhem_ev;
@@ -96,6 +99,11 @@ static void mayhem_load_once(void) {
         if (!strncmp(line, "events", 6)) {
             char *s = line + 6, *e;
             for (unsigned long v; nmayhem_ev < 32 && (v = strtoul(s, &e, 10), e != s); s = e) mayhem_ev[nmayhem_ev++] = (uint32_t)v;
+        } else if (!strncmp(line, "spread ", 7) && nmspread < 32) {
+            int track;
+            float pct;
+            if (sscanf(line + 7, "%d %f", &track, &pct) == 2 && pct > 0 && pct <= 100)
+                mspread[nmspread].track = track, mspread[nmspread++].share = pct / 100.0f;
         } else if (!strncmp(line, "moment ", 7) && nmm < MM_MAX) {
             int n = 0, track;
             float x, z, r;
@@ -111,7 +119,7 @@ static void mayhem_load_once(void) {
                 snprintf(mm[k].name, sizeof mm[k].name, "%s", t);
                 if (bar) snprintf(mm[k].todo, sizeof mm[k].todo, "%s", bar + 1);
             }
-            if (mm[k].nz < 4) {
+            if (mm[k].nz < MM_ZONES) {
                 float *zn = mm[k].zone[mm[k].nz++];
                 zn[0] = x, zn[1] = z, zn[2] = r, zn[3] = strcmp(top, "-") ? (float)atof(top) : 1e9f;
             }
@@ -128,6 +136,19 @@ static void mayhem_load_once(void) {
     fprintf(stderr, "xbrt: mayhem: %d events, %d moments from %s\n", nmayhem_ev, nmm, path);
 }
 int rt_mm_count(void) { mayhem_load(); return nmm; }
+/* The share of the lap Mayhem's rivals are spread over on the race's track (hle_career.c's grid): mayhem.txt's
+ * "spread <track> <percent>" (the user's, 7 Nov: "don't space out as much on Pacific/Fujimi, makes it impossible":
+ * on their long laps the leaders began most of a lap ahead), else the whole lap. */
+float rt_qr_mayhem_share(void) {
+    mayhem_load();
+    uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
+    int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
+    const char *qt_ = getenv("XBRT_QR_TEST"), *cm = qt_ ? strchr(qt_, ',') : NULL;
+    if (track < 0 && cm) track = atoi(cm + 1); /* (testing: an arcade race has no event record; XBRT_QR_TEST's track) */
+    for (int i = 0; i < nmspread; i++)
+        if (mspread[i].track == track) return mspread[i].share;
+    return 1.0f;
+}
 void rt_mm_get(int i, const char **name, const char **todo, int *got) {
     mayhem_load();
     *name = mm[i].name, *todo = mm[i].todo, *got = mm[i].got;
@@ -469,6 +490,8 @@ int rt_qr_flame(float pos[3], float back[3], float *power) {
 }
 static uint32_t cand[24], cand_was[24]; /* the places to try (find_cam_slots), the camera's among them (cam_probe_tick) */
 static int ncand, probe_i, probe_stage;
+static int cam_retry; /* the camera's holds looked for again on the grid (fewer than 2 found) */
+static uint64_t cam_retry_at;
 static uint64_t tdcam_until; /* real time */
 static uint64_t auto_until; /* real time: the autopilot let go by then at the latest (4 s after the camera is back) */
 volatile int rt_qr_auto;     /* the autopilot: 2 just started, 1 on (hle_input.c ends it) */
@@ -494,18 +517,31 @@ static void find_cam_slots(uint32_t me, uint32_t rme) {
     /* the camera's objects: the closest bunch of those copies (each within 4 KB of the next), and only 2 KB round
      * it: from the lowest copy to the highest, another run took in the race's and the HUD's hold on the player's
      * car too (16 places), and given the rival, takedowns stopped counting and the camera went wrong */
-    int best = 0, bestn = 0;
-    for (int i = 0; i < nc; i++) {
+    /* Every bunch, the biggest first, gives its places to try (the user's, 7 Nov: "takedown camera wasn't working" on
+     * Pacific Shipyards and Fujimi: there 6 copies came as two bunches of 3, the first taken was not the camera's,
+     * and the camera followed none of its 2 places); the probe then finds the camera's among them all. */
+    int bs[32], bn[32], nb = 0;
+    for (int i = 0; i < nc;) {
         int j = i;
         while (j + 1 < nc && copy[j + 1] - copy[j] < 0x1000) j++;
-        if (j - i + 1 > bestn) best = i, bestn = j - i + 1;
+        bs[nb] = i, bn[nb++] = j - i + 1;
+        i = j + 1;
     }
+    for (int x = 1; x < nb; x++) /* (by size, the biggest first; the lower address first among equals) */
+        for (int y = x; y > 0 && bn[y] > bn[y - 1]; y--) { int t = bs[y]; bs[y] = bs[y - 1], bs[y - 1] = t; t = bn[y]; bn[y] = bn[y - 1], bn[y - 1] = t; }
+    int best = nb ? bs[0] : 0, bestn = nb ? bn[0] : 0;
     uint32_t lo = nc ? copy[best] : 0, hi = nc ? copy[best + bestn - 1] : 0;
     cam_lo = lo, cam_hi = hi;
     ncand = 0, ncslot = 0, probe_i = 0, probe_stage = 0;
-    for (uint32_t a = (lo - 0x2000) & ~3u; hi && a < hi + 0x2000 && ncand < 24; a += 4) {
-        uint32_t w = xb_rd32(a);
-        if (w == me || w == rme) cand[ncand] = a, cand_was[ncand++] = w;
+    for (int b2 = 0; b2 < nb && ncand < 24; b2++) {
+        uint32_t l2 = copy[bs[b2]], h2 = copy[bs[b2] + bn[b2] - 1];
+        for (uint32_t a = (l2 - 0x2000) & ~3u; a < h2 + 0x2000 && ncand < 24; a += 4) {
+            uint32_t w = xb_rd32(a);
+            if (w != me && w != rme) continue;
+            int seen = 0;
+            for (int q = 0; q < ncand; q++) seen |= cand[q] == a;
+            if (!seen) cand[ncand] = a, cand_was[ncand++] = w;
+        }
     }
     if (ncand) rt_present_hold_until = rt_now_100ns() + 30000000, probe_began = rt_now_100ns(); /* (the picture held while they are tried: no flicker) */
     fprintf(stderr, "xbrt: quick race: the camera's hold on the player's car, %d places to try (%d copies, %d together over %u bytes)\n",
@@ -786,7 +822,7 @@ void rt_qr_tick(void) {
     if (!xb_rd32(0x592984) || !active()) {
         if (probe_i < ncand && probe_stage == 1) xb_wr32(cand[probe_i], cand_was[probe_i]); /* (quit mid-probe: put back) */
         probe_i = ncand = 0, probe_stage = 0;
-        tdcam_end(), rt_qr_auto = 0, ncslot = -1, rt_toon = 0, rt_view_cam.on = 0, rt_photo_lookback = 0, rt_drift_look = 0, td_wait_car = 0, view_shift = 0, rt_view_press = 0, vsurvey = 0, rt_view_lock = 0;
+        tdcam_end(), rt_qr_auto = 0, ncslot = -1, cam_retry = 0, rt_toon = 0, rt_view_cam.on = 0, rt_photo_lookback = 0, rt_drift_look = 0, td_wait_car = 0, view_shift = 0, rt_view_press = 0, vsurvey = 0, rt_view_lock = 0;
         memset(cs, 0, sizeof cs); takedowns = 0, tank = 1; return;
     }
     if (dt <= 0 || dt > 0.25) return;
@@ -843,6 +879,25 @@ void rt_qr_tick(void) {
             if (cam_in_car(me) && view_shift < 3) { /* (an in-car view: the chase camera's holds are the takedown's) */
                 if (!rt_view_press && now >= view_next) view_press(1), view_next = now + 4000000;
             } else if (!rt_view_press && now >= view_next) find_cam_slots(me, rme);
+        }
+        { /* fewer than the camera's 2 holds found (its place and where it looks: with 1 the takedown camera faced the
+           * wreck from the player's car; the user's, 7 Nov: "takedown camera wasn't working" on Pacific Shipyards and
+           * Fujimi, 0 and 1 found there): looked for again on the grid, 3 times at most, the best kept */
+            static int best_n = -1;
+            static uint32_t best_s[16], best_w[16];
+            if (ncslot < 0 && cam_retry == 0) best_n = -1;
+            if (ncslot >= 0 && probe_i >= ncand && ncand > 0 && ncslot < 2 && on_grid && cam_retry < 3 && now >= cam_retry_at) {
+                if (ncslot > best_n) {
+                    best_n = ncslot;
+                    for (int i = 0; i < ncslot; i++) best_s[i] = cslot[i], best_w[i] = cslot_was[i];
+                }
+                cam_retry++, cam_retry_at = now + 10000000, ncslot = -1;
+                fprintf(stderr, "xbrt: quick race: the camera's holds looked for again (%d found; try %d)\n", best_n, cam_retry);
+            } else if (cam_retry > 0 && best_n > (ncslot < 0 ? 0 : ncslot) && ((ncslot >= 0 && probe_i >= ncand && cam_retry >= 3) || !on_grid)) {
+                for (int i = 0; i < best_n; i++) cslot[i] = best_s[i], cslot_was[i] = best_w[i];
+                ncslot = best_n, best_n = -1, probe_i = ncand;
+                fprintf(stderr, "xbrt: quick race: the camera follows the best search's %d places\n", ncslot);
+            }
         }
         if (view_shift && vsurvey != 1 && !rt_view_press && !tdcam_until && !td_wait_car && ((ncslot >= 0 && probe_i >= ncand) || !on_grid)) {
             fprintf(stderr, "xbrt: quick race: the camera's holds found in the chase view; the player's view put back (%d presses)\n", (4 - view_shift) % 4);

@@ -1,0 +1,5 @@
+# career categories after the six (runtime/hle_career_cats.c): folder, kind (2 club), title id (GameStrings),
+# description id (UIStrings), icon (a tile of media/Events/Events.xpr), place in the list (0 first)
+# (7 Nov, the user: the list opens on Amateur; Mayhem, Time Trial and Drift to its left)
+Mayhem 2 965 2163 9 0
+Drift 2 964 2162 8 2

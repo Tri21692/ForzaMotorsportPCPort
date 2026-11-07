@@ -1,0 +1,24 @@
+# Mayhem (runtime/hle_quickrace.c): its events (tools/mayhemseries.py), then a line a Mayhem Moment's place:
+# moment <track ordinal> <x> <z> <radius m> <top y or -> <name>|<what to do>
+# spread <track> <percent>: Mayhem's rivals spread over that share of the lap (else all of it): the long laps
+spread 20 45
+spread 10 45
+events 406 407 408 409 410 411 412 413
+moment 17 151.1 -206.2 180 -7 Ari-Wall-to|Take down an opponent in the Tokyo Tunnel.
+moment 17 483.9 -319.0 180 -7 Ari-Wall-to|Take down an opponent in the Tokyo Tunnel.
+moment 20 -503.0 -567.0 22 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -478.0 -366.0 30 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -480.0 -440.0 30 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -240.0 -343.0 32 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -160.0 -398.0 35 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -421.0 668.0 38 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -324.0 -213.0 20 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -527.0 -600.0 30 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -528.0 -685.0 32 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 20 -490.0 -708.0 25 - Mother Trucker|Take down an opponent into the Pacific Shipyards trailers.
+moment 10 2152.5 -49.4 78 - Suspended|Take down an opponent on the bridge in Fujimi Kaido.
+moment 18 -180.0 -80.0 30 - Crash 'R Us|Take down an opponent in front of the Toys 'R Us in New York.
+moment 9 -577.0 -299.0 30 - Land-Filled Up|Take down an opponent in front of the Sunoco sign at Road Atlanta.
+moment 25 -625.1 -807.4 35 - Stick It To 'Em|Take down an opponent on the small bend in Rio.
+moment 5 171.0 -400.0 40 - Standing Crashvation|Take down an opponent in front of the bleachers in the Sunset Peninsula infield.
+moment 3 42.0 -448.0 30 - Wham-Bulance|Take down an opponent in front of the ambulance at Maple Valley.

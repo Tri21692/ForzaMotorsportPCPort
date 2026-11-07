@@ -363,7 +363,9 @@ void f_000410E0(XbCtx *c) {
         int32_t moved = place;
         if (mine) moved = 1;
         else if (k >= 0 && points > 0) {
-            int pct = (int)((k + 1) * 100.0f / (ai + 1) + 0.5f);
+            float share = rt_qr_mayhem() ? rt_qr_mayhem_share() : 1.0f; /* (Mayhem: mayhem.txt's spread for the track) */
+            int pct = (int)((k + 1) * 100.0f * share / (ai + 1) + 0.5f);
+            if (pct < 2) pct = 2; /* (-1 is the pole's) */
             moved = -(pct > 99 ? 99 : pct);
         } else if (place > 15) moved = 15; /* (no line: no slot past the track's 15) */
         if (moved != place) xb_wr32(c->esp + 4, (uint32_t)moved);

@@ -37,7 +37,9 @@
 #define CAT_MAX 12u
 #define TT_NAME 0x4D02C0u /* the Time Trial category's folder name (nv2a.c's career_timetrial) */
 
-static uint32_t base = CAT_TABLE, count = CAT_DISC;
+#define CAT_AMATEUR 2u /* the disc's Amateur (club) entry: the item the list opens on (0x1851B5 pushes 2) */
+
+static uint32_t base = CAT_TABLE, count = CAT_DISC, start = CAT_AMATEUR;
 static struct { char name[32]; uint32_t icon, at; } added[CAT_MAX - CAT_DISC]; /* at: its entry's address */
 static unsigned nadded;
 static int ready;
@@ -70,6 +72,7 @@ static void setup(void) {
         if (k < n) at[k] = slot++;
         else {
             for (uint32_t o = 0; o < CAT_SIZE; o += 4) xb_wr32(t + slot * CAT_SIZE + o, xb_rd32(CAT_TABLE + d * CAT_SIZE + o));
+            if (d == CAT_AMATEUR) start = slot;
             d++, slot++;
         }
     }
@@ -77,6 +80,9 @@ static void setup(void) {
         uint32_t e = t + at[k] * CAT_SIZE, nm = names + 32 * k;
         for (unsigned i = 0; i < 32; i++) xb_wr8(nm + i, (uint8_t)(i < strlen(want[k].name) ? want[k].name[i] : 0));
         for (uint32_t o = 0; o < CAT_SIZE; o += 4) xb_wr32(e + o, 0);
+        /* +0x28, the lowest level, is the least of its series' (0x185052: min(+0x28, series +0x544)), so it starts as the
+         * disc's entries do, not 0 (Mayhem's tile said "Level 0" for its level-15 series) */
+        xb_wr32(e + 0x28, xb_rd32(CAT_TABLE + 0x28));
         xb_wr32(e + 0x00, nm);
         xb_wr32(e + 0x04, want[k].kind);
         xb_wr32(e + 0x10, xb_rd32(CAT_TABLE + 0x10)), xb_wr16(e + 0x14, (uint16_t)want[k].title); /* the first's tables */
@@ -99,6 +105,14 @@ void rt_career_cats_init(void) {
 }
 
 uint32_t cat_base(void) { setup(); return base; }
+/* The Race Type list built (the user's, 7 Nov: "arrange the career categories so that the game starts on Amateur series"):
+ * the game opens it on item 2, the disc's Amateur; with categories added before it, the D-pad is pressed right as many
+ * places on (hle_input.c), so the carousel, the panel and the selection move together as the player's own presses do.
+ * (Telling the list 4 at 0x1851B5 moved its selection but not the carousel, which still showed item 2.) */
+static void cat_opened(void) {
+    setup();
+    if (start > CAT_AMATEUR) rt_menu_right_press((int)(start - CAT_AMATEUR));
+}
 static uint32_t cat_end(void) { return cat_base() + count * CAT_SIZE; }
 
 /* The icon for the list item of the entry at e, whose kind is k. */

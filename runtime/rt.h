@@ -135,11 +135,13 @@ extern volatile char rt_photo_path[512];
 extern volatile float rt_drift_look; /* Mayhem's drift: the look wanted (rad, + right: the camera behind the nose); hle_input.c holds the right stick so */
 extern volatile int rt_view_lock;    /* Mayhem: the near chase view forced (hle_quickrace.c), the player's view button ignored (hle_input.c) */
 extern volatile int rt_view_press; /* hle_quickrace.c: BLACK (the view) presses wanted; hle_input.c sends them */
+void rt_menu_right_press(int n); /* hle_input.c: the D-pad's right pressed n times, after a moment (hle_career_cats.c: the Race Type list on to Amateur) */
 extern volatile int rt_photo_lookback; /* XBRT_MM_PHOTO: Y held for the game's look back (hle_input.c) */ /* a picture to save, as shown, once (glfill.c clears it): XBRT_MM_PHOTO */
 int rt_overlay_page(void); /* F1's page shown: 0 settings, 1 achievements, 2 Mayhem Moments (overlay.c) */
 extern volatile float rt_cam_vp[4][4]; /* the world's view and projection as the frame drew it (raster.c) */
 int rt_qr_flame(float pos[3], float back[3], float *power);
 int rt_qr_mayhem(void); /* a Mayhem race on */ /* Mayhem's boost flame: 1 while it burns, at pos, pointing back */
+float rt_qr_mayhem_share(void); /* the share of the lap Mayhem's rivals are spread over (mayhem.txt "spread") */
 extern volatile float rt_toon; /* Mayhem's cartoon look, 0..1 (hle_quickrace.c sets it, glfill.c draws it) */
 extern volatile uint64_t rt_present_hold_until; /* the shown picture held until then (glfill.c; the camera probe) */
 extern volatile float rt_pad_steer, rt_pad_throttle, rt_pad_brake; /* the pad as given to the game: -1..1 (right +), 0..1, 0..1 (hle_input.c) */

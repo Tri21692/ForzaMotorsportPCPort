@@ -423,6 +423,7 @@ L_00185190:;
     c->ecx = (uint32_t)((uint32_t)(c->esi + 0xFFFFFFD8u));
     /* 001851C8  call dword ptr [edx+0x7c] */
     { uint32_t t = xb_rd32((uint32_t)(c->edx + 0x0000007Cu)); xb_push(c, 0x001851CBu); xb_call_indirect(c, t); }
+    cat_opened(); /* changed: the list on to Amateur (the D-pad pressed, hle_input.c) */
     /* 001851CB  pop edi */
     { uint32_t v = xb_pop(c); c->edi = (uint32_t)(v); }
     /* 001851CC  pop esi */

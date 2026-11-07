@@ -12,6 +12,7 @@
  * game is recompiled again, copy it anew and keep the one change, marked. */
 #include <stdlib.h>
 
+#include <string.h>
 #include "funcs.h"
 #include "rt.h"
 
@@ -23,7 +24,14 @@ uint32_t cat_base(void); /* the categories' table (hle_career_cats.c: moved when
 static int tt_first_tile(uint32_t index) {
     static int on = -1;
     if (on < 0) on = getenv("XBRT_CAREER_TIMETRIAL") && atoi(getenv("XBRT_CAREER_TIMETRIAL"));
-    return on && index == 0 && xb_rd32(cat_base()) == 0x4D02C0;
+    if (index != 0) return 0;
+    if (on && xb_rd32(cat_base()) == 0x4D02C0) return 1;
+    /* any other first tile but the disc's Online Career (the user's, 7 Nov: Mayhem first, before Time Trial) */
+    char nm[16];
+    uint32_t p = xb_rd32(cat_base());
+    for (unsigned i = 0; i < sizeof nm; i++) nm[i] = p ? (char)xb_rd8(p + i) : 0;
+    nm[sizeof nm - 1] = 0;
+    return p && strcmp(nm, "OnlineCareer") != 0;
 }
 
 void f_00184C30(XbCtx *c) {

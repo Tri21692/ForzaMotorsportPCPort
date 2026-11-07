@@ -27,6 +27,11 @@ for name in ('f_00184F30', 'f_001856B0'):
         line = f[f.index('\n', a) + 1:b]
         assert 'xb_wr32' in line and 'c->edx' in line, line
         f = f[:b] + '\n    xb_wr32((uint32_t)(c->esi + 0x28u), cat_frame(c->ebp, c->edx)); /* changed: the icon */' + f[b:]
+        # the list on to Amateur once built: it opens on item 2 (the disc's Amateur), and the carousel keeps its own
+        # place (the list told 4 still showed 2), so the D-pad is pressed on as far as the added categories moved it
+        old = 'xb_call_indirect(c, t); }\n    /* 001851CB  pop edi */'
+        assert f.count(old) == 1
+        f = f.replace(old, 'xb_call_indirect(c, t); }\n    cat_opened(); /* changed: the list on to Amateur (the D-pad pressed, hle_input.c) */\n    /* 001851CB  pop edi */')
     out.append('/* %s: %d table addresses made cat_base()/cat_end()%s */\n' % (name, n0, ', the item kind its icon' if k else '') + f)
 open(os.path.join(ROOT, 'runtime', 'hle_career_cats_gen.inc'), 'w', encoding='latin-1', newline='\n').write('\n'.join(out))
 print([len(o) for o in out])
