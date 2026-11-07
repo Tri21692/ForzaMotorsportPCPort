@@ -211,7 +211,7 @@ static int ov_init(void) {
         static const char *fn[5] = {"u_f0", "u_f1", "u_f2", "u_f3", "u_f4"};
         for (int i = 0; i < 5; i++) glUniform1i(glGetUniformLocation(prog, fn[i]), i);
         glGenVertexArrays(1, &vao), glGenBuffers(1, &vbo);
-        glBindVertexArray(vao);
+        gl_vao_bind(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(OvVert), (void *)0);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(OvVert), (void *)(2 * sizeof(float)));
@@ -251,11 +251,11 @@ static void ov_submit(int vx, int vy, int vw, int vh, float W, float H) {
     glBindTexture(GL_TEXTURE_2D, ov_photos ? ov_photos : gl_dummy2d);
     glBindSampler(4, 0);
     glActiveTexture(GL_TEXTURE0);
-    glBindVertexArray(ov_vao);
+    gl_vao_bind(ov_vao);
     glBindBuffer(GL_ARRAY_BUFFER, ov_vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)ov_n * (GLsizeiptr)sizeof(OvVert), ov_v, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, ov_n);
-    glBindVertexArray(gl_vao);
+    gl_vao_bind(gl_vao);
     glDisable(GL_BLEND);
 }
 

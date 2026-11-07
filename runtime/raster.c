@@ -1630,6 +1630,7 @@ static int vidx_cap, deferred;
 static uint32_t fetch_attr(const FetchAttr *fa, const uint8_t *p, float *v);
 static void materialize(void);
 
+#include "glcache.h" /* (the GL state shadow: before the GL files, so all their calls go through it) */
 #include "gltexhd.c"
 #include "glfill.c"
 #include "glover.c"

@@ -220,7 +220,7 @@ static int nearest(uint32_t xs, uint32_t zs, uint32_t np, float x, float z) {
 static struct {
     uint32_t car;
     float v[3], pos[3];
-    uint64_t still_since, off_since, hit_at, spin_until, down_at, tumble_until, chase_until, spun_since;
+    uint64_t still_since, off_since, hit_at, spin_until, down_at, tumble_until, chase_until, spun_since, wall_until;
     float spin;   /* radians a second about the up axis, until spin_until */
     float impact; /* the closing speed of the player's last hit on it, m/s */
     float push[2]; uint64_t push_until; /* a hit's shove, m/s, given over 0.2 s (at once it jolted) */
@@ -1187,8 +1187,40 @@ void rt_qr_tick(void) {
             cs[i].still_since = 0;
             continue;
         }
+        static int wallfix = -1; /* XBRT_WALL_FIX=0: off (testing: the comparison) */
+        if (wallfix < 0) wallfix = !getenv("XBRT_WALL_FIX") || atoi(getenv("XBRT_WALL_FIX"));
+        if (wallfix && car == me && mayhem_race && !cs[i].down_at && cs[i].car == car) {
+            /* a wall (the user's, 7 Nov: "wall collision chaos when smacking/riding it on Mayhem races"): the game's own
+             * knock along the ground since our last tick over 100 m/s^2 (10 g; its tyres give 1-2, a drift's up to 6), no
+             * other car within 6 m: Mayhem's handling, pull and lighter fall stand down for 0.4 s and the game's physics
+             * settles the contact. (Against the wall the handling put the speed back along the nose, turned the body into
+             * the barrier and pulled on; the game threw the car back out, and at 80% of the pull it flew.) */
+            float gx = v[0] - cs[i].v[0], gz = v[2] - cs[i].v[2], g = sqrtf(gx * gx + gz * gz) / (float)dt;
+            int near_car = 0;
+            for (uint32_t j = 0; j < n && !near_car; j++) {
+                uint32_t r2 = xb_rd32(arr + 4 * j), c2 = r2 && r2 < RT_USER_LIMIT ? xb_rd32(r2 + 0xA0) : 0;
+                if (!c2 || c2 == car || c2 >= RT_USER_LIMIT) continue;
+                float ex = p[0] - rdf(c2 + 0x14), ez = p[2] - rdf(c2 + 0x1C);
+                near_car = ex * ex + ez * ez < 36;
+            }
+            if (g > 100 && !near_car && lap >= 0) {
+                static int wlog = -1;
+                if (wlog < 0) wlog = getenv("XBRT_WALLLOG") != NULL;
+                if (wlog || cs[i].wall_until < now) fprintf(stderr, "xbrt: mayhem: the player's car on a wall (%.0f m/s^2): ours stood down at %.3f s\n", g, now / 1e7);
+                cs[i].wall_until = now + 4000000;
+            }
+        }
+        int on_wall = car == me && cs[i].wall_until > now;
+        if (car == me && mayhem_race && getenv("XBRT_CHAOS")) { /* testing: the player's car tilted (up under 0.85), bouncing
+                                                                  * (up or down over 3 m/s), spinning (over 2.5 rad/s), ticks a 30 s */
+            static int tipped, flying, spinning, ticks; static uint64_t next;
+            float a0 = rdf(car + 0x50), a1 = rdf(car + 0x54), a2 = rdf(car + 0x58);
+            ticks++, tipped += rdf(car + 0x30) < 0.85f, flying += v[1] > 3 || v[1] < -3, spinning += a0 * a0 + a1 * a1 + a2 * a2 > 6.25f;
+            if (!next) next = now + 300000000;
+            else if (now > next) fprintf(stderr, "xbrt: chaos: %d of %d ticks tilted, %d bouncing, %d spinning\n", tipped, ticks, flying, spinning), tipped = flying = spinning = ticks = 0, next = now + 300000000;
+        }
         if (mods & QR_LOWGRAVITY) v[1] += (float)(9.81 * 0.6 * dt), wrf(car + 0x48, v[1]); /* (60% of the pull given back) */
-        else if (mayhem_race && (car == me || cs[i].tumble_until || cs[i].down_at)) v[1] += (float)(9.81 * 0.2 * dt), wrf(car + 0x48, v[1]);
+        else if (mayhem_race && !on_wall && (car == me || cs[i].tumble_until || cs[i].down_at)) v[1] += (float)(9.81 * 0.2 * dt), wrf(car + 0x48, v[1]);
         /* (Mayhem's over-the-top physics: 80% of the pull, longer flights: the player's car, and a rival only as a wreck,
          * thrown. On every rival it took a fifth of their tyres' load, and with the push below they reached the bends
          * too fast and stopped at the walls: 14-18 m/s their median on Tokyo, 19-22 without Mayhem, the tests of 5 Nov) */
@@ -1302,7 +1334,7 @@ void rt_qr_tick(void) {
                     me_drift = 1;
                     /* a knock: a fifth of the speed gone in a tick (15% and 1 m/s fired on a wall's brush, a kerb, a
                      * landing; a carried-over gap's speed is the game's, no knock) */
-                    const char *why = dsp < 10 ? "slow" : !resumed && sp < dsp * 0.8f - 1.5f ? "knock" : steer * drift_dir < 0.15f ? "let go" : NULL;
+                    const char *why = on_wall ? "wall" : dsp < 10 ? "slow" : !resumed && sp < dsp * 0.8f - 1.5f ? "knock" : steer * drift_dir < 0.15f ? "let go" : NULL;
                     if (dlog && (int)(now / 2500000) != (int)((now - (uint64_t)(dt * 1e7)) / 2500000))
                         fprintf(stderr, "xbrt: drift: slip %.0f deg, speed %.1f, turn %.2f (the game's %.2f) rad/s, steer %.2f, ang +0x50 %.2f %.2f %.2f\n",
                                 slip * 57.3f, dsp, rot, gturn / dt, steer, rdf(car + 0x50), rdf(car + 0x54), rdf(car + 0x58));
@@ -1315,7 +1347,7 @@ void rt_qr_tick(void) {
                         v[1] -= (float)(2.5 * dt);
                         wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
                     }
-                } else if (out_until > now && dsp > 1) {
+                } else if (out_until > now && dsp > 1 && !on_wall) {
                     /* out of a drift: the way it goes swung to the heading (half of the slip a 1/16 s), all of the
                      * drift's speed kept and more with the throttle; the stick steers as on the road */
                     float slip = atan2f(vdz * hx - vdx * hz, vdx * hx + vdz * hz);
@@ -1339,7 +1371,7 @@ void rt_qr_tick(void) {
                     }
                 } else {
                     float ramp = vf > 25 ? 1.0f : vf > 0 ? vf / 25 : 0;
-                    float turn = steer * 0.55f * ramp; /* rad/s */
+                    float turn = on_wall ? 0 : steer * 0.55f * ramp; /* rad/s (none on a wall: the body turned into the barrier) */
                     if (turn > 0.001f || turn < -0.001f) {
                         yaw(car, turn * (float)dt);
                         hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
@@ -1347,10 +1379,10 @@ void rt_qr_tick(void) {
                         rx = hz, rz = -hx; /* (vf and vl kept: the velocity turns with the car, the speed carried round) */
                     }
                     vl *= expf(-3.2f * (float)dt);
-                    if (thr > 0.05f && vf > -1 && vf < 95) vf += MAYHEM_PULL * thr * (float)dt;
+                    if (!on_wall && thr > 0.05f && vf > -1 && vf < 95) vf += MAYHEM_PULL * thr * (float)dt;
                     if (brk > 0.05f && vf > 0) vf -= (vf < 14.0f * brk * (float)dt ? vf : 14.0f * brk * (float)dt); /* (14 m/s^2 on the game's: the user's "more effective"; was 8) */
                     v[0] = hx * vf + rx * vl, v[2] = hz * vf + rz * vl;
-                    v[1] -= (float)(2.5 * dt); /* (planted) */
+                    if (!on_wall) v[1] -= (float)(2.5 * dt); /* (planted; not on a wall: pressed down against it, it bounced) */
                     wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
                 }
             }
@@ -1501,7 +1533,7 @@ void rt_qr_tick(void) {
                 int moment = mayhem_race && mayhem_moment(p[0], p[1], p[2]); /* (a Mayhem Moment's place: its own banner, glover.c) */
                 say(moment ? "MAYHEM MOMENT!" : wall ? "WALL TAKEDOWN!" : "TAKEDOWN!");
                 if (moment) tank = 1; /* (a full boost) */
-                fprintf(stderr, "xbrt: quick race: takedown %d (racer %u, %s)\n", takedowns, i, wall ? "wall" : rdf(car + 0x30) < 0.3f ? "rolled" : "stopped");
+                fprintf(stderr, "xbrt: quick race: takedown %d (racer %u, %s) at %.3f s\n", takedowns, i, wall ? "wall" : rdf(car + 0x30) < 0.3f ? "rolled" : "stopped", rt_now_100ns() / 1e7);
                 tdcam_start(car, r, me, sqrtf(mv0[0] * mv0[0] + mv0[2] * mv0[2])); /* the camera on the wreck, slowed, the player's car on the line */
                 damage_set((int)i, car, DMG_FULL); /* (wrecked; repaired on its respawn) */
                 if (wall) { /* blown up (the user's: "explodes" on the wall): thrown up off the wall, rolling, for 1.2 s */
@@ -1530,7 +1562,7 @@ void rt_qr_tick(void) {
                 if (cs[i].down_at && car != me) cs[i].chase_until = now + 200000000; /* then a hard chase back to the player, up to 20 s */
                 cs[i].still_since = cs[i].down_at = cs[i].spin_until = cs[i].tumble_until = 0;
                 if (car == me) say("RESPAWN");
-                fprintf(stderr, "xbrt: quick race: racer %u respawned at line point %d (%s)\n", i, at, car == me ? "the player" : "an opponent");
+                fprintf(stderr, "xbrt: quick race: racer %u respawned at line point %d (%s) at %.3f s\n", i, at, car == me ? "the player" : "an opponent", rt_now_100ns() / 1e7);
                 v[0] = rdf(car + 0x44), v[1] = rdf(car + 0x48), v[2] = rdf(car + 0x4C);
             }
             if (cs[i].chase_until > now && me) { /* rubber band: pushed hard along its heading while the player is ahead and over 25 m off */

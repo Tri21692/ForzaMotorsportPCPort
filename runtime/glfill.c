@@ -225,6 +225,12 @@ static const char *fs_src =
 
 static int gl_ready = -1; /* -1 not set up, 0 failed, 1 ready */
 static GLuint gl_fs, gl_vao, gl_vbo, gl_dummy2d, gl_dummycube;
+/* The vertex array bound now: a bind only when it changes (the user's, 7 Nov: frame drops with the rivals in view; each
+ * of the ~1,700 draws a frame bound the vertex programs' array and then the fill's back, two driver calls a draw) */
+static GLuint gl_cur_vao = ~0u;
+static void gl_vao_bind(GLuint v) {
+    if (v != gl_cur_vao) glBindVertexArray(v), gl_cur_vao = v;
+}
 static int gl_k = 1; /* XBRT_GL_SCALE: see gl_proxy */
 static GLint u_size, u_zmax, u_cicw, u_cocw, u_aicw, u_aocw, u_c0, u_c1, u_fc0, u_fc1, u_ctl, u_f0, u_f1;
 static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4], u_zr, u_zoff;
@@ -413,7 +419,7 @@ static int gl_setup(void) {
     if (!vs || !gl_fs || !gl_link(&gl_main, vs)) return 0;
     gl_use(&gl_main);
     glGenVertexArrays(1, &gl_vao);
-    glBindVertexArray(gl_vao);
+    gl_vao_bind(gl_vao);
     glGenBuffers(1, &gl_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
     for (int i = 0; i < 8; i++) { /* position, two colours, four texture coordinates, fog */
@@ -846,9 +852,9 @@ static void gl_hdr_present(int W, int H, GLuint vao) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     float peak = rt_hdr_peak > 0 ? rt_hdr_peak : rt_hdr_screen_peak;
     glUniform1i(u_sdr, 0), glUniform1f(u_paper, rt_hdr_paper / 80.0f), glUniform1f(u_peak, peak / 80.0f);
-    glBindVertexArray(vao);
+    gl_vao_bind(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(gl_vao);
+    gl_vao_bind(gl_vao);
     rt_hdr_present(vsync);
 }
 
@@ -966,9 +972,9 @@ static int gl_window_show(GLuint tex, GLuint fbo, int w, int h, int game) { /* g
         glUniform1i(u_bloom, 2);
         glUniform1f(u_sharpen, post ? rt_post_sharpen : 0), glUniform1f(u_bloom_amt, bloom), glUniform1f(u_vibrance, post ? rt_post_vibrance : 0);
         glUniform1f(u_toon, post ? rt_toon : 0);
-        glBindVertexArray(empty_vao);
+        gl_vao_bind(empty_vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(gl_vao);
+        gl_vao_bind(gl_vao);
     } else { /* no shader: scaled as it is */
         glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
         glBlitFramebuffer(0, 0, w, h, x, H - y, x + cw, H - y - ch, GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -1055,7 +1061,10 @@ static void gl_present_vblank(uint32_t fb) {
     static unsigned last_seq;
     static int same;
     if (s && s->seq == last_seq) {
-        if (++same > 6) s = NULL; /* loading screens: their text and icon are drawn on the CPU, into RAM */
+        /* loading screens: their text and icon are drawn on the CPU, into RAM. In a race ([0x592984]) the GPU's picture
+         * is kept 2 s first (the user's, 7 Nov: "one frame black screen" while racing: a hitch of 7 blanks, at a respawn
+         * or a takedown, turned the window to RAM's copy, black there and without our overlays) */
+        if (++same > (xb_rd32(0x592984) ? 120 : 6)) s = NULL;
     } else if (s) {
         last_seq = s->seq, same = 0;
         static uint64_t fps_from;
@@ -1069,7 +1078,15 @@ static void gl_present_vblank(uint32_t fb) {
             if (fps_log) fprintf(stderr, "xbrt: fps %.1f\n", rt_fps_shown);
         }
     }
-    if (rt_display_video_on()) s = NULL; /* a movie: the overlay is composited from RAM */
+    int why = !s ? (same > 6 ? 2 : 1) : 0; /* (1 no surface drawn there, 2 the same one 7 blanks running) */
+    if (rt_display_video_on()) s = NULL, why = 3; /* a movie: the overlay is composited from RAM */
+    { /* (debugging the user's "one frame black screen / custom overlay flickering" while racing, 7 Nov: each turn from the
+       * GPU's picture to RAM's logged, with why) */
+        static int was_gl;
+        if (!s && was_gl) fprintf(stderr, "xbrt: present: RAM shown (%s), fb %08x, race %s\n", why == 1 ? "no GPU surface there" : why == 2 ? "the same GPU picture 7 blanks" : "a movie", fb,
+                                  xb_rd32(0x592984) ? "on" : "off");
+        was_gl = s != NULL;
+    }
     if (!s) gl_fifo_n = 0, gl_fifo_shown = -1; /* RAM shows the screen: what was queued is old */
     if (!s && fb) gl_sync_range(fb, (rt_display_pitch ? rt_display_pitch : 640 * 4) * 480); /* what the GPU drew there, not read back at the notifies */
     if (!s) { /* RAM shows what is on screen now: the display goes back to it at once */
@@ -1091,6 +1108,26 @@ static void gl_present_vblank(uint32_t fb) {
     /* the window keeps its last picture a moment (hle_quickrace.c's camera probe on the grid turns the camera to rivals a
      * few frames each, which showed as flicker at the start: the user's), 3 s at most; only the showing is held, the
      * frames go on (skipped whole, the probe saw the camera late and missed its hold on the car) */
+    static int blk = -1; /* XBRT_BLACK_LOG=1 (debugging the user's one-frame black picture while racing, 7 Nov): a patch
+                            * of the shown frame's middle read back, a frame gone black logged with its source */
+    if (blk < 0) blk = getenv("XBRT_BLACK_LOG") && atoi(getenv("XBRT_BLACK_LOG"));
+    if (blk) {
+        static float prev = 100;
+        static uint8_t px[64 * 8 * 4];
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fs ? fs->fbo : snap ? snap->fbo : s->fbo);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadPixels(w / 2 - 32, h * 6 / 10, 64, 8, GL_RGBA, GL_UNSIGNED_BYTE, px); /* (the scene above the middle: GL's rows go up) */
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+        float sum = 0;
+        for (int i = 0; i < 64 * 8; i++) sum += px[4 * i] + px[4 * i + 1] + px[4 * i + 2];
+        float avg = sum / (64 * 8 * 3);
+        if (avg < 6 && prev > 20)
+            fprintf(stderr, "xbrt: black frame at %.3f s: shown from %s (seq %u, the surface's %u), brightness %.1f after %.1f, race %s\n",
+                    rt_now_100ns() / 1e7, fs ? "the queue" : snap ? "the flip's copy" : "the live surface", fs ? fs->seq : snap ? snap->seq : 0, s->seq, avg, prev,
+                    xb_rd32(0x592984) ? "on" : "off");
+        prev = avg;
+    }
     int held = rt_present_hold_until && rt_now_100ns() < rt_present_hold_until;
     if (!held && gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h, 1)) {
         rt_gl_shown = rt_now_100ns();
@@ -2306,7 +2343,7 @@ static void gl_draw(const DrawState *d, const Tri *tri, int n) {
         gl_put(gl_verts + (i * 3 + 1) * GL_VERT, &tri[i].b);
         gl_put(gl_verts + (i * 3 + 2) * GL_VERT, &tri[i].c);
     }
-    glBindVertexArray(gl_vao);
+    gl_vao_bind(gl_vao);
     glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * 3 * GL_VERT * sizeof(float), gl_verts, GL_STREAM_DRAW);
     gl_frag_state(d, s);

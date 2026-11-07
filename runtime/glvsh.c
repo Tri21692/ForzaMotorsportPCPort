@@ -319,6 +319,13 @@ uint64_t vc_new, vc_refills, vc_moved, vc_moved_bytes; /* fills: new, bytes chan
 static uint32_t vc_lo, vc_hi; /* the indices' range, from vc_find for vc_source */
 static uint64_t vc_fmt; /* the draw's layout without its addresses (vc_find), for vc_content */
 static int vc_first_seen; /* vc_find said no: the first time its key is seen */
+/* What the draw's bytes hashed to when its key was first seen, and the slot of that note (vc_find): a draw is let in
+ * only if its bytes are the same the second time. New York's dynamic geometry comes round again at the same places
+ * of a ring with other bytes: each was let in on its second sighting, given new buffers and never drawn from again,
+ * some 100 fills a frame (30,000 "new" in 5 s) at the busiest grid. Those now stream as uncached draws. */
+static uint64_t vc_seen_key[VC_SLOTS], vc_seen_src[VC_SLOTS];
+static int vc_seen_at = -1;
+uint64_t vc_dynamic; /* (the stats line) */
 /* Content to the entry holding it: Maple Valley's scenery streams in at other places as the car goes,
  * and the same geometry under a new key (its addresses) was 99% of the fills there (70,000 in 5 s,
  * 700 MB uploaded again), the device thread busy all the frame on its slowest stretch. */
@@ -366,7 +373,7 @@ static void vc_hold(VcEntry *e, uint64_t ck) {
 static VcEntry *vc_find(int n, int prim, const int *used, int m) {
     static int on = -1;
     if (on < 0) on = !getenv("XBRT_GL_VCACHE") || atoi(getenv("XBRT_GL_VCACHE"));
-    vc_first_seen = 0;
+    vc_first_seen = 0, vc_seen_at = -1;
     if (!on || n < 16) return NULL;
     uint64_t hv = hash_bytes((const uint8_t *)vidx, (uint32_t)n * 4); /* which vertex each one is, from the arrays' starts */
     uint64_t key = vc_mix(hv, (uint64_t)n << 8 | (uint64_t)prim);
@@ -400,10 +407,10 @@ static VcEntry *vc_find(int n, int prim, const int *used, int m) {
     }
     /* A draw is let in the second time it is seen: some 50 a frame came new each time (geometry
      * the game writes afresh, at another place each frame) and filled the cache for nothing. */
-    static uint64_t seen[VC_SLOTS];
-    uint64_t *was_seen = &seen[(key ^ key >> 29) & (VC_SLOTS - 1)];
+    vc_seen_at = (int)((key ^ key >> 29) & (VC_SLOTS - 1));
+    uint64_t *was_seen = &vc_seen_key[vc_seen_at];
     if (*was_seen != key) {
-        *was_seen = key, vc_first++, vc_first_seen = 1;
+        *was_seen = key, vc_seen_src[vc_seen_at] = 0, vc_first++, vc_first_seen = 1;
         return NULL;
     }
     if (vc_bytes > (512u << 20)) { /* too much on the GPU: what was not drawn lately goes */
@@ -466,7 +473,7 @@ static void vc_store(VcEntry *e, uint64_t src, uint64_t sparse, const float *pac
     else vc_bytes -= e->bytes;
     glBindBuffer(GL_ARRAY_BUFFER, e->vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)bytes, packed, e->misses ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
-    glBindVertexArray(gl_vsh_vao); /* the element buffer is the vertex array's */
+    gl_vao_bind(gl_vsh_vao); /* the element buffer is the vertex array's */
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, e->ibo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)k * (GLsizeiptr)sizeof(GLuint), idx, GL_STATIC_DRAW);
     e->src = src, e->sparse = sparse, e->uses = 0, e->k = k, e->bytes = bytes + (size_t)k * sizeof(GLuint), e->alias = 0;
@@ -538,7 +545,7 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     gl_use(p);
     if (!gl_vsh_vao) {
         glGenVertexArrays(1, &gl_vsh_vao);
-        glBindVertexArray(gl_vsh_vao);
+        gl_vao_bind(gl_vsh_vao);
         glGenBuffers(1, &gl_vsh_vbo);
         glGenBuffers(1, &gl_vsh_ibo);
         glBindBuffer(GL_ARRAY_BUFFER, gl_vsh_vbo);
@@ -548,7 +555,7 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
         }
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_vsh_ibo);
     }
-    glBindVertexArray(gl_vsh_vao);
+    gl_vao_bind(gl_vsh_vao);
     /* Only the attributes the program reads, packed: all sixteen were
      * 256 bytes a vertex, some 60 MB a frame in a race. */
     static float *packed;
@@ -586,6 +593,7 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
         }
     } else if (deferred && vc_first_seen) { /* first seen at its addresses: what another entry holds is drawn from there */
         uint64_t s = vc_source(n, used, m, 0);
+        if (vc_seen_at >= 0) vc_seen_src[vc_seen_at] = s;
         VcEntry *b = s ? vc_holder(vc_content(s, idx, k)) : NULL;
         if (b) b->last = vc_clock, hit = 1, from = b, vc_moved++, vc_moved_bytes += (uint64_t)n * m * 16;
     }
@@ -603,6 +611,11 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
         } else
             for (int i = 0; i < n; i++)
                 for (int j = 0; j < m; j++) memcpy(packed + (i * m + j) * 4, vs[i].a[used[j]], 16);
+    }
+    if (ce && !hit && !ce->vbo && !ce->alias && vc_seen_at >= 0 && vc_seen_key[vc_seen_at] == ce->key && vc_seen_src[vc_seen_at] != src) {
+        /* new, and its bytes not the ones of its first sighting: geometry rewritten at these places (a ring), not
+         * kept; noted again, to be let in if the next sighting matches this one */
+        vc_seen_src[vc_seen_at] = src, ce->key = 0, ce->last = 0, ce = NULL, vc_dynamic++;
     }
     if (ce && !hit) { /* its own buffers: a new draw, or one whose bytes changed */
         uint64_t ck = ce->ck;
@@ -672,7 +685,7 @@ static int gl_draw_vsh(const DrawState *d, const Vertex *vs, int n, int prim) {
     uint64_t p6 = rt_now_100ns();
     prof_t[0] += p1 - p0, prof_t[1] += p2 - p1, prof_t[2] += p3 - p2, prof_t[3] += p4 - p3, prof_t[4] += p5 - p4, prof_t[5] += p6 - p5;
     prof_n++, prof_verts += (uint64_t)n;
-    glBindVertexArray(gl_vao);
+    /* (the vertex programs' array left bound: every other draw binds its own) */
     s->dirty = s->cdirty = 1, s->seq = ++gl_seq;
     if (d->ztest && d->zwrite && s->ztex) s->zdirty = 1, s->zgpu = 0;
     gl_drawn(s, d->cx0, d->cy0, d->cx0 + d->cw, d->cy0 + d->ch);
