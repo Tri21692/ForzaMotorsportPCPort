@@ -118,7 +118,7 @@ DROP = {'countach': ['KIT00_REAR_WINDOW', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_H
 # the car's own cabin (merged into the body above): the template's interior not fitted in as well
 OWN_CABIN = {'jesko', 'zr1', 'gt2rs', 'f8', 'slrmoss', '335i', '190e', 'brera', 'chiron', 'fordgt17', 'huracan'}  # (the SLR Stirling Moss: no roof, and the coupe template's headliner fitted under none stood over its cockpit in black)
 HEIGHT = {  # the body moved up (+) or down (-), metres, from the store's side views (the user's 6 Nov: "fix the heights")
- 'huracan': -0.06, 'jesko': -0.04, 'maloo': -0.03, 'impala': +0.05}
+ 'huracan': -0.06, 'jesko': -0.04, 'maloo': -0.03, 'impala': +0.17, '190e': +0.03, 'zr1': +0.03, 'diablo': +0.03}  # (the evening's: the Impala's tyres were under its body, the others' fronts tucked under their lips)
 COVERS = {'rs5'}  # lamps under another sheet's shells: those left out (nfsu2forza NFSU_COVERS)
 THIN = {}  # dense ports whose levels are all one mesh, thinned (cartoolkit "decimate"; its levels then share no vertices)
 ARCHES = {  # (6 Nov evening: refined from the store's side views and sideplot.py, the GT2 RS to the Terzo) the arch middles as the length fit puts them, where the converter's own read is off (NFSU_ARCHES); from
