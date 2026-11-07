@@ -118,7 +118,8 @@ DROP = {'countach': ['KIT00_REAR_WINDOW', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_H
 # the car's own cabin (merged into the body above): the template's interior not fitted in as well
 OWN_CABIN = {'jesko', 'zr1', 'gt2rs', 'f8', 'slrmoss', '335i', '190e', 'brera', 'chiron', 'fordgt17', 'huracan'}  # (the SLR Stirling Moss: no roof, and the coupe template's headliner fitted under none stood over its cockpit in black)
 HEIGHT = {  # the body moved up (+) or down (-), metres, from the store's side views (the user's 6 Nov: "fix the heights")
- 'huracan': -0.06, 'jesko': -0.04, 'maloo': -0.03, 'impala': +0.17, '190e': +0.03, 'zr1': +0.03, 'diablo': +0.03}  # (the evening's: the Impala's tyres were under its body, the others' fronts tucked under their lips)
+ 'huracan': -0.06, 'jesko': -0.04, 'maloo': -0.03, 'impala': +0.10, '190e': +0.03, 'zr1': +0.03, 'diablo': +0.03}  # (the evening's: the Impala's tyres were under its body, the others' fronts tucked under their lips)
+WIDEN = {'jesko': 1.12, 'senna': 1.08, '190e': 1.05, 'terzo': 1.03, 'chiron': 1.03, 'impala': 1.05, 'rs5': 1.03, 'maloo': 1.04}  # the body's width alone scaled (plan "widen"), where the game's tyres poke out past the arches
 COVERS = {'rs5'}  # lamps under another sheet's shells: those left out (nfsu2forza NFSU_COVERS)
 THIN = {}  # dense ports whose levels are all one mesh, thinned (cartoolkit "decimate"; its levels then share no vertices)
 ARCHES = {  # (6 Nov evening: refined from the store's side views and sideplot.py, the GT2 RS to the Terzo) the arch middles as the length fit puts them, where the converter's own read is off (NFSU_ARCHES); from
@@ -160,10 +161,10 @@ def convert(key):
     log = os.path.join(out, 'build.log'); open(log, 'w').close()
     carbin_t, lv = template_files(tmpl)
     sd = stage(src, key)
-    if key in MERGE or key in DROP or key in OWN_CABIN or key in HEIGHT:
+    if key in MERGE or key in DROP or key in OWN_CABIN or key in HEIGHT or key in WIDEN:
         plan = os.path.join(out, 'plan.json')
         json.dump({'merge': {'KIT00_BODY': MERGE.get(key, ['KIT00_BODY']), **({'UNUSED': DROP[key]} if key in DROP else {})}, 'most_wanted': True,
-                   **({'interior': True} if key in OWN_CABIN else {}), **({'lower': -HEIGHT[key] * 1.6} if key in HEIGHT else {})}, open(plan, 'w'))
+                   **({'interior': True} if key in OWN_CABIN else {}), **({'lower': -HEIGHT[key] * 1.6} if key in HEIGHT else {}), **({'widen': WIDEN[key]} if key in WIDEN else {})}, open(plan, 'w'))
         cmd = [sys.executable, '-W', 'ignore', os.path.join(T, 'cartoolkit.py'), plan, carbin_t, sd, os.path.join(out, 'car.carbin')]
     elif key in THIN:
         plan = os.path.join(out, 'plan.json')

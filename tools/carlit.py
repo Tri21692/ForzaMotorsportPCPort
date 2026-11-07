@@ -183,6 +183,30 @@ if os.environ.get('ICON') or os.environ.get('HUBS'):  # the tile's car stands on
         axles = [(hf_ * 4096 * S, 0, 0), (hr_ * 4096 * S, 0, 0)]
         radii = [df_ / 2, dr_ / 2]
         centres = [-rf_ + df_ / 2, -rr_ + dr_ / 2]
+    if os.environ.get('TIRE'):  # TIRE=tire.carbin, TSCALE=front,rear, TRACK=front,rear (maxdata TrackOuter, m), TPOS=outer|centre:
+        # the game's own tyre model at its draw scale, the tyre's outer face (or its middle) at half the track
+        tc = carbin.read(open(os.environ['TIRE'], 'rb').read())
+        tsf, tsr = (float(x) for x in os.environ.get('TSCALE', '1,1').split(','))
+        tf_, tr_ = (float(x) for x in os.environ['TRACK'].split(','))
+        cy = (y0 + y1) / 2
+        for (ax, _, _), zc0, sc, trk in zip(axles, centres, (tsf, tsr), (tf_, tr_)):
+            for q in tc['parts']:
+                if not q['verts'] or not q['name'].endswith('LOD1'): continue
+                TV = [(v[0] * S * 1.6 / 1.6, v[1] * S, v[2] * S) for v in q['verts']]
+                xs_ = [v[0] for v in TV]; xmid = (min(xs_) + max(xs_)) / 2; half = (max(xs_) - min(xs_)) / 2 * sc
+                for sgn in (-1, 1):
+                    lat = trk / 2 - (half if os.environ.get('TPOS', 'outer') == 'outer' else 0)
+                    tf_faces = []
+                    for sp in q['subparts']:
+                        if sp['id'] != 1: continue
+                        ix = sp['indices']
+                        for kk in range(len(ix) - 2):
+                            a_, b_, c_ = (ix[kk], ix[kk + 1], ix[kk + 2]) if kk % 2 == 0 else (ix[kk + 1], ix[kk], ix[kk + 2])
+                            if len({a_, b_, c_}) == 3: tf_faces.append((a_, b_, c_))
+                    me_ = bpy.data.meshes.new('tyre')
+                    me_.from_pydata([(ax + v[2] * sc, cy + sgn * (lat + (v[0] - xmid) * sc * sgn * -1), zc0 + v[1] * sc) for v in TV], [], tf_faces)
+                    o_ = bpy.data.objects.new('tyre', me_); scene.collection.objects.link(o_); me_.materials.append(rubber)
+        axles = []
     for (ax, top, width), r, zc0 in zip(axles, radii, centres):
         for sgn in (-1, 1):
             y = (y0 + y1) / 2 + sgn * (Wd / 2 - 0.14 * Wd)

@@ -402,6 +402,7 @@ if __name__ == '__main__':
     nfsu2forza.FIT_WIDTH = plan.get('fit') == 'width'
     nfsu2forza.FIT_TRACK = plan.get('fit') == 'track'
     nfsu2forza.LOWER = plan.get('lower', 0.0)
+    nfsu2forza.WIDEN = plan.get('widen', 1.0)
     nfsu2forza.KITS = plan.get('kits')
     nfsu2forza.HIDE = tuple(plan.get('hide', ()))
     nfsu2forza.SHOP = dict(plan.get('shop', {}))

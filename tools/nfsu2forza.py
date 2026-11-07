@@ -1063,6 +1063,7 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     if FIT_TRACK:  # its width then the template's (plan "fit": "track"): the wheels are the template's, at its track, and
         tx = [v[0] / 4096 for v in tbody['verts']]  # the Neon, fitted by length 8% wider than the SRT-4, had them 6-9 cm inside its fenders
         kx = (max(tx) - min(tx)) / (k * (max(v[1] for v in nb) - min(v[1] for v in nb)))
+    kx *= WIDEN  # (the plan's "widen": the body's width alone scaled, over the template's wheels at its track)
     print('fit: scale %.3f, forward offset %.3f, up offset %.3f%s' % (k, dz, dy, ', width x%.3f' % kx if kx != 1 else ''))
 
     dark = dark_uv(os.path.join(os.path.dirname(template_path), 'liveries', 'standard', 'livery0nc.xpr'))
@@ -2447,6 +2448,7 @@ VINYL_CANVAS = ('BODY', 'BODY_LEFT', 'BODY_RIGHT', 'BODY_TOP', 'BODY_REAR')  # M
 CANVAS = '__canvas__'  # the canvas's rooms in the atlas: pack_atlas images (CANVAS, k), white (plain paint)
 CANVAS_SIZE = 512  # Most Wanted's vinyl canvas, texels
 SKIN = None  # (texture name, canvas size): a livery sheet the BODY groups are drawn from, as a vinyl canvas (cartoolkit.py sets it)
+WIDEN = 1.0  # the body's width alone scaled by this (cartoolkit's plan "widen": the user's 6 Nov, tyres poking out past the arches)
 FIT_TRACK = False  # its width scaled apart to the template body's (cartoolkit.py's plan "fit": "track")
 FIT_WIDTH = False  # scaled to the template body's width, not its length (cartoolkit.py's plan "fit": "width")
 KITS = None  # the body kits the shop offers (cartoolkit.py's plan "kits"; None, all the car has): the MX-5 add-on's are
