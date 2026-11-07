@@ -167,37 +167,6 @@ static int mm_in(int i, float x, float y, float z) {
     }
     return 0;
 }
-/* A Moment still locked, coming up (7 Nov, Mayhem's improvements: where to look for them): the player within MM_HINT m
- * of one of its places, "MOMENT AHEAD" and its name on the race's note for a moment; again for that place only after
- * 30 s away. Unlocked ones say nothing. */
-#define MM_HINT 120.0f
-static void mm_hint(float x, float z) {
-    static uint64_t told[MM_MAX][MM_ZONES];
-    uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
-    int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
-    const char *qt_ = getenv("XBRT_QR_TEST"), *cm = qt_ ? strchr(qt_, ',') : NULL;
-    if (track < 0 && cm) track = atoi(cm + 1); /* (testing: an arcade race has no event record) */
-    uint64_t now = rt_now_100ns();
-    for (int i = 0; i < nmm; i++) {
-        if (mm[i].track != track || mm[i].got) continue;
-        for (int k = 0; k < mm[i].nz; k++) {
-            const float *zn = mm[i].zone[k];
-            float r = zn[2] + MM_HINT, dx = x - zn[0], dz = z - zn[1];
-            if (dx * dx + dz * dz > r * r) continue;
-            int quiet = 0; /* (another place of the same Moment told lately: once for them all) */
-            for (int j = 0; j < mm[i].nz; j++) quiet |= told[i][j] && now - told[i][j] < 300000000;
-            if (!quiet) {
-                char m[48];
-                snprintf(m, sizeof m, "MOMENT AHEAD: %s", mm[i].name);
-                say(m);
-                fprintf(stderr, "xbrt: mayhem: near the Moment %s\n", mm[i].name);
-            }
-            told[i][k] = now;
-            return;
-        }
-    }
-}
-
 /* A takedown at (x, y, z) on the race's track: a Mayhem Moment's place? Its banner, and unlocked if new. 1 if one. */
 static int mayhem_moment(float x, float y, float z) {
     uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
@@ -1184,7 +1153,6 @@ void rt_qr_tick(void) {
             if (looks < 0) looks = getenv("XBRT_AUTODRIVE_LOOKS") && atoi(getenv("XBRT_AUTODRIVE_LOOKS"));
             if (looks && autod > 0 && car == me) rt_photo_lookback = (int)((rt_now_100ns() / 15000000) % 8);
         }
-        if (car == me && mayhem_race && lap >= 0) mm_hint(rdf(car + 0x14), rdf(car + 0x1C)); /* (before the autopilot's: on it too) */
         if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
             autopilot(car, xs, zs, np, dt);
             cs[i].v[0] = rdf(car + 0x44), cs[i].v[1] = rdf(car + 0x48), cs[i].v[2] = rdf(car + 0x4C);

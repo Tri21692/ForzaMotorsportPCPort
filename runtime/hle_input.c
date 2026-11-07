@@ -43,9 +43,6 @@ static uint32_t packet;
  * seconds, for running without anyone at the controls. */
 enum { A_A, A_B, A_X, A_Y, A_BLACK, A_WHITE, A_LT, A_RT };
 
-static volatile int menu_right; /* D-pad right presses wanted (rt_menu_right_press) */
-static volatile uint64_t menu_right_at;
-void rt_menu_right_press(int n) { menu_right_at = rt_now_100ns() + 6000000, menu_right = n; }
 static void set_pad(uint32_t pad, uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]) {
     xb_wr16(pad, buttons);
     for (int i = 0; i < 8; i++) xb_wr8(pad + 2 + i, analog[i]);
@@ -325,14 +322,6 @@ static void host_pad(uint32_t pad) {
         else thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
     }
     if (rt_view_lock) analog[A_BLACK] = 0; /* (Mayhem: the near chase view forced, the player's view button ignored) */
-    { /* the D-pad's right pressed for hle_career_cats.c (the Race Type list on to Amateur): after a moment (the screen
-       * comes in first), down two polls, up two polls, each press */
-        static int phase;
-        if (menu_right > 0 && rt_now_100ns() >= menu_right_at) {
-            if (phase < 2) buttons |= 0x8, phase++;
-            else if (++phase >= 4) phase = 0, menu_right--, menu_right_at = rt_now_100ns() + 1500000;
-        }
-    }
     { /* the view button pressed for hle_quickrace.c (the takedown camera from an in-car view, Mayhem's forced view): down
        * a poll, up a poll */
         static int phase;
