@@ -117,6 +117,8 @@ DROP = {'countach': ['KIT00_REAR_WINDOW', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_H
         'diablo': ['KIT00_LEFT_HEADLIGHT', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_HEADLIGHT_GLASS', 'KIT00_RIGHT_HEADLIGHT_GLASS']}  # (its pop-up lamps, modelled raised: two boxes on its nose that read as wing pieces, the user's 6 Nov; closed, as parked)  # (6 Nov: BASE and the glass read as scattered spikes and shards, in the game too; KIT00_BODY has the whole shell)
 # the car's own cabin (merged into the body above): the template's interior not fitted in as well
 OWN_CABIN = {'jesko', 'zr1', 'gt2rs', 'f8', 'slrmoss', '335i', '190e', 'brera', 'chiron', 'fordgt17', 'huracan'}  # (the SLR Stirling Moss: no roof, and the coupe template's headliner fitted under none stood over its cockpit in black)
+HEIGHT = {  # the body moved up (+) or down (-), metres, from the store's side views (the user's 6 Nov: "fix the heights")
+ 'huracan': -0.06, 'jesko': -0.04, 'maloo': -0.03, 'impala': +0.05}
 COVERS = {'rs5'}  # lamps under another sheet's shells: those left out (nfsu2forza NFSU_COVERS)
 THIN = {}  # dense ports whose levels are all one mesh, thinned (cartoolkit "decimate"; its levels then share no vertices)
 ARCHES = {  # the arch middles as the length fit puts them, where the converter's own read is off (NFSU_ARCHES); from
@@ -158,9 +160,10 @@ def convert(key):
     log = os.path.join(out, 'build.log'); open(log, 'w').close()
     carbin_t, lv = template_files(tmpl)
     sd = stage(src, key)
-    if key in MERGE or key in DROP or key in OWN_CABIN:
+    if key in MERGE or key in DROP or key in OWN_CABIN or key in HEIGHT:
         plan = os.path.join(out, 'plan.json')
-        json.dump({'merge': {'KIT00_BODY': MERGE.get(key, ['KIT00_BODY']), **({'UNUSED': DROP[key]} if key in DROP else {})}, 'most_wanted': True, **({'interior': True} if key in OWN_CABIN else {})}, open(plan, 'w'))
+        json.dump({'merge': {'KIT00_BODY': MERGE.get(key, ['KIT00_BODY']), **({'UNUSED': DROP[key]} if key in DROP else {})}, 'most_wanted': True,
+                   **({'interior': True} if key in OWN_CABIN else {}), **({'lower': -HEIGHT[key] * 1.6} if key in HEIGHT else {})}, open(plan, 'w'))
         cmd = [sys.executable, '-W', 'ignore', os.path.join(T, 'cartoolkit.py'), plan, carbin_t, sd, os.path.join(out, 'car.carbin')]
     elif key in THIN:
         plan = os.path.join(out, 'plan.json')
