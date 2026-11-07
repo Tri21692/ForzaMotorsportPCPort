@@ -80,6 +80,7 @@ static struct { int track, nz; float zone[MM_ZONES][4]; char name[40], todo[120]
 static struct { int track; float share; } mspread[32]; /* "spread <track> <percent>": the rivals over that much of the lap */
 static int nmspread;
 static int nmm, mm_loaded;
+static int mm_prize; /* "prize <car ordinal>": the car for every Moment found (the user's, 7 Nov) */
 static uint32_t mayhem_ev[32];
 static int nmayhem_ev;
 static char mm_flash[64]; /* the last Moment's banner, MAYHEM MOMENT! and its name */
@@ -100,6 +101,8 @@ static void mayhem_load_once(void) {
         if (!strncmp(line, "events", 6)) {
             char *s = line + 6, *e;
             for (unsigned long v; nmayhem_ev < 32 && (v = strtoul(s, &e, 10), e != s); s = e) mayhem_ev[nmayhem_ev++] = (uint32_t)v;
+        } else if (!strncmp(line, "prize ", 6)) {
+            mm_prize = atoi(line + 6);
         } else if (!strncmp(line, "spread ", 7) && nmspread < 32) {
             int track;
             float pct;
@@ -187,6 +190,62 @@ static int mayhem_moment(float x, float y, float z) {
         return 1;
     }
     return 0;
+}
+
+/* The car for every Mayhem Moment (the user's, 7 Nov: "a prize car for getting all Mayhem Moments"): mayhem.txt's
+ * "prize <ordinal>". Given the game's own way (docs/research/car-gift.md): the career's series flow works out a
+ * finished race's rewards with f_0017E270(..., gifts, ...), its second argument the list of cars won (a vector<int>:
+ * begin +4, end +8); the ordinal is pushed onto it there (f_0018C280, push_back), so the game's CarUnlock screen
+ * shows it, puts it in the garage (or credits if the garage is full), takes its picture and saves. Owed while
+ * every Moment is found and <mods>/mayhem_prize.txt doesn't say "given"; marked given when the garage takes the
+ * car (its add, f_00056A40(ordinal, ...), thiscall), never in the save. XBRT_MM_PRIZE=0: off. */
+static int mm_prize_given = -1;
+static const char *mm_prize_path(void) {
+    static char path[512];
+    snprintf(path, sizeof path, "%s/mayhem_prize.txt", mods_dir());
+    return path;
+}
+static int mm_prize_owed(void) {
+    mayhem_load();
+    if (!mm_prize || !nmm || (getenv("XBRT_MM_PRIZE") && !atoi(getenv("XBRT_MM_PRIZE")))) return 0;
+    for (int i = 0; i < nmm; i++) if (!mm[i].got) return 0;
+    if (mm_prize_given < 0) {
+        char line[64] = "";
+        FILE *f = fopen(mm_prize_path(), "r");
+        if (f) { if (!fgets(line, sizeof line, f)) line[0] = 0; fclose(f); }
+        mm_prize_given = !strncmp(line, "given", 5);
+    }
+    if (mm_prize_given) return 0;
+    uint32_t n = xb_rd32(0x57D188); /* (the car list: an ordinal it has, or the car screen reads a null car) */
+    for (uint32_t r = 0; r < n && r < 400; r++)
+        if (xb_rd32(0x57D18C + r * 0x8C + 0x7C) == (uint32_t)mm_prize) return 1;
+    fprintf(stderr, "xbrt: mayhem prize: car %d not in the car list\n", mm_prize);
+    return 0;
+}
+void orig_f_0017E270(XbCtx *c); /* a finished race's rewards (wraps.txt) */
+void f_0017E270(XbCtx *c) {
+    uint32_t gifts = xb_rd32(c->esp + 8), race = xb_rd32(0x592984); /* (cdecl: read before the call returns) */
+    orig_f_0017E270(c);
+    if (!gifts || !race || xb_rd32(race + 0x24) != 0 || !mm_prize_owed()) return;
+    uint32_t b = xb_rd32(gifts + 4), e = xb_rd32(gifts + 8);
+    for (uint32_t p = b; p && p < e; p += 4) if (xb_rd32(p) == (uint32_t)mm_prize) return; /* (on it already) */
+    uint32_t scratch = c->esp - 0x10, ecx = c->ecx;
+    xb_wr32(scratch, (uint32_t)mm_prize);
+    c->ecx = gifts;
+    rt_guest_call(c, 0x0018C280u, 1, scratch);
+    c->ecx = ecx;
+    fprintf(stderr, "xbrt: mayhem prize: every Moment found, car %d to the car screen\n", mm_prize);
+}
+void orig_f_00056A40(XbCtx *c); /* the garage takes a car (wraps.txt) */
+void f_00056A40(XbCtx *c) {
+    uint32_t ordinal = xb_rd32(c->esp + 4);
+    orig_f_00056A40(c);
+    if (mm_prize && ordinal == (uint32_t)mm_prize && c->eax && mm_prize_given == 0) {
+        FILE *f = fopen(mm_prize_path(), "w");
+        if (f) fprintf(f, "given %d\n", mm_prize), fclose(f);
+        mm_prize_given = 1;
+        fprintf(stderr, "xbrt: mayhem prize: car %d in the garage\n", mm_prize);
+    }
 }
 
 int rt_qr_takedowns(void) { return takedowns; }

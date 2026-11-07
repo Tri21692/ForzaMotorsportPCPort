@@ -1788,7 +1788,11 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
     def on_trunk(levels):
         """An Underground 2 spoiler on the trunk lid: its parts stand at the origin (the game puts them on at run
         time), so as they were they sat inside the car, unseen (the Silvia's own, the Neon's shop ones, 5 Nov). Its
-        back to the lid's back edge, its foot on the lid's top there. Spoilers already in place are left."""
+        back to the lid's back edge, its feet (its lowest vertices) on the lid where they stand. Spoilers already in
+        place are left.
+        (Its lowest point once went to the lid's highest point near the back edge, |y| < 0.35, in the middle: the
+        legs stand out near the lid's sides, where it curves down, and the Celica GT-Four's wing floated 10 cm over
+        its lid in the store, the Neon's shop wings 2-6 cm, 7 Nov.)"""
         trunk = find('TRUNK')
         if not levels or not trunk: return levels
         V0 = np.array([v[:3] for v in levels[0]['verts']])
@@ -1798,13 +1802,39 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         back, depth = T[:, 0].min(), np.ptp(V0[:, 0])
         near = T[(T[:, 0] < back + max(depth, 0.15)) & (np.abs(T[:, 1]) < 0.35)]
         top = near[:, 2].max() if len(near) else T[:, 2].max()
-        dx, dz = back + 0.02 - V0[:, 0].min(), top - 0.01 - V0[:, 2].min()
+        dx, dz_old = back + 0.02 - V0[:, 0].min(), top - 0.01 - V0[:, 2].min()
+        # The lid's height under each foot vertex (those within 3 cm of the lowest), moved back: its highest
+        # triangle over the foot's x-y (the lid's top skin), or without triangles its highest vertex within 4 cm
+        feet = V0[V0[:, 2] < V0[:, 2].min() + 0.03] + [dx, 0.0, 0.0]
+        tris = np.array(trunk[0].get('tris') or [], int).reshape(-1, 3)
+        lid = np.full(len(feet), np.nan)
+        if len(tris):
+            A, B, C = T[tris[:, 0]], T[tris[:, 1]], T[tris[:, 2]]
+            e0, e1 = B[:, :2] - A[:, :2], C[:, :2] - A[:, :2]
+            den = e0[:, 0] * e1[:, 1] - e0[:, 1] * e1[:, 0]
+            k = np.abs(den) > 1e-12  # (edge-on triangles: the lid's walls)
+            A, B, C, e0, e1, den = A[k], B[k], C[k], e0[k], e1[k], den[k]
+            for i, p in enumerate(feet):
+                w = p[:2] - A[:, :2]
+                u = (w[:, 0] * e1[:, 1] - w[:, 1] * e1[:, 0]) / den
+                v = (e0[:, 0] * w[:, 1] - e0[:, 1] * w[:, 0]) / den
+                m = (u >= -1e-6) & (v >= -1e-6) & (u + v <= 1 + 1e-6)
+                if m.any(): lid[i] = (A[m, 2] + u[m] * (B[m, 2] - A[m, 2]) + v[m] * (C[m, 2] - A[m, 2])).max()
+        else:
+            for i, p in enumerate(feet):
+                m = np.hypot(T[:, 0] - p[0], T[:, 1] - p[1]) < 0.04
+                if m.any(): lid[i] = T[m, 2].max()
+        need = (lid - feet[:, 2])[np.isfinite(lid)]
+        # the feet's middle on the lid, then 1 cm in (as before): where the lid slopes along a foot, its front
+        # sinks a little rather than its back floating
+        dz = float(np.median(need)) - 0.01 if len(need) else dz_old
         out = []
         for lv in levels:
             q = dict(lv)
             q['verts'] = [(v[0] + dx, v[1], v[2] + dz) + tuple(v[3:]) for v in lv['verts']]
             out.append(q)
-        print('spoiler on the trunk: %+.2f forward, %+.2f up' % (dx, dz))
+        print('spoiler on the trunk: %+.2f forward, %+.3f up (%d of %d foot vertices over the lid; the old rule %+.3f, %+.3f)'
+              % (dx, dz, len(need), len(feet), dz_old, dz - dz_old))
         return out
 
     plan = {

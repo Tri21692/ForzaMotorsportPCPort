@@ -25,7 +25,8 @@ IW, IH = 172, 150           # its picture, 12 in from the sides and top
 CROP = (0.04, 0.06, 0.96, 0.97)  # the part of the game's picture kept (the HUD off in the photo runs; the frame counter in the corner cut)
 HAND = r'C:\Windows\Fonts\Inkfree.ttf'
 TRACKS = {17: 'Tokyo', 20: 'Pacific Shipyards', 10: 'Fujimi Kaido', 18: 'New York', 9: 'Road Atlanta',
-          25: 'Rio de Janeiro', 5: 'Sunset Peninsula', 3: 'Maple Valley'}
+          25: 'Rio de Janeiro', 5: 'Sunset Peninsula', 3: 'Maple Valley',
+          1: 'Laguna Seca', 26: 'Tsukuba', 27: 'Alpine Ring', 16: 'Road America'}  # (the Championship's, 7 Nov)
 
 
 def picture(path):

@@ -144,3 +144,15 @@ Also rejected:
 Scripts, all read-only, are in `E:\xbrt_scr\moments2\`: m2.py, fams.py, famgroup.py, chk.py, scan.py, ov.py,
 final.py and laps.py. They ran with `python -E -P` rather than `-I`, because NumPy is installed only in the user
 site-packages, which `-I` turns off. `-P` still keeps the script and current folders off the import path.
+
+## Built (7 Nov, tools/mayhemchamp.py)
+
+The user's picks: Re-Tired (Laguna Seca), Dunlop-Sided (Tsukuba), Lights, Camera, Wreck-tion (Alpine Ring's camera
+crane), and a new one, **R-Vehicular Damage**: take down an opponent in front of the RVs at Road America, on every
+stretch of the line with RVs or campers within about 60 m (16 places, the most a Moment holds; found by
+E:\xbrt_scr\moments2\rv_zones.py from the meshes textured rvlarge1_00 and camper_01).
+
+The Mayhem Tour Championship (events\Mayhem\Ser00003.xml, series 110, level 45, Class R, logo tile 53): Laguna Lunacy
+(2 laps), Tsukuba Tussle (3), Alpine Avalanche (2), Road America Rampage (1); events 414-417; 1,800 CR a km. Mayhem
+Tour II is Class S now. Prize cars (tools/prizecars.py): Tour Charger SRT8, Tour II Corvette ZR1, Championship
+Lamborghini Egoista.
