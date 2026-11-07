@@ -191,7 +191,7 @@ if os.environ.get('ICON') or os.environ.get('HUBS'):  # the tile's car stands on
         cy = (y0 + y1) / 2
         for (ax, _, _), zc0, sc, trk in zip(axles, centres, (tsf, tsr), (tf_, tr_)):
             for q in tc['parts']:
-                if not q['verts'] or not q['name'].endswith('LOD1'): continue
+                if not q['verts'] or not q['name'].endswith(('LOD1', '_LOD')): continue  # (an imported wheel's own model: wheel_LOD)
                 TV = [(v[0] * S * 1.6 / 1.6, v[1] * S, v[2] * S) for v in q['verts']]
                 xs_ = [v[0] for v in TV]; xmid = (min(xs_) + max(xs_)) / 2; half = (max(xs_) - min(xs_)) / 2 * sc
                 for sgn in (-1, 1):
