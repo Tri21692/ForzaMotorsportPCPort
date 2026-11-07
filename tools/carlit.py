@@ -237,13 +237,21 @@ if os.environ.get('ICON'):  # the car-select tile: the car alone on a clear back
 cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam')); scene.collection.objects.link(cam); scene.camera = cam
 cam.data.lens = 45
 views = {'icon': (6.4, -6.6, 2.2), 'front': (6.0, -4.2, 1.9), 'rear': (-6.0, 4.2, 2.1), 'left': (0.2, 8.0, 0.8), 'fside': (4.5, 5.5, 1.2), 'lclose': (0.3, 4.6, 0.6), 'rclose': (-2.2, 3.2, 1.0), 'fclose': (3.4, -1.6, 0.9), 'rtop': (-3.6, 1.8, 2.6), 'cabin': (0.6, 2.2, 2.4), 'rearc': (-4.6, 1.4, 0.9)}
-if os.environ.get('VIEWS'): views = {k: views[k] for k in os.environ['VIEWS'].split(',')}
+if os.environ.get('CAMS'):  # CAMS=name:x:y:z:tx:ty:tz;...  cameras of one's own, each looking at its target (metres, Blender's axes)
+    views = {}; targets = {}
+    for c_ in os.environ['CAMS'].split(';'):
+        n_, *xs_ = c_.split(':'); xs_ = [float(x) for x in xs_]
+        views[n_] = tuple(xs_[:3]); targets[n_] = tuple(xs_[3:6])
+elif os.environ.get('VIEWS'): views = {k: views[k] for k in os.environ['VIEWS'].split(',')}
 elif os.environ.get('ICON'): views = {'icon': views['icon']}
-else: del views['icon']
+elif 'icon' in views: del views['icon']
 for name, (x, y, z) in views.items():
     cam.location = (x, y, z)
     cam.data.lens = 45 if 'close' not in name else 35
     if name == 'icon': cam.data.lens = 52
-    cam.rotation_euler = (-cam.location).normalized().to_track_quat('-Z', 'Y').to_euler()
+    from mathutils import Vector
+    tgt = Vector(targets[name]) if os.environ.get('CAMS') else Vector((0, 0, 0))
+    if os.environ.get('CAMS'): cam.data.lens = float(os.environ.get('LENS', '50'))
+    cam.rotation_euler = (tgt - cam.location).normalized().to_track_quat('-Z', 'Y').to_euler()
     scene.render.filepath = '%s_%s.png' % (out, name)
     bpy.ops.render.render(write_still=True)

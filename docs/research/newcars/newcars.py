@@ -118,15 +118,15 @@ DROP = {'countach': ['KIT00_REAR_WINDOW', 'KIT00_RIGHT_HEADLIGHT', 'KIT00_LEFT_H
 # the car's own cabin (merged into the body above): the template's interior not fitted in as well
 OWN_CABIN = {'jesko', 'zr1', 'gt2rs', 'f8', 'slrmoss', '335i', '190e', 'brera', 'chiron', 'fordgt17', 'huracan'}  # (the SLR Stirling Moss: no roof, and the coupe template's headliner fitted under none stood over its cockpit in black)
 HEIGHT = {  # the body moved up (+) or down (-), metres, from the store's side views (the user's 6 Nov: "fix the heights")
- 'huracan': -0.06, 'jesko': -0.04, 'maloo': -0.03, 'impala': +0.10, '190e': +0.03, 'zr1': +0.03, 'diablo': +0.03}  # (the evening's: the Impala's tyres were under its body, the others' fronts tucked under their lips)
-WIDEN = {'jesko': 1.12, 'senna': 1.08, '190e': 1.05, 'terzo': 1.03, 'chiron': 1.03, 'impala': 1.05, 'rs5': 1.03, 'maloo': 1.04}  # the body's width alone scaled (plan "widen"), where the game's tyres poke out past the arches
+ 'huracan': -0.06, 'jesko': +0.04, 'maloo': -0.03, 'impala': +0.10, '190e': +0.03, 'zr1': +0.03, 'diablo': +0.09, 'rs5': -0.05, 'chiron': -0.05, 'huayra': +0.02}  # (the evening's: the Impala's tyres were under its body, the others' fronts tucked under their lips)
+WIDEN = {'jesko': 1.17, 'senna': 1.08, '190e': 1.05, 'terzo': 1.03, 'chiron': 1.03, 'impala': 1.14, 'rs5': 1.03, 'maloo': 1.065}  # the body's width alone scaled (plan "widen"), where the game's tyres poke out past the arches
 COVERS = {'rs5'}  # lamps under another sheet's shells: those left out (nfsu2forza NFSU_COVERS)
 THIN = {}  # dense ports whose levels are all one mesh, thinned (cartoolkit "decimate"; its levels then share no vertices)
 ARCHES = {  # (6 Nov evening: refined from the store's side views and sideplot.py, the GT2 RS to the Terzo) the arch middles as the length fit puts them, where the converter's own read is off (NFSU_ARCHES); from
   # sideplot.py's measure of each arch against its wheel (the user's 6 Nov screenshots: the M8 GTE's rear wheel behind its arch)
- 'm8gte': [2.089, -2.084], 'senna': [1.758, -2.413], '190e': [2.562, -1.659], 'eclipse': [1.875, -1.912],
+ 'm8gte': [2.089, -2.084], 'senna': [1.932, -2.413], '190e': [2.562, -1.659], 'eclipse': [1.875, -1.912],
  'charger': [2.464, -2.182], 'brera': [1.925, -1.81], 'lfa': [2.172, -2.197], 'xk': [2.294, -1.996], '4c': [1.649, -1.87],
- 'countach': [2.0, -2.149, 1.834, -2.277], 'gt2rs': [1.794, -1.91], 'gtx1': [1.88, -2.353, 1.983, -2.353], 'huayra': [1.947, -2.299], 'zr1': [2.059, -2.093], 'maloo': [2.409, -2.064, 2.265, -2.208], 'rs5': [2.335, -2.157, 2.255, -2.157], 'fordgt17': [1.977, -2.228], 'chiron': [2.195, -2.257], 'terzo': [2.14, -2.216]}  # (its template's rotors: the front pair only, so its hubs given)
+ 'countach': [2.0, -2.149, 1.834, -2.277], 'gt2rs': [1.794, -1.91], 'gtx1': [1.88, -2.353, 1.983, -2.353], 'huayra': [1.947, -2.383], 'zr1': [2.059, -2.093], 'maloo': [2.409, -2.008, 2.265, -2.208], 'rs5': [2.335, -2.157, 2.255, -2.157], 'fordgt17': [1.977, -2.228], 'chiron': [2.195, -2.257], 'terzo': [2.14, -2.216], 'impala': [2.849, -2.21, 2.503, -2.21]}  # (its template's rotors: the front pair only, so its hubs given)
 PAINT = {'chiron': '0.08,0.16,0.5', 'lfa': '0.85,0.85,0.88', 'm2': '0.1,0.35,0.75', '190e': '0.05,0.05,0.06', 'gt2rs': '0.6,0.6,0.62',
          'xk': '0.12,0.25,0.15', 'huayra': '0.7,0.7,0.72', 'impala': '0.55,0.05,0.05', 'rs5': '0.12,0.3,0.12', 'gtx1': '0.9,0.9,0.92',
          'jesko': '0.85,0.85,0.88', 'terzo': '0.05,0.05,0.06', 'maloo': '0.85,0.45,0.05', 'm8gte': '0.1,0.15,0.4', 'sesto': '0.2,0.2,0.22',
