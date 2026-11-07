@@ -1262,10 +1262,18 @@ void rt_qr_tick(void) {
                 float ex = p[0] - rdf(c2 + 0x14), ez = p[2] - rdf(c2 + 0x1C);
                 near_car = ex * ex + ez * ez < 36;
             }
-            if (g > 100 && !near_car && lap >= 0) {
+            /* (the bar: 3x the car's own knocks of the last ~2 s, never under 100: a race car's tyres alone gave 100-210
+             * m/s^2 on Laguna in the Championship, so every drift ended "on a wall" at once and the handling stood down
+             * round the lap, the user's "brake-to-drift/handling feels off"; a road car's stay under 35, its bar 100.
+             * A wall's own knock is over 300, its log line's) */
+            static float gbase = 30.0f;
+            if (lap < 0) gbase = 30.0f;
+            float bar = gbase * 3.0f < 100.0f ? 100.0f : gbase * 3.0f;
+            if (g <= bar) gbase += (g - gbase) * (1.0f - expf(-(float)dt / 2.0f));
+            if (g > bar && !near_car && lap >= 0) {
                 static int wlog = -1;
                 if (wlog < 0) wlog = getenv("XBRT_WALLLOG") != NULL;
-                if (wlog || cs[i].wall_until < now) fprintf(stderr, "xbrt: mayhem: the player's car on a wall (%.0f m/s^2): ours stood down at %.3f s\n", g, now / 1e7);
+                if (wlog || cs[i].wall_until < now) fprintf(stderr, "xbrt: mayhem: the player's car on a wall (%.0f m/s^2, the bar %.0f): ours stood down at %.3f s\n", g, bar, now / 1e7);
                 cs[i].wall_until = now + 4000000;
             }
         }

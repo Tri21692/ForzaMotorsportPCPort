@@ -34,7 +34,7 @@ EVENT0 = 414           # after the Tour's 406-413 (the profile keeps 512 medal b
 ICON = mayhemlogos.FIRST + 2
 CR_PER_KM = 1800
 FIELD_FROM = r'events\proseries\Ser00013.xml'   # Class R-GTS Championship, level 45 (the disc's)
-TOUR2_CLASS, TOUR2_FIELD = 'S', r'events\spec\Ser00017.xml'  # Class S Championship, level 30 (the disc's)
+TOUR2_CLASS, TOUR2_FIELD = 'S', r'events\spec\Ser00017.xml'  # Class S Championship, level 30 (the mods' file, checked by name)
 DESC = ('The finale: four races of takedowns, boost and over-the-top physics in race cars, with a Mayhem Moment to find '
         'on each. Open to Class R cars.')
 DESC2 = ('Four more races of takedowns, boost and over-the-top physics, with a Mayhem Moment to find on each. Open to '
@@ -64,8 +64,13 @@ def text_of(d, sid):
     return None
 
 
-def disc_xml(mega, name):
-    return next(bytes(v) for k, v in mega.disc.items() if k.lower() == name.lower()).decode('latin-1')
+def series_xml(mega, name, want):
+    """The mods folder's series file (the mods renumber some: the disc's spec\\Ser00017 is the Ferrari Supercars Event,
+    whose three Ferraris made Tour II take no S car, 7 Nov), checked by its name."""
+    x = next(bytes(v) for k, v in mega.files.items() if k.lower() == name.lower()).decode('latin-1')
+    got = re.search(r'<series [^>]*displayname="([^"]*)"', x).group(1)
+    if got != want: raise SystemExit('%s is %r, not %r' % (name, got, want))
+    return x
 
 
 def block(x, tag):
@@ -108,7 +113,7 @@ def main(disc, mods):
         open(mp, 'wb').write(d)
     sid = dict(zip((w[0] for w in want), ids))
     # Tour II: Class S, the disc's Class S field
-    s_src = disc_xml(mega, TOUR2_FIELD)
+    s_src = series_xml(mega, TOUR2_FIELD, "Class S Championship")
     x2 = x2.replace(block(x2, 'Restrictions'), block(s_src, 'Restrictions')).replace(block(x2, 'AIField'), block(s_src, 'AIField'))
     mega.files[k2] = x2.encode('latin-1')
     print('%s: Mayhem Tour II, Class %s' % (k2, TOUR2_CLASS))
@@ -116,7 +121,7 @@ def main(disc, mods):
     if have3:
         print('%s there already' % k3)
     else:
-        r_src = disc_xml(mega, FIELD_FROM)
+        r_src = series_xml(mega, FIELD_FROM, "Class R-GTS Championship")
         ords = [int(o) for k in mega.files if k.lower().startswith('events' + B)
                 for o in re.findall(r'seriesordinal="(\d+)"', mega.files[k].decode('latin-1'))]
         used = {int(o) for k in mega.files if k.lower().startswith('events' + B)

@@ -385,6 +385,10 @@ void f_000410E0(XbCtx *c) {
                 if (best > 400.0f) from = 36.0f; /* (not on the line yet: 20 m off) */
             }
             float at = from + (k + 1) * (float)points * share / (ai + 1);
+            /* (round the lap: on Laguna Seca the grid stands behind the line's start, the player at its last points, and
+             * every rival came to 100% and more, put at 99%, beside the player: the user's, 7 Nov, "Laguna isn't
+             * spacing out the rivals". A point-to-point's grid is at its line's start: never past the end there.) */
+            if (at >= (float)points) at -= (float)points;
             int pct = (int)ceilf(at * 100.0f / (float)points);
             if (pct < 2) pct = 2; /* (-1 is the pole's) */
             moved = -(pct > 99 ? 99 : pct);

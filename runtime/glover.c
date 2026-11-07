@@ -130,6 +130,19 @@ static void ov_button(float x, float y, const char *letter, const float col[4], 
     ov_text(OVF_MENU, x + 24, y - 3, label, white, 0);
 }
 
+/* A pad button's name in a rounded pill (LT, RT, BACK, START: the user's, 7 Nov, "add controller icons for the
+ * settings menu"), the width it took. */
+static float ov_pill(float x, float y, const char *name, const float col[4]) {
+    static const float white[4] = {1, 1, 1, 1};
+    float w = ov_width(&ov_font[OVF_TEXT], name) + 12;
+    if (w < 18) w = 18;
+    ov_quad(x, y, x + 18, y + 18, 0, 0, 1, 1, col, 9);
+    ov_quad(x + w - 18, y, x + w, y + 18, 0, 0, 1, 1, col, 9);
+    ov_rect(x + 9, y, x + w - 9, y + 18, col);
+    ov_text(OVF_TEXT, x + w / 2, y + 1, name, white, 2);
+    return w;
+}
+
 static const char *ov_vs =
     "#version 430\n"
     "layout(location = 0) in vec2 a_p;\n"
@@ -381,8 +394,22 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     if (rt_overlay_needs_restart()) ov_text(OVF_TEXT, X0 + 64, 378, "Restart the game for the new settings to take effect.", amber, 0);
     if (n) ov_button(X0 + 64, 428, "A", green, "Change"); /* (none on the pages without settings: achievements, Moments) */
     ov_button(X0 + 190, 428, "B", red, "Back");
-    ov_text(OVF_MENU, X0 + 590, 425, "F1  Close", white, 1);
-    ov_text(OVF_MENU, X0 + 450, 425, "Q / E  Tabs", white, 1);
+    { /* the pad's: the triggers switch tabs, Back+Start closes (F1, Q / E and Esc on the keyboard as before) */
+        static const float pad[4] = {0.30f, 0.32f, 0.36f, 1};
+        float x = X0 + 290;
+        x += ov_pill(x, 428, "LT", pad) + 4;
+        x += ov_pill(x, 428, "RT", pad) + 6;
+        ov_text(OVF_MENU, x, 425, "Tabs", white, 0);
+        x = X0 + 590 - ov_width(&ov_font[OVF_MENU], "Close") - 6;
+        x -= ov_width(&ov_font[OVF_TEXT], "START") + 12;
+        float bw = ov_width(&ov_font[OVF_TEXT], "BACK") + 12, plus = ov_width(&ov_font[OVF_MENU], "+") + 6;
+        x -= plus + bw;
+        x += ov_pill(x, 428, "BACK", pad) + 3;
+        ov_text(OVF_MENU, x, 425, "+", white, 0);
+        x += plus - 3;
+        x += ov_pill(x, 428, "START", pad) + 6;
+        ov_text(OVF_MENU, x, 425, "Close", white, 0);
+    }
     ov_submit(vx, vy, vw, vh, W, H);
 }
 
