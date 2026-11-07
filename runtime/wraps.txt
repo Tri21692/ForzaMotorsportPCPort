@@ -12,3 +12,4 @@ BDD00   # the replay reads one back: hle_career.c, past the 10th the one ten bef
 171000  # a car unlocked in a query's bitset: hle_unlock.c, the add-on cars in Free Run and the arcade
 3726D0  # the Advanced Search applied: hle_unlock.c, its "DLC Cars" entry
 1767A0  # a query condition (field, comparison, value): hle_unlock.c, that entry's turned to the add-on cars
+B3530   # the race's ranking (a place a racer, +0xBC): hle_career.c, Mayhem's places from where the cars are on the road

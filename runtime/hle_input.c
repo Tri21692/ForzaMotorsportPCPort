@@ -321,15 +321,6 @@ static void host_pad(uint32_t pad) {
         if (took) rt_qr_auto = 0;
         else thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
     }
-    if (rt_view_lock) analog[A_BLACK] = 0; /* (Mayhem: the near chase view forced, the player's view button ignored) */
-    { /* the view button pressed for hle_quickrace.c (the takedown camera from an in-car view, Mayhem's forced view): down
-       * a poll, up a poll */
-        static int phase;
-        if (rt_view_press > 0 || phase) {
-            if (!phase) analog[A_BLACK] = 255, phase = 1;
-            else analog[A_BLACK] = 0, phase = 0, rt_view_press--;
-        }
-    }
     { /* Mayhem's camera led round the turns (hle_quickrace.c: the user's "make it spin quicker after turning"): the game's own look round the car
        * (the right stick) at the angle hle_quickrace.c wants (rt_drift_look, + right: the camera kept behind the nose),
        * eased; never over the player's own stick. The stick held all the way over, pointing at the angle (ahead +y, as the

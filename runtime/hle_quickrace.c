@@ -55,10 +55,11 @@ static float tank = 1.0f;
 static char note[48];
 static uint64_t note_until;
 
-static void say(const char *m) {
+static void say_for(const char *m, double secs) {
     snprintf(note, sizeof note, "%s", m);
-    note_until = rt_now_100ns() + 15000000;
+    note_until = rt_now_100ns() + (uint64_t)(secs * 1e7);
 }
+static void say(const char *m) { say_for(m, 1.5); }
 const char *rt_qr_note(void) { return note_until && rt_now_100ns() < note_until ? note : NULL; }
 
 /* ---- Mayhem (the user's, 3 Nov): a career category of its own (tools/mayhemseries.py; first a secret code on
@@ -472,7 +473,6 @@ volatile char rt_photo_path[512];
 static uint64_t qr_ticks; /* rt_qr_tick's that acted (the handling's state dropped when it missed one)*/
 static int me_drift; /* the player's car drifting or easing out of one, this tick (no spin-out then) */
 volatile float rt_drift_look; /* (rt.h: the look wanted in a drift, radians, + to the right; hle_input.c holds the right stick so) */
-volatile int rt_view_lock;    /* (rt.h: Mayhem: the player's view button ignored, the near chase view forced) */
 volatile int rt_photo_lookback; /* (rt.h, hle_input.c: 1 Y held, the game looking back; 2 right, 3 left: the right stick) */
 volatile float rt_toon; /* (rt.h: Mayhem's cartoon look, glfill.c) */
 static uint64_t flame_until; /* real time: the boost burning (its flame drawn by glover.c) */
@@ -493,7 +493,7 @@ static int ncand, probe_i, probe_stage;
 static int cam_retry; /* the camera's holds looked for again on the grid (fewer than 2 found) */
 static uint64_t cam_retry_at;
 static uint64_t tdcam_until; /* real time */
-static uint64_t auto_until; /* real time: the autopilot let go by then at the latest (4 s after the camera is back) */
+static uint64_t auto_until; /* real time: the autopilot let go by then at the latest (7 s after the camera is back) */
 volatile int rt_qr_auto;     /* the autopilot: 2 just started, 1 on (hle_input.c ends it) */
 static float auto_speed, auto_p[2];
 static int auto_k = -1;
@@ -543,9 +543,70 @@ static void find_cam_slots(uint32_t me, uint32_t rme) {
             if (!seen) cand[ncand] = a, cand_was[ncand++] = w;
         }
     }
-    if (ncand) rt_present_hold_until = rt_now_100ns() + 30000000, probe_began = rt_now_100ns(); /* (the picture held while they are tried: no flicker) */
     fprintf(stderr, "xbrt: quick race: the camera's hold on the player's car, %d places to try (%d copies, %d together over %u bytes)\n",
             ncand, nc, bestn, hi - lo);
+    /* The camera's two holds told by their look, not tried (the user's, 7 Nov: the probe held the picture still on the
+     * grid for seconds, "game still froze"): in every probe's finds, the camera's hold on the car is the second of two
+     * copies of the car's address 8 bytes apart, and its hold on the racer record the first of two copies side by side,
+     * 0xB0 or 0x260 bytes before it (the far and the near chase cameras). So no probe: those, when the look is there. */
+    static int noprobe = -1;
+    if (noprobe < 0) noprobe = !(getenv("XBRT_CAM_PROBE") && atoi(getenv("XBRT_CAM_PROBE")));
+    if (noprobe) {
+        uint32_t H = 0, R = 0;
+        for (int q = 0; q < ncand && !H; q++)
+            if (cand_was[q] == me && xb_rd32(cand[q] - 8) == me && xb_rd32(cand[q] - 4) != me) H = cand[q];
+        for (uint32_t a = H ? H - 4 : 0; H && a >= H - 0x400; a -= 4)
+            if (xb_rd32(a) == rme && xb_rd32(a + 4) == rme && xb_rd32(a - 4) != rme) { R = a; break; }
+        ncslot = 0, probe_i = ncand; /* (none to try) */
+        if (R) cslot[ncslot] = R, cslot_was[ncslot++] = rme;
+        if (H) cslot[ncslot] = H, cslot_was[ncslot++] = me;
+        fprintf(stderr, "xbrt: quick race: the camera's holds by their look: car %08x, racer %08x (%d)", H, R, ncslot);
+        for (int q = 0; q < ncand && ncslot < 2; q++) /* (not found: each place and its neighbours, to learn the look) */
+            fprintf(stderr, "%s %08x=%s [-8]%08x [-4]%08x [+4]%08x", q ? "," : "; places:", cand[q], cand_was[q] == me ? "car" : "racer", xb_rd32(cand[q] - 8), xb_rd32(cand[q] - 4), xb_rd32(cand[q] + 4));
+        if (H && !R) { /* (for the next look: what stands where the racer's were) */
+            fprintf(stderr, "; at -0xB0: %08x %08x, at -0x260: %08x %08x", xb_rd32(H - 0xB0), xb_rd32(H - 0xAC), xb_rd32(H - 0x260), xb_rd32(H - 0x25C));
+        }
+        fprintf(stderr, "\n");
+        return;
+    }
+    if (ncand) rt_present_hold_until = rt_now_100ns() + 30000000, probe_began = rt_now_100ns(); /* (the picture held while they are tried: no flicker) */
+}
+
+/* Debugging (XBRT_CAMSCAN_LATE=1): every 3 s, read only, the camera position's copies in memory, by bunch, and the
+ * player's car's and racer record's addresses held within 8 KB of each bunch: when the camera's hold on the racer
+ * record comes to be (on the grid without a press of the view button only the car's was found, 7 Nov). */
+static float cam_along(uint32_t me);
+static void cam_scan_debug(uint32_t me, uint32_t rme, int lap) {
+    static uint64_t next;
+    uint64_t now = rt_now_100ns();
+    if (now < next) return;
+    next = now + 30000000;
+    float cx = rt_cam_pos[0], cy = rt_cam_pos[1], cz = rt_cam_pos[2];
+    uint32_t copy[32], at = RT_USER_BASE, b, sz, pr, st;
+    int nc = 0;
+    while (at < RT_USER_LIMIT && nc < 32) {
+        if (!rt_user_query(at, &b, &sz, &pr, &st) || !sz) { at = b + (sz ? sz : 0x1000); continue; }
+        if (at < b) at = b;
+        uint32_t end = b + sz;
+        if (st == 0x1000 && at >= 0x01000000)
+            for (uint32_t a = at; a + 12 <= end && nc < 32; a += 4)
+                if (fabsf(rdf(a) - cx) <= 0.05f && fabsf(rdf(a + 4) - cy) <= 0.05f && fabsf(rdf(a + 8) - cz) <= 0.05f) copy[nc++] = a;
+        at = end;
+    }
+    fprintf(stderr, "xbrt: camscan: lap %d, the camera %.1f m along the car, %d copies:", lap, cam_along(me), nc);
+    for (int i = 0; i < nc;) {
+        int j = i;
+        while (j + 1 < nc && copy[j + 1] - copy[j] < 0x1000) j++;
+        fprintf(stderr, " [%08x-%08x:", copy[i], copy[j]);
+        for (uint32_t a = (copy[i] - 0x2000) & ~3u; a < copy[j] + 0x2000; a += 4) {
+            uint32_t w = xb_rd32(a);
+            if (w == me) fprintf(stderr, " car@%08x", a);
+            else if (w == rme) fprintf(stderr, " RACER@%08x", a);
+        }
+        fprintf(stderr, "]");
+        i = j + 1;
+    }
+    fprintf(stderr, "\n");
 }
 
 /* Which of those places the camera itself follows (the user's: the camera "not cutting over": with 2 of them it
@@ -623,19 +684,13 @@ static void cam_restore(uint32_t me) {
 
 /* In-car views (the user's, 4 Nov: "takedowns weren't displaying properly on Rio", raced from the bumper): the takedown
  * camera moves the chase camera's object, and in the bumper or hood view the camera is another, with one of its two
- * holds on the car. So on the grid, in an in-car view, the game's own view button (BLACK, hle_input.c) is pressed till
- * the chase camera stands (the camera over CAM_INCAR m off the car), its holds found there, the view put back; and a
- * takedown in an in-car view goes to the chase view for its slow motion and back after. */
+ * holds on the car. The view was switched to the chase one for the search and each takedown (4 Nov), then forced
+ * (5 Nov); the user's, 7 Nov: "remove the camera changing code": the player's view is never changed. In an in-car
+ * view the holds aren't looked for and a takedown has no camera of its own; Mayhem's grid recommends a chase view. */
 #define CAM_INCAR 3.2f
 #define CAM_BEHIND 2.5f /* m: a chase view's camera stands over this behind the car's middle */
-volatile int rt_view_press; /* BLACK presses wanted (hle_input.c sends one a poll pair) */
-static int view_shift;      /* presses made since the player's own view (4 views round) */
-static int vsurvey, vstep;  /* Mayhem's forced view: 1 the views being visited on the grid, 2 the near chase kept */
-static float vdist[4], valong[4], near_d; /* the views' cameras' distances off the car; the near chase's, from the last time */
-static int view_back;       /* the takedown camera's: put the view back at its end */
-static uint32_t td_wait_car, td_wait_racer;
-static float td_wait_speed;
-static uint64_t td_wait_until;
+static int view_tip;        /* Mayhem: the view looked at on this grid: 1 an in-car one (the chase view recommended), 2 not */
+static int raced;           /* the player off the grid this race: back on it is a restart */
 /* the camera's place along the car's nose (m, + ahead of the car's middle): the chase views stand some 4-6 m behind;
  * the bumper, the hood and the cockpit on the car or ahead of it. (By the distance alone, under CAM_INCAR, the user's
  * bumper view, 4.3 m ahead of the M3's middle, was a chase view: "the camera was forced on front bumper") */
@@ -645,7 +700,6 @@ static float cam_along(uint32_t me) {
     return hl > 0.1f ? (dx * hx + dz * hz) / hl : 0;
 }
 static int cam_in_car(uint32_t me) { return cam_along(me) > -CAM_BEHIND; }
-static void view_press(int n) { rt_view_press += n; view_shift = (view_shift + n) % 4; }
 
 static void tdcam_end(void) {
     if (!tdcam_until) return;
@@ -654,9 +708,9 @@ static void tdcam_end(void) {
     cam_restore(td_from); /* (straight back behind the player's car, facing on) */
     cam_cut(td_to, td_from); /* (straight back behind the player's car) */
     rt_time_scale(1.0), rt_vblank_rate = 1.0f;
-    auto_until = rt_now_100ns() + 40000000; /* (held on the line past that, takedowns stopped counting: the user's) */
+    auto_until = rt_now_100ns() + 70000000; /* (held on the line past that, takedowns stopped counting: the user's; 4 s, then 7 s (the
+                                             * user's, 7 Nov: "make the autopilot a little longer, unless the user press a button") */
     tdcam_until = 0;
-    if (view_shift) view_press((4 - view_shift) % 4); /* (the player's own view again: an in-car one, cut away from) */
 }
 
 
@@ -670,12 +724,7 @@ static void tdcam_start(uint32_t car, uint32_t racer, uint32_t me, float speed) 
         return;
     }
     if (ncslot <= 0) return;
-    if (cam_in_car(me) && !td_wait_car) { /* (in-car: the chase view first; tdcam_wait_tick starts it there) */
-        td_wait_car = car, td_wait_racer = racer, td_wait_speed = speed, td_wait_until = rt_now_100ns() + 15000000;
-        view_back = 0;
-        view_press(1);
-        return;
-    }
+    if (cam_in_car(me)) return; /* (an in-car view: the camera shown isn't the one the holds move) */
     for (int i = 0; i < ncslot; i++)
         if (xb_rd32(cslot[i]) != cslot_was[i]) { /* (not the player's any more: the camera's object gone or remade) */
             fprintf(stderr, "xbrt: quick race: the camera's places changed; no takedown camera until the next race\n");
@@ -822,7 +871,7 @@ void rt_qr_tick(void) {
     if (!xb_rd32(0x592984) || !active()) {
         if (probe_i < ncand && probe_stage == 1) xb_wr32(cand[probe_i], cand_was[probe_i]); /* (quit mid-probe: put back) */
         probe_i = ncand = 0, probe_stage = 0;
-        tdcam_end(), rt_qr_auto = 0, ncslot = -1, cam_retry = 0, rt_toon = 0, rt_view_cam.on = 0, rt_photo_lookback = 0, rt_drift_look = 0, td_wait_car = 0, view_shift = 0, rt_view_press = 0, vsurvey = 0, rt_view_lock = 0;
+        tdcam_end(), rt_qr_auto = 0, ncslot = -1, cam_retry = 0, rt_toon = 0, rt_view_cam.on = 0, rt_photo_lookback = 0, rt_drift_look = 0, view_tip = 0, raced = 0;
         memset(cs, 0, sizeof cs); takedowns = 0, tank = 1; return;
     }
     if (dt <= 0 || dt > 0.25) return;
@@ -845,41 +894,34 @@ void rt_qr_tick(void) {
         int on_grid = tm && tm < RT_USER_LIMIT && (int)xb_rd32(tm + 0x9C) < 0;
         if (!on_grid) grid_since = 0;
         else if (!grid_since) grid_since = now;
-        static uint64_t view_next; /* (the next press, a moment after the last: the view takes a frame or two) */
-        /* Mayhem: the near chase view forced (the user's, 5 Nov: "can we force a certain camera during Mayhem events?").
-         * On the grid each of the game's 4 views is visited (BLACK, a press each 0.25 s), the camera's distance off the
-         * car noted, and the nearest one not in the car (over CAM_INCAR) kept, before the takedown camera's holds are
-         * looked for there; the player's own view button ignored for the race (rt_view_lock, hle_input.c). Already in it
-         * (the camera as far off as the near chase was last time): no presses. */
-        if (!mayhem_race) vsurvey = 0, rt_view_lock = 0;
-        else if (vsurvey < 2 && me && rt_cam_frame && (vsurvey || (on_grid && now - grid_since > 20000000)) && !rt_view_press && now >= view_next) {
-            float vdx = rt_cam_pos[0] - rdf(me + 0x14), vdy = rt_cam_pos[1] - rdf(me + 0x18), vdz = rt_cam_pos[2] - rdf(me + 0x1C);
-            float d = sqrtf(vdx * vdx + vdy * vdy + vdz * vdz), along = cam_along(me);
-            rt_view_lock = 1;
-            if (!vsurvey && near_d > 0 && along < -CAM_BEHIND && fabsf(d - near_d) < 0.3f) {
-                vsurvey = 2, view_shift = 0;
-                fprintf(stderr, "xbrt: mayhem: in the near chase view already (the camera %.1f m off the car)\n", d);
-            } else {
-                if (!vsurvey) vsurvey = 1, vstep = 0, view_shift = 0;
-                if (vstep < 4) vdist[view_shift] = d, valong[view_shift] = along, vstep++, view_press(1), view_next = now + 4000000;
-                else {
-                    int best = -1;
-                    for (int j = 0; j < 4; j++)
-                        if (valong[j] < -CAM_BEHIND && (best < 0 || vdist[j] < vdist[best])) best = j;
-                    if (best < 0) best = 0;
-                    near_d = vdist[best];
-                    fprintf(stderr, "xbrt: mayhem: the views' cameras %.1f %.1f %.1f %.1f m off the car (%.1f %.1f %.1f %.1f along it): view %d kept (%d presses)\n",
-                            vdist[0], vdist[1], vdist[2], vdist[3], valong[0], valong[1], valong[2], valong[3], best, best);
-                    rt_view_press += best;
-                    view_shift = 0, vsurvey = 2, view_next = now + 2500000;
-                }
+        /* Mayhem: the player's own view (the user's, 7 Nov: "Don't force the camera change anymore in Mayhem Events";
+         * forced to the near chase since 5 Nov), and in a view in the car (the bumper, the hood, the cockpit) a chase
+         * view recommended, once a start, half a second off the grid: the grid's own camera stood at the bumper (4.3 m
+         * along the car) in a chase view too, and the tip came wrongly */
+        static uint64_t go_since;
+        if (on_grid || !rme) go_since = 0;
+        else if (!go_since) go_since = now;
+        { /* a restart (the race's record kept, the player back on the grid after racing): the race's own counts again */
+            if (rme && !on_grid && tm && tm < RT_USER_LIMIT) raced = 1;
+            else if (on_grid && raced) {
+                raced = 0, takedowns = 0, tank = 1;
+                memset(cs, 0, sizeof cs);
+                fprintf(stderr, "xbrt: quick race: restarted: takedowns and the boost from nothing again\n");
             }
         }
-        if (ncslot < 0 && me && on_grid && rt_cam_frame && now - grid_since > 20000000 && (mods & QR_TAKEDOWNS) && (!mayhem_race || vsurvey == 2)) {
-            if (cam_in_car(me) && view_shift < 3) { /* (an in-car view: the chase camera's holds are the takedown's) */
-                if (!rt_view_press && now >= view_next) view_press(1), view_next = now + 4000000;
-            } else if (!rt_view_press && now >= view_next) find_cam_slots(me, rme);
+        if (!mayhem_race || on_grid) view_tip = 0;
+        else if (!view_tip && me && rt_cam_frame && go_since && now - go_since > 5000000) {
+            float vdx = rt_cam_pos[0] - rdf(me + 0x14), vdy = rt_cam_pos[1] - rdf(me + 0x18), vdz = rt_cam_pos[2] - rdf(me + 0x1C);
+            float d = sqrtf(vdx * vdx + vdy * vdy + vdz * vdz), al = cam_along(me);
+            if (cam_in_car(me) && d < 7) {
+                view_tip = 1;
+                say_for("TIP: A CHASE VIEW IS BEST FOR MAYHEM (RB / E)", 6.0);
+                fprintf(stderr, "xbrt: mayhem: an in-car view (the camera %.1f m along the car): the chase view recommended\n", al);
+            } else view_tip = 2;
         }
+        { static int scan = -1; if (scan < 0) scan = getenv("XBRT_CAMSCAN_LATE") != NULL;
+          if (scan && me && rt_cam_frame) cam_scan_debug(me, rme, tm && tm < RT_USER_LIMIT ? (int)xb_rd32(tm + 0x9C) : -9); }
+        if (ncslot < 0 && me && on_grid && rt_cam_frame && now - grid_since > 20000000 && (mods & QR_TAKEDOWNS)) find_cam_slots(me, rme); /* (whatever the grid's camera: it holds the chase camera's places nearby) */
         { /* fewer than the camera's 2 holds found (its place and where it looks: with 1 the takedown camera faced the
            * wreck from the player's car; the user's, 7 Nov: "takedown camera wasn't working" on Pacific Shipyards and
            * Fujimi, 0 and 1 found there): looked for again on the grid, 3 times at most, the best kept */
@@ -898,20 +940,6 @@ void rt_qr_tick(void) {
                 ncslot = best_n, best_n = -1, probe_i = ncand;
                 fprintf(stderr, "xbrt: quick race: the camera follows the best search's %d places\n", ncslot);
             }
-        }
-        if (view_shift && vsurvey != 1 && !rt_view_press && !tdcam_until && !td_wait_car && ((ncslot >= 0 && probe_i >= ncand) || !on_grid)) {
-            fprintf(stderr, "xbrt: quick race: the camera's holds found in the chase view; the player's view put back (%d presses)\n", (4 - view_shift) % 4);
-            view_press((4 - view_shift) % 4);
-        }
-        if (td_wait_car && me) { /* a takedown in an in-car view: started once the chase camera stands */
-            if (!cam_in_car(me) && !rt_view_press) {
-                uint32_t c_ = td_wait_car;
-                td_wait_car = 0;
-                tdcam_start(c_, td_wait_racer, me, td_wait_speed);
-            } else if (rt_now_100ns() > td_wait_until) {
-                td_wait_car = 0;
-                if (view_shift) view_press((4 - view_shift) % 4);
-            } else if (!rt_view_press && now >= view_next && view_shift < 3) view_press(1), view_next = now + 3000000;
         }
         if (ncslot >= 0 && probe_i < ncand && on_grid && me) { /* then which of them the camera follows (a rival 4 m or more off) */
             uint32_t them = 0, rthem = 0;

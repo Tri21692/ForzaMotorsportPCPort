@@ -26,6 +26,8 @@
 #include "funcs.h"
 #include "rt.h"
 
+static float rdf_(uint32_t a) { uint32_t v = xb_rd32(a); float f; memcpy(&f, &v, 4); return f; }
+
 #define MAX_TT 128
 static struct { uint32_t ordinal, ms[3]; } tt[MAX_TT];
 static int ntt;
@@ -364,7 +366,26 @@ void f_000410E0(XbCtx *c) {
         if (mine) moved = 1;
         else if (k >= 0 && points > 0) {
             float share = rt_qr_mayhem() ? rt_qr_mayhem_share() : 1.0f; /* (Mayhem: mayhem.txt's spread for the track) */
-            int pct = (int)((k + 1) * 100.0f * share / (ai + 1) + 0.5f);
+            /* from the pole (the line's point 36, ResetPositionForGrid's place 1) on, so every rival starts ahead of the
+             * player (the user's, 7 Nov: "make sure when you space out, everyone starts in front of the user": on a
+             * point-to-point the line begins well behind the grid, and the first rivals at 3% and 6% of it stood
+             * behind the pole, crossed the start line and were ranked ahead of everyone) */
+            /* (where the player's car stands: the line's nearest point; the player is placed first. Not the place-1
+             * point 36: Pacific's grid stood 0.067 of the road on, 130 points, and the first rival was still behind) */
+            float from = 36.0f;
+            for (uint32_t i = 0; i < n; i++) {
+                uint32_t r = xb_rd32(arr + 4 * i), pc = r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0 ? xb_rd32(r + 0xA0) : 0;
+                uint32_t xs = xb_rd32(line + 0x30), zs = xb_rd32(line + 0x44);
+                if (!pc || pc >= RT_USER_LIMIT || !xs || !zs || points > 100000) continue;
+                float cx = rdf_(pc + 0x14), cz = rdf_(pc + 0x1C), best = 1e30f;
+                for (int32_t j = 0; j < points; j++) {
+                    float px = rdf_(xs + 4 * j), pz = rdf_(zs + 4 * j), d2 = (px - cx) * (px - cx) + (pz - cz) * (pz - cz);
+                    if (d2 < best) best = d2, from = (float)j;
+                }
+                if (best > 400.0f) from = 36.0f; /* (not on the line yet: 20 m off) */
+            }
+            float at = from + (k + 1) * (float)points * share / (ai + 1);
+            int pct = (int)ceilf(at * 100.0f / (float)points);
             if (pct < 2) pct = 2; /* (-1 is the pole's) */
             moved = -(pct > 99 ? 99 : pct);
         } else if (place > 15) moved = 15; /* (no line: no slot past the track's 15) */
@@ -549,6 +570,35 @@ static void big_tick(void) {
     if (nolaps < 0) nolaps = getenv("XBRT_BIG_NOLAPS") != NULL; /* (testing: the laps left to the game) */
     if (nolaps) since = 0;
     int me_lap = -9, waiting = 0, begun = 0;
+    /* the race's measure of the line (the user's, 7 Nov: "I passed a few and was still at 7/8"): the player's own share
+     * of the lap (timing +0x80) where its car stands (pk, the line's nearest point) and how many of the line's points
+     * make a whole lap or the whole road (L): a rival's share is the player's, plus the points between them over L.
+     * (Taken as the point over the line's count, a point-to-point's rivals were 0.067 of the road further on than the
+     * player's measure of the same place, the line beginning 36 points behind the start: the game ranks by it, 0xB3530,
+     * so passing a rival did not count till well past it.) */
+    double pf = 0, L = 0;
+    int32_t pk = -1;
+    {
+        uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+        uint32_t np = line ? xb_rd32(line + 8) : 0, xs = line ? xb_rd32(line + 0x30) : 0, zs = line ? xb_rd32(line + 0x44) : 0;
+        for (uint32_t i = 0; i < n && np > 2 && np < 100000 && xs && zs; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0, car = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xA0) : 0;
+            if (!t || t >= RT_USER_LIMIT || !car || car >= RT_USER_LIMIT || xb_rd32(r + 0x14) != 0 || (int32_t)xb_rd32(t + 0x9C) < 0) continue;
+            float cx, cz, best = 1e30f;
+            uint32_t v = xb_rd32(car + 0x14);
+            memcpy(&cx, &v, 4); v = xb_rd32(car + 0x1C); memcpy(&cz, &v, 4);
+            for (uint32_t k = 0; k < np; k++) {
+                float px, pz;
+                v = xb_rd32(xs + 4 * k); memcpy(&px, &v, 4); v = xb_rd32(zs + 4 * k); memcpy(&pz, &v, 4);
+                float d2 = (px - cx) * (px - cx) + (pz - cz) * (pz - cz);
+                if (d2 < best) best = d2, pk = (int32_t)k;
+            }
+            uint64_t w = (uint64_t)xb_rd32(t + 0x80) | (uint64_t)xb_rd32(t + 0x84) << 32;
+            memcpy(&pf, &w, 8);
+            if (!(pf >= 0 && pf < 0.5)) pf = 0, pk = -1; /* (just off the line: the measure's start) */
+            else L = (double)(np - (uint32_t)pk) / (1.0 - pf);
+        }
+    }
     for (uint32_t i = 0; i < n; i++) {
         uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
         if (!t || t >= RT_USER_LIMIT) continue;
@@ -599,7 +649,8 @@ static void big_tick(void) {
                     float d2 = (px - cx) * (px - cx) + (pz - cz) * (pz - cz);
                     if (d2 < best) best = d2, kb = k;
                 }
-                f = (double)kb / np;
+                f = pk >= 0 && L > 1 ? pf + ((double)kb - pk) / L : (double)kb / np;
+                if (f < 0) f = 0;
             }
         }
         uint32_t cps = xb_rd32(t + 0x1C), past = 0;
@@ -660,6 +711,73 @@ static void mayhem_spread(XbCtx *c) {
         placed++;
     }
     fprintf(stderr, "xbrt: mayhem: %d cars placed again, the rivals spread round the lap\n", placed);
+}
+
+/* Mayhem's places from the road (the user's, 7 Nov: "I passed a few and was still at 7/8", then "what if we just tied
+ * position to race percentage?"): the game ranks the racers in 0xB3530 (those over the line first, then the rest by
+ * timing +0x78, the most of the race reached, a place each at +0xBC), and with the rivals spread up the road their
+ * measures were wrong (one placed short of a point-to-point's start line crossed it and was counted finished). So in a
+ * Mayhem race, straight after the game's ranking, each racer's place is set again from where its car is: laps begun
+ * (from 0) times the racing line's points, plus the line's point nearest the car (in 3D, looked for near the last one
+ * first: the roads that cross on a bridge), those over the line (racer +0x12A) first, in the order they crossed. */
+#define RANK_MAX 16
+static void mayhem_places(void) {
+    static uint32_t race_was, fin_of[RANK_MAX], fin_n;
+    static int32_t last[RANK_MAX];
+    uint32_t race = xb_rd32(0x592984);
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+    uint32_t track = xb_rd32(0x5E1450), line = track && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+    int32_t np = line ? (int32_t)xb_rd32(line + 8) : 0;
+    uint32_t xs = line ? xb_rd32(line + 0x30) : 0, zs = line ? xb_rd32(line + 0x44) : 0, ys = line ? xb_rd32(line + 0x58) : 0;
+    if (!race || !rt_qr_mayhem() || !arr || n < 2 || n > RANK_MAX || np < 3 || np > 100000 || !xs || !zs || !ys) { race_was = 0; return; }
+    int me_lap = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i), t = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xC0) : 0;
+        if (!t || t >= RT_USER_LIMIT) return;
+        if (xb_rd32(r + 0x14) == 0) me_lap = (int32_t)xb_rd32(t + 0x9C);
+    }
+    if (race != race_was || me_lap < 0) { /* (a new race, or a restart: the player on the grid) */
+        race_was = race, fin_n = 0;
+        memset(fin_of, 0, sizeof fin_of);
+        for (int i = 0; i < RANK_MAX; i++) last[i] = -1;
+    }
+    double prog[RANK_MAX];
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i), t = xb_rd32(r + 0xC0), car = xb_rd32(r + 0xA0);
+        if (!car || car >= RT_USER_LIMIT) { prog[i] = -1e9; continue; }
+        if (!fin_of[i] && xb_rd8(r + 0x12A)) fin_of[i] = ++fin_n;
+        float cx = rdf_(car + 0x14), cy = rdf_(car + 0x18), cz = rdf_(car + 0x1C), best = 1e30f;
+        int32_t kb = -1;
+        if (last[i] >= 0) /* near the last one: 150 points (some 300 m) either way */
+            for (int32_t d = -150; d <= 150; d++) {
+                int32_t k = ((last[i] + d) % np + np) % np;
+                float px = rdf_(xs + 4 * k) - cx, py = rdf_(ys + 4 * k) - cy, pz = rdf_(zs + 4 * k) - cz, d2 = px * px + py * py + pz * pz;
+                if (d2 < best) best = d2, kb = k;
+            }
+        if (best > 900.0f) /* (none within 30 m: the whole line) */
+            for (int32_t k = 0; k < np; k++) {
+                float px = rdf_(xs + 4 * k) - cx, py = rdf_(ys + 4 * k) - cy, pz = rdf_(zs + 4 * k) - cz, d2 = px * px + py * py + pz * pz;
+                if (d2 < best) best = d2, kb = k;
+            }
+        last[i] = kb;
+        int32_t lap = (int32_t)xb_rd32(t + 0x9C);
+        prog[i] = (double)(lap > 0 ? lap : 0) * np + kb;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t place = 1;
+        for (uint32_t j = 0; j < n; j++) {
+            if (j == i) continue;
+            int ahead = fin_of[j] ? (!fin_of[i] || fin_of[j] < fin_of[i]) : (!fin_of[i] && (prog[j] > prog[i] || (prog[j] == prog[i] && j < i)));
+            place += ahead;
+        }
+        uint32_t r = xb_rd32(arr + 4 * i);
+        if (xb_rd32(r + 0xBC) != place) xb_wr32(r + 0xBC, place);
+    }
+}
+void orig_f_000B3530(XbCtx *c); /* the game's ranking (wraps.txt) */
+void f_000B3530(XbCtx *c) {
+    orig_f_000B3530(c);
+    mayhem_places();
 }
 
 void rt_career_tick(XbCtx *c) {
