@@ -39,7 +39,7 @@ CARS = {
  'sesto':    (PACK + r'\LAMBOSESTO', 'Sesto Elemento', 'Sesto', 'Lamborghini', 2010, 2500000, 562, 398, 999, 'Ferrari360', 'LamborghiniGallardo', ['AudiRS6:drivetraindiff'], (2.5, 5.8, 330)),
  'f8':       (PACK + r'\F8', 'F8 Tributo', 'F8 Tributo', 'Ferrari', 2019, 300000, 710, 568, 1435, 'Ferrari360', 'Ferrari360', [], (2.9, 6.4, 340)),
  'svj':      (PACK + r'\SVJ', 'Aventador SVJ', 'Aventador SVJ', 'Lamborghini', 2018, 520000, 759, 531, 1525, 'FerrariEnzo', 'FerrariEnzo', ['AudiRS6:drivetraindiff'], (2.8, 6.0, 350)),
- 'eclipse':  (PACK + r'\ECLIPSEELITE', 'Eclipse GT', 'Eclipse GT', 'Mitsubishi', 2006, 30000, 263, 260, 1590, 'MitsuEclipseGTS', 'MitsuEclipseGTS', [], (6.0, 15.0, 240)),
+ 'eclipse':  (PACK + r'\ECLIPSEELITE', 'Eclipse Custom', 'Eclipse Custom', 'Mitsubishi', 2006, 30000, 390, 330, 1450, 'MitsuEclipseGTS', 'MitsuEclipseGTS', [], (4.8, 11.0, 270)),  # (7 Nov: the user's A-class Eclipse Custom, eclipsecustom.py; was 263 hp, 260 lb-ft, 1590 kg)
  'civicfn2': (PACK + r'\CIVICFN2', 'Civic Type R (FN2)', 'Civic Type R', 'Honda', 2007, 32000, 198, 142, 1267, 'Honda_CivicR', 'Honda_CivicR', [], (6.6, 17.0, 225)),
  'charger':  (PACK + r'\CHARGER06', 'Charger SRT8', 'Charger SRT8', 'Dodge', 2006, 45000, 425, 420, 1890, 'CadillacCTS', 'DodgeChallenger', [], (5.0, 12.0, 270)),
  'evora':    (PACK + r'\EVORA', 'Evora', 'Evora', 'Lotus', 2009, 75000, 276, 258, 1382, 'LotusEsprit', 'Nissan350Z', [], (4.9, 11.5, 260)),
@@ -59,6 +59,7 @@ CLEAN = [172, 175, 223, 231, 244, 245, 246, 247, 248, 249, 251, 252, 253, 254, 2
          268, 269, 270, 271, 273, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 289, 290]  # free, no stale strings (165, 288: the MX-5's)
 ORD = dict(zip(CARS, CLEAN))
 NAME = {k: 'NC' + re.sub(r'[^A-Za-z0-9]', '', v[3]) + re.sub(r'[^A-Za-z0-9]', '', v[2]) for k, v in CARS.items()}  # the car's internal name
+NAME['eclipse'] = 'NCMitsubishiEclipseGT'  # (installed under its first name; shown as the Eclipse Custom since 7 Nov)
 
 
 def run(cmd, log, env=None):
@@ -124,7 +125,7 @@ COVERS = {'rs5'}  # lamps under another sheet's shells: those left out (nfsu2for
 THIN = {}  # dense ports whose levels are all one mesh, thinned (cartoolkit "decimate"; its levels then share no vertices)
 ARCHES = {  # (6 Nov evening: refined from the store's side views and sideplot.py, the GT2 RS to the Terzo) the arch middles as the length fit puts them, where the converter's own read is off (NFSU_ARCHES); from
   # sideplot.py's measure of each arch against its wheel (the user's 6 Nov screenshots: the M8 GTE's rear wheel behind its arch)
- 'm8gte': [2.089, -2.084], 'senna': [1.932, -2.413], '190e': [2.447, -1.82], 'eclipse': [1.875, -1.912],
+ 'm8gte': [2.089, -2.084], 'senna': [1.932, -2.413], '190e': [2.415, -1.852], 'eclipse': [1.875, -1.912],
  'charger': [2.464, -2.182], 'brera': [1.925, -1.81], 'lfa': [2.172, -2.197], 'xk': [2.294, -1.996], '4c': [1.649, -1.87],
  'countach': [2.0, -2.149, 1.834, -2.277], 'gt2rs': [1.794, -1.91], 'gtx1': [1.88, -2.353, 1.983, -2.353], 'huayra': [1.947, -2.383], 'zr1': [2.059, -2.093], 'maloo': [2.409, -2.008, 2.265, -2.208], 'rs5': [2.370, -2.194, 2.255, -2.157], 'fordgt17': [1.977, -2.228], 'chiron': [2.195, -2.257], 'terzo': [2.14, -2.216], 'impala': [2.849, -2.21, 2.503, -2.21]}  # (its template's rotors: the front pair only, so its hubs given)
 PAINT = {'chiron': '0.08,0.16,0.5', 'lfa': '0.85,0.85,0.88', 'm2': '0.1,0.35,0.75', '190e': '0.05,0.05,0.06', 'gt2rs': '0.6,0.6,0.62',
