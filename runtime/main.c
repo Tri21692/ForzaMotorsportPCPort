@@ -242,10 +242,15 @@ void rt_sleep_precise(uint64_t ns) {
 #ifdef _WIN32
 #define PROF_SLOTS 65536
 typedef struct { uint64_t pc[3]; uint32_t n; } ProfSlot;
-typedef struct { HANDLE th; char path[1024]; ProfSlot *tab; } Prof;
+typedef struct { HANDLE th; char path[1024]; ProfSlot *tab; int snaps; } Prof;
 
 static void prof_write(Prof *p) {
-    FILE *f = fopen(p->path, "w");
+    /* XBRT_PROFILE_EVERY=<ms>: written that often, each as <file>.<n> instead (a stretch read as two snapshots' difference) */
+    static int keep = -1;
+    if (keep < 0) keep = getenv("XBRT_PROFILE_EVERY") ? atoi(getenv("XBRT_PROFILE_EVERY")) : 0;
+    char kept[1100];
+    if (keep > 0) snprintf(kept, sizeof kept, "%s.%05d", p->path, p->snaps++);
+    FILE *f = fopen(keep > 0 ? kept : p->path, "w");
     if (!f) return;
     fprintf(f, "base %llx\n", (unsigned long long)(uintptr_t)GetModuleHandleW(NULL));
     for (int i = 0; i < PROF_SLOTS; i++)
@@ -294,7 +299,9 @@ static void *prof_main(void *arg) {
                 memcpy(pr->tab[h].pc, pc, sizeof pc), pr->tab[h].n++;
                 break;
             }
-        if (rt_now_100ns() - last > 50000000) last = rt_now_100ns(), prof_write(pr);
+        static int64_t every = -1;
+        if (every < 0) every = getenv("XBRT_PROFILE_EVERY") && atoi(getenv("XBRT_PROFILE_EVERY")) > 0 ? (int64_t)atoi(getenv("XBRT_PROFILE_EVERY")) * 10000 : 50000000;
+        if (rt_now_100ns() - last > (uint64_t)every) last = rt_now_100ns(), prof_write(pr);
     }
     prof_write(pr);
     return NULL;
