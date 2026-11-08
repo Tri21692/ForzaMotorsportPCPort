@@ -1265,11 +1265,20 @@ void rt_qr_tick(void) {
             /* (the bar: 3x the car's own knocks of the last ~2 s, never under 100: a race car's tyres alone gave 100-210
              * m/s^2 on Laguna in the Championship, so every drift ended "on a wall" at once and the handling stood down
              * round the lap, the user's "brake-to-drift/handling feels off"; a road car's stay under 35, its bar 100.
-             * A wall's own knock is over 300, its log line's) */
+             * A wall's own knock is over 300, its log line's.
+             * It learned only from the knocks under the bar, so a race car's never raised it: still 100, and in the
+             * Championship of 7 Nov every drift ended "on a wall" the tick it began, 40 times a corner, the user's "still
+             * feels completely different". The knock measured is against the speed WE wrote last tick: in a drift the
+             * game's tyres pushing back on our slide, 114-171 in a race car. Now it learns from every knock, clipped at
+             * 100 (the bar 100-300), and while the drift is ours (or easing out) the bar is 300: a wall in a drift
+             * is the drift's own "knock" too, a fifth of the speed gone) */
             static float gbase = 30.0f;
             if (lap < 0) gbase = 30.0f;
             float bar = gbase * 3.0f < 100.0f ? 100.0f : gbase * 3.0f;
-            if (g <= bar) gbase += (g - gbase) * (1.0f - expf(-(float)dt / 2.0f));
+            /* (and the tick a drift begins, brake and stick: the log's first "wall", 171, came the tick before the drift's in) */
+            int drifty = me_drift || (rt_pad_brake > 0.06f && (rt_pad_steer > 0.3f || rt_pad_steer < -0.3f));
+            if (drifty && bar < 300.0f) bar = 300.0f;
+            gbase += ((g < 100.0f ? g : 100.0f) - gbase) * (1.0f - expf(-(float)dt / 2.0f));
             if (g > bar && !near_car && lap >= 0) {
                 static int wlog = -1;
                 if (wlog < 0) wlog = getenv("XBRT_WALLLOG") != NULL;
