@@ -714,7 +714,9 @@ static void cam_probe_tick(uint32_t me, uint32_t rme, uint32_t them, uint32_t rt
 #define CAM_SNAP 0x2000
 static uint32_t snap_lo, snap_n;
 static uint32_t snap_w[CAM_SNAP / 4];
-static float snap_p[3];
+static float snap_p[3], snap_dist; /* snap_dist: the camera's distance from the car then (the chase view's) */
+static uint32_t pre_w[CAM_SNAP / 4], pre_mask[CAM_SNAP / 128]; /* what the put-back wrote over: the game's own, for the guard */
+static uint64_t guard_at; /* real time of the put-back: the camera watched after it (cam_guard) */
 
 static void cam_snapshot(uint32_t me) {
     uint32_t lo = ~0u, hi = 0;
@@ -726,27 +728,67 @@ static void cam_snapshot(uint32_t me) {
     snap_lo = lo, snap_n = (hi - lo) / 4;
     for (uint32_t k = 0; k < snap_n; k++) snap_w[k] = xb_rd32(lo + 4 * k);
     snap_p[0] = rdf(me + 0x14), snap_p[1] = rdf(me + 0x18), snap_p[2] = rdf(me + 0x1C);
+    float dx = rt_cam_pos[0] - snap_p[0], dy = rt_cam_pos[1] - snap_p[1], dz = rt_cam_pos[2] - snap_p[2];
+    snap_dist = sqrtf(dx * dx + dy * dy + dz * dz);
 }
 
+static uint64_t camdbg_until; /* XBRT_CAMDBG=1: what the put-back wrote, and the camera's distance for 10 s after */
+static int camdbg_on(void) { static int on = -1; if (on < 0) on = getenv("XBRT_CAMDBG") && atoi(getenv("XBRT_CAMDBG")); return on; }
 static void cam_restore(uint32_t me) {
     if (!snap_n || !me) return;
     float d[3] = {rdf(me + 0x14) - snap_p[0], rdf(me + 0x18) - snap_p[1], rdf(me + 0x1C) - snap_p[2]};
     int moved = 0;
+    memset(pre_mask, 0, sizeof pre_mask);
+#define CAM_PUT(k, v) (pre_w[k] = xb_rd32(snap_lo + 4 * (k)), pre_mask[(k) / 32] |= 1u << ((k) % 32), xb_wr32(snap_lo + 4 * (k), (v)))
     for (uint32_t k = 0; k < snap_n; k++) {
         uint32_t w = snap_w[k];
         float x, y, z;
         memcpy(&x, &w, 4);
         if (k + 2 < snap_n) memcpy(&y, &snap_w[k + 1], 4), memcpy(&z, &snap_w[k + 2], 4);
         if (k + 2 < snap_n && fabsf(x - snap_p[0]) < 20 && fabsf(z - snap_p[2]) < 20 && fabsf(y - snap_p[1]) < 10) {
-            wrf(snap_lo + 4 * k, x + d[0]), wrf(snap_lo + 4 * k + 4, y + d[1]), wrf(snap_lo + 4 * k + 8, z + d[2]);
+            float m[3] = {x + d[0], y + d[1], z + d[2]};
+            uint32_t mw[3];
+            memcpy(mw, m, 12);
+            CAM_PUT(k, mw[0]), CAM_PUT(k + 1, mw[1]), CAM_PUT(k + 2, mw[2]);
             k += 2, moved++;
             continue;
         }
+        /* Of the rest, only what reads as a direction (its parts within -1..1: where the camera faced then); not its
+         * distances, sizes or far places (the user's, 8 Nov: "Chase Cam zoomed out infinitely" after a Tsukuba takedown,
+         * the camera's object laid out as not seen before; the old values over the game's ran away) */
         float a = fabsf(x);
-        if (a > 1e-6f && a < 1e6f) xb_wr32(snap_lo + 4 * k, w); /* (floats only: no pointer, count or flag of then over now's) */
+        if (a > 1.0001f) continue;
+        if (camdbg_on() && a > 1e-6f) {
+            float now_v = rdf(snap_lo + 4 * k);
+            if (fabsf(now_v - x) > 1e-3f * (fabsf(x) + 1)) fprintf(stderr, "xbrt: camdbg: +%03x (%08x) %g -> %g\n", 4 * k, snap_lo + 4 * k, now_v, x);
+        }
+        if (a > 1e-6f) CAM_PUT(k, w); /* (floats only: no pointer, count or flag of then over now's) */
     }
+#undef CAM_PUT
+    guard_at = rt_now_100ns();
+    camdbg_until = rt_now_100ns() + 100000000;
     fprintf(stderr, "xbrt: quick race: the camera put back (%u bytes, %d places moved %.0f m)\n", snap_n * 4, moved, sqrtf(d[0] * d[0] + d[2] * d[2]));
     snap_n = 0;
+}
+
+/* After a put-back, the camera watched for 5 s: if it stands far from the player's car (over 2.5 times its distance
+ * before the takedown, 20 m at least) for a quarter of a second, what the put-back wrote over is given back: the
+ * game's own camera, which swings back behind the car by itself. (A guard: the user's camera ran away once.) */
+static void cam_guard(uint32_t me) {
+    static int far_n;
+    if (!guard_at || !me || tdcam_until) { far_n = 0; return; }
+    uint64_t t = rt_now_100ns() - guard_at;
+    if (t > 50000000) { guard_at = 0, far_n = 0; return; }
+    if (t < 4000000) return; /* (the view a few frames behind) */
+    float dx = rt_cam_pos[0] - rdf(me + 0x14), dy = rt_cam_pos[1] - rdf(me + 0x18), dz = rt_cam_pos[2] - rdf(me + 0x1C);
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz), bar = snap_dist * 2.5f > 20 ? snap_dist * 2.5f : 20;
+    if (dist <= bar) { far_n = 0; return; }
+    if (++far_n < 15) return;
+    int n = 0;
+    for (uint32_t k = 0; k < CAM_SNAP / 4; k++)
+        if (pre_mask[k / 32] >> (k % 32) & 1) xb_wr32(snap_lo + 4 * k, pre_w[k]), n++;
+    fprintf(stderr, "xbrt: quick race: the camera %.0f m from the car after the put-back (%.0f m before): the game's own %d values given back\n", dist, snap_dist, n);
+    guard_at = 0, far_n = 0;
 }
 
 /* In-car views (the user's, 4 Nov: "takedowns weren't displaying properly on Rio", raced from the bumper): the takedown
@@ -770,8 +812,11 @@ static int cam_in_car(uint32_t me) { return cam_along(me) > -CAM_BEHIND; }
 
 static void tdcam_end(void) {
     if (!tdcam_until) return;
+    int same = 1;
     for (int i = 0; i < ncslot; i++)
         if (xb_rd32(cslot[i]) == cslot_now[i]) xb_wr32(cslot[i], cslot_was[i]);
+        else same = 0;
+    if (!same && snap_n) fprintf(stderr, "xbrt: quick race: the camera's object changed in the takedown: not put back\n"), snap_n = 0;
     cam_restore(td_from); /* (straight back behind the player's car, facing on) */
     cam_cut(td_to, td_from); /* (straight back behind the player's car) */
     rt_time_scale(1.0), rt_vblank_rate = 1.0f;
@@ -986,6 +1031,17 @@ void rt_qr_tick(void) {
                 fprintf(stderr, "xbrt: mayhem: an in-car view (the camera %.1f m along the car): the chase view recommended\n", al);
             } else view_tip = 2;
         }
+        cam_guard(me);
+        if (camdbg_until && me && rt_cam_frame) {
+            static uint64_t nx;
+            uint64_t rn = rt_now_100ns();
+            if (rn > camdbg_until) camdbg_until = 0;
+            else if (rn >= nx) {
+                nx = rn + 5000000;
+                float ddx = rt_cam_pos[0] - rdf(me + 0x14), ddy = rt_cam_pos[1] - rdf(me + 0x18), ddz = rt_cam_pos[2] - rdf(me + 0x1C);
+                fprintf(stderr, "xbrt: camdbg: the camera %.1f m from the car, %.1f along\n", sqrtf(ddx * ddx + ddy * ddy + ddz * ddz), cam_along(me));
+            }
+        }
         { static int scan = -1; if (scan < 0) scan = getenv("XBRT_CAMSCAN_LATE") != NULL;
           if (scan && me && rt_cam_frame) cam_scan_debug(me, rme, tm && tm < RT_USER_LIMIT ? (int)xb_rd32(tm + 0x9C) : -9); }
         if (ncslot < 0 && me && on_grid && rt_cam_frame && now - grid_since > 20000000 && (mods & QR_TAKEDOWNS)) find_cam_slots(me, rme); /* (whatever the grid's camera: it holds the chase camera's places nearby) */
@@ -1045,9 +1101,12 @@ void rt_qr_tick(void) {
         }
         const char *tt = getenv("XBRT_TD_TEST");
         if (tt && race_since && !td_real && now - race_since > (uint64_t)(atof(tt) * 1e7) && tm) {
-            for (uint32_t i = 0; i < n; i++) {
+            static uint32_t td_next; /* (XBRT_TD_REPEAT: the next rival each time) */
+            for (uint32_t i0 = 0; i0 < n; i0++) {
+                uint32_t i = (i0 + td_next) % n;
                 uint32_t r = xb_rd32(arr + 4 * i);
                 if (r && r != rme && r < RT_USER_LIMIT) {
+                    td_next = i + 1;
                     tdcam_start(xb_rd32(r + 0xA0), r, me, 30);
                     damage_set((int)i, xb_rd32(r + 0xA0), DMG_FULL); /* (the damage path too, on what it has) */
                     td_real = rt_now_100ns(), td_clock = xb_rd32(tm + 0xA0), td_car = xb_rd32(r + 0xA0);
@@ -1060,6 +1119,10 @@ void rt_qr_tick(void) {
             }
         }
         static int told;
+        { /* XBRT_TD_REPEAT=<s>: testing, the takedown camera again that many real seconds after the last began */
+            const char *tr = getenv("XBRT_TD_REPEAT");
+            if (tr && td_real && told && !tdcam_until && rt_now_100ns() - td_real > (uint64_t)(atof(tr) * 1e7)) td_real = 0, told = 0;
+        }
         if (td_real && !tdcam_until && !told && tm) {
             told = 1;
             float ddx = rdf(td_car + 0x14) - td_p[0], ddz = rdf(td_car + 0x1C) - td_p[2];
