@@ -104,20 +104,74 @@ static int hd_in_pack(uint64_t k) {
     return hd_npack && bsearch(&k, hd_pack, (size_t)hd_npack, sizeof k, hd_cmp) != NULL;
 }
 
-static void hd_export_one(const Texture *t, uint64_t k) {
-    if (t->w * t->h < 16 * 16 || hd_seen_add(k)) return;
-    char path[1200];
-    snprintf(path, sizeof path, "%s/%016llx.bmp", hd_export, (unsigned long long)k);
-    FILE *f = fopen(path, "wb");
+/* The files are written by a thread of their own (the user's, 8 Nov: "Tsukuba has horrible fps ... slow as soon
+ * as the race started": a track new to the export folder saved about 1,000 textures, 112 MB, in its first lap,
+ * each written by the render thread in the middle of a frame). The render thread only copies the texels. Each
+ * is written as .tmp and renamed, so a game closed mid-write leaves no half file for the pack. */
+typedef struct HdJob { struct HdJob *next; uint64_t k; int w, h; uint32_t px[]; } HdJob;
+static HdJob *hd_q_head, *hd_q_tail;
+static size_t hd_q_bytes;
+static CRITICAL_SECTION hd_q_cs;
+static CONDITION_VARIABLE hd_q_cv;
+static int hd_q_up;
+#define HD_Q_MAX ((size_t)256 << 20) /* (more waiting than this: the rest are exported another session) */
+
+static void hd_write_bmp(const HdJob *j) {
+    char path[1200], tmp[1210];
+    snprintf(path, sizeof path, "%s/%016llx.bmp", hd_export, (unsigned long long)j->k);
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "wb");
     if (!f) return;
     uint8_t h[54] = {'B', 'M'};
-    uint32_t size = 54 + (uint32_t)t->w * t->h * 4;
-    uint32_t vals[] = {size, 0, 54, 40, (uint32_t)t->w, (uint32_t)-t->h};
+    uint32_t size = 54 + (uint32_t)j->w * j->h * 4;
+    uint32_t vals[] = {size, 0, 54, 40, (uint32_t)j->w, (uint32_t)-j->h};
     memcpy(h + 2, &vals[0], 4), memcpy(h + 10, &vals[2], 4), memcpy(h + 14, &vals[3], 4), memcpy(h + 18, &vals[4], 4), memcpy(h + 22, &vals[5], 4);
     h[26] = 1, h[28] = 32;
-    fwrite(h, 1, 54, f);
-    fwrite(t->texels, 4, (size_t)t->w * t->h, f); /* (BGRA as the decoder lays A8R8G8B8 out) */
-    fclose(f);
+    int ok = fwrite(h, 1, 54, f) == 54 && fwrite(j->px, 4, (size_t)j->w * j->h, f) == (size_t)j->w * j->h; /* (BGRA as the decoder lays A8R8G8B8 out) */
+    ok = fclose(f) == 0 && ok;
+    if (!ok || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) DeleteFileA(tmp);
+}
+
+static DWORD WINAPI hd_writer(LPVOID unused) {
+    (void)unused;
+    for (;;) {
+        EnterCriticalSection(&hd_q_cs);
+        while (!hd_q_head) SleepConditionVariableCS(&hd_q_cv, &hd_q_cs, INFINITE);
+        HdJob *j = hd_q_head;
+        if (!(hd_q_head = j->next)) hd_q_tail = NULL;
+        LeaveCriticalSection(&hd_q_cs);
+        hd_write_bmp(j);
+        EnterCriticalSection(&hd_q_cs);
+        hd_q_bytes -= (size_t)j->w * j->h * 4;
+        LeaveCriticalSection(&hd_q_cs);
+        free(j);
+    }
+    return 0;
+}
+
+static void hd_export_one(const Texture *t, uint64_t k) {
+    if (t->w * t->h < 16 * 16) return;
+    size_t n = (size_t)t->w * t->h * 4;
+    if (!hd_q_up) {
+        InitializeCriticalSection(&hd_q_cs), InitializeConditionVariable(&hd_q_cv), hd_q_up = 1;
+        HANDLE th = CreateThread(NULL, 0, hd_writer, NULL, 0, NULL);
+        if (th) SetThreadPriority(th, THREAD_PRIORITY_BELOW_NORMAL), CloseHandle(th);
+        else hd_q_up = -1;
+    }
+    if (hd_q_up < 0) return;
+    EnterCriticalSection(&hd_q_cs);
+    size_t queued = hd_q_bytes;
+    LeaveCriticalSection(&hd_q_cs);
+    if (queued + n > HD_Q_MAX || hd_seen_add(k)) return;
+    HdJob *j = malloc(sizeof *j + n);
+    if (!j) return;
+    j->next = NULL, j->k = k, j->w = t->w, j->h = t->h;
+    memcpy(j->px, t->texels, n);
+    EnterCriticalSection(&hd_q_cs);
+    if (hd_q_tail) hd_q_tail->next = j; else hd_q_head = j;
+    hd_q_tail = j, hd_q_bytes += n;
+    WakeConditionVariable(&hd_q_cv);
+    LeaveCriticalSection(&hd_q_cs);
 }
 
 static int hd_levels(int w, int h) {

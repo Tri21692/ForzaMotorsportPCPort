@@ -919,6 +919,14 @@ static void *device_main(void *arg) {
             static uint32_t since;
             uint32_t interval = rt_frame_interval_at ? xb_rd32(rt_frame_interval_at) : 1;
             if (interval < 1 || interval > 4) interval = 1;
+            { /* (8 Nov, Tsukuba's 30 and 15 fps stretches: every change of the pacing, logged) */
+                static uint32_t was_iv;
+                static float was_rate = -1;
+                if (interval != was_iv || rate != was_rate) {
+                    fprintf(stderr, "xbrt: pacing: a frame every %u blanks, the blanks at %.2f of 60 a second (blank %u)\n", interval, rate, nv2a.vblanks);
+                    was_iv = interval, was_rate = rate;
+                }
+            }
             nv2a.drained = 0;
             if (++since >= interval && nv2a.queued) nv2a.queued--, since = 0, nv2a.drained = 1;
             if (nv2a.flip_stall && nv2a.queued < 2) nv2a.flip_stall = 0, nv2a_trace('R', 1);

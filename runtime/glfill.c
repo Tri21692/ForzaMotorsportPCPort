@@ -1045,6 +1045,26 @@ static int gl_show_ram(void) {
     return ok;
 }
 
+/* The frame rate in the corner (rt_fps_shown): new pictures the window was given, by their seq. It counted the
+ * buffer the CRTC showed, drawn anew or not; after a hard crash Forza keeps drawing both buffers in turn but the
+ * CRTC's start address stays on one (8 Nov, the user's "Tsukuba has horrible fps": 30 shown, and 15 in the
+ * takedowns' slow motion, while the window had 60 pictures a second, the race clock a 60th apart in each). */
+static void fps_count(uint32_t seq) {
+    static uint32_t last;
+    static uint64_t fps_from;
+    static int fps_frames;
+    if (seq == last) return;
+    last = seq;
+    uint64_t now = rt_now_100ns();
+    if (!fps_from || now - fps_from > 30000000) fps_from = now, fps_frames = 0; /* (after a pause: start again) */
+    else if (++fps_frames, now - fps_from >= 5000000) {
+        rt_fps_shown = fps_frames * 1e7f / (float)(now - fps_from), fps_from = now, fps_frames = 0;
+        static int fps_log = -1; /* XBRT_FPS_LOG=1: the shown frame rate in the log every 5 s (benchmarks) */
+        if (fps_log < 0) fps_log = getenv("XBRT_FPS_LOG") && atoi(getenv("XBRT_FPS_LOG"));
+        if (fps_log) fprintf(stderr, "xbrt: fps %.1f\n", rt_fps_shown);
+    }
+}
+
 static void gl_present_vblank(uint32_t fb) {
     if (gl_ready < 0) gl_ready = gl_setup();
     if (gl_ready <= 0) return;
@@ -1067,16 +1087,6 @@ static void gl_present_vblank(uint32_t fb) {
         if (++same > (xb_rd32(0x592984) ? 120 : 6)) s = NULL;
     } else if (s) {
         last_seq = s->seq, same = 0;
-        static uint64_t fps_from;
-        static int fps_frames;
-        uint64_t now = rt_now_100ns();
-        if (!fps_from || now - fps_from > 30000000) fps_from = now, fps_frames = 0; /* (after a pause: start again) */
-        else if (++fps_frames, now - fps_from >= 5000000) {
-            rt_fps_shown = fps_frames * 1e7f / (float)(now - fps_from), fps_from = now, fps_frames = 0;
-            static int fps_log = -1; /* XBRT_FPS_LOG=1: the shown frame rate in the log every 5 s (benchmarks) */
-            if (fps_log < 0) fps_log = getenv("XBRT_FPS_LOG") && atoi(getenv("XBRT_FPS_LOG"));
-            if (fps_log) fprintf(stderr, "xbrt: fps %.1f\n", rt_fps_shown);
-        }
     }
     int why = !s ? (same > 6 ? 2 : 1) : 0; /* (1 no surface drawn there, 2 the same one 7 blanks running) */
     if (rt_display_video_on()) s = NULL, why = 3; /* a movie: the overlay is composited from RAM */
@@ -1129,7 +1139,70 @@ static void gl_present_vblank(uint32_t fb) {
         prev = avg;
     }
     int held = rt_present_hold_until && rt_now_100ns() < rt_present_hold_until;
-    if (!held && gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h, 1)) {
+    /* (8 Nov, Tsukuba's 30 fps: XBRT_PRESENT_STATS=1, every 5 s what the window was given) */
+    static int pst = -1;
+    static unsigned pn, pnew, pheld, pfail, pfifo, psnap;
+    static uint32_t plast;
+    static uint64_t pfrom, pt, pmax;
+    if (pst < 0) pst = getenv("XBRT_PRESENT_STATS") && atoi(getenv("XBRT_PRESENT_STATS"));
+    uint32_t pseq = fs ? fs->seq : snap ? snap->seq : s->seq;
+    uint64_t pt0 = rt_now_100ns();
+    int pok = !held && gl_window_show(fs ? fs->tex : snap ? snap->tex : s->ctex, fs ? fs->fbo : snap ? snap->fbo : s->fbo, w, h, 1);
+    if (pok) fps_count(pseq);
+    static unsigned psame, plive;
+    if (pst && pok && xb_rd32(0x592984)) { /* the shown picture's middle, 64 x 64, against the last one's: the same picture twice? */
+        static uint8_t px[64 * 64 * 4];
+        static uint64_t lasth;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fs ? fs->fbo : snap ? snap->fbo : s->fbo);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadPixels(w / 2 - 32, h / 2 - 32, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+        uint64_t hh = 1469598103934665603ull;
+        for (int i = 0; i < 64 * 64 * 4; i++) hh = (hh ^ px[i]) * 1099511628211ull;
+        psame += hh == lasth, lasth = hh;
+        { /* XBRT_FIFO_DUMP=<folder>: every 15 s in a race, 8 frames running as shown, at a third of the size */
+            static const char *dd = (const char *)-1;
+            static uint64_t next_dump;
+            static int nd, burst;
+            if (dd == (const char *)-1) dd = getenv("XBRT_FIFO_DUMP");
+            if (dd && *dd && !burst && pt0 >= next_dump) burst = 8, next_dump = pt0 + 150000000, nd++;
+            if (dd && *dd && burst) {
+                int ow = w / 3, oh = h / 3;
+                uint8_t *big = malloc((size_t)w * h * 4), *row = malloc((size_t)ow * 3);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, fs ? fs->fbo : snap ? snap->fbo : s->fbo);
+                glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, big);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
+                char path[600];
+                snprintf(path, sizeof path, "%s/d%02d_%d_seq%u_live%u_fb%08x.ppm", dd, nd, 8 - burst, pseq, s->seq, fb);
+                FILE *f = fopen(path, "wb");
+                if (f) {
+                    fprintf(f, "P6\n%d %d\n255\n", ow, oh);
+                    for (int y = 0; y < oh; y++) {
+                        for (int x = 0; x < ow; x++) memcpy(row + 3 * x, big + ((size_t)(y * 3) * w + (size_t)x * 3) * 4, 3);
+                        fwrite(row, 1, (size_t)ow * 3, f);
+                    }
+                    fclose(f);
+                }
+                free(big), free(row), burst--;
+            }
+        }
+        static uint32_t live_last;
+        plive += s->seq != live_last, live_last = s->seq;
+    }
+    if (pst) {
+        uint64_t pd = rt_now_100ns() - pt0;
+        pn++, pnew += pok && pseq != plast, pheld += held, pfail += !held && !pok, pfifo += fs != NULL, psnap += !fs && snap, pt += pd;
+        if (pd > pmax) pmax = pd;
+        if (pok) plast = pseq;
+        if (!pfrom) pfrom = pt0;
+        if (pt0 - pfrom >= 50000000) {
+            fprintf(stderr, "xbrt: present stats: %u blanks, %u new pictures shown (%u the same as the last), live surface new %u, %u held, %u failed; from the queue %u, the flip's copy %u; window %.2f ms a blank, %.1f most\n",
+                    pn, pnew, psame, plive, pheld, pfail, pfifo, psnap, pt / 1e4 / (pn ? pn : 1), pmax / 1e4);
+            pn = pnew = pheld = pfail = pfifo = psnap = psame = plive = 0, pt = pmax = 0, pfrom = pt0;
+        }
+    }
+    if (pok) {
         rt_gl_shown = rt_now_100ns();
         glBindFramebuffer(GL_FRAMEBUFFER, gl_cur ? gl_cur->fbo : 0);
         if (!rt_display_wants_pixels()) return;
