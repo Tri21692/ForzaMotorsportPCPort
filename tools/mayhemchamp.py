@@ -38,14 +38,16 @@ TOUR2_CLASS, TOUR2_FIELD = 'S', r'events\spec\Ser00017.xml'  # Class S Champions
 DESC = ('The finale: four races of takedowns, boost and over-the-top physics in race cars, with a Mayhem Moment to find '
         'on each. Open to Class R cars.')
 DESC2 = ('Four more races of takedowns, boost and over-the-top physics, with a Mayhem Moment to find on each. Open to '
-         'Class S cars.')
+         'Class S cars. First place receives the Chevrolet Corvette ZR1 (C7).')  # (tools/prizecars.py's prize: kept if this is re-run)
 COLOURS = ((25, 20, 15), (215, 170, 40))  # black to gold
 RV = 'Take down an opponent in front of the RVs at Road America.'
 # (race name, track ordinal, laps, Moment, what to do, places: (x, z, radius))
 RACES = [
     ('Laguna Lunacy', 1, 2, 'Re-Tired', 'Take down an opponent into the Turn 11 tyre stacks at Laguna Seca.', [(-124.0, 497.0, 30)]),
     ('Tsukuba Tussle', 26, 3, 'Dunlop-Sided', 'Take down an opponent under the Dunlop bridge at Tsukuba.', [(85.0, -5.0, 30)]),
-    ('Alpine Avalanche', 27, 2, 'Lights, Camera, Wreck-tion', 'Take down an opponent under the camera crane at the Alpine Ring.', [(-180.0, -125.0, 25)]),
+    # (every camera crane whose boom reaches over the road, the user's 8 Nov; a 4th value: another track, Silverstone's 2 and 47)
+    ('Alpine Avalanche', 27, 2, 'Lights, Camera, Wreck-tion', 'Take down an opponent under a camera crane at the Alpine Ring or Silverstone.',
+     [(-180.0, -125.0, 25), (-94.0, -304.0, 25), (-237.0, 315.0, 25), (94.6, 799.0, 25, 2), (408.0, 316.0, 25, 2), (94.6, 799.0, 25, 47), (408.0, 316.0, 25, 47)]),
     ('Road America Rampage', 16, 1, 'R-Vehicular Damage', RV, [
         (504.9, 324.7, 45), (511.0, 213.1, 32), (515.1, 127.1, 32), (518.8, 29.2, 26), (522.3, -56.7, 32),
         (526.5, -172.7, 45), (530.0, -262.6, 45), (533.5, -356.5, 45), (538.0, -474.5, 32), (542.0, -578.4, 34),
@@ -167,7 +169,7 @@ def main(disc, mods):
     names = {l.split(None, 6)[6].split('|')[0] for l in lines if l.startswith('moment ')}
     for _, track, _, moment, todo, places in RACES:
         if moment in names: continue
-        lines += ['moment %d %.1f %.1f %g - %s|%s' % (track, x, z, r, moment, todo) for x, z, r in places]
+        lines += ['moment %d %.1f %.1f %g - %s|%s' % (pl[3] if len(pl) > 3 else track, pl[0], pl[1], pl[2], moment, todo) for pl in places]
     open(mt, 'w').write('\n'.join(lines) + '\n')
     print('mayhem.txt: %s' % lines[ev])
 

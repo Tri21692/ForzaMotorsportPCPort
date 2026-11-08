@@ -76,7 +76,7 @@ const char *rt_qr_note(void) { return note_until && rt_now_100ns() < note_until 
 static int mayhem_race;
 #define MM_MAX 16
 #define MM_ZONES 16 /* (the user's, 7 Nov: Mother Trucker on every trailer of Pacific Shipyards: 10 places) */
-static struct { int track, nz; float zone[MM_ZONES][4]; char name[40], todo[120]; int got; } mm[MM_MAX]; /* zone: x, z, radius, top y */
+static struct { int track, nz; float zone[MM_ZONES][5]; char name[40], todo[120]; int got; } mm[MM_MAX]; /* zone: x, z, radius, top y, track (the user's, 8 Nov: Lights, Camera, Wreck-tion at every crane over the road, Alpine Ring's and Silverstone's); track: the first line's */
 static struct { int track; float share; } mspread[32]; /* "spread <track> <percent>": the rivals over that much of the lap */
 static int nmspread;
 static int nmm, mm_loaded;
@@ -125,7 +125,7 @@ static void mayhem_load_once(void) {
             }
             if (mm[k].nz < MM_ZONES) {
                 float *zn = mm[k].zone[mm[k].nz++];
-                zn[0] = x, zn[1] = z, zn[2] = r, zn[3] = strcmp(top, "-") ? (float)atof(top) : 1e9f;
+                zn[0] = x, zn[1] = z, zn[2] = r, zn[3] = strcmp(top, "-") ? (float)atof(top) : 1e9f, zn[4] = (float)track;
             }
         }
     }
@@ -163,11 +163,11 @@ float rt_mm_flash_age(int *is_new) {
     *is_new = mm_flash_new;
     return mm_flash_until ? (float)(5.0 - (double)(mm_flash_until - rt_now_100ns()) / 1e7) : 99.0f;
 }
-/* Whether (x, y, z) is in one of Moment i's places. */
-static int mm_in(int i, float x, float y, float z) {
+/* Whether (x, y, z) on the track is in one of Moment i's places. */
+static int mm_in(int i, int track, float x, float y, float z) {
     for (int k = 0; k < mm[i].nz; k++) {
         const float *zn = mm[i].zone[k];
-        if ((x - zn[0]) * (x - zn[0]) + (z - zn[1]) * (z - zn[1]) <= zn[2] * zn[2] && y < zn[3]) return 1;
+        if ((int)zn[4] == track && (x - zn[0]) * (x - zn[0]) + (z - zn[1]) * (z - zn[1]) <= zn[2] * zn[2] && y < zn[3]) return 1;
     }
     return 0;
 }
@@ -176,7 +176,7 @@ static int mayhem_moment(float x, float y, float z) {
     uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
     int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
     for (int i = 0; i < nmm; i++) {
-        if (mm[i].track != track || !mm_in(i, x, y, z)) continue;
+        if (!mm_in(i, track, x, y, z)) continue;
         snprintf(mm_flash, sizeof mm_flash, "%s", mm[i].name);
         mm_flash_until = rt_now_100ns() + 50000000, mm_flash_new = !mm[i].got;
         fprintf(stderr, "xbrt: mayhem: moment %s%s\n", mm[i].name, mm[i].got ? "" : " (unlocked)");

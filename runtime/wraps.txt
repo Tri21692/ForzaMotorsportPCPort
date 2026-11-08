@@ -18,3 +18,4 @@ B3530   # the race's ranking (a place a racer, +0xBC): hle_career.c, Mayhem's pl
 3BD550  # D3D_BlockOnTime: hle_d3d.c, XBRT_BOT_LOG=<ms> logs its long waits (debugging)
 3F602C  # DSOUND: a command for the GP DSP (spins until the last is acknowledged): hle_qol.c acknowledges each at once
 250B60  # an index into a ring of racing-line points (thiscall, one argument): hle_career.c, an empty ring answered without the divide by zero
+243F30  # a racing-line point index wrapped round the line (thiscall, one argument, then 0x2515A0): hle_career.c, an empty line answered without the divide by zero

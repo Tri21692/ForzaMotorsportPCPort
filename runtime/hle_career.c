@@ -994,3 +994,21 @@ void f_00250B60(XbCtx *c) {
     }
     orig_f_00250B60(c);
 }
+
+/* The same racing line one step up (0x243F30, thiscall, one argument: the index round the line's count at +4, then on
+ * to 0x2515A0 with the object at +8, which comes to 0x250B60 above): a Mayhem takedown staged at the crane on Alpine
+ * Ring (8 Nov) ended in a divide error there, the count 0. An empty line takes index 0 on the same way. */
+void orig_f_00243F30(XbCtx *c);
+void f_002515A0(XbCtx *c);
+void f_00243F30(XbCtx *c) {
+    uint32_t o = c->ecx;
+    if (o && o < RT_USER_LIMIT && xb_rd32(o + 4) == 0) {
+        static int said;
+        if (said++ < 5) fprintf(stderr, "xbrt: racing line: an empty line asked for point %d (object %08x): point 0, not a divide by zero\n", (int32_t)xb_rd32(c->esp + 4), o);
+        xb_wr32(c->esp + 4, 0);
+        c->ecx = xb_rd32(o + 8);
+        f_002515A0(c); /* (the original's jmp: it returns for this one) */
+        return;
+    }
+    orig_f_00243F30(c);
+}
