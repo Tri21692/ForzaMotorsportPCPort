@@ -180,6 +180,24 @@ static int hd_levels(int w, int h) {
     return l;
 }
 
+/* The GPU's memory kept for the rest (the user's, 8 Nov: Alpine Ring's Mayhem race slowed to 30-48 fps and the game
+ * froze loading the next: the 4x copies, 2048x2048 with their mipmaps, 22 MB each, took 6.8 GB of the laptop's 8 in
+ * two laps, and the driver moved textures out of the GPU's memory as it drew). A sharper copy is made only while at
+ * least this much would be left free (GL_NVX_gpu_memory_info, read every half second, less what was made since):
+ * else at 2x, else at its own size. XBRT_TEX_VRAM_RESERVE=<MB>, default 1536; without NVIDIA's reading, no limit. */
+static int hd_fits(int64_t bytes) {
+    static int reserve = -1, said;
+    extern int rt_vram_free_mb;
+    if (reserve < 0) reserve = getenv("XBRT_TEX_VRAM_RESERVE") ? atoi(getenv("XBRT_TEX_VRAM_RESERVE")) : 1536;
+    if (rt_vram_free_mb < 0) return 1;
+    if ((int64_t)rt_vram_free_mb * 1048576 - hd_since_poll - bytes < (int64_t)reserve * 1048576) {
+        if (!said++) fprintf(stderr, "xbrt: textures: the GPU's memory is low (%d MB free): new textures less sharp until there is room%s", rt_vram_free_mb, "\n");
+        return 0;
+    }
+    hd_since_poll += bytes;
+    return 1;
+}
+
 /* Level 0 of a pack's file into a new texture (bound to the current unit), every mip level made. */
 static int hd_load(GLuint tex, uint64_t k) {
     char path[1200];
@@ -188,6 +206,7 @@ static int hd_load(GLuint tex, uint64_t k) {
     if (!f) return 0;
     uint32_t hd[3] = {0};
     int ok = fread(hd, 4, 3, f) == 3 && hd[0] == 0x31444858 /* XHD1 */ && hd[1] && hd[2] && hd[1] <= 8192 && hd[2] <= 8192;
+    ok = ok && hd_fits((int64_t)hd[1] * hd[2] * 16 / 3); /* (with its mipmaps: a third more) */
     uint32_t *px = ok ? malloc((size_t)hd[1] * hd[2] * 4) : NULL;
     ok = px && fread(px, 4, (size_t)hd[1] * hd[2], f) == (size_t)hd[1] * hd[2];
     fclose(f);
@@ -305,7 +324,12 @@ static int hd_upload(GLuint tex, Texture *t) {
     if (pack && hd_in_pack(k) && hd_load(tex, k)) return t->hd = 1;
     /* not one the CPU redraws over and over (its re-uploads: a compute pass each), nor huge (memory) */
     /* (4x only up to 512 a side: none past 2048, as at 2x) */
-    if (hd_scale && t->decodes <= 4 && t->w <= 1024 && t->h <= 1024)
-        return t->hd = hd_upscale(tex, t, hd_scale == 4 && t->w <= 512 && t->h <= 512 ? 4 : 2);
+    if (hd_scale && t->decodes <= 4 && t->w <= 1024 && t->h <= 1024) {
+        int k = hd_scale == 4 && t->w <= 512 && t->h <= 512 ? 4 : 2;
+        int64_t one = (int64_t)t->w * t->h * 16 / 3; /* (its size, with mipmaps) */
+        if (k == 4 && !hd_fits(one * 16)) k = 2;
+        if (!hd_fits(one * k * k)) return 0;
+        return t->hd = hd_upscale(tex, t, k);
+    }
     return 0;
 }

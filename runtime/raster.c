@@ -1586,6 +1586,7 @@ static void tex_flush_all(void) {
  * flip (the user's, 8 Nov: Alpine Ring's Mayhem race slowed to 30-48 fps for a minute in a second race, the device
  * thread waiting in the driver, where a first race and my tests held 60). -1: not known. */
 int rt_vram_total_mb = -1, rt_vram_free_mb = -1, rt_vram_evictions = -1, rt_vram_evicted_mb = -1;
+static int64_t hd_since_poll; /* bytes of sharper textures made since the last reading (gltexhd.c's budget) */
 static void vram_poll(void) {
     static int has = -1;
     static uint64_t next;
@@ -1600,11 +1601,12 @@ static void vram_poll(void) {
     }
     uint64_t now = rt_now_100ns();
     if (!has || now < next) return;
-    next = now + 20000000;
+    next = now + 5000000; /* (every half second: gltexhd.c's budget reads it) */
     GLint v[4] = {0};
     glGetIntegerv(0x9047 /* TOTAL_AVAILABLE_MEMORY */, &v[0]), glGetIntegerv(0x9049 /* CURRENT_AVAILABLE_VIDMEM */, &v[1]);
     glGetIntegerv(0x904A /* EVICTION_COUNT */, &v[2]), glGetIntegerv(0x904B /* EVICTED_MEMORY */, &v[3]);
     rt_vram_total_mb = v[0] / 1024, rt_vram_free_mb = v[1] / 1024, rt_vram_evictions = v[2], rt_vram_evicted_mb = v[3] / 1024;
+    hd_since_poll = 0;
 }
 
 void nv2a_raster_flip(void) {
