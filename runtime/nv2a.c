@@ -1064,6 +1064,12 @@ void nv2a_log_stats(void) {
     }
     fprintf(stderr, "[%10.3f] nv2a: waiting for the driver after %u traps: %.1f s\n", rt_now_100ns() / 1e7, nv2a.traps, trap_t_wait / 1e7);
     {
+        extern int rt_vram_total_mb, rt_vram_free_mb, rt_vram_evictions, rt_vram_evicted_mb;
+        if (rt_vram_free_mb >= 0)
+            fprintf(stderr, "[%10.3f] nv2a: GPU memory %d MB free of %d, %d evictions (%d MB)\n", rt_now_100ns() / 1e7, rt_vram_free_mb, rt_vram_total_mb,
+                    rt_vram_evictions, rt_vram_evicted_mb);
+    }
+    {
         extern uint64_t vc_hits, vc_fills, vc_skips, vc_far, vc_first, vc_bytes;
         static uint64_t lh, lf, ls, lr, l1;
         fprintf(stderr, "[%10.3f] nv2a: vertex cache: %llu hits, %llu filled, %llu left out (changing), %llu too far to check, %llu seen once; %llu MB\n",

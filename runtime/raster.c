@@ -1582,10 +1582,35 @@ static void tex_flush_all(void) {
     fprintf(stderr, "xbrt: textures: %d to load again (pack %s, upscale %s)\n", n, rt_tex_pack_on ? "on" : "off", rt_tex_upscale == 4 ? "4x" : rt_tex_upscale ? "2x" : "off");
 }
 
+/* The GPU's memory for the stats line (GL_NVX_gpu_memory_info, NVIDIA's): free and evicted, read every 2 s at a
+ * flip (the user's, 8 Nov: Alpine Ring's Mayhem race slowed to 30-48 fps for a minute in a second race, the device
+ * thread waiting in the driver, where a first race and my tests held 60). -1: not known. */
+int rt_vram_total_mb = -1, rt_vram_free_mb = -1, rt_vram_evictions = -1, rt_vram_evicted_mb = -1;
+static void vram_poll(void) {
+    static int has = -1;
+    static uint64_t next;
+    if (has < 0) {
+        GLint n = 0;
+        has = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+        for (GLint i = 0; i < n && !has; i++) {
+            const char *e = (const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+            if (e && !strcmp(e, "GL_NVX_gpu_memory_info")) has = 1;
+        }
+    }
+    uint64_t now = rt_now_100ns();
+    if (!has || now < next) return;
+    next = now + 20000000;
+    GLint v[4] = {0};
+    glGetIntegerv(0x9047 /* TOTAL_AVAILABLE_MEMORY */, &v[0]), glGetIntegerv(0x9049 /* CURRENT_AVAILABLE_VIDMEM */, &v[1]);
+    glGetIntegerv(0x904A /* EVICTION_COUNT */, &v[2]), glGetIntegerv(0x904B /* EVICTED_MEMORY */, &v[3]);
+    rt_vram_total_mb = v[0] / 1024, rt_vram_free_mb = v[1] / 1024, rt_vram_evictions = v[2], rt_vram_evicted_mb = v[3] / 1024;
+}
+
 void nv2a_raster_flip(void) {
     frame_draws = 0;
     nv2a_raster_flush();
-    if (rt_gl_on) gl_flip();
+    if (rt_gl_on) gl_flip(), vram_poll();
     if (rt_tex_reload) rt_tex_reload = 0, hd_on = -1, tex_flush_all();
 }
 
