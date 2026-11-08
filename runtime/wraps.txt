@@ -17,3 +17,4 @@ B3530   # the race's ranking (a place a racer, +0xBC): hle_career.c, Mayhem's pl
 56A40   # the garage takes a car (thiscall: ordinal, ...): hle_quickrace.c, the Mayhem prize marked given
 3BD550  # D3D_BlockOnTime: hle_d3d.c, XBRT_BOT_LOG=<ms> logs its long waits (debugging)
 3F602C  # DSOUND: a command for the GP DSP (spins until the last is acknowledged): hle_qol.c acknowledges each at once
+250B60  # an index into a ring of racing-line points (thiscall, one argument): hle_career.c, an empty ring answered without the divide by zero

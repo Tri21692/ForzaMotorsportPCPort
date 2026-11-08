@@ -974,3 +974,23 @@ int rt_catchup_hud(int *metres) {
     *metres = (int)lround((prog[me] - prog[1 - me]) * cu[k].points * 2.0);
     return 1;
 }
+
+/* An index into a ring of racing-line points (0x250B60, thiscall, one argument; its object's +0x10 the ring's length,
+ * +0x98 and +0x30 the fallback's): the user's Alpine Ring Mayhem race (8 Nov, with every thread being profiled) ended
+ * in a divide error there 5 s after the start, the ring's length 0, not filled yet for a rival placed round the lap.
+ * An empty ring takes the function's own fallback (its index from +0x30 less +0xC0, round +0x98), or 0, as it
+ * returns when the index is outside the ring. */
+void orig_f_00250B60(XbCtx *c);
+void f_00250B60(XbCtx *c) {
+    uint32_t o = c->ecx;
+    if (o && o < RT_USER_LIMIT && xb_rd32(o + 0x10) == 0) {
+        int32_t n = (int32_t)xb_rd32(o + 0x98), r = 0;
+        if (n > 0) r = ((int32_t)xb_rd32(o + 0x30) - (int32_t)xb_rd32(o + 0xC0) + n) % n;
+        static int said;
+        if (said++ < 5) fprintf(stderr, "xbrt: racing line: an empty ring of points asked for an index (object %08x): %d, not a divide by zero\n", o, r);
+        c->eax = c->edx = (uint32_t)r;
+        c->esp += 8; /* ret 4 */
+        return;
+    }
+    orig_f_00250B60(c);
+}
