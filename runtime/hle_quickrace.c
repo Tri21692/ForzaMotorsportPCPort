@@ -616,6 +616,14 @@ static void find_cam_slots(uint32_t me, uint32_t rme) {
             if (cand_was[q] == me && xb_rd32(cand[q] - 8) == me && xb_rd32(cand[q] - 4) != me) H = cand[q];
         for (uint32_t a = H ? H - 4 : 0; H && a >= H - 0x400; a -= 4)
             if (xb_rd32(a) == rme && xb_rd32(a + 4) == rme && xb_rd32(a - 4) != rme) { R = a; break; }
+        /* Laguna (the user's, 7 Nov: "takedown camera is broken, at least on laguna"; 0 found): there the hold on the
+         * car is the second of two copies 0x1C apart (the probe of 7 Nov: 02947978, after 0294795c; the user's race:
+         * 0371dd38 after 0371dd1c), and the racer's pair side by side 0xBB8 before it, out of the 0x400 looked
+         * through: then any of the places' racer pairs */
+        for (int q = 0; q < ncand && !H; q++)
+            if (cand_was[q] == me && xb_rd32(cand[q] - 0x1C) == me && xb_rd32(cand[q] - 4) != me) H = cand[q];
+        for (int q = 0; q < ncand && H && !R; q++)
+            if (cand_was[q] == rme && xb_rd32(cand[q] + 4) == rme && xb_rd32(cand[q] - 4) != rme) R = cand[q];
         ncslot = 0, probe_i = ncand; /* (none to try) */
         if (R) cslot[ncslot] = R, cslot_was[ncslot++] = rme;
         if (H) cslot[ncslot] = H, cslot_was[ncslot++] = me;
@@ -1277,9 +1285,10 @@ void rt_qr_tick(void) {
             float bar = gbase * 3.0f < 100.0f ? 100.0f : gbase * 3.0f;
             /* (and the tick a drift begins, brake and stick: the log's first "wall", 171, came the tick before the drift's in) */
             int drifty = me_drift || (rt_pad_brake > 0.06f && (rt_pad_steer > 0.3f || rt_pad_steer < -0.3f));
-            if (drifty && bar < 300.0f) bar = 300.0f;
+            /* (the user's, 7 Nov evening: "return the brake-to-drift code pre wall fix": a drift's own knocks ran 300-440
+             * in a race car, over any bar; in a drift, its start and its way out, no wall check, as before the fix) */
             gbase += ((g < 100.0f ? g : 100.0f) - gbase) * (1.0f - expf(-(float)dt / 2.0f));
-            if (g > bar && !near_car && lap >= 0) {
+            if (g > bar && !near_car && lap >= 0 && !drifty) {
                 static int wlog = -1;
                 if (wlog < 0) wlog = getenv("XBRT_WALLLOG") != NULL;
                 if (wlog || cs[i].wall_until < now) fprintf(stderr, "xbrt: mayhem: the player's car on a wall (%.0f m/s^2, the bar %.0f): ours stood down at %.3f s\n", g, bar, now / 1e7);
@@ -1410,7 +1419,7 @@ void rt_qr_tick(void) {
                     me_drift = 1;
                     /* a knock: a fifth of the speed gone in a tick (15% and 1 m/s fired on a wall's brush, a kerb, a
                      * landing; a carried-over gap's speed is the game's, no knock) */
-                    const char *why = on_wall ? "wall" : dsp < 10 ? "slow" : !resumed && sp < dsp * 0.8f - 1.5f ? "knock" : steer * drift_dir < 0.15f ? "let go" : NULL;
+                    const char *why = dsp < 10 ? "slow" : !resumed && sp < dsp * 0.8f - 1.5f ? "knock" : steer * drift_dir < 0.15f ? "let go" : NULL;
                     if (dlog && (int)(now / 2500000) != (int)((now - (uint64_t)(dt * 1e7)) / 2500000))
                         fprintf(stderr, "xbrt: drift: slip %.0f deg, speed %.1f, turn %.2f (the game's %.2f) rad/s, steer %.2f, ang +0x50 %.2f %.2f %.2f\n",
                                 slip * 57.3f, dsp, rot, gturn / dt, steer, rdf(car + 0x50), rdf(car + 0x54), rdf(car + 0x58));
@@ -1423,7 +1432,7 @@ void rt_qr_tick(void) {
                         v[1] -= (float)(2.5 * dt);
                         wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
                     }
-                } else if (out_until > now && dsp > 1 && !on_wall) {
+                } else if (out_until > now && dsp > 1) {
                     /* out of a drift: the way it goes swung to the heading (half of the slip a 1/16 s), all of the
                      * drift's speed kept and more with the throttle; the stick steers as on the road */
                     float slip = atan2f(vdz * hx - vdx * hz, vdx * hx + vdz * hz);
