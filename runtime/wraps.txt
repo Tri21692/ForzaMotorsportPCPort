@@ -15,3 +15,5 @@ BDD00   # the replay reads one back: hle_career.c, past the 10th the one ten bef
 B3530   # the race's ranking (a place a racer, +0xBC): hle_career.c, Mayhem's places from where the cars are on the road
 17E270  # a finished race's rewards (the cars won, a vector): hle_quickrace.c, the car for every Mayhem Moment pushed on
 56A40   # the garage takes a car (thiscall: ordinal, ...): hle_quickrace.c, the Mayhem prize marked given
+3BD550  # D3D_BlockOnTime: hle_d3d.c, XBRT_BOT_LOG=<ms> logs its long waits (debugging)
+3F602C  # DSOUND: a command for the GP DSP (spins until the last is acknowledged): hle_qol.c acknowledges each at once

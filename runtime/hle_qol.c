@@ -35,3 +35,17 @@ void f_00265046(XbCtx *c) {
     if (rt_fast_loading < 0) rt_fast_loading = !(getenv("XBRT_FAST_LOADING") && !atoi(getenv("XBRT_FAST_LOADING")));
     if (rt_fast_loading) c->eax += 3001;
 }
+
+/* DSOUND's command to the GP DSP (0x3F602C, thiscall, two arguments: CDirectSound_CommitEffectData's): it spins until
+ * the DSP has acknowledged the last command, then writes the next one. The DSP isn't run; apu.c's rt_apu_tick stands
+ * in for its executive and acknowledges from the DPC thread every millisecond, so each command waited a tick or more.
+ * A race's start sends a long run of them as its sounds load, and the game stood still for 370 ms between Start Race
+ * and the intro (the user's, 8 Nov: "Alpine Ring dropped below 30"; on every track). Each is acknowledged as it is
+ * written: what the tick does, without the wait. XBRT_GP_ACK_NOW=0: as before. */
+void orig_f_003F602C(XbCtx *c);
+void f_003F602C(XbCtx *c) {
+    static int on = -1;
+    if (on < 0) on = !getenv("XBRT_GP_ACK_NOW") || atoi(getenv("XBRT_GP_ACK_NOW"));
+    orig_f_003F602C(c);
+    if (on) rt_apu_tick();
+}

@@ -59,3 +59,23 @@ void XB_FN_D3DTexture_LockRect(XbCtx *c) {
 }
 
 #endif
+
+/* Debugging: XBRT_BOT_LOG=<ms> logs each D3D_BlockOnTime (0x3BD550: wait until the GPU's GET passes a push-buffer
+ * place) that took that long: the place, the game's write place and the GPU's GET and PUT going in and coming out,
+ * and the caller (the race-start stutter, 8 Nov: the game spun in it with the GPU idle). */
+void orig_f_003BD550(XbCtx *c);
+void f_003BD550(XbCtx *c) {
+    static int ms = -1;
+    if (ms < 0) ms = getenv("XBRT_BOT_LOG") ? atoi(getenv("XBRT_BOT_LOG")) : 0;
+    if (!ms) { orig_f_003BD550(c); return; }
+    uint32_t from = xb_rd32(c->esp), time = xb_rd32(c->esp + 4), flags = xb_rd32(c->esp + 8);
+    uint32_t dev = xb_rd32(0x3C8A48), put = xb_rd32(dev + 0x2C), gp = xb_rd32(dev + 0x30);
+    uint32_t get0 = gp ? xb_hw_rd32(gp) : 0, hput0 = xb_mmio_read(RT_NV2A_BASE + 0x800040u, 4), cb = xb_rd32(dev + 0x19FC);
+    uint64_t t0 = rt_now_100ns();
+    orig_f_003BD550(c);
+    uint64_t took = (rt_now_100ns() - t0) / 10000;
+    if (took >= (uint64_t)ms)
+        fprintf(stderr, "[%9.3f] BlockOnTime %llu ms from %08x: time %08x flags %x, game put %08x -> %08x, GET %08x -> %08x, PUT %08x -> %08x, callback %08x\n",
+                rt_now_100ns() / 1e7, (unsigned long long)took, from, time, flags, put, xb_rd32(dev + 0x2C), get0, gp ? xb_hw_rd32(gp) : 0, hput0,
+                xb_mmio_read(RT_NV2A_BASE + 0x800040u, 4), cb);
+}
