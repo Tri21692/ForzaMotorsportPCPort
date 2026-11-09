@@ -899,6 +899,7 @@ static void *device_main(void *arg) {
     vblank_due = next_vblank;
     pthread_t ticker;
     pthread_create(&ticker, NULL, vblank_ticker, NULL);
+    rt_host_thread("vblank ticker", ticker);
     pthread_mutex_lock(&lock);
     for (;;) {
         uint64_t t = now_ns();
@@ -1035,6 +1036,7 @@ void rt_nv2a_init(void) {
     pthread_t h;
     pthread_create(&h, NULL, device_main, NULL);
     rt_profile_thread(h);
+    rt_host_thread("device (the GPU)", h);
 }
 
 /* The stats line, every 5 seconds at log level 1 or with XBRT_STATS=1 (which

@@ -37,7 +37,7 @@ def main(exe, log, start=None):
     thread = None
     for l in lines[first + 1:]:
         if l.startswith('---- ') or l.startswith('['): break
-        if l.startswith('thread '): thread = l; continue
+        if l.startswith(('thread ', 'runtime thread: ')): thread = l; continue
         if not l.startswith('  host:') or thread is None: continue
         print(thread)
         for f in l.split()[1:]:

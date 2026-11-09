@@ -1012,3 +1012,22 @@ void f_00243F30(XbCtx *c) {
     }
     orig_f_00243F30(c);
 }
+
+/* An AI driver's update (0x24DDD0, thiscall, no arguments): it reads its racing-line follower at +0x2E8 and its point
+ * at +0x2D4 (0x243F30 above). In a Mayhem race on Alpine Ring (8 Nov, the user's crash 5 s in and a test's at the
+ * start) the follower held 0x42C80000, 100.0 as a float, not an object: the driver's memory not set yet, or written
+ * through an old pointer. The update is skipped while it is not a heap address, and logged (the first few) with the
+ * driver's other fields, to find who leaves it so. */
+void orig_f_0024DDD0(XbCtx *c);
+void f_0024DDD0(XbCtx *c) {
+    uint32_t d = c->ecx, f = d && d < RT_USER_LIMIT ? xb_rd32(d + 0x2E8) : 0;
+    if (d && d < RT_USER_LIMIT && (f < 0x10000 || f >= RT_PHYS_SIZE)) {
+        static int said;
+        if (said++ < 8)
+            fprintf(stderr, "xbrt: AI driver %08x: its racing-line follower (+0x2E8) is %08x, not an object: its update skipped (+0x2B4 %08x, +0x2D4 %d, +0x2E0 %08x, +0x2E4 %08x, +0x2EC %08x)\n",
+                    d, f, xb_rd32(d + 0x2B4), (int32_t)xb_rd32(d + 0x2D4), xb_rd32(d + 0x2E0), xb_rd32(d + 0x2E4), xb_rd32(d + 0x2EC));
+        c->esp += 4; /* ret */
+        return;
+    }
+    orig_f_0024DDD0(c);
+}

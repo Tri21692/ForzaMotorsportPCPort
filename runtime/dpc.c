@@ -124,5 +124,6 @@ void rt_dpc_start(void) {
     pthread_attr_init(&a);
     pthread_attr_setstacksize(&a, 16u << 20);
     pthread_create(&h, &a, dpc_main, t);
+    rt_host_thread("DPC (timers, interrupts, DPCs; holds rt_gil while it runs them)", h);
     pthread_attr_destroy(&a);
 }

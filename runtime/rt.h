@@ -289,6 +289,7 @@ uint64_t rt_now_100ns(void); /* monotonic, Xbox system time units */
 uint64_t rt_game_now_100ns(void); /* the game's clock: rt_now_100ns, slowed by rt_time_scale (thread.c) */
 void rt_time_scale(double s);     /* the game's clock from now on at s (0.05..1) of real time */
 void rt_profile_thread(pthread_t t); /* XBRT_PROFILE (main.c) */
+void rt_host_thread(const char *name, pthread_t h); /* the runtime's own threads, for the hang dump (thread.c) */
 void rt_profile_game_thread(pthread_t t); /* XBRT_PROFILE_GAME (main.c) */
 void rt_sleep_precise(uint64_t ns); /* to well under a millisecond, whatever the timer resolution */
 

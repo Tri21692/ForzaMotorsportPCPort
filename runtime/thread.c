@@ -270,8 +270,7 @@ void rt_thread_start(RtThread *t) {
  * say for what). The thread is suspended just long enough to unwind 32 frames (x64 unwind data,
  * as gcc writes it for Windows); printed after it runs on, as offsets in this executable (named
  * with tools/hangstack.py from nm) or module!offset. */
-static void host_backtrace(RtThread *t) {
-    HANDLE h = pthread_gethandle(t->host);
+static void host_backtrace_h(HANDLE h) {
     if (!h || GetThreadId(h) == GetCurrentThreadId()) return;
     DWORD64 pc[32];
     int n = 0;
@@ -308,7 +307,16 @@ static void host_backtrace(RtThread *t) {
     }
     fprintf(stderr, "\n");
 }
+static void host_backtrace(RtThread *t) { host_backtrace_h(pthread_gethandle(t->host)); }
 #endif
+
+/* The runtime's own threads, for the hang dump too (the user's freezes of 8 Nov after a race: every game thread
+ * waiting for rt_gil, its holder not one of them): the DPC thread, the device thread, its vblank ticker. */
+static struct { const char *name; pthread_t h; } host_threads[8];
+static int nhost_threads;
+void rt_host_thread(const char *name, pthread_t h) {
+    if (nhost_threads < 8) host_threads[nhost_threads].name = name, host_threads[nhost_threads++].h = h;
+}
 
 /* Debugging (XBRT_THREAD_DUMP): each thread's registers, latest kernel
  * call and stack, which holds its likely return addresses, and (Windows)
@@ -324,6 +332,12 @@ void rt_thread_dump(void) {
         if (!t->terminated && t->started) host_backtrace(t);
 #endif
     }
+#ifdef _WIN32
+    for (int i = 0; i < nhost_threads; i++) {
+        fprintf(stderr, "runtime thread: %s\n", host_threads[i].name);
+        host_backtrace_h(pthread_gethandle(host_threads[i].h));
+    }
+#endif
     fflush(stderr);
 }
 

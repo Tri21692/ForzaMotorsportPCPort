@@ -1939,3 +1939,34 @@ int rt_qr_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]
     if (!menu_open) eat = 1;
     return 1;
 }
+
+/* An AI driver's walk a distance on along its racing line (0x24C070, thiscall: the distance, then where to put the
+ * point reached and the fraction of its segment): it adds segment lengths from the car's own fraction until the
+ * distance is covered, and with a NaN in them (a car's physics gone to NaN: Alpine Ring's Mayhem races, 8 Nov, two
+ * rivals NaN, and the user's freezes after a race) the test is never true and the game hangs in it, before our tick
+ * can set the car back on the line (above). So while any car is NaN, the distance is not a number, or the driver's
+ * line follower (+0x2E8) is not an object, the walk answers the driver's own point and 0; the car is set back on the
+ * next tick. */
+void orig_f_0024C070(XbCtx *c);
+void f_0024C070(XbCtx *c) {
+    uint32_t d = c->ecx, pidx = xb_rd32(c->esp + 8), pfrac = xb_rd32(c->esp + 12);
+    float dist = rdf(c->esp + 4);
+    uint32_t fol = d && d < RT_USER_LIMIT ? xb_rd32(d + 0x2E8) : 0;
+    const char *why = !(dist > -1e6f && dist < 1e6f) ? "the distance not a number" : fol < 0x10000 || fol >= RT_PHYS_SIZE ? "its line follower not an object" : NULL;
+    if (!why) {
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+        for (uint32_t i = 0; arr && arr < RT_USER_LIMIT && n <= 64 && i < n && !why; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i), car = r && r < RT_USER_LIMIT ? xb_rd32(r + 0xA0) : 0;
+            if (car && car < RT_USER_LIMIT && car_broken(car)) why = "a car not a number";
+        }
+    }
+    if (why) {
+        static int said;
+        if (said++ < 8) fprintf(stderr, "xbrt: AI driver %08x: its walk along the line skipped (%s, distance %g)\n", d, why, dist);
+        if (pidx && pidx < RT_USER_LIMIT && d) xb_wr32(pidx, xb_rd32(d + 0x2D4));
+        if (pfrac && pfrac < RT_USER_LIMIT) wrf(pfrac, 0.0f);
+        c->esp += 16; /* ret 0xC */
+        return;
+    }
+    orig_f_0024C070(c);
+}
