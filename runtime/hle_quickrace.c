@@ -143,9 +143,27 @@ int rt_mm_count(void) { mayhem_load(); return nmm; }
 /* The share of the lap Mayhem's rivals are spread over on the race's track (hle_career.c's grid): mayhem.txt's
  * "spread <track> <percent>" (the user's, 7 Nov: "don't space out as much on Pacific/Fujimi, makes it impossible":
  * on their long laps the leaders began most of a lap ahead), else the whole lap. */
+/* The event the career is starting (0x5B6944: it holds the event when the grid is laid, before the race has it at
+ * +0x318), if it is one of Mayhem's: then the grid is spread as it is laid (hle_career.c's 0x410E0), not after. Placed
+ * again after (each car's ResetPositionForGrid once the race was known), the AI read freed memory from then on (the
+ * freed-memory trap, 9 Nov: an AI assert at once; without the trap, rivals gone to NaN at the start line, and the
+ * user's freezes after the race). */
+static uint32_t mayhem_grid_event(void) {
+    mayhem_load();
+    uint32_t ev = xb_rd32(0x5B6944);
+    if (!ev || ev >= RT_USER_LIMIT) return 0;
+    uint32_t ord = xb_rd32(ev + 0x10);
+    /* (0x5B6944 keeps the last career event after its race: an arcade race after a Mayhem one was spread too. So only
+     * while the track being loaded, 0x592E7C, is the event's: found holding the grid's track in career and arcade) */
+    if (xb_rd32(ev + 0x20) != xb_rd32(0x592E7C)) return 0;
+    for (int k = 0; k < nmayhem_ev; k++) if (mayhem_ev[k] == ord) return ev;
+    return 0;
+}
+int rt_qr_mayhem_grid(void) { return mayhem_grid_event() != 0 || (getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST"))); }
 float rt_qr_mayhem_share(void) {
     mayhem_load();
     uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;
+    if (!ev || ev >= RT_USER_LIMIT) ev = mayhem_grid_event(); /* (the grid laid before the race has its event) */
     int track = ev && ev < RT_USER_LIMIT ? (int)xb_rd32(ev + 0x20) : -1;
     const char *qt_ = getenv("XBRT_QR_TEST"), *cm = qt_ ? strchr(qt_, ',') : NULL;
     if (track < 0 && cm) track = atoi(cm + 1); /* (testing: an arcade race has no event record; XBRT_QR_TEST's track) */
@@ -975,6 +993,27 @@ void rt_qr_tick(void) {
             if (race && getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST"))) mayhem_race = 1; /* (any race, testing) */
             if (race && mayhem_race && !was) fprintf(stderr, "xbrt: mayhem: this race (event %u)\n", ord);
             if (race && ev && ev != ev_was) fprintf(stderr, "xbrt: race's event ordinal %u\n", ord);
+            {
+                extern uint32_t *rt_grid_globals;
+                if (race && ev && rt_grid_globals) { /* (XBRT_EVENT_SCAN) */
+                    int n = 0;
+                    fprintf(stderr, "xbrt: event scan: event %08x (ordinal %u); the globals holding it at the grid:", ev, ord);
+                    for (uint32_t k = 0; k < 0x80000 && n < 24; k++)
+                        if (rt_grid_globals[k] == ev) fprintf(stderr, " %08x", 0x400000 + 4 * k), n++;
+                    { /* and the event's track ordinal (+0x20): which globals held it at the grid (the current track's) */
+                        uint32_t tr = xb_rd32(ev + 0x20);
+                        int m2 = 0;
+                        fprintf(stderr, "; its track %u held at the grid by:", tr);
+                        for (uint32_t k = 0; k < 0x80000 && m2 < 300; k++)
+                            if (rt_grid_globals[k] == tr) fprintf(stderr, " %x", 0x400000 + 4 * k), m2++;
+                    }
+                    fprintf(stderr, "; holding it now:");
+                    for (uint32_t k = 0, m = 0; k < 0x80000 && m < 24; k++)
+                        if (xb_rd32(0x400000 + 4 * k) == ev) fprintf(stderr, " %08x", 0x400000 + 4 * k), m++;
+                    fprintf(stderr, "\n");
+                    free(rt_grid_globals), rt_grid_globals = NULL;
+                }
+            }
             race_was = race, ev_was = ev;
         }
     }

@@ -21,3 +21,5 @@ B3530   # the race's ranking (a place a racer, +0xBC): hle_career.c, Mayhem's pl
 243F30  # a racing-line point index wrapped round the line (thiscall, one argument, then 0x2515A0): hle_career.c, an empty line answered without the divide by zero
 24DDD0  # an AI driver's update (thiscall, no arguments): hle_career.c, skipped while its racing-line follower (+0x2E8) is not an object
 24C070  # an AI driver walks its racing line a distance on (thiscall, 3 arguments): hle_quickrace.c, not while a car is NaN (the walk never ended)
+62C80   # the game's fatal error halt (an assert's end: it loops for good): hle_listcheck.c logs the message and, with XBRT_HEAP_TRAP, the freed blocks the stack points into
+258A60  # CSpeedComputer::GetBrakeAdjustedOptimalSpeed (thiscall): hle_listcheck.c, with XBRT_HEAP_TRAP its object and the pointers in it checked against the freed blocks held

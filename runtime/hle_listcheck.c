@@ -703,10 +703,23 @@ void f_00271310(XbCtx *c) {
 #define TRAP_N 8192
 #define TRAP_SET (1 << 15)
 #define TRAP_WORD 0xF4EEDEADu
-static struct { uint32_t p, bytes, flags, from[8]; uint64_t at; int bad; } trap[TRAP_N];
+static struct { uint32_t p, bytes, flags, from[8]; uint64_t at; int bad; uint8_t *was; } trap[TRAP_N]; /* was: its bytes at the free, given back at its release */
 static int trap_first, trap_n, trap_frees;
 static uint64_t trap_bytes;
 static uint32_t trap_set[TRAP_SET]; /* the held blocks: 0 empty, 1 removed */
+static uint16_t trap_page[0x4000000 / 0x1000]; /* held blocks over each 4 KB page of RAM: where to look (trap_where) */
+static void trap_pages(uint32_t p, uint32_t bytes, int d) {
+    for (uint32_t pg = p >> 12; pg <= (p + bytes - 1) >> 12 && pg < 0x4000; pg++) trap_page[pg] += (uint16_t)d;
+}
+/* The held block holding a, or -1. */
+static int trap_where(uint32_t a) {
+    if (a >= 0x4000000 || !trap_page[a >> 12]) return -1;
+    for (int j = 0; j < trap_n; j++) {
+        int k = (trap_first + j) % TRAP_N;
+        if (a - trap[k].p < trap[k].bytes) return k;
+    }
+    return -1;
+}
 static int trap_removed;
 static int64_t trap_cap = -1;
 
@@ -767,6 +780,13 @@ static void trap_release(XbCtx *c) {
     int i = trap_find(p);
     if (i >= 0) trap_set[i] = 1, trap_removed++;
     trap_first = (trap_first + 1) % TRAP_N, trap_n--, trap_bytes -= trap[k].bytes;
+    trap_pages(p, trap[k].bytes, -1);
+    if (trap[k].was) { /* its old bytes back, as a free leaves them: the pattern only while held (a block let go with the
+                        * pattern in it gave the next malloc's unset part the pattern, and the AI's speed tables, which
+                        * read past what they filled, an assert at once) */
+        for (uint32_t o = 0; o + 4 <= trap[k].bytes; o += 4) { uint32_t w; memcpy(&w, trap[k].was + o, 4); xb_wr32(p + o, w); }
+        free(trap[k].was), trap[k].was = NULL;
+    }
     if (!(xb_rd8(p - 11) & 1)) { /* (its header says free: the heap's own record of it went wrong meanwhile) */
         fprintf(stderr, "xbrt: heap trap: block %08x held, but its header says free (%08x %08x): left alone\n", p, xb_rd32(p - 16), xb_rd32(p - 12));
         return;
@@ -793,13 +813,110 @@ static int trap_take(XbCtx *c, uint32_t p, uint32_t flags) {
     trap[k].p = p, trap[k].bytes = bytes, trap[k].flags = flags, trap[k].at = rt_now_100ns(), trap[k].bad = 0;
     stack_of(c, trap[k].from);
     trap_n++, trap_bytes += bytes;
-    for (uint32_t o = 0; o + 4 <= bytes; o += 4) xb_wr32(p + o, TRAP_WORD);
+    trap_pages(p, bytes, 1);
+    trap[k].was = malloc(bytes);
+    for (uint32_t o = 0; o + 4 <= bytes; o += 4) {
+        if (trap[k].was) { uint32_t w = xb_rd32(p + o); memcpy(trap[k].was + o, &w, 4); }
+        xb_wr32(p + o, TRAP_WORD);
+    }
     uint32_t i = trap_hash(p);
     while (trap_set[i] > 1) i = (i + 1) & (TRAP_SET - 1);
     trap_set[i] = p;
+    if (trap_frees % 10000 == 9999) fprintf(stderr, "xbrt: heap trap: %d frees held so far, %d held now (%llu KB)\n", trap_frees + 1, trap_n, (unsigned long long)(trap_bytes / 1024));
     if (++trap_frees % 1000 == 0)
         for (int j = 0; j < trap_n; j++) trap_check((trap_first + j) % TRAP_N, "in a sweep");
     return 1;
+}
+
+/* The game's fatal error halt (0x62C80: what an assert ends in; it loops for good, the screen standing: one of the
+ * user's freezes of 8 Nov was an AI assert, "Min speed set to zero - FPE!!" in CSpeedComputer::
+ * GetBrakeAdjustedOptimalSpeed). Logged before it: the message (the text nearest above on the stack), and with
+ * XBRT_HEAP_TRAP each held freed block the stack points into, with who freed it: what was read after its free. */
+void orig_f_00062C80(XbCtx *c);
+void f_00062C80(XbCtx *c) {
+    static int told;
+    if (told++ < 3) {
+        char msg[400];
+        int n = 0;
+        uint32_t a = c->esp, end = c->esp + 0x4000;
+        for (; a + 17 < end; a++) /* "Assertion Failure" or any long run of text */
+            if (xb_rd8(a) == 'A' && xb_rd8(a + 1) == 's' && xb_rd8(a + 2) == 's' && xb_rd8(a + 3) == 'e' && xb_rd8(a + 4) == 'r' && xb_rd8(a + 5) == 't') break;
+        for (; a < end && n < (int)sizeof msg - 1; a++) {
+            uint8_t ch = xb_rd8(a);
+            if (!ch) break;
+            msg[n++] = ch == 10 || ch == 13 ? '|' : (char)ch;
+        }
+        msg[n] = 0;
+        fprintf(stderr, "xbrt: the game halted on a fatal error (0x62C80, it loops for good): %s; stack:", n ? msg : "(no message found)");
+        log_stack(c);
+        if (trap_on()) {
+            int shown = 0;
+            for (uint32_t w = c->esp; w < c->esp + 0x4000 && shown < 24; w += 4) {
+                uint32_t v = xb_rd32(w);
+                int k = trap_where(v);
+                if (k < 0) continue;
+                shown++;
+                fprintf(stderr, "xbrt: heap trap: the stack at %08x points into freed block %08x+%x (%u bytes, freed %.2f s before, from", w, trap[k].p, v - trap[k].p,
+                        trap[k].bytes, (rt_now_100ns() - trap[k].at) / 1e7);
+                for (int j = 0; j < 8 && trap[k].from[j]; j++) fprintf(stderr, " %08x", trap[k].from[j]);
+                fprintf(stderr, ")\n");
+            }
+            if (!shown) fprintf(stderr, "xbrt: heap trap: nothing on the stack points into a held freed block\n");
+        }
+        fflush(stderr);
+    }
+    orig_f_00062C80(c);
+}
+
+/* CSpeedComputer::GetBrakeAdjustedOptimalSpeed (0x258A60, thiscall): its assert at line 217 (the slowest speed of its
+ * points not above 0) halted the game. With XBRT_HEAP_TRAP: the object itself, and each pointer in its first 0x100
+ * bytes (its tables: +0x60, +0x74, +0x88 ...), checked against the freed blocks held; one in a freed block logged
+ * (the first few), with who freed it: the speed computer reading memory after its free. */
+void orig_f_00258A60(XbCtx *c);
+void f_00258A60(XbCtx *c) {
+    if (trap_on()) { /* the trap's pattern copied into one of its tables (read from a freed block and kept) */
+        static int told2;
+        uint32_t o = c->ecx;
+        for (uint32_t off = 0; told2 < 6 && o && o < 0x4000000 && off < 0x100; off += 4) {
+            uint32_t t = xb_rd32(o + off);
+            if (t < 0x10000 || t >= 0x4000000 || (t & 3)) continue;
+            for (uint32_t w = 0; w < 4096; w++)
+                if (xb_rd32(t + 4 * w) == TRAP_WORD) {
+                    told2++;
+                    fprintf(stderr, "xbrt: heap trap: the speed computer %08x's +%x (%08x) holds the trap's pattern at [%u] (its block %u bytes by its header, %u entries; the computer's +10 %d, +18 %d, +1c %d, +20 %d); called from",
+                            o, off, t, w, (uint32_t)xb_rd16(t - 16) * 16 - 16, ((uint32_t)xb_rd16(t - 16) * 16 - 16) / 4, (int32_t)xb_rd32(o + 0x10), (int32_t)xb_rd32(o + 0x18),
+                            (int32_t)xb_rd32(o + 0x1C), (int32_t)xb_rd32(o + 0x20));
+                    log_stack(c);
+                    break;
+                }
+        }
+    }
+    if (trap_on()) {
+        static int told;
+        uint32_t o = c->ecx;
+        if (told < 6 && o && o < 0x4000000) {
+            for (uint32_t off = 0; off <= 0x100 && told < 6; off += 4) {
+                uint32_t v = off ? xb_rd32(o + off - 4) : o; /* (off 0: the object; then its words) */
+                int k = trap_where(v);
+                if (k < 0 && off && v >= 0x10000 && v < 0x4000000) /* one more step: what its pointers point at */
+                    for (uint32_t off2 = 0; off2 < 0x100 && k < 0; off2 += 4) {
+                        uint32_t v2 = xb_rd32(v + off2);
+                        if ((k = trap_where(v2)) >= 0) {
+                            fprintf(stderr, "xbrt: heap trap: (through +%x = %08x, its +%x) ", off - 4, v, off2);
+                            v = v2;
+                        }
+                    }
+                if (k < 0) continue;
+                told++;
+                fprintf(stderr, "xbrt: heap trap: the speed computer %08x %s%x is %08x, in freed block %08x+%x (%u bytes, freed %.2f s before, from", o,
+                        off ? "+" : "itself, ", off ? off - 4 : 0, v, trap[k].p, v - trap[k].p, trap[k].bytes, (rt_now_100ns() - trap[k].at) / 1e7);
+                for (int j = 0; j < 8 && trap[k].from[j]; j++) fprintf(stderr, " %08x", trap[k].from[j]);
+                fprintf(stderr, "); called from");
+                log_stack(c);
+            }
+        }
+    }
+    orig_f_00258A60(c);
 }
 
 /* RtlFreeHeap (sub_0026A438: heap, flags, block; it calls sub_0026C6D2) as generated, with every

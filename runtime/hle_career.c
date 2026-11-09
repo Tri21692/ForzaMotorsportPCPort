@@ -291,7 +291,8 @@ static int big_field(void) {
  * out", after 12 rivals stalled and the game hung; Mayhem's race is known before its grid is laid, the log shows) */
 static int spread_field(void) {
     uint32_t n = xb_rd32(0x58DAA0 + 0x10), arr = xb_rd32(0x58DAA0 + 4);
-    return arr && n >= 2 && n <= 64 && (n > BIG_FIELD || rt_qr_mayhem());
+    int rt_qr_mayhem_grid(void);
+    return arr && n >= 2 && n <= 64 && (n > BIG_FIELD || rt_qr_mayhem() || rt_qr_mayhem_grid());
 }
 /* the grid's order (0x75050: thiscall on the racer list, the order as its argument: 0 random, 1 and 2 by lists): a
  * big field's never the random one */
@@ -343,8 +344,20 @@ void f_000BDD00(XbCtx *c) {
 }
 
 void orig_f_000410E0(XbCtx *c); /* the game's own (wraps.txt) */
+/* Debugging (XBRT_EVENT_SCAN=1): the game's globals (0x400000-0x600000) as they stood when the grid was laid, for
+ * hle_quickrace.c to look in, once the race's event shows (+0x318), for the words that held it then: where the career
+ * keeps its event before the race has it (Mayhem's spread wants to be known at the grid, not after). */
+uint32_t *rt_grid_globals;
 void f_000410E0(XbCtx *c) {
     pthread_once(&cu_once, cu_load);
+    {
+        static uint32_t told_ev = 1;
+        uint32_t gev = xb_rd32(0x5B6944);
+        if (gev != told_ev) told_ev = gev, fprintf(stderr, "xbrt: grid: the event being started (0x5B6944) %08x, ordinal %d\n", gev,
+                                                    gev && gev < RT_USER_LIMIT ? (int)xb_rd32(gev + 0x10) : -1);
+    }
+    if (!rt_grid_globals && getenv("XBRT_EVENT_SCAN") && (rt_grid_globals = malloc(0x200000)))
+        for (uint32_t k = 0; k < 0x80000; k++) rt_grid_globals[k] = xb_rd32(0x400000 + 4 * k);
     int32_t place = (int32_t)xb_rd32(c->esp + 4);
     uint32_t car = c->ecx;
     static int nospread = -1;
@@ -557,7 +570,8 @@ static void tour_tick(void) {
 static void big_tick(void) {
     if (!big_active) return;
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
-    if (!arr || n < 2 || n > 64 || (n <= BIG_FIELD && !rt_qr_mayhem())) { big_active = 0, big_grid_ok = 0; return; }
+    int rt_qr_mayhem_grid(void);
+    if (!arr || n < 2 || n > 64 || (n <= BIG_FIELD && !rt_qr_mayhem() && !rt_qr_mayhem_grid())) { big_active = 0, big_grid_ok = 0; return; }
     uint64_t now = rt_now_100ns();
     /* (2 s after the race's clock runs, the player's (+0xA0, from its first move): from the race's being there
      * ([0x592984], catch-up's) it was done on the grid's menu, and the game crashed at Start Race, placing the cars
@@ -687,6 +701,7 @@ static void mayhem_spread(XbCtx *c) {
     uint32_t race = xb_rd32(0x592984);
     if (!race) { done_for = 0; return; }
     if (!c || done_for == race || !rt_qr_mayhem()) return;
+    if (getenv("XBRT_MAYHEM_SPREAD") && !atoi(getenv("XBRT_MAYHEM_SPREAD"))) return; /* (testing: the grid as the game lays it) */
     uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
     if (!arr || n < 2 || n > 64) return;
     uint32_t rme = 0;
