@@ -286,6 +286,7 @@ static void host_pad(uint32_t pad) {
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
     }
+    rt_spotify_pad(&buttons); /* spotify.c: Back + the D-pad */
     if (autopress && rt_now_100ns() % 20000000 < 2000000) { /* 0.2 s of every 2 s */
         buttons |= 0x10;
         analog[A_A] = 255;

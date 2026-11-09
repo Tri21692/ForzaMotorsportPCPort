@@ -66,6 +66,8 @@ static const OvItem items[] = {
     {"volume", "Volume", {"0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1"},
      {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}, 1, "Sound volume."},
     {"background_mute", "Mute in Background", {"0", "1"}, {"Off", "On"}, 1, "Silent while the game's window is not in front."},
+    {"spotify", "Spotify", {"0", "1"}, {"Off", "On"}, 1, "Hold Back: Up play/pause, Right next, Left previous, Down the song. Keys: M , . - = /"},
+    {"spotify_popup", "Song Pop-Up", {"0", "1"}, {"Off", "On"}, 1, "The song's name for a few seconds when a new one starts in Spotify."},
     {NULL, "Achievements", {NULL}, {NULL}, 0, NULL}, /* (no settings: glover.c lists rt_ach_get's) */
     {NULL, "Moments", {NULL}, {NULL}, 0, NULL}, /* (none either: glover.c shows rt_mm_get's, with their photographs) */
 };
@@ -152,6 +154,8 @@ static void apply(const OvItem *it, const char *v) {
     else if (!strcmp(it->setting, "bloom")) rt_post_bloom = (float)atof(v);
     else if (!strcmp(it->setting, "vibrance")) rt_post_vibrance = (float)atof(v);
     else if (!strcmp(it->setting, "background_mute")) { if (!atoi(v)) rt_apu_set_muted(0); } /* (display.c mutes on the next switch away) */
+    else if (!strcmp(it->setting, "spotify")) rt_spotify_enable(atoi(v));
+    else if (!strcmp(it->setting, "spotify_popup")) {} /* (read as each song starts) */
     else changed_restart = 1;
 }
 

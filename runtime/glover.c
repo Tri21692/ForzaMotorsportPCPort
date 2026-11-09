@@ -534,7 +534,10 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     int flame = rt_qr_flame(fpos, fback, &fpow);
     if (rt_show_fps < 0) rt_show_fps = getenv("XBRT_SHOW_FPS") && atoi(getenv("XBRT_SHOW_FPS"));
     int fps = rt_show_fps && rt_fps_shown > 0;
-    if (!(tt || cu || drift || toast || fps || ach || mg || qn || qtd || qr_hud || qcam || flame) || !ov_init()) return;
+    char sp_title[128], sp_artist[128];
+    float sp_a = 0;
+    int sp = !photo && rt_spotify_card(sp_title, sizeof sp_title, sp_artist, sizeof sp_artist, &sp_a); /* spotify.c: a new song */
+    if (!(tt || cu || drift || toast || fps || ach || mg || qn || qtd || qr_hud || qcam || flame || sp) || !ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
     static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
                        gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1},
@@ -709,6 +712,22 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
         ov_rect(W / 2 - w, 60, W / 2 + w, 63, gold);
         ov_text(OVF_ITEM, W / 2, 67, "ACHIEVEMENT UNLOCKED", gold, 2);
         ov_text(OVF_MENU, W / 2, 85, ach, white, 2);
+    }
+    if (sp) { /* the song Spotify started: a card at the bottom, in the middle, clear of the toast below it */
+        static const float green[4] = {0.11f, 0.73f, 0.33f, 1}, bg[4] = {0, 0, 0, 0.62f}, soft[4] = {0.80f, 0.82f, 0.84f, 1};
+        float g[4] = {green[0], green[1], green[2], sp_a}, b[4] = {0, 0, 0, bg[3] * sp_a}, t[4] = {1, 1, 1, sp_a}, s[4] = {soft[0], soft[1], soft[2], sp_a};
+        float most = 330; /* half the widest: long names cut with "..." */
+        for (char *p = sp_title; ov_width(&ov_font[OVF_MENU], sp_title) > 2 * most - 30 && strlen(sp_title) > 4;)
+            p = sp_title + strlen(sp_title) - 4, strcpy(p, "...");
+        for (char *p = sp_artist; ov_width(&ov_font[OVF_TEXT], sp_artist) > 2 * most - 30 && strlen(sp_artist) > 4;)
+            p = sp_artist + strlen(sp_artist) - 4, strcpy(p, "...");
+        float wt = ov_width(&ov_font[OVF_MENU], sp_title), wa = ov_width(&ov_font[OVF_TEXT], sp_artist);
+        float w = (wt > wa ? wt : wa) / 2 + 20;
+        if (w < 120) w = 120;
+        ov_rect(W / 2 - w, 344, W / 2 + w, 394, b);
+        ov_rect(W / 2 - w, 391, W / 2 + w, 394, g);
+        ov_text(OVF_MENU, W / 2, 347, sp_title, t, 2);
+        ov_text(OVF_TEXT, W / 2, 369, sp_artist, s, 2);
     }
     if (toast) {
         float w = 150;

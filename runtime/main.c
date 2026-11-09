@@ -343,6 +343,7 @@ void rt_profile_game_thread(pthread_t t) {
 int main(int argc, char **argv) {
     rt_settings_load(); /* forza.ini: before anything reads an XBRT_* switch */
     rt_soundtracks_init();
+    rt_spotify_init();
     const char *env = getenv("XBRT_LOG");
     rt_log_level = env ? atoi(env) : 0;
     const char *from = getenv("XBRT_LOG_FROM");

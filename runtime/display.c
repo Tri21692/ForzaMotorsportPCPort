@@ -362,6 +362,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             set_fullscreen(fs);
             return 0;
         }
+        if (!(lp & (1 << 30)) && rt_spotify_key((int)wp)) return 0; /* (not the key's repeats) */
         debug_key(wp);
         break;
     case WM_SYSKEYDOWN: /* Alt+Enter */

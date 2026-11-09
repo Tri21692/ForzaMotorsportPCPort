@@ -144,6 +144,12 @@ extern volatile uint64_t rt_present_hold_until; /* the shown picture held until 
 extern volatile float rt_pad_steer, rt_pad_throttle, rt_pad_brake; /* the pad as given to the game: -1..1 (right +), 0..1, 0..1 (hle_input.c) */
 extern volatile float rt_vblank_rate; /* vertical blanks at this share of 59.94 Hz (nv2a.c): the game's slow motion */
 void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */
+/* Spotify (spotify.c): the song playing, shown when it changes, and play/pause, next, previous, volume */
+void rt_spotify_init(void);          /* at start, after the settings */
+void rt_spotify_enable(int on);      /* F1's Spotify setting */
+int rt_spotify_key(int vk);          /* a key in the game's window: 1 if it was Spotify's */
+void rt_spotify_pad(uint16_t *buttons); /* Back + the D-pad: the D-pad taken from the game while Back is held */
+int rt_spotify_card(char *title, int tn, char *artist, int an, float *alpha); /* the song's card, while shown */
 extern char rt_toast_text[64];
 extern volatile uint64_t rt_toast_until;
 /* For the race HUD (hle_career.c): in a Catch-Up race, the player's lead over the opponent in
