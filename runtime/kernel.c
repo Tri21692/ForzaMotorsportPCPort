@@ -589,9 +589,14 @@ K(FscInvalidateIdleBlocks) { return 0; }
 
 /* ---- memory ---- */
 
+/* Debugging: XBRT_VM_LOG=1 logs each virtual allocation and free (the game's heap grows, commits and decommits by
+ * these; the user's freezes of 8 Nov hung in its free just after a decommit) with the caller, as asked and as done. */
+static int vm_log(void) { static int on = -1; if (on < 0) on = getenv("XBRT_VM_LOG") && atoi(getenv("XBRT_VM_LOG")); return on; }
 K(NtAllocateVirtualMemory) {
     uint32_t pbase = ARG(0), psize = ARG(2), protect = ARG(4);
+    uint32_t ask_b = xb_rd32(pbase), ask_s = xb_rd32(psize);
     uint32_t a = rt_user_alloc(xb_rd32(pbase), xb_rd32(psize), protect);
+    if (vm_log()) fprintf(stderr, "xbrt: vm: alloc %08x +%x type %x from %08x -> %08x\n", ask_b, ask_s, ARG(3), xb_rd32(c->esp), a);
     if (rt_log_level > 1) rt_log("  -> %08x size %08x\n", a, xb_rd32(psize));
     if (!a) return STATUS_NO_MEMORY;
     xb_wr32(pbase, a);
@@ -600,8 +605,11 @@ K(NtAllocateVirtualMemory) {
 }
 
 K(NtFreeVirtualMemory) {
-    uint32_t size;
-    if (!rt_user_free(xb_rd32(ARG(0)), &size)) return STATUS_INVALID_PARAMETER;
+    uint32_t size = 0;
+    uint32_t ask_b = xb_rd32(ARG(0)), ask_s = ARG(1) ? xb_rd32(ARG(1)) : 0;
+    int ok = rt_user_free(xb_rd32(ARG(0)), &size);
+    if (vm_log()) fprintf(stderr, "xbrt: vm: free %08x +%x type %x from %08x -> %s, %x released (and zeroed)\n", ask_b, ask_s, ARG(2), xb_rd32(c->esp), ok ? "done" : "refused", ok ? size : 0);
+    if (!ok) return STATUS_INVALID_PARAMETER;
     if (ARG(1)) xb_wr32(ARG(1), size);
     return STATUS_SUCCESS;
 }
