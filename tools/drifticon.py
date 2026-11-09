@@ -172,10 +172,11 @@ def draw(disc, strip, w, h, car_png):
     ox, oy = int(W * 0.30), int(H * 0.20)
     obj = np.zeros((H, W, 4))
     obj[oy:oy + ch, ox:ox + cw] = car
-    # smoke behind the rear wheels (the car's right in the picture, a front three-quarter view)
+    # smoke off the rear wheels: the car's left in the picture (a front three-quarter view, its nose to the right;
+    # the user's, 8 Nov: the smoke was in front of the car)
     sa, sg = np.zeros((H, W)), np.zeros((H, W))
     e = W / 210 * 1.6
-    for fx, fy, fr in ((0.83, 0.70, 0.085), (0.92, 0.60, 0.07), (0.90, 0.80, 0.075), (0.98, 0.70, 0.06)):
+    for fx, fy, fr in ((0.45, 0.66, 0.05), (0.40, 0.69, 0.075), (0.33, 0.62, 0.065), (0.35, 0.76, 0.07), (0.28, 0.69, 0.05)):
         puff(sa, sg, W * fx, H * fy, W * fr, e)
     smoke = np.dstack([sg, sg, sg, sa])
     # the smoke behind the car: car over smoke
