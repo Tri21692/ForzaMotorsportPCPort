@@ -78,7 +78,7 @@ static float rdf(uint32_t a) {
 static struct {
     uint32_t racer;
     double total, cur, len;   /* banked, the drift now (before its length bonus), its length (m) */
-    float angle, v[3], penalty;
+    float angle, v[3], penalty, pos[3]; /* pos: the car's place at the last tick it moved */
     int drifting, done, offroad;  /* offroad: the car left the road and has not yet run straight on it */
     uint64_t last, calm_since, v_at, straight_since;
     float clock;                  /* the race's clock (timing +0xA0) at the last tick */
@@ -132,10 +132,16 @@ void rt_drift_tick(void) {
         fprintf(stderr, "xbrt: drift event: a run begins\n");
     }
     int32_t lap = (int32_t)xb_rd32(timing + 0x9C);
-    /* the race's own clock, not the wall's: paused it stands still (the user's: pausing mid-drift, the
-     * frozen car's slide scored on and on) */
+    /* How far the car went since the last tick it moved: the drift's length from that, not from a clock. Paused, the
+     * car stands and nothing scores (the user's, 3 Nov: pausing mid-drift, the frozen car's slide scored on and on).
+     * The race clock read before (timing +0xA0) is the last lap's time, not a running clock: it stood at 0 all of
+     * the first lap and then jumped, so nothing ever scored (the user's, 8 Nov: "no points are being awarded"). */
     float clock = rdf(timing + 0xA0);
-    double dt = clock - ds.clock;
+    float pos[3] = {rdf(car + 0x14), rdf(car + 0x18), rdf(car + 0x1C)};
+    double moved = hypot(pos[0] - ds.pos[0], pos[2] - ds.pos[2]);
+    int fresh = ds.pos[0] == 0 && ds.pos[2] == 0;
+    if (moved > 0 || fresh) memcpy(ds.pos, pos, sizeof pos);
+    if (fresh || moved > 20) moved = 0; /* (the first tick, or a jump: a restart, a respawn) */
     ds.clock = clock, ds.last = now;
     if (ds.done) return;
     if (laps && lap >= (int32_t)laps) { /* the last lap done: what is drifting now counts */
@@ -151,13 +157,24 @@ void rt_drift_tick(void) {
     }
     float v[3] = {rdf(car + 0x44), rdf(car + 0x48), rdf(car + 0x4C)}, fx = rdf(car + 0x38), fz = rdf(car + 0x40);
     float pen = rdf(timing + 0x98);
+    { /* debugging: XBRT_DRIFT_LOG=1, the scoring's state twice a second */
+        static int on = -1;
+        static uint64_t nx;
+        if (on < 0) on = getenv("XBRT_DRIFT_LOG") && atoi(getenv("XBRT_DRIFT_LOG"));
+        if (on && now >= nx) {
+            nx = now + 5000000;
+            float sp0 = hypotf(v[0], v[2]), fl0 = hypotf(fx, fz), c0 = sp0 > 0.1f && fl0 > 0.1f ? (v[0] * fx + v[2] * fz) / (sp0 * fl0) : 1;
+            fprintf(stderr, "xbrt: drift log: lap %d of %u clock %.2f moved %.3f speed %.1f angle %.1f heading %.2f,%.2f pen %.3f (was %.3f) offroad %d drifting %d cur %.0f len %.0f total %.0f\n",
+                    lap, laps, clock, moved, sp0, acosf(c0 < -1 ? -1 : c0 > 1 ? 1 : c0) * 57.29578f, fx, fz, pen, ds.penalty, ds.offroad, ds.drifting, ds.cur, ds.len, ds.total);
+        }
+    }
     int off = pen > ds.penalty + 0.001f;
     ds.penalty = pen;
-    if (lap < 0 || dt > 0.25 || dt < 0) { /* not yet started, or back from a restart: nothing to score */
+    if (lap < 0) { /* not yet started: nothing to score */
         memcpy(ds.v, v, sizeof v), ds.v_at = now;
         return;
     }
-    if (dt == 0) return; /* paused (or no new frame yet): the clock stands */
+    if (moved == 0) return; /* paused (or no physics step since the last tick): the car stands */
     if (now - ds.v_at >= 500000) { /* every 50 ms: an impact is a jump in velocity */
         double t = (now - ds.v_at) / 1e7, dv = sqrt((v[0] - ds.v[0]) * (v[0] - ds.v[0]) + (v[1] - ds.v[1]) * (v[1] - ds.v[1]) + (v[2] - ds.v[2]) * (v[2] - ds.v[2]));
         memcpy(ds.v, v, sizeof v), ds.v_at = now;
@@ -180,8 +197,8 @@ void rt_drift_tick(void) {
     if (a > SPIN) { dr_lose("SPUN: DRIFT LOST"); return; }
     if (a >= ANGLE_MIN) {
         ds.drifting = 1, ds.calm_since = 0;
-        ds.cur += sp * dt * ((a > 90 ? 90 : a) - (ANGLE_MIN - 2));
-        ds.len += sp * dt;
+        ds.cur += moved * ((a > 90 ? 90 : a) - (ANGLE_MIN - 2));
+        ds.len += moved;
     } else if (ds.drifting) {
         if (!ds.calm_since) ds.calm_since = now;
         else if ((now - ds.calm_since) / 1e7 > HOLD) dr_bank();

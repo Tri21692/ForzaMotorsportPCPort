@@ -692,6 +692,116 @@ void f_00271310(XbCtx *c) {
         fprintf(stderr, "xbrt: list check: removing %08x removed nothing (%u listed)\n", obj, n);
 }
 
+/* XBRT_HEAP_TRAP=<KB> (1: 1024): the freed-memory trap (the user's freezes of 8 Nov after a Mayhem career race: the
+ * heap's list of big free blocks gone round in a loop, and once a call through XML text, 0x3c0a0d0a; something writes
+ * into memory after the game freed it). A block freed from the game's heap is not freed: it is filled with a pattern
+ * and held, up to that many KB (oldest first out; blocks over 256 KB freed at once), so nothing reuses it. Before one
+ * is let go, and every 1,000 frees for all held, the pattern is checked: a word changed is a write after the free,
+ * logged once a block with where in it, what was written (the value often says who: a float, a pointer, text), how
+ * long after the free, and the return addresses of its free and (XBRT_LIST_CHECK) of its malloc. A block freed again
+ * while held is logged and not freed twice. */
+#define TRAP_N 8192
+#define TRAP_SET (1 << 15)
+#define TRAP_WORD 0xF4EEDEADu
+static struct { uint32_t p, bytes, flags, from[8]; uint64_t at; int bad; } trap[TRAP_N];
+static int trap_first, trap_n, trap_frees;
+static uint64_t trap_bytes;
+static uint32_t trap_set[TRAP_SET]; /* the held blocks: 0 empty, 1 removed */
+static int trap_removed;
+static int64_t trap_cap = -1;
+
+static int trap_on(void) {
+    if (trap_cap < 0) {
+        const char *e = getenv("XBRT_HEAP_TRAP");
+        int kb = e ? atoi(e) : 0;
+        trap_cap = kb <= 0 ? 0 : (int64_t)(kb == 1 ? 1024 : kb) * 1024;
+        if (trap_cap) fprintf(stderr, "xbrt: heap trap: on, %lld KB of freed blocks held and checked\n", (long long)(trap_cap / 1024));
+    }
+    return trap_cap > 0;
+}
+static uint32_t trap_hash(uint32_t p) { return (p >> 4) * 2654435761u >> 17; }
+static int trap_find(uint32_t p) {
+    for (uint32_t i = trap_hash(p), n = 0; n < TRAP_SET; i = (i + 1) & (TRAP_SET - 1), n++) {
+        if (trap_set[i] == p) return (int)i;
+        if (!trap_set[i]) return -1;
+    }
+    return -1;
+}
+static void trap_rebuild(void) {
+    memset(trap_set, 0, sizeof trap_set), trap_removed = 0;
+    for (int j = 0; j < trap_n; j++) {
+        uint32_t p = trap[(trap_first + j) % TRAP_N].p, i = trap_hash(p);
+        while (trap_set[i]) i = (i + 1) & (TRAP_SET - 1);
+        trap_set[i] = p;
+    }
+}
+static void trap_check(int k, const char *when) {
+    if (trap[k].bad) return;
+    uint32_t p = trap[k].p, nw = trap[k].bytes / 4, bad = 0, first = 0;
+    for (uint32_t w = 0; w < nw; w++)
+        if (xb_rd32(p + 4 * w) != TRAP_WORD) { if (!bad++) first = w; }
+    if (!bad) return;
+    trap[k].bad = 1;
+    static int told;
+    if (told++ >= 40) return;
+    fprintf(stderr, "xbrt: heap trap: block %08x (%u bytes) written after its free, %d words, seen %s %.2f s after the free; first at +%x:",
+            p, trap[k].bytes, bad, when, (rt_now_100ns() - trap[k].at) / 1e7, 4 * first);
+    for (uint32_t w = first; w < first + 8 && w < nw; w++) fprintf(stderr, " %08x", xb_rd32(p + 4 * w));
+    fprintf(stderr, "; changed words at");
+    int shown = 0;
+    for (uint32_t w = 0; w < nw && shown < 12; w++)
+        if (xb_rd32(p + 4 * w) != TRAP_WORD) fprintf(stderr, " +%x=%08x", 4 * w, xb_rd32(p + 4 * w)), shown++;
+    fprintf(stderr, "; freed from");
+    for (int j = 0; j < 8 && trap[k].from[j]; j++) fprintf(stderr, " %08x", trap[k].from[j]);
+    uint32_t *at = live_slot(p, 0);
+    if (at) fprintf(stderr, "; malloc'd %x bytes from %08x %08x %08x %08x", live_size[at - live_at], live_from[at - live_at][0], live_from[at - live_at][1],
+                    live_from[at - live_at][2], live_from[at - live_at][3]);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+}
+/* The oldest held block checked and freed for real (RtlFreeHeap's own, sub_0026C6D2). */
+static void trap_release(XbCtx *c) {
+    int k = trap_first;
+    trap_check(k, "on its release");
+    uint32_t p = trap[k].p;
+    int i = trap_find(p);
+    if (i >= 0) trap_set[i] = 1, trap_removed++;
+    trap_first = (trap_first + 1) % TRAP_N, trap_n--, trap_bytes -= trap[k].bytes;
+    if (!(xb_rd8(p - 11) & 1)) { /* (its header says free: the heap's own record of it went wrong meanwhile) */
+        fprintf(stderr, "xbrt: heap trap: block %08x held, but its header says free (%08x %08x): left alone\n", p, xb_rd32(p - 16), xb_rd32(p - 12));
+        return;
+    }
+    xb_push(c, p), xb_push(c, trap[k].flags), xb_push(c, HEAP), xb_push(c, 0x0026A449u);
+    f_0026C6D2(c); /* (ret 0xC: its arguments off again) */
+    if (trap_removed > TRAP_N) trap_rebuild();
+}
+/* 1 when the block is held (or was held already): not to be freed now. */
+static int trap_take(XbCtx *c, uint32_t p, uint32_t flags) {
+    if (trap_find(p) >= 0) {
+        static int told;
+        if (told++ < 20) {
+            fprintf(stderr, "xbrt: heap trap: block %08x freed again while held; stack:", p);
+            log_stack(c);
+        }
+        return 1;
+    }
+    uint32_t bytes = (uint32_t)xb_rd16(p - 16) * 16;
+    bytes = bytes > 16 ? bytes - 16 : 0;
+    if (!bytes || bytes > 256 * 1024) return 0;
+    while (trap_n && (trap_n >= TRAP_N || trap_bytes + bytes > (uint64_t)trap_cap)) trap_release(c);
+    int k = (trap_first + trap_n) % TRAP_N;
+    trap[k].p = p, trap[k].bytes = bytes, trap[k].flags = flags, trap[k].at = rt_now_100ns(), trap[k].bad = 0;
+    stack_of(c, trap[k].from);
+    trap_n++, trap_bytes += bytes;
+    for (uint32_t o = 0; o + 4 <= bytes; o += 4) xb_wr32(p + o, TRAP_WORD);
+    uint32_t i = trap_hash(p);
+    while (trap_set[i] > 1) i = (i + 1) & (TRAP_SET - 1);
+    trap_set[i] = p;
+    if (++trap_frees % 1000 == 0)
+        for (int j = 0; j < trap_n; j++) trap_check((trap_first + j) % TRAP_N, "in a sweep");
+    return 1;
+}
+
 /* RtlFreeHeap (sub_0026A438: heap, flags, block; it calls sub_0026C6D2) as generated, with every
  * free from the heap at 0x10A0000 put in the history of frees (XBRT_LIST_CHECK) and a block that
  * is free already left alone: freed again, it went into the heap's list of free blocks a second
@@ -722,6 +832,11 @@ void f_0026A438(XbCtx *c) {
             int k = nfrees++ % FREES;
             frees[k].p = p;
             stack_of(c, frees[k].from);
+        }
+        if (trap_on() && trap_take(c, p, xb_rd32(c->esp + 8))) { /* held, not freed (the freed-memory trap) */
+            c->eax = 1;
+            c->esp += 16;
+            return;
         }
     }
     /* 0026A438  push dword ptr [esp+0xc] (three times: the arguments again) */
