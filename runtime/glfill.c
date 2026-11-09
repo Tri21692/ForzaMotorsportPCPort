@@ -1874,7 +1874,15 @@ static void gl_copy_rows(const GlSurf *e, GLuint from, uint32_t from_base, GLuin
 
 static void gl_copy(const GlSurf *e, GlSurf *s) {
     int w = e->w < s->w ? e->w : s->w;
-    gl_copy_rows(e, e->ctex, e->cbase, s->ctex, s->h, s->cbase, s->cpitch, w);
+    /* Colour only over colour: e may be here for its depth alone. A shown
+     * buffer (pitch 2560) shares the scene's depth, and 00eb4000 lies a
+     * whole number of the scene's 5120-byte rows (240) before the scene at
+     * 00fe0000: its lower half was pasted over the scene's top-left
+     * 640x240 each time the scene was bound after it, and the bumper view's
+     * mirror, drawn into the scene there, lost its left half every other
+     * frame (00d88000, 480 rows before, fell outside). */
+    if (gl_span_hit(e->cbase, e->cpitch * (uint32_t)e->h, s->cbase, s->cpitch * (uint32_t)s->h) && e->cpitch == s->cpitch && e->bpp == s->bpp)
+        gl_copy_rows(e, e->ctex, e->cbase, s->ctex, s->h, s->cbase, s->cpitch, w);
     /* Not depth: Forza's shown buffers share the scene's depth memory (a 640
      * wide view of 1280-wide depth), and the scene's depth copied in made
      * the passes drawn there fail their depth test: black patches on NVIDIA.
