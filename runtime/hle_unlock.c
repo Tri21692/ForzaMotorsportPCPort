@@ -50,6 +50,8 @@ void f_00171000(XbCtx *c) {
     int addon = ordinal < sizeof rt_addon && rt_addon[ordinal];
     if (rt_dlc_query && self - 4 == rt_dlc_query) { c->eax = addon; return; } /* (the search's "DLC Cars") */
     if (rt_unlock_on && c->eax == 0 && addon) c->eax = 1;
+    extern int rt_qr_prize_locked(uint32_t ordinal);
+    if (c->eax && rt_qr_prize_locked(ordinal)) c->eax = 0; /* (Mayhem's prize car, until given: hle_quickrace.c) */
 }
 
 static int class_row_is_dlc(uint32_t row) { /* performanceclass.dat's rows, 24 bytes: the row's id is 8 */

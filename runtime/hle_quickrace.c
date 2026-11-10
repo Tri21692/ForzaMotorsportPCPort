@@ -162,10 +162,13 @@ static uint32_t mayhem_grid_event(void) {
 int rt_qr_mayhem_grid(void) { return mayhem_grid_event() != 0 || (getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST"))); }
 
 /* Mayhem's gearbox and top speed (the user's, 9 Nov: "Mayhem mode should allow every car to have 7 gears and a higher
- * top speed"). Each car in a race has its physics built from its XML files (f_000F1670, from the car's creation): the
- * transmission by f_000EEE30 (thiscall, into physics +0x5E0: +8 FinalDriveRatio, +0xC the ratios' count, the reverse's
- * with them, +0x10 the ratios, 8 at most: v0 the reverse, then the forward gears), the aero by f_000EF2B0 (into physics
- * +0x2E0: +0 LongitudinalDrag). (The 588 blocks f_000EC190 loads at the start are tuning setups, not these.) */
+ * top speed"; then "limit the 7th gear to the user only? Breaks AI"). Each car in a race has its physics built from
+ * its XML files (f_000F1670, from the car's creation, the physics at car +0x1B18): the transmission by f_000EEE30
+ * (thiscall, into physics +0x5E0, car +0x20F8: +8 FinalDriveRatio, +0xC the ratios' count, the reverse's with them,
+ * +0x10 the ratios, 8 at most: v0 the reverse, then the forward gears), the aero by f_000EF2B0 (into physics +0x2E0:
+ * +0 LongitudinalDrag). (The 588 blocks f_000EC190 loads at the start are tuning setups, not these.) The drag is
+ * lowered for every car; the gearbox only the player's: its racer (+0x14 0) has the car (+0xA0) as it is built. Only
+ * then: changed at the grid it was ignored (the shifts stayed the car's own). */
 #define MAYHEM_TOP_TALLER 1.25f /* the 7th's ratio, the old top's over this */
 #define MAYHEM_DRAG 0.75f
 
@@ -181,16 +184,20 @@ static void mayhem_gearbox(uint32_t t) {
         xb_wr32(t + 0x14 + 4 * g, v);
     }
     xb_wr32(t + 0xC, 8);
-    fprintf(stderr, "xbrt: mayhem: a car's gearbox, %u forward gears to 7, the top's ratio %.3f to %.3f (drag x%.2f)\n", n - 1,
-            top * MAYHEM_TOP_TALLER, top, MAYHEM_DRAG);
+    fprintf(stderr, "xbrt: mayhem: the player's gearbox, %u forward gears to 7, the top's ratio %.3f to %.3f\n", n - 1,
+            top * MAYHEM_TOP_TALLER, top);
 }
 
 void orig_f_000EEE30(XbCtx *c);
 void f_000EEE30(XbCtx *c) {
-    uint32_t t = c->ecx;
+    uint32_t t = c->ecx, car = t - 0x20F8;
     orig_f_000EEE30(c);
-    if (!t || t >= RT_USER_LIMIT) return;
-    if (rt_qr_mayhem_grid()) mayhem_gearbox(t);
+    if (!t || t >= RT_USER_LIMIT || !(rt_qr_mayhem_grid() || getenv("XBRT_GEAR_TEST"))) return;
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+    for (uint32_t i = 0; arr && arr < RT_USER_LIMIT && i < n && i < 64; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i);
+        if (r && r < RT_USER_LIMIT && xb_rd32(r + 0xA0) == car && xb_rd32(r + 0x14) == 0) mayhem_gearbox(t);
+    }
 }
 
 void orig_f_000EF2B0(XbCtx *c);
@@ -268,6 +275,19 @@ static const char *mm_prize_path(void) {
     static char path[512];
     snprintf(path, sizeof path, "%s/mayhem_prize.txt", mods_dir());
     return path;
+}
+/* The prize car locked (hle_unlock.c) until it is given (the user's, 9 Nov: its dealer, Criterion, to say "Unlock all
+ * Mayhem Moments to receive this car."): its ordinal is past the profile's unlock bits, which count as unlocked. */
+int rt_qr_prize_locked(uint32_t ordinal) {
+    mayhem_load();
+    if (!mm_prize || ordinal != (uint32_t)mm_prize) return 0;
+    if (mm_prize_given < 0) {
+        char line[64] = "";
+        FILE *f = fopen(mm_prize_path(), "r");
+        if (f) { if (!fgets(line, sizeof line, f)) line[0] = 0; fclose(f); }
+        mm_prize_given = !strncmp(line, "given", 5);
+    }
+    return !mm_prize_given;
 }
 static int mm_prize_owed(void) {
     mayhem_load();

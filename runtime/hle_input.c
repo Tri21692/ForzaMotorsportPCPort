@@ -300,6 +300,25 @@ static void host_pad(uint32_t pad) {
         buttons = 0;
         memset(analog, 0, sizeof analog), memset(thumbs, 0, sizeof thumbs);
     }
+    { /* The pause (the user's, 9 Nov): "Disable pausing during a Takedown": START is not passed on while the takedown
+       * camera is on, nor after it while that press is held. "Prevent users from turning their car when paused": from a
+       * START pressed while racing until the race runs again (rt_qr_music: 2 paused or over, its clock standing; it
+       * knows only after 0.4 s) and whenever it stands, the game is given no steering (the stick's sideways). */
+        static int swallow, start_was, hold, saw_pause;
+        static uint64_t hold_at;
+        int start = (buttons & 0x10) != 0, st = rt_qr_music(NULL);
+        uint64_t now = rt_now_100ns();
+        if (start && !start_was && rt_qr_cam_active()) swallow = 1;
+        if (swallow && !start) swallow = 0;
+        if (swallow) buttons &= ~0x10, start = 0;
+        if (start && !start_was && st == 1) hold = 1, saw_pause = 0, hold_at = now;
+        if (hold) {
+            if (st == 2) saw_pause = 1;
+            else if (saw_pause || now - hold_at > 15000000) hold = 0; /* (running again, or the press paused nothing) */
+        }
+        if (hold || st == 2) thumbs[0] = 0;
+        start_was = (buttons & 0x10) != 0;
+    }
     /* what the game is given to drive with (Mayhem's arcade handling, hle_quickrace.c, works from it) */
     rt_pad_steer = thumbs[0] / 32767.0f, rt_pad_throttle = analog[A_RT] / 255.0f, rt_pad_brake = analog[A_LT] / 255.0f;
     /* Our menus (F1, Quick Race, Prize Match) open, or closed with something still held: the game sees nothing

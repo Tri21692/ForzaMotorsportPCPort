@@ -40,7 +40,7 @@ DESC = ('The finale: four races of takedowns, boost and over-the-top physics in 
 DESC2 = ('Four more races of takedowns, boost and over-the-top physics, with a Mayhem Moment to find on each. Open to '
          'Class S cars. First place receives the Chevrolet Corvette ZR1 (C7).')  # (tools/prizecars.py's prize: kept if this is re-run)
 COLOURS = ((25, 20, 15), (215, 170, 40))  # black to gold
-RV = 'Take down an opponent in front of the RVs at Road America.'
+RV = "Take down an opponent in front of the RVs on Road America's front straight."
 # (race name, track ordinal, laps, Moment, what to do, places: (x, z, radius))
 RACES = [
     ('Laguna Lunacy', 1, 2, 'Re-Tired', 'Take down an opponent into the Turn 11 tyre stacks at Laguna Seca.', [(-124.0, 497.0, 30)]),
@@ -50,9 +50,7 @@ RACES = [
      [(-180.0, -125.0, 25), (-94.0, -304.0, 25), (-237.0, 315.0, 25), (94.6, 799.0, 25, 2), (408.0, 316.0, 25, 2), (94.6, 799.0, 25, 47), (408.0, 316.0, 25, 47)]),
     ('Road America Rampage', 16, 1, 'R-Vehicular Damage', RV, [
         (504.9, 324.7, 45), (511.0, 213.1, 32), (515.1, 127.1, 32), (518.8, 29.2, 26), (522.3, -56.7, 32),
-        (526.5, -172.7, 45), (530.0, -262.6, 45), (533.5, -356.5, 45), (538.0, -474.5, 32), (542.0, -578.4, 34),
-        (207.2, -729.2, 26), (87.5, -730.9, 28), (107.3, -218.3, 45), (131.2, -131.5, 45), (28.7, 448.6, 28),
-        (355.9, 717.0, 30)]),
+        (526.5, -172.7, 45), (530.0, -262.6, 45), (533.5, -356.5, 45), (538.0, -474.5, 32), (542.0, -578.4, 34),]),  # (the front straight's only, the user's 9 Nov: "only count near the finish line RVs")
 ]
 
 
