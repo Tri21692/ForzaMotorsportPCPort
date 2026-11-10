@@ -215,6 +215,21 @@ if os.environ.get('ICON') or os.environ.get('HUBS'):  # the tile's car stands on
             bpy.context.object.data.materials.append(rubber)
             bpy.ops.mesh.primitive_cylinder_add(radius=r * 0.64, depth=0.15 * Wd + 0.01, location=(ax, y, zc), rotation=(math.pi / 2, 0, 0), vertices=48)
             bpy.context.object.data.materials.append(alloy)
+            if os.environ.get('DEALER'):  # close up: an alloy's look, a dark barrel, five spokes, a lip and a cap on the outer face
+                if 'barrel' not in bpy.data.materials:
+                    bm_ = bpy.data.materials.new('barrel'); bm_.use_nodes = True
+                    bm_.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.04, 0.04, 0.045, 1)
+                    bm_.node_tree.nodes['Principled BSDF'].inputs['Metallic'].default_value = 0.6
+                bpy.context.object.data.materials[0] = bpy.data.materials['barrel']
+                yo = y + sgn * (0.075 * Wd + 0.006)
+                for s_ in range(5):
+                    a_ = 2 * math.pi * s_ / 5 + 0.3
+                    bpy.ops.mesh.primitive_cube_add(size=1, location=(ax + math.cos(a_) * r * 0.31, yo, zc + math.sin(a_) * r * 0.31), rotation=(0, -a_, 0))
+                    sp_ = bpy.context.object; sp_.scale = (r * 0.62, 0.025, r * 0.13); sp_.data.materials.append(alloy)
+                bpy.ops.mesh.primitive_torus_add(major_radius=r * 0.62, minor_radius=r * 0.035, location=(ax, yo, zc), rotation=(math.pi / 2, 0, 0))
+                bpy.context.object.data.materials.append(alloy)
+                bpy.ops.mesh.primitive_cylinder_add(radius=r * 0.12, depth=0.03, location=(ax, yo, zc), rotation=(math.pi / 2, 0, 0), vertices=24)
+                bpy.context.object.data.materials.append(alloy)
     print('ICON axles', [(round(a, 2), round(t, 2), round(w, 2)) for a, t, w in axles])
 # ground, light, world
 bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, -0.02))
@@ -234,6 +249,37 @@ if os.environ.get('ICON'):  # the car-select tile: the car alone on a clear back
     g.hide_render = True
     scene.render.film_transparent = True
     scene.render.resolution_x, scene.render.resolution_y = 512, 256
+if os.environ.get('DEALER'):  # a maker's dealer background (addmake.py --dealer, the user's of 9 Nov): the car close up on
+    # asphalt under a sky, as the disc's (418 x 480 of the 512 x 512, drawn here at twice that); the camera from CAMS
+    scene.render.resolution_x, scene.render.resolution_y = 836, 960
+    g.scale = (10, 10, 1)
+    tyres_ = [o for o in scene.objects if o.type == 'MESH' and o.data.materials and o.data.materials[0].name.startswith('tyre')]
+    if tyres_: g.location.z = min((o.matrix_world @ v.co).z for o in tyres_ for v in o.data.vertices) + 0.005  # (the car on its tyres)
+    nt = gm.node_tree; bsdf = nt.nodes['Principled BSDF']
+    tco = nt.nodes.new('ShaderNodeTexCoord')
+    noise = nt.nodes.new('ShaderNodeTexNoise'); noise.inputs['Scale'].default_value = 400.0; noise.inputs['Detail'].default_value = 4.0
+    ramp = nt.nodes.new('ShaderNodeValToRGB')
+    ramp.color_ramp.elements[0].position, ramp.color_ramp.elements[1].position = 0.4, 0.6
+    ramp.color_ramp.elements[0].color, ramp.color_ramp.elements[1].color = (0.075, 0.075, 0.08, 1), (0.13, 0.13, 0.135, 1)
+    nt.links.new(tco.outputs['Object'], noise.inputs['Vector'])
+    nt.links.new(noise.outputs['Fac'], ramp.inputs['Fac']); nt.links.new(ramp.outputs['Color'], bsdf.inputs['Base Color'])
+    bsdf.inputs['Roughness'].default_value = 0.95; bsdf.inputs['Specular'].default_value = 0.12
+    # the sky: pale at the horizon to a soft blue above (the view's height, Generated z, through a ramp)
+    wn = scene.world.node_tree; wtc = wn.nodes.new('ShaderNodeTexCoord'); sep = wn.nodes.new('ShaderNodeSeparateXYZ')
+    wr = wn.nodes.new('ShaderNodeValToRGB')
+    wr.color_ramp.elements[0].position, wr.color_ramp.elements[1].position = 0.0, 0.3
+    wr.color_ramp.elements[0].color, wr.color_ramp.elements[1].color = (0.72, 0.78, 0.86, 1), (0.25, 0.4, 0.68, 1)
+    wn.links.new(wtc.outputs['Generated'], sep.inputs[0]); wn.links.new(sep.outputs['Z'], wr.inputs['Fac'])
+    wn.links.new(wr.outputs['Color'], wn.nodes['Background'].inputs['Color'])
+    wn.nodes['Background'].inputs['Strength'].default_value = float(os.environ.get('SKY', '0.75'))
+    sun.data.energy = 4.5; sun.data.angle = math.radians(4)
+    c0 = os.environ.get('CAMS', '').split(';')[0].split(':')
+    if len(c0) >= 7:  # the sun over the camera's shoulder: the side shown lit
+        from mathutils import Vector
+        to_cam = Vector((float(c0[1]) - float(c0[4]), float(c0[2]) - float(c0[5]), 0)).normalized()
+        s_ = Vector((to_cam.x * math.cos(0.6) - to_cam.y * math.sin(0.6), to_cam.x * math.sin(0.6) + to_cam.y * math.cos(0.6), 1.1))
+        sun.rotation_euler = (-s_).to_track_quat('-Z', 'Y').to_euler()
+    scene.view_settings.view_transform = 'Standard'  # (Filmic washed the paint out: the disc's are saturated)
 cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam')); scene.collection.objects.link(cam); scene.camera = cam
 cam.data.lens = 45
 views = {'icon': (6.4, -6.6, 2.2), 'front': (6.0, -4.2, 1.9), 'rear': (-6.0, 4.2, 2.1), 'left': (0.2, 8.0, 0.8), 'fside': (4.5, 5.5, 1.2), 'lclose': (0.3, 4.6, 0.6), 'rclose': (-2.2, 3.2, 1.0), 'fclose': (3.4, -1.6, 0.9), 'rtop': (-3.6, 1.8, 2.6), 'cabin': (0.6, 2.2, 2.4), 'rearc': (-4.6, 1.4, 0.9)}
