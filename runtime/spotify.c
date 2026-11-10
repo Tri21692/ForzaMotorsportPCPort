@@ -1,12 +1,16 @@
 /* Spotify (the user's, 9 Nov: "integrate spotify api for the game"): the song playing in the player's Spotify,
  * shown for a few seconds when it changes, and play/pause, next, previous and volume from the game.
  *
- * forza.ini: spotify = 1 turns it on (F1's Audio tab too), spotify_client_id is the Client ID of the player's own
- * app on developer.spotify.com, whose redirect URI must be http://127.0.0.1:8888/callback. Spotify plays the
- * music itself (the desktop app, a phone): its terms let nothing else stream it, and controlling it needs Premium
- * (what is playing does not).
+ * forza.ini: spotify = 1 turns it on (F1's Audio tab too). Two ways to reach it (spotify_mode):
+ *   desktop (the default): the Spotify app on this PC, through Windows (its window's title, media commands, its
+ *     volume in the mixer). Anyone, no sign-in, free accounts too; music playing on a phone is not seen.
+ *   web: Spotify's Web API, any device, signed in: spotify_client_id is the Client ID of an app on
+ *     developer.spotify.com (redirect URI http://127.0.0.1:8888/callback). Its development mode lets in only the
+ *     accounts added to that app (up to 25); controls need Premium.
+ * Race music (spotify_race_music, on): paused in the menus, the next song as each race starts (follow_tick).
+ * Spotify plays the music itself: its terms let nothing else stream it.
  *
- * Sign-in, once: the authorization code flow with PKCE (no client secret). The browser opens Spotify's page; it
+ * Web sign-in, once: the authorization code flow with PKCE (no client secret). The browser opens Spotify's page; it
  * comes back to a listener on 127.0.0.1:8888, the code is traded for tokens, and the refresh token is kept in
  * spotify_token.txt (in run\, beside forza.ini; delete it to sign out). Later starts sign in from it unseen.
  *
@@ -19,12 +23,16 @@
 #include <string.h>
 
 #ifdef _WIN32
+#define COBJMACROS
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <bcrypt.h>
 #include <shellapi.h>
 #include <winhttp.h>
+#include <mmdeviceapi.h>
+#include <audiopolicy.h>
+#include <wchar.h>
 #endif
 
 #include "rt.h"
@@ -47,7 +55,8 @@ static char client_id[80];
 static char access_tok[1024], refresh_tok[1024];
 static DWORD access_until; /* GetTickCount */
 static char cur_id[96], cur_title[128], cur_artist[128]; /* the song (ASCII for the game's fonts), under lock */
-static int cur_playing, cur_volume = -1;
+static int cur_playing, cur_device, cur_volume = -1;
+static int web; /* spotify_mode = web: the Web API, signed in; else the app on this PC */
 static uint64_t card_until; /* 100 ns */
 static HINTERNET session;
 
@@ -515,12 +524,14 @@ static int control_ok(int st) {
     return 0;
 }
 
-static void poll_player(void) {
+/* ---- the web backend (spotify_mode = web) ---- */
+
+static void web_poll(void) {
     static char out[65536]; /* (a track's answer lists its markets: 20 KB and more) */
     int st = api("GET", "/v1/me/player?additional_types=episode", out, sizeof out);
     if (st == 204 || (st == 200 && !out[0])) { /* no device playing */
         EnterCriticalSection(&lock);
-        cur_playing = 0;
+        cur_playing = 0, cur_device = 0;
         LeaveCriticalSection(&lock);
         return;
     }
@@ -541,16 +552,202 @@ static void poll_player(void) {
         ascii(cur_title, sizeof cur_title, name);
         ascii(cur_artist, sizeof cur_artist, artist);
     }
-    cur_playing = playing, cur_volume = vol;
+    cur_playing = playing, cur_volume = vol, cur_device = 1;
     const char *pop = rt_settings_get("spotify_popup");
     if (changed && playing && (!pop || atoi(pop))) card_until = rt_now_100ns() + 60000000; /* 6 s */
     LeaveCriticalSection(&lock);
     if (changed) fprintf(stderr, "xbrt: spotify: now playing \"%s\" by %s\n", cur_title, cur_artist);
 }
 
+static int web_play(int on) {
+    char out[2048];
+    return control_ok(api("PUT", on ? "/v1/me/player/play" : "/v1/me/player/pause", out, sizeof out));
+}
+
+static int web_skip(int dir) {
+    char out[2048];
+    return control_ok(api("POST", dir > 0 ? "/v1/me/player/next" : "/v1/me/player/previous", out, sizeof out));
+}
+
+static void web_volume(int delta) {
+    char out[2048], path[96];
+    int v = cur_volume < 0 ? 50 : cur_volume;
+    v += delta;
+    v = v < 0 ? 0 : v > 100 ? 100 : v;
+    snprintf(path, sizeof path, "/v1/me/player/volume?volume_percent=%d", v);
+    if (control_ok(api("PUT", path, out, sizeof out))) {
+        cur_volume = v;
+        char m[40];
+        snprintf(m, sizeof m, "volume %d%%", v);
+        say(m);
+    }
+}
+
+/* ---- the desktop backend (spotify_mode = desktop, the default) ----
+ * The Spotify app on this PC, through Windows: its main window's title is "Artist - Song" while a song plays and
+ * "Spotify Premium" / "Spotify Free" while paused; WM_APPCOMMAND's media commands posted to it play, pause and skip
+ * (as a keyboard's media keys would, but to Spotify alone); its volume is its own in the Windows mixer. No sign-in
+ * and no Premium. */
+
+static HWND sp_wnd;
+
+static int is_spotify(DWORD pid) {
+    static DWORD yes;
+    if (pid && pid == yes) return 1;
+    int r = 0;
+    HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (p) {
+        wchar_t path[MAX_PATH];
+        DWORD n = MAX_PATH;
+        if (QueryFullProcessImageNameW(p, 0, path, &n)) {
+            const wchar_t *b = wcsrchr(path, L'\\');
+            r = !_wcsicmp(b ? b + 1 : path, L"Spotify.exe");
+        }
+        CloseHandle(p);
+    }
+    if (r) yes = pid;
+    return r;
+}
+
+typedef struct {
+    HWND best;
+    int score;
+} FindSp;
+
+static BOOL CALLBACK find_cb(HWND h, LPARAM lp) {
+    FindSp *f = (FindSp *)lp;
+    wchar_t cls[64];
+    if (!GetClassNameW(h, cls, 64) || wcsncmp(cls, L"Chrome_WidgetWin_", 17)) return TRUE;
+    if (GetWindow(h, GW_OWNER) || GetWindowTextLengthW(h) <= 0) return TRUE;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (!is_spotify(pid)) return TRUE;
+    int score = 1 + (IsWindowVisible(h) ? 2 : 0);
+    if (score > f->score) f->best = h, f->score = score;
+    return TRUE;
+}
+
+static HWND desk_window(void) {
+    if (sp_wnd && IsWindow(sp_wnd) && GetWindowTextLengthW(sp_wnd) > 0) return sp_wnd;
+    FindSp f = {NULL, 0};
+    EnumWindows(find_cb, (LPARAM)&f);
+    return sp_wnd = f.best;
+}
+
+static void desk_poll(void) {
+    HWND w = desk_window();
+    wchar_t wt[512] = L"";
+    char t[1024] = "";
+    if (w) GetWindowTextW(w, wt, 512), WideCharToMultiByte(CP_UTF8, 0, wt, -1, t, sizeof t, NULL, NULL);
+    const char *dash = strstr(t, " - ");
+    int ad = strstr(t, "Advertisement") != NULL;
+    int song = w && dash && strncmp(t, "Spotify", 7) && !ad;
+    EnterCriticalSection(&lock);
+    int changed = song && strcmp(t, cur_id);
+    if (song) {
+        snprintf(cur_id, sizeof cur_id, "%.95s", t); /* (the title itself: a song's id here) */
+        char artist[512];
+        snprintf(artist, sizeof artist, "%.*s", (int)(dash - t), t);
+        ascii(cur_artist, sizeof cur_artist, artist);
+        ascii(cur_title, sizeof cur_title, dash + 3);
+    }
+    cur_playing = song || (w && ad), cur_device = w != NULL;
+    const char *pop = rt_settings_get("spotify_popup");
+    if (changed && (!pop || atoi(pop))) card_until = rt_now_100ns() + 60000000;
+    LeaveCriticalSection(&lock);
+    if (changed) fprintf(stderr, "xbrt: spotify: now playing \"%s\" by %s\n", cur_title, cur_artist);
+}
+
+static int desk_send(int cmd) {
+    HWND w = desk_window();
+    if (!w) {
+        say("open the Spotify app");
+        return 0;
+    }
+    PostMessageW(w, WM_APPCOMMAND, (WPARAM)w, MAKELPARAM(0, cmd));
+    return 1;
+}
+
+static int desk_play(int on) {
+    desk_poll();
+    if (!cur_device) return desk_send(0);
+    if (cur_playing != on) desk_send(APPCOMMAND_MEDIA_PLAY_PAUSE);
+    return 1;
+}
+
+static int desk_skip(int dir) { return desk_send(dir > 0 ? APPCOMMAND_MEDIA_NEXTTRACK : APPCOMMAND_MEDIA_PREVIOUSTRACK); }
+
+static const GUID sp_CLSID_MMDeviceEnumerator = {0xBCDE0395, 0xE52F, 0x467C, {0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E}};
+static const GUID sp_IID_IMMDeviceEnumerator = {0xA95664D2, 0x9614, 0x4F35, {0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6}};
+static const GUID sp_IID_IAudioSessionManager2 = {0x77AA99A0, 0x1BD6, 0x484F, {0x8B, 0xC7, 0x2C, 0x65, 0x4C, 0x9A, 0x9B, 0x6F}};
+static const GUID sp_IID_IAudioSessionControl2 = {0xBFB7FF88, 0x7239, 0x4FC9, {0x8F, 0xA2, 0x07, 0xC9, 0x50, 0xBE, 0x9C, 0x6D}};
+static const GUID sp_IID_ISimpleAudioVolume = {0x87CE5498, 0x68D6, 0x44E5, {0x92, 0x15, 0x6D, 0xA4, 0x7E, 0xF8, 0x83, 0xD8}};
+
+/* Spotify's volume in the Windows mixer, moved by delta percent: the new one, or -1 (no Spotify sound yet). */
+static int desk_volume(int delta) {
+    IMMDeviceEnumerator *en = NULL;
+    IMMDevice *dev = NULL;
+    IAudioSessionManager2 *mgr = NULL;
+    IAudioSessionEnumerator *se = NULL;
+    float nv = -1;
+    if (FAILED(CoCreateInstance(&sp_CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &sp_IID_IMMDeviceEnumerator, (void **)&en))) return -1;
+    if (SUCCEEDED(IMMDeviceEnumerator_GetDefaultAudioEndpoint(en, eRender, eMultimedia, &dev)) &&
+        SUCCEEDED(IMMDevice_Activate(dev, &sp_IID_IAudioSessionManager2, CLSCTX_ALL, NULL, (void **)&mgr)) &&
+        SUCCEEDED(IAudioSessionManager2_GetSessionEnumerator(mgr, &se))) {
+        int n = 0;
+        IAudioSessionEnumerator_GetCount(se, &n);
+        for (int i = 0; i < n; i++) {
+            IAudioSessionControl *c = NULL;
+            IAudioSessionControl2 *c2 = NULL;
+            ISimpleAudioVolume *v = NULL;
+            if (FAILED(IAudioSessionEnumerator_GetSession(se, i, &c))) continue;
+            DWORD pid = 0;
+            if (SUCCEEDED(IAudioSessionControl_QueryInterface(c, &sp_IID_IAudioSessionControl2, (void **)&c2))) {
+                IAudioSessionControl2_GetProcessId(c2, &pid);
+                if (pid && is_spotify(pid) && SUCCEEDED(IAudioSessionControl_QueryInterface(c, &sp_IID_ISimpleAudioVolume, (void **)&v))) {
+                    if (nv < 0) {
+                        float cur = 1;
+                        ISimpleAudioVolume_GetMasterVolume(v, &cur);
+                        nv = cur + (float)delta / 100.0f;
+                        nv = nv < 0 ? 0 : nv > 1 ? 1 : nv;
+                    }
+                    ISimpleAudioVolume_SetMasterVolume(v, nv, NULL);
+                    ISimpleAudioVolume_Release(v);
+                }
+                IAudioSessionControl2_Release(c2);
+            }
+            IAudioSessionControl_Release(c);
+        }
+    }
+    if (se) IAudioSessionEnumerator_Release(se);
+    if (mgr) IAudioSessionManager2_Release(mgr);
+    if (dev) IMMDevice_Release(dev);
+    IMMDeviceEnumerator_Release(en);
+    return nv < 0 ? -1 : (int)(nv * 100 + 0.5f);
+}
+
+/* ---- either ---- */
+
+static void be_poll(void) {
+    if (web) web_poll();
+    else desk_poll();
+}
+static int be_play(int on) { return web ? web_play(on) : desk_play(on); }
+static int be_skip(int dir) { return web ? web_skip(dir) : desk_skip(dir); }
+static void be_volume(int delta) {
+    if (web) {
+        web_volume(delta);
+        return;
+    }
+    int v = desk_volume(delta);
+    char m[40];
+    if (v < 0) snprintf(m, sizeof m, "play something first");
+    else snprintf(m, sizeof m, "volume %d%%", v);
+    say(m);
+}
+
 static void run_commands(void) {
     LONG c = InterlockedExchange(&cmds, 0);
-    char out[2048];
     if (c & CMD_SHOW) {
         EnterCriticalSection(&lock);
         if (cur_title[0]) card_until = rt_now_100ns() + 60000000;
@@ -558,8 +755,9 @@ static void run_commands(void) {
         if (!cur_title[0]) say("nothing playing");
     }
     if (c & CMD_TOGGLE) {
+        be_poll();
         int was = cur_playing;
-        if (control_ok(api("PUT", was ? "/v1/me/player/pause" : "/v1/me/player/play", out, sizeof out))) {
+        if (be_play(!was)) {
             EnterCriticalSection(&lock);
             cur_playing = !was;
             if (!was && cur_title[0]) card_until = rt_now_100ns() + 60000000;
@@ -567,27 +765,52 @@ static void run_commands(void) {
             if (was) say("paused");
         }
     }
-    if (c & CMD_NEXT) control_ok(api("POST", "/v1/me/player/next", out, sizeof out));
-    if (c & CMD_PREV) control_ok(api("POST", "/v1/me/player/previous", out, sizeof out));
-    if (c & (CMD_VOLUP | CMD_VOLDN)) {
-        int v = cur_volume < 0 ? 50 : cur_volume;
-        v += (c & CMD_VOLUP) ? 10 : -10;
-        v = v < 0 ? 0 : v > 100 ? 100 : v;
-        char path[96];
-        snprintf(path, sizeof path, "/v1/me/player/volume?volume_percent=%d", v);
-        if (control_ok(api("PUT", path, out, sizeof out))) {
-            cur_volume = v;
-            char m[40];
-            snprintf(m, sizeof m, "volume %d%%", v);
-            say(m);
+    if (c & CMD_NEXT) be_skip(1);
+    if (c & CMD_PREV) be_skip(-1);
+    if (c & CMD_VOLUP) be_volume(10);
+    if (c & CMD_VOLDN) be_volume(-10);
+}
+
+/* Race music (spotify_race_music, the user's: "It'll pause when we're in the menus. Once we start another race, it'll
+ * skip the song and go to the next, similar to how the music in the game works"): paused as the menus, the pause menu
+ * or a race's end come up; on again on leaving the pause menu; the next song as each race starts (a restart too).
+ * Only what it paused itself is played again, and nothing is said when Spotify isn't there. */
+static void follow_tick(void) {
+    static int st_was = -1, ours;
+    static unsigned serial_was;
+    const char *f = rt_settings_get("spotify_race_music");
+    unsigned serial;
+    int st = rt_qr_music(&serial);
+    if (f && !atoi(f)) {
+        st_was = st, serial_was = serial;
+        return;
+    }
+    if (st_was < 0) serial_was = serial;
+    if (st == st_was && serial == serial_was) return;
+    be_poll();
+    if (cur_device) {
+        if (st == 1 && serial != serial_was) { /* a race started */
+            fprintf(stderr, "xbrt: spotify: a race started: the next song\n");
+            be_skip(1);
+            Sleep(web ? 500 : 800);
+            be_poll();
+            if (!cur_playing) be_play(1);
+            ours = 0;
+        } else if (st == 1) { /* back from the pause menu */
+            if (ours) be_play(1);
+            ours = 0;
+        } else if (st_was == 1 || st_was < 0) { /* the menus, the pause menu, the race over (or the game just started) */
+            if (cur_playing && be_play(0)) ours = 1;
         }
     }
+    st_was = st, serial_was = serial;
 }
 
 static void *worker(void *arg) {
     (void)arg;
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-    token_load();
+    CoInitializeEx(NULL, COINIT_MULTITHREADED); /* (the mixer's volume) */
+    if (web) token_load();
     DWORD next_poll = 0;
     int asked = 0; /* the browser opened this session: not again unless asked (F1, Audio, Spotify off and on) */
     for (;;) {
@@ -595,7 +818,7 @@ static void *worker(void *arg) {
             Sleep(250);
             continue;
         }
-        if (!refresh_tok[0]) {
+        if (web && !refresh_tok[0]) {
             LONG c = InterlockedAnd(&cmds, ~CMD_SIGNIN);
             if (asked && !(c & CMD_SIGNIN)) {
                 if (c & ~CMD_SIGNIN) InterlockedExchange(&cmds, 0), say("not signed in (F1, Audio, Spotify)");
@@ -608,11 +831,12 @@ static void *worker(void *arg) {
         }
         if (cmds) {
             run_commands();
-            next_poll = GetTickCount() + 600; /* the change, seen soon after */
+            next_poll = GetTickCount() + (web ? 600 : 250); /* the change, seen soon after */
         }
+        follow_tick();
         if ((int)(GetTickCount() - next_poll) >= 0) {
-            poll_player();
-            next_poll = GetTickCount() + (rt_display_focused() ? 3000 : 15000);
+            be_poll();
+            next_poll = GetTickCount() + (web ? (rt_display_focused() ? 3000 : 15000) : 1000);
         }
         Sleep(50);
     }
@@ -620,22 +844,24 @@ static void *worker(void *arg) {
 }
 
 void rt_spotify_init(void) {
-    const char *on = getenv("XBRT_SPOTIFY"), *id = getenv("XBRT_SPOTIFY_ID");
+    const char *on = getenv("XBRT_SPOTIFY"), *id = getenv("XBRT_SPOTIFY_ID"), *mode = getenv("XBRT_SPOTIFY_MODE");
     if ((getenv("XBRT_INPUT_LIVE") && *getenv("XBRT_INPUT_LIVE")) || (getenv("XBRT_INPUT_SCRIPT") && *getenv("XBRT_INPUT_SCRIPT"))) return; /* tests */
+    web = mode && !strcmp(mode, "web");
     snprintf(client_id, sizeof client_id, "%s", id ? id : "");
     for (char *p = client_id; *p; p++)
         if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) *p = 0; /* (hex as Spotify gives it) */
     InitializeCriticalSection(&lock);
     started = 1;
-    enabled = on && atoi(on) && client_id[0];
-    if (on && atoi(on) && !client_id[0]) fprintf(stderr, "xbrt: spotify: on, but forza.ini has no spotify_client_id\n");
+    enabled = on && atoi(on) && (!web || client_id[0]);
+    if (on && atoi(on) && web && !client_id[0]) fprintf(stderr, "xbrt: spotify: web mode, but forza.ini has no spotify_client_id\n");
+    fprintf(stderr, "xbrt: spotify: %s, %s\n", enabled ? "on" : "off", web ? "web (signed in)" : "desktop (the app on this PC)");
     pthread_t h;
     if (pthread_create(&h, NULL, worker, NULL) == 0) rt_host_thread("spotify", h);
 }
 
 void rt_spotify_enable(int on) {
     if (!started) return;
-    if (on && !client_id[0]) {
+    if (on && web && !client_id[0]) {
         say("add spotify_client_id to forza.ini");
         return;
     }

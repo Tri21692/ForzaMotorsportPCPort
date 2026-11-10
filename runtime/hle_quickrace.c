@@ -970,7 +970,53 @@ static void dmg_debug_tick(void) {
     #undef DMG_ADDR
 }
 
+/* For Spotify's race music (spotify.c): where the player is, from the race (0x592984) and the race's own clock, the
+ * player's timing record +0x94, which runs from the countdown and stands while the race is paused or over (found
+ * 9 Nov: it stood through an 8 s pause; +0xA0, the last lap's time, does not run). 0 the menus, 1 racing, 2 paused
+ * or the race over, 3 on the grid before the clock starts. Each race begun counts once (a restart too: its clock
+ * starts again from 0). */
+static volatile int music_state;
+static volatile unsigned music_serial;
+static void music_tick(void) {
+    static float clk_was;
+    static uint64_t still_since;
+    static uint32_t race_was;
+    static int counted;
+    uint32_t race = xb_rd32(0x592984), rme = 0;
+    if (race) {
+        uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+        for (uint32_t i = 0; arr && arr < RT_USER_LIMIT && n <= MAXCARS && i < n; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i);
+            if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) rme = r;
+        }
+    }
+    uint32_t tmr = rme ? xb_rd32(rme + 0xC0) : 0;
+    if (!tmr || tmr >= RT_USER_LIMIT) {
+        if (music_state) fprintf(stderr, "xbrt: race music: the menus\n");
+        music_state = 0, counted = 0, clk_was = 0, still_since = 0, race_was = 0;
+        return;
+    }
+    float clk = rdf(tmr + 0x94);
+    uint64_t now = rt_now_100ns();
+    if (!(clk == clk)) clk = 0; /* (NaN) */
+    if (race != race_was || clk < clk_was - 0.5f) counted = 0; /* another race, or this one restarted */
+    if (clk != clk_was) still_since = 0;
+    else if (!still_since) still_since = now;
+    int running = clk > 0 && (!still_since || now - still_since < 4000000); /* (a physics step's 60 a second: equal between them) */
+    if (running && !counted) counted = 1, music_serial++;
+    int st = running ? 1 : clk > 0 ? 2 : 3;
+    if (st != music_state) fprintf(stderr, "xbrt: race music: %s (race %u)\n", st == 1 ? "racing" : st == 2 ? "paused or over" : "on the grid", music_serial);
+    music_state = st;
+    clk_was = clk, race_was = race;
+}
+
+int rt_qr_music(unsigned *serial) {
+    if (serial) *serial = music_serial;
+    return music_state;
+}
+
 void rt_qr_tick(void) {
+    music_tick();
     cam_debug_tick();
     dmg_debug_tick();
     static uint64_t last;

@@ -150,6 +150,7 @@ void rt_spotify_enable(int on);      /* F1's Spotify setting */
 int rt_spotify_key(int vk);          /* a key in the game's window: 1 if it was Spotify's */
 void rt_spotify_pad(uint16_t *buttons); /* Back + the D-pad: the D-pad taken from the game while Back is held */
 int rt_spotify_card(char *title, int tn, char *artist, int an, float *alpha); /* the song's card, while shown */
+int rt_qr_music(unsigned *serial);   /* hle_quickrace.c: 0 the menus, 1 racing, 2 paused or over, 3 the grid; *serial counts races begun */
 extern char rt_toast_text[64];
 extern volatile uint64_t rt_toast_until;
 /* For the race HUD (hle_career.c): in a Catch-Up race, the player's lead over the opponent in

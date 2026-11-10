@@ -18,7 +18,7 @@ RTFLAGS = -O2 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=off -I$(GEN) 
 ifeq ($(OS),Windows_NT)
 EXE = .exe
 OSFLAGS = -Wa,-mbig-obj -D_FILE_OFFSET_BITS=64
-OSLIBS = -lwinmm -lgdi32 -lopengl32 -ld3d11 -ldxgi -ldxguid -lwinhttp -lws2_32 -lbcrypt -lshell32
+OSLIBS = -lwinmm -lgdi32 -lopengl32 -ld3d11 -ldxgi -ldxguid -lwinhttp -lws2_32 -lbcrypt -lshell32 -lole32
 endif
 
 GEN_SRC = $(wildcard $(GEN)/*.c)
