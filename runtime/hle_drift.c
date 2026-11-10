@@ -77,6 +77,7 @@ static float rdf(uint32_t a) {
 /* The run's state (the DPC thread writes it with rt_gil held; the HUD reads it). */
 static struct {
     uint32_t racer;
+    unsigned serial;          /* the race begun (rt_qr_music): a restart keeps the racer, not this */
     double total, cur, len;   /* banked, the drift now (before its length bonus), its length (m) */
     float angle, v[3], penalty, pos[3]; /* pos: the car's place at the last tick it moved */
     int drifting, done, offroad;  /* offroad: the car left the road and has not yet run straight on it */
@@ -126,9 +127,13 @@ void rt_drift_tick(void) {
     uint32_t r = player_racer(), car = r ? xb_rd32(r + 0xA0) : 0, timing = r ? xb_rd32(r + 0xC0) : 0;
     if (!car || car >= RT_USER_LIMIT || !timing || timing >= RT_USER_LIMIT) return;
     uint64_t now = rt_now_100ns();
-    if (r != ds.racer) { /* a new run (a restart makes the racers again) */
+    unsigned serial;
+    rt_qr_music(&serial);
+    /* A new run: another racer, or the same one restarted (the user's 9 Nov restart from the pause menu kept the
+     * racer, so the run before it carried on: its points and its end) */
+    if (r != ds.racer || serial != ds.serial) {
         memset(&ds, 0, sizeof ds);
-        ds.racer = r, ds.last = now, ds.penalty = rdf(timing + 0x98), ds.clock = rdf(timing + 0xA0);
+        ds.racer = r, ds.serial = serial, ds.last = now, ds.penalty = rdf(timing + 0x98), ds.clock = rdf(timing + 0xA0);
         fprintf(stderr, "xbrt: drift event: a run begins\n");
     }
     int32_t lap = (int32_t)xb_rd32(timing + 0x9C);
