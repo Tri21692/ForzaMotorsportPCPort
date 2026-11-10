@@ -743,7 +743,9 @@ K(ExQueryNonVolatileSetting) {
 /* ---- Hal, Av, Io, Xe, Dbg ---- */
 
 K(HalReturnToFirmware) {
-    rt_log("HalReturnToFirmware(%u): the game asked to leave\n", ARG(0));
+    /* (always said: with logging off, the user's 9 Nov close after a race start left no trace of why) */
+    fprintf(stderr, "xbrt: the game asked to leave (HalReturnToFirmware %u)\n", ARG(0));
+    rt_backtrace(c);
     fflush(stderr);
     _exit(0);
 }

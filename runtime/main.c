@@ -340,7 +340,13 @@ void rt_profile_game_thread(pthread_t t) {
 #endif
 }
 
+static void said_exit(void) {
+    fprintf(stderr, "xbrt: exiting (exit, or the last guest thread ended)\n");
+    fflush(stderr);
+}
+
 int main(int argc, char **argv) {
+    atexit(said_exit); /* (every way out says so: HalReturnToFirmware, the window's close and the crash handler do too) */
     rt_settings_load(); /* forza.ini: before anything reads an XBRT_* switch */
     rt_soundtracks_init();
     rt_spotify_init();

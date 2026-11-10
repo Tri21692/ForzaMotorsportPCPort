@@ -374,6 +374,8 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_ERASEBKGND:
         return 1;
     case WM_CLOSE:
+        fprintf(stderr, "xbrt: the window was closed\n");
+        fflush(stderr);
         ExitProcess(0);
     }
     return DefWindowProcA(hwnd, msg, wp, lp);
