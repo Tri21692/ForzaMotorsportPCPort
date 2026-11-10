@@ -160,6 +160,52 @@ static uint32_t mayhem_grid_event(void) {
     return 0;
 }
 int rt_qr_mayhem_grid(void) { return mayhem_grid_event() != 0 || (getenv("XBRT_MAYHEM_TEST") && atoi(getenv("XBRT_MAYHEM_TEST"))); }
+
+/* Mayhem's gearbox and top speed (the user's, 9 Nov: "Mayhem mode should allow every car to have 7 gears and a higher
+ * top speed"). Each car in a race has its physics built from its XML files (f_000F1670, from the car's creation): the
+ * transmission by f_000EEE30 (thiscall, into physics +0x5E0: +8 FinalDriveRatio, +0xC the ratios' count, the reverse's
+ * with them, +0x10 the ratios, 8 at most: v0 the reverse, then the forward gears), the aero by f_000EF2B0 (into physics
+ * +0x2E0: +0 LongitudinalDrag). (The 588 blocks f_000EC190 loads at the start are tuning setups, not these.) */
+#define MAYHEM_TOP_TALLER 1.25f /* the 7th's ratio, the old top's over this */
+#define MAYHEM_DRAG 0.75f
+
+static void mayhem_gearbox(uint32_t t) {
+    uint32_t n = xb_rd32(t + 0xC);
+    if (n < 2 || n > 8) return;
+    float r1 = rdf(t + 0x14), top = rdf(t + 0x10 + 4 * (n - 1)) / MAYHEM_TOP_TALLER;
+    if (!(r1 > 0) || !(top > 0) || top >= r1) return;
+    for (int g = 0; g < 7; g++) { /* (1st as it was, then evenly spaced, each a fixed step taller, to the new top) */
+        float r = r1 * powf(top / r1, g / 6.0f);
+        uint32_t v;
+        memcpy(&v, &r, 4);
+        xb_wr32(t + 0x14 + 4 * g, v);
+    }
+    xb_wr32(t + 0xC, 8);
+    fprintf(stderr, "xbrt: mayhem: a car's gearbox, %u forward gears to 7, the top's ratio %.3f to %.3f (drag x%.2f)\n", n - 1,
+            top * MAYHEM_TOP_TALLER, top, MAYHEM_DRAG);
+}
+
+void orig_f_000EEE30(XbCtx *c);
+void f_000EEE30(XbCtx *c) {
+    uint32_t t = c->ecx;
+    orig_f_000EEE30(c);
+    if (!t || t >= RT_USER_LIMIT) return;
+    if (rt_qr_mayhem_grid()) mayhem_gearbox(t);
+}
+
+void orig_f_000EF2B0(XbCtx *c);
+void f_000EF2B0(XbCtx *c) {
+    uint32_t a = c->ecx;
+    orig_f_000EF2B0(c);
+    if (!a || a >= RT_USER_LIMIT) return;
+    if (rt_qr_mayhem_grid()) {
+        float d = rdf(a) * MAYHEM_DRAG;
+        uint32_t v;
+        memcpy(&v, &d, 4);
+        if (d > 0) xb_wr32(a, v);
+    }
+}
+
 float rt_qr_mayhem_share(void) {
     mayhem_load();
     uint32_t race = xb_rd32(0x592984), ev = race ? xb_rd32(race + 0x318) : 0;

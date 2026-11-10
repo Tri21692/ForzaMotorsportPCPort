@@ -24,3 +24,5 @@ B4AA0   # a racer over the line recorded (thiscall, the racer; its place from +0
 24C070  # an AI driver walks its racing line a distance on (thiscall, 3 arguments): hle_quickrace.c, not while a car is NaN (the walk never ended)
 62C80   # the game's fatal error halt (an assert's end: it loops for good): hle_listcheck.c logs the message and, with XBRT_HEAP_TRAP, the freed blocks the stack points into
 258A60  # CSpeedComputer::GetBrakeAdjustedOptimalSpeed (thiscall): hle_listcheck.c, with XBRT_HEAP_TRAP its object and the pointers in it checked against the freed blocks held
+EEE30   # a car's transmission loaded for a race (thiscall; +8 the final drive, +0xC the ratios' count, +0x10 the ratios): hle_quickrace.c, Mayhem's 7 gears
+EF2B0   # a car's aero loaded for a race (thiscall; +0 LongitudinalDrag): hle_quickrace.c, Mayhem's lower drag
