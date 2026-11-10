@@ -13,6 +13,7 @@ BDD00   # the replay reads one back: hle_career.c, past the 10th the one ten bef
 3726D0  # the Advanced Search applied: hle_unlock.c, its "DLC Cars" entry
 1767A0  # a query condition (field, comparison, value): hle_unlock.c, that entry's turned to the add-on cars
 B3530   # the race's ranking (a place a racer, +0xBC): hle_career.c, Mayhem's places from where the cars are on the road
+B4AA0   # a racer over the line recorded (thiscall, the racer; its place from +0xBC, put back at the race's end): hle_career.c, Mayhem's place
 17E270  # a finished race's rewards (the cars won, a vector): hle_quickrace.c, the car for every Mayhem Moment pushed on
 56A40   # the garage takes a car (thiscall: ordinal, ...): hle_quickrace.c, the Mayhem prize marked given
 3BD550  # D3D_BlockOnTime: hle_d3d.c, XBRT_BOT_LOG=<ms> logs its long waits (debugging)

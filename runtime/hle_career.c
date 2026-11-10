@@ -740,6 +740,9 @@ static void mayhem_spread(XbCtx *c) {
  * (from 0) times the racing line's points, plus the line's point nearest the car (in 3D, looked for near the last one
  * first: the roads that cross on a bridge), those over the line (racer +0x12A) first, in the order they crossed. */
 #define RANK_MAX 16
+/* The order the racers crossed the line in, from the game's record of each crossing (f_000B4AA0 below): two over it in
+ * one frame are ranked as they crossed, not by their grid slots. */
+static uint32_t cross_race, cross_r[RANK_MAX], cross_n;
 static void mayhem_places(void) {
     static uint32_t race_was, fin_of[RANK_MAX], fin_n;
     static int32_t last[RANK_MAX];
@@ -756,15 +759,19 @@ static void mayhem_places(void) {
         if (xb_rd32(r + 0x14) == 0) me_lap = (int32_t)xb_rd32(t + 0x9C);
     }
     if (race != race_was || me_lap < 0) { /* (a new race, or a restart: the player on the grid) */
-        race_was = race, fin_n = 0;
+        race_was = race, fin_n = 0, cross_n = 0;
         memset(fin_of, 0, sizeof fin_of);
         for (int i = 0; i < RANK_MAX; i++) last[i] = -1;
     }
+    cross_race = race;
     double prog[RANK_MAX];
     for (uint32_t i = 0; i < n; i++) {
         uint32_t r = xb_rd32(arr + 4 * i), t = xb_rd32(r + 0xC0), car = xb_rd32(r + 0xA0);
         if (!car || car >= RT_USER_LIMIT) { prog[i] = -1e9; continue; }
-        if (!fin_of[i] && xb_rd8(r + 0x12A)) fin_of[i] = ++fin_n;
+        if (!fin_of[i] && xb_rd8(r + 0x12A)) { /* (its place in the crossings; one not recorded after them) */
+            for (uint32_t k = 0; k < cross_n && !fin_of[i]; k++) if (cross_r[k] == r) fin_of[i] = k + 1;
+            if (!fin_of[i]) fin_of[i] = RANK_MAX + ++fin_n;
+        }
         float cx = rdf_(car + 0x14), cy = rdf_(car + 0x18), cz = rdf_(car + 0x1C), best = 1e30f;
         int32_t kb = -1;
         if (last[i] >= 0) /* near the last one: 150 points (some 300 m) either way */
@@ -793,6 +800,30 @@ static void mayhem_places(void) {
         if (xb_rd32(r + 0xBC) != place) xb_wr32(r + 0xBC, place);
     }
 }
+/* Each racer over the line is recorded (f_000B4AA0, thiscall, the racer: a 0x508-byte record at race +0x108 with its
+ * place, +0xBC as it is then, a byte at +4), and at the race's end f_000B4EE0 puts every recorded place back: the rewards
+ * and Race Winnings pay by it. That was the game's own place at the crossing, and in a Mayhem race the game ranks the
+ * racer crossing the line by a measure that has just gone round (7th or 8th of 8, the log), so the user was paid for a
+ * place they did not finish in (the user's, 9 Nov: "make sure you finish in the place you were actually in"; over the
+ * line 1st, "2nd Place"; 5th, "8th Place, 0 CR"). So in a Mayhem race the racer is placed by the crossings before it is
+ * recorded: after those over the line before it. */
+void orig_f_000B4AA0(XbCtx *c);
+void f_000B4AA0(XbCtx *c) {
+    uint32_t racer = xb_rd32(c->esp + 4), race = xb_rd32(0x592984);
+    if (racer && racer < RT_USER_LIMIT && race && race == cross_race && rt_qr_mayhem()) {
+        uint32_t k = 0;
+        while (k < cross_n && cross_r[k] != racer) k++;
+        if (k == cross_n && cross_n < RANK_MAX) cross_r[cross_n++] = racer;
+        uint32_t place = k + 1, was = xb_rd32(racer + 0xBC);
+        if (k < RANK_MAX && was != place) {
+            fprintf(stderr, "xbrt: mayhem places: a racer%s over the line %u (the game's place for it %u)\n",
+                    xb_rd32(racer + 0x14) == 0 ? " (the player)" : "", place, was);
+            xb_wr32(racer + 0xBC, place);
+        }
+    }
+    orig_f_000B4AA0(c);
+}
+
 void orig_f_000B3530(XbCtx *c); /* the game's ranking (wraps.txt) */
 void f_000B3530(XbCtx *c) {
     orig_f_000B3530(c);
