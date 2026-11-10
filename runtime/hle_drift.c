@@ -81,6 +81,8 @@ static struct {
     double total, cur, len;   /* banked, the drift now (before its length bonus), its length (m) */
     float angle, v[3], penalty, pos[3]; /* pos: the car's place at the last tick it moved */
     int drifting, done, offroad;  /* offroad: the car left the road and has not yet run straight on it */
+    int line_k, ww;               /* the racing line's point nearest the car; facing the wrong way since ww_clock */
+    float ww_clock;               /* (the race's clock, timing +0x94: it stands while paused) */
     uint64_t last, calm_since, v_at, straight_since;
     float clock;                  /* the race's clock (timing +0xA0) at the last tick */
     char msg[32];
@@ -120,6 +122,91 @@ static uint32_t player_racer(void) {
     return 0;
 }
 
+/* ---- the wrong way (the user's, 9 Nov: driving the track backwards to farm drift points) ----
+ * The car facing more than WW_ANGLE degrees from the way the track runs (the AI's racing line, in race order: the
+ * track 0x5E1450 +4, its points' x, z, y at +0x30, +0x44, +0x58) for WW_SECONDS of the race's clock: the drift in
+ * progress is lost and the car is set back on the line, facing along it, standing. A drift's own angle stays under
+ * 90 (past SPIN it is lost anyway), so only a car turned round counts. */
+#define WW_ANGLE 120.0f
+#define WW_SECONDS 3.0f
+
+static void wrf(uint32_t a, float f) {
+    uint32_t u;
+    memcpy(&u, &f, 4);
+    xb_wr32(a, u);
+}
+
+static int dr_line(uint32_t *xs, uint32_t *zs, uint32_t *ys, uint32_t *np) {
+    uint32_t track = xb_rd32(0x5E1450), line = track && track < RT_USER_LIMIT && xb_rd8(track + 8) ? xb_rd32(track + 4) : 0;
+    if (!line || line >= RT_USER_LIMIT) return 0;
+    *np = xb_rd32(line + 8), *xs = xb_rd32(line + 0x30), *zs = xb_rd32(line + 0x44), *ys = xb_rd32(line + 0x58);
+    return *np > 8 && *np < 100000 && *xs && *xs < RT_USER_LIMIT && *zs && *zs < RT_USER_LIMIT && *ys && *ys < RT_USER_LIMIT;
+}
+
+/* The line's point nearest (x, z): near the last one found, or (a quarter of the time, or far from it) all of them. */
+static int dr_nearest(uint32_t xs, uint32_t zs, uint32_t np, float x, float z) {
+    static unsigned n;
+    int best = -1, lo = 0, hi = (int)np;
+    float bd = 1e30f;
+    if (ds.line_k > 0 && ds.line_k < (int)np && (n++ & 3)) lo = ds.line_k - 60, hi = ds.line_k + 60;
+    for (int i = lo; i < hi; i++) {
+        int k = (i % (int)np + (int)np) % (int)np;
+        float dx = rdf(xs + 4 * k) - x, dz = rdf(zs + 4 * k) - z, d = dx * dx + dz * dz;
+        if (d < bd) bd = d, best = k;
+    }
+    if (lo != 0 && bd > 60.0f * 60.0f) { /* (lost it: all of them) */
+        ds.line_k = 0;
+        return dr_nearest(xs, zs, np, x, z);
+    }
+    return ds.line_k = best;
+}
+
+/* The drift's own respawn: on the line a little ahead of point k, facing along it, standing (no push, no spin). */
+static void dr_respawn(uint32_t car, uint32_t xs, uint32_t zs, uint32_t ys, uint32_t np, int k) {
+    k = (k + 2) % (int)np;
+    int k2 = (k + 3) % (int)np;
+    float x = rdf(xs + 4 * k), y = rdf(ys + 4 * k), z = rdf(zs + 4 * k);
+    float fx = rdf(xs + 4 * k2) - x, fz = rdf(zs + 4 * k2) - z, len = sqrtf(fx * fx + fz * fz);
+    if (!(len > 0.1f) || !(x == x) || !(y == y) || !(z == z)) return;
+    fx /= len, fz /= len;
+    float pose[12] = {x, y + 0.6f, z, fz, 0, -fx, 0, 1, 0, fx, 0, fz}; /* position, then the turn's rows (the third: the nose) */
+    for (int j = 0; j < 12; j++) wrf(car + 0x14 + 4 * j, pose[j]);
+    for (int j = 0; j < 6; j++) wrf(car + 0x44 + 4 * j, 0); /* velocity and spin */
+    ds.pos[0] = x, ds.pos[1] = y + 0.6f, ds.pos[2] = z; /* (not taken for the game's respawn: our own message stands) */
+    memset(ds.v, 0, sizeof ds.v);
+    fprintf(stderr, "xbrt: drift event: the wrong way for %.0f s: set back on the line at point %d\n", WW_SECONDS, k);
+}
+
+/* 1 when the car was just set back (nothing more this tick). */
+static int dr_wrong_way(uint32_t car, uint32_t timing) {
+    uint32_t xs, zs, ys, np;
+    if (!dr_line(&xs, &zs, &ys, &np)) return 0;
+    float x = rdf(car + 0x14), z = rdf(car + 0x1C), hx = rdf(car + 0x38), hz = rdf(car + 0x40);
+    int k = dr_nearest(xs, zs, np, x, z);
+    if (k < 0) return 0;
+    int k2 = (k + 3) % (int)np;
+    float dx = rdf(xs + 4 * k2) - rdf(xs + 4 * k), dz = rdf(zs + 4 * k2) - rdf(zs + 4 * k);
+    float dl = sqrtf(dx * dx + dz * dz), hl = sqrtf(hx * hx + hz * hz);
+    if (!(dl > 0.01f) || !(hl > 0.1f)) return 0;
+    float c = (dx * hx + dz * hz) / (dl * hl);
+    int wrong = c < cosf(WW_ANGLE * 3.14159265f / 180.0f);
+    float clk = rdf(timing + 0x94);
+    if (!wrong) {
+        ds.ww = 0;
+        return 0;
+    }
+    if (!ds.ww) {
+        ds.ww = 1, ds.ww_clock = clk;
+        return 0;
+    }
+    if (clk - ds.ww_clock < WW_SECONDS) return 0;
+    if (ds.drifting && ds.cur > 0) dr_lose("WRONG WAY: DRIFT LOST");
+    else dr_say("WRONG WAY");
+    dr_respawn(car, xs, zs, ys, np, k);
+    ds.ww = 0;
+    return 1;
+}
+
 /* With rt_gil held, from rt_career_tick: the drift scoring. */
 void rt_drift_tick(void) {
     uint32_t laps = 0;
@@ -146,6 +233,9 @@ void rt_drift_tick(void) {
     double moved = hypot(pos[0] - ds.pos[0], pos[2] - ds.pos[2]);
     int fresh = ds.pos[0] == 0 && ds.pos[2] == 0;
     if (moved > 0 || fresh) memcpy(ds.pos, pos, sizeof pos);
+    /* A jump: the game's respawn (or ours, below, which moves ds.pos with the car): the drift in progress is lost (the
+     * user's, 9 Nov: "A respawn also kills the drift") */
+    if (!fresh && moved > 20 && !ds.done) dr_lose("RESPAWN: DRIFT LOST");
     if (fresh || moved > 20) moved = 0; /* (the first tick, or a jump: a restart, a respawn) */
     ds.clock = clock, ds.last = now;
     if (ds.done) return;
@@ -179,6 +269,7 @@ void rt_drift_tick(void) {
         memcpy(ds.v, v, sizeof v), ds.v_at = now;
         return;
     }
+    if (dr_wrong_way(car, timing)) return;
     if (moved == 0) return; /* paused (or no physics step since the last tick): the car stands */
     if (now - ds.v_at >= 500000) { /* every 50 ms: an impact is a jump in velocity */
         double t = (now - ds.v_at) / 1e7, dv = sqrt((v[0] - ds.v[0]) * (v[0] - ds.v[0]) + (v[1] - ds.v[1]) * (v[1] - ds.v[1]) + (v[2] - ds.v[2]) * (v[2] - ds.v[2]));
