@@ -344,6 +344,7 @@ STAND_SITES = [(0.029, 0.119, 'out'), (0.168, 0.232, 'in'), (0.316, 0.445, 'out'
                (0.615, 0.642, 'out'), (0.633, 0.673, 'in'), (0.719, 0.748, 'out'), (0.791, 0.863, 'out')]
 STAND_CLONES = ['seatsarea_02', 'outerpitstands01', 'seatsarea']
 STAND_GAP = 3.0
+STAND_PAD = 45.0   # m beyond the runway levelled at each stand site (terrain's pads): the stands stood sunk in the slopes
 STAND_PUSH = (0.0, 4.0, 10.0, 20.0, 35.0)  # m further out tried (a long straight stand by a bend)
 CLEARINGS += [(a, b, side, 75.0) for a, b, side in STAND_SITES]
 # The walls dressed (the user's photo: armco and catch fence round the track): on each wall (its line along the
@@ -366,7 +367,10 @@ SHORTCUT_SAVE, SHORTCUT_CLEAR = 25.0, 1.5  # (the most anywhere at Fuji: 29 m, a
 # metre, a radius under 200 m) where GT4 has none: on the inside edge round the apex (KERB_APEX m each side) and the
 # outside edge on the way out (KERB_EXIT m past the apex), KERB_W wide from KERB_IN m over the asphalt, KERB_LIFT m
 # over the runway; none within KERB_SKIP m of GT4's own.
-KERB_TURN, KERB_APEX, KERB_EXIT, KERB_IN, KERB_LIFT, KERB_SKIP = 1 / 200.0, 25.0, (5.0, 45.0), 0.3, 0.03, 3.0
+KERB_TURN, KERB_APEX, KERB_EXIT, KERB_IN, KERB_LIFT, KERB_SKIP = 1 / 120.0, 25.0, (5.0, 45.0), 0.3, 0.03, 3.0
+# Every kerb one ribbon (more_kerbs; the user's 11 Nov review: too thin or flat, ragged ends, wrong places): this wide,
+# its crest this high, the rise over its ends' KERB_TAPER m; gaps under KERB_JOIN m closed, none shorter than KERB_LEAST m
+KERB_WIDE, KERB_RISE, KERB_TAPER, KERB_JOIN, KERB_LEAST = 1.6, 0.06, 3.0, 12.0, 10.0
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -490,7 +494,7 @@ def build(disc, runway_dir, out):
     cf = to_forza(E['centre'])
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
     clear = clearings(cf, sides(cf)[1], reach[:, 0], reach[:, 1])
-    Vt, Tt, ground_at, Kt, top_near = terrain(Vf, F, area >= SLIVER, cf, read_ground(runway_dir), clear)  # (under the run-off's far grass too: drawn now)
+    Vt, Tt, ground_at, Kt, top_near = terrain(Vf, F, area >= SLIVER, cf, read_ground(runway_dir), clear, pads=stand_pads(cf, sides(cf)[1], reach[:, 0], reach[:, 1]))  # (under the run-off's far grass too: drawn now)
     rast = Raster(Vf, F, res=0.5)
     terrain_at = ground_at
 
@@ -552,7 +556,7 @@ def build(disc, runway_dir, out):
     o_r = o_w + len(Vw)
     o_k = o_r + len(Vr)
     Td = np.vstack([T[drawn], Tt + len(Vf), Ta + o_a, Tfar + o_f, Ttr + o_t, Tw + o_w, Tr + o_r, Tk + o_k])
-    kinds_d = np.concatenate([kinds[drawn], Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw, Kr, np.full(len(Tk), KERB)])
+    kinds_d = np.concatenate([np.where(kinds[drawn] == KERB, TARMAC, kinds[drawn]), Kt, np.full(len(Ta), TARMAC), Kfar, np.full(len(Ttr), TREE), Kw, Kr, np.full(len(Tk), KERB)])
     given_uv = {o_t + i: (u, v) for i, (u, v) in enumerate(UVtr)}  # (the trees': on the sheet; repeats, set per donor)
     given_uv.update({o_w + i: (u, v) for i, (u, v) in enumerate(UVw)})  # (the rails and fences)
     given_uv.update({o_r + i: (u, v) for i, (u, v) in enumerate(UVr)})  # (the far ring)
@@ -1203,6 +1207,27 @@ def apron(centre, inner, reach_in, s0, s1, cols, ground_at=None):
     return V, T
 
 
+def stand_pads(centre, inner, reach_in, reach_out):
+    """The stand sites' level ground as a function of points (n, 2): True within STAND_PAD m beyond the runway there."""
+    n = len(centre)
+    c2 = centre[:, [0, 2]]
+
+    def pad(xz):
+        q = np.asarray(xz, float).reshape(-1, 2)
+        out = np.zeros(len(q), bool)
+        for a in range(0, len(q), 4000):
+            d = np.hypot(q[a:a + 4000, None, 0] - c2[None, :, 0], q[a:a + 4000, None, 1] - c2[None, :, 1])
+            j = d.argmin(1); dist = d[np.arange(len(j)), j]
+            side_in = np.einsum('ij,ij->i', q[a:a + 4000] - c2[j], inner[j][:, [0, 2]]) > 0
+            share = j / n
+            beyond = dist - np.where(side_in, reach_in[j], reach_out[j])
+            for s0, s1, side in STAND_SITES:
+                on = (share >= s0 - 0.004) & (share <= s1 + 0.004)
+                out[a:a + 4000] |= on & (side_in == (side == 'in')) & (beyond < STAND_PAD)
+        return out
+    return pad
+
+
 def grid_sampler(Hg, lo, cell):
     """A grid's heights (corners every `cell` m from `lo`) at points (..., 2), blended between its corners."""
     nz, nx = Hg.shape
@@ -1334,7 +1359,7 @@ def far_terrain(Vf, F, loop, ground, clear=None, cell=FAR_CELL, reach=FAR_REACH,
     return V, T, K, grid_sampler(Y, lo, cell)
 
 
-def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP):
+def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reach=TERRAIN_REACH, drop=TERRAIN_DROP, pads=None):
     """The ground round the runway (Forza's, V; F all its faces, `drawn` those drawn; loop the centre line): a
     grid of `cell` m squares out to `reach` m beyond the runway and over all the loop's middle, each corner at
     GT4's ground's height there (read_ground; its hills) where it has some, else at the runway's height spread outward (the nearest runway's,
@@ -1355,6 +1380,7 @@ def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reac
         new = ~filled & (cnt > 0)
         if not new.any(): break
         y[new] = acc[new] / cnt[new]; away[new] = it * g; filled |= new
+    y_run = y.copy()  # (the runway's height spread outward)
     if ground is not None:  # GT4's ground off the runway where it has some, the rest spread again from it and the runway
         gr = ground_raster(ground[0], ground[1], r.lo, r.shape, g)
         # spikes out (a stand's or a roof's top where no ground is under it): cells 3 m off their 10 m median
@@ -1365,6 +1391,12 @@ def terrain(Vf, F, drawn, loop, ground=None, clear=None, cell=TERRAIN_CELL, reac
         use = np.isfinite(gr) & (away > 0)
         y = r.y.astype(float).copy()
         y[use] = gr[use]
+        if pads is not None:  # level ground for the stands (the user's 11 Nov review: sunk in the hillsides; each stood
+            # with its lowest point on the lowest ground under it, its back deep in GT4's slope): the runway's height there
+            zz, xx = np.nonzero((away > 0) & (away <= STAND_PAD + 40.0))
+            on = pads(np.stack([r.lo[0] + (xx + 0.5) * g, r.lo[1] + (zz + 0.5) * g], 1))
+            y[zz[on], xx[on]] = y_run[zz[on], xx[on]]
+            print('terrain: %d m2 levelled for the stands' % (on.sum() * g * g))
         filled = np.isfinite(y)
         for it in range(1, 400):
             y0 = np.where(filled, y, 0.0)
@@ -2153,7 +2185,11 @@ def barrier_geometry(runs):
 
 
 def more_kerbs(centre, left, right, rast, gt4_kerbs):
-    """Kerbs at the corners (KERB_*): (vertices, triangles, texture coordinates: across 0-1, along in repeats)."""
+    """Every kerb, as one smooth ribbon along the track's edge (the user's, 11 Nov: GT4's own were thin, flat and
+    ragged at their ends, drawn from its triangles): where GT4 has a kerb at that edge, and at the corners it has
+    none at (KERB_*). KERB_WIDE m across from KERB_IN m over the asphalt, a crest KERB_RISE m high towards its
+    outside, falling to nothing over its first and last metres. (vertices, triangles, texture coordinates: across
+    0-1, along in repeats.) GT4's kerb triangles are drawn as asphalt under them (build)."""
     c = centre[:, [0, 2]]
     n = len(c)
     arc, lap = lap_arc(centre)
@@ -2163,56 +2199,90 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
     k = np.convolve(np.concatenate([k[-7:], k, k[:7]]), np.ones(15) / 15, 'valid')
     bent = np.abs(k) > KERB_TURN
     lft = np.stack([-t[:, 1], t[:, 0]], 1)
-    near_gt4 = np.zeros(n, bool)
+    step = float(np.mean(np.diff(arc[:50])))
+    edges = (left, right)
+    mask = [np.zeros(n, bool), np.zeros(n, bool)]  # GT4's kerbs at each edge
     if len(gt4_kerbs):
-        for side in (left, right):
+        for s_, side in enumerate(edges):
             e = side[:, [0, 2]]
             for a in range(0, n, 500):
                 d = np.hypot(e[a:a + 500, None, 0] - gt4_kerbs[None, :, 0], e[a:a + 500, None, 1] - gt4_kerbs[None, :, 2])
-                near_gt4[a:a + 500] |= d.min(1) < KERB_SKIP
-    want = []  # (indices along the edge, the edge)
+                mask[s_][a:a + 500] = d.min(1) < KERB_SKIP
+    n_gt4 = [int(m_.sum()) for m_ in mask]
+    added = 0
     i = 0
-    while i < n:
+    while i < n:  # the corners GT4 gives no kerb: the inside round the apex, the outside on the way out
         if not bent[i]: i += 1; continue
         j = i
         while j < n and bent[j]: j += 1
         apex = i + int(np.argmax(np.abs(k[i:j])))
         turn_left = k[apex] > 0
-        inside, outside = (left, right) if turn_left else (right, left)
-        # (which of the layout's edges is the inside: the one the bend's centre is on)
-        if np.dot(inside[apex, [0, 2]] - c[apex], lft[apex]) * (1 if turn_left else -1) < 0: inside, outside = outside, inside
-        step = np.mean(np.diff(arc[:50]))
+        ins, outs = (0, 1) if turn_left else (1, 0)
+        if np.dot(edges[ins][apex, [0, 2]] - c[apex], lft[apex]) * (1 if turn_left else -1) < 0: ins, outs = outs, ins
         a_ = int(KERB_APEX / step)
-        want.append(([q % n for q in range(apex - a_, apex + a_ + 1)], inside))
-        want.append(([q % n for q in range(apex + int(KERB_EXIT[0] / step), apex + int(KERB_EXIT[1] / step) + 1)], outside))
+        for s_, idx in ((ins, [q % n for q in range(apex - a_, apex + a_ + 1)]),
+                        (outs, [q % n for q in range(apex + int(KERB_EXIT[0] / step), apex + int(KERB_EXIT[1] / step) + 1)])):
+            wide = [q % n for q in range(idx[0] - 10, idx[0] + len(idx) + 10)]
+            if mask[s_][wide].any(): continue  # (GT4's own there: its place and length kept)
+            mask[s_][idx] = True
+            added += 1
         i = j
     V, T, UV = [], [], []
-    made = 0
-    for idx, edge in want:
-        run = []
-        for q in idx + [None]:
-            if q is not None and not near_gt4[q]: run.append(q); continue
-            if len(run) >= 4:
+    made, metres = 0, 0.0
+    gap, least = int(round(KERB_JOIN / step)), int(round(KERB_LEAST / step))
+    cols = ((-KERB_IN, 0.0, 0.01, 0.0), (KERB_WIDE * 0.6 - KERB_IN, 0.6, 0.0, 1.0), (KERB_WIDE - KERB_IN, 1.0, 0.02, 0.0))  # (m out, u, lift, share of the rise)
+    for s_, edge in enumerate(edges):
+        m_ = mask[s_].copy()
+        if m_.all() or not m_.any(): continue
+        r0 = int(np.argmin(m_))  # (a place with none: the runs counted from there round the lap)
+        order = [(r0 + q) % n for q in range(n)]
+        mm = m_[order]
+        q = 0
+        while q < n:  # short gaps closed
+            if mm[q]: q += 1; continue
+            e_ = q
+            while e_ < n and not mm[e_]: e_ += 1
+            if 0 < q and e_ < n and e_ - q <= gap: mm[q:e_] = True
+            q = e_
+        e2 = edge[:, [0, 2]]
+        sm = (np.roll(e2, 1, 0) + e2 + np.roll(e2, -1, 0)) / 3  # (the edge's line smoothed: the layout's steps)
+        out = sm - c
+        out = (np.roll(out, 1, 0) + out + np.roll(out, -1, 0)) / 3
+        out /= np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
+        q = 0
+        while q < n:
+            if not mm[q]: q += 1; continue
+            e_ = q
+            while e_ < n and mm[e_]: e_ += 1
+            run = [order[x] for x in range(q, e_)]
+            q = e_
+            if len(run) < least: continue
+            made += 1
+            metres += (len(run) - 1) * step
+            along = np.concatenate([[0.0], np.cumsum([np.linalg.norm(sm[run[x + 1]] - sm[run[x]]) for x in range(len(run) - 1)])])
+            for p0 in range(0, len(run) - 1, 50):  # (pieces of 100 m: the texture's count along stays in s16)
+                piece = list(range(p0, min(p0 + 51, len(run))))
+                v0 = np.floor(along[p0] / 4.0)
                 b = len(V)
-                for m_, q_ in enumerate(run):
-                    e = edge[q_]
-                    o = e[[0, 2]] - c[q_]; o /= max(np.linalg.norm(o), 1e-9)
-                    for f, u in ((-KERB_IN, 0.0), (KERB_W - KERB_IN, 1.0)):
-                        xz = e[[0, 2]] + o * f
+                for x in piece:
+                    q_ = run[x]
+                    ends = min(along[x], along[-1] - along[x])
+                    rise = KERB_RISE * min(1.0, ends / KERB_TAPER)
+                    for f, u, lift, share in cols:
+                        xz = sm[q_] + out[q_] * f
                         ij = np.floor((xz - rast.lo) / rast.res).astype(int)
                         y = rast.y[ij[1], ij[0]] if 0 <= ij[0] < rast.shape[1] and 0 <= ij[1] < rast.shape[0] else np.nan
-                        V.append((xz[0], (y if np.isfinite(y) else e[1]) + KERB_LIFT, xz[1])); UV.append((u, (arc[q_] - arc[run[0]]) % lap / 4.0))
-                for m_ in range(len(run) - 1):
-                    a0, a1, c0, c1 = b + 2 * m_, b + 2 * m_ + 2, b + 2 * m_ + 1, b + 2 * m_ + 3
-                    T += [(a0, a1, c1), (a0, c1, c0)]
-                made += 1
-            run = []
+                        V.append((xz[0], (y if np.isfinite(y) else edge[q_][1]) + lift + share * rise, xz[1])); UV.append((u, along[x] / 4.0 - v0))
+                for x in range(len(piece) - 1):
+                    for col in range(2):
+                        a0, a1, c0, c1 = b + 3 * x + col, b + 3 * x + 3 + col, b + 3 * x + col + 1, b + 3 * x + 4 + col
+                        T += [(a0, a1, c1), (a0, c1, c0)]
     V, T = np.array(V, float).reshape(-1, 3), np.array(T, int).reshape(-1, 3)
     if len(T):  # wound face up (the game's way: as the runway's)
         nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
         flip = nrm[:, 1] > 0
         T[flip] = T[flip][:, [0, 2, 1]]
-    print('kerbs: %d added at the corners, %d triangles' % (made, len(T)))
+    print('kerbs: %d ribbons along %.0f m (GT4 has them at %d + %d edge points; %d added at corners without), %d triangles' % (made, metres, n_gt4[0], n_gt4[1], added, len(T)))
     return V, T, np.array(UV, float).reshape(-1, 2)
 
 
