@@ -572,7 +572,8 @@ def track_entry(tracklist, name_id, length):
                  ('dataFile', folder + 'QuickPreview.xml'), ('collisionFile', folder + 'QuickPreview1.col'),
                  ('reverseSplines', 'false'), ('swapInnerOuter', 'false'), ('aiReady', 'true'),
                  ('Ordinal', ordinal), ('length', int(round(length))),
-                 ('minimap', MAP_TILE), ('icon', LOGO), ('Image', LOAD_IMAGE)) + ((('TimeOfDay', TIME_OF_DAY),) if TIME_OF_DAY else ()):
+                 ('minimap', MAP_TILE), ('icon', LOGO), ('Image', LOAD_IMAGE),
+                 ('Video', folder + 'Flythrough.bik')) + ((('TimeOfDay', TIME_OF_DAY),) if TIME_OF_DAY else ()):
         e = attr(e, k, v)
     e = re.sub(r'\s(p2pordinal|start|end)="[^"]*"', '', e)
     e = e.replace(' Ordinal="%d"' % ordinal, ' Ordinal="%d" hotlapordinal="%d"' % (ordinal, hotlap))

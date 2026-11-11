@@ -4,7 +4,8 @@ steady rate) cropped clear of the HUD, shrunk, and packed as the .clip file read
   python tools/makeclip.py <folder of p_*.ppm> <first> <count> <out.clip> [width height] [repeat]
 
 The crop is the middle of a 4:3 picture between the map, the lap times, the speedometer and the place (x 26%-77%,
-y 18%-69%: the road ahead over the car's roof). repeat: the movie's frames each clip frame is shown for (2: pictures 66 ms apart under a 29.97 a
+y 18%-69%: the road ahead over the car's roof); CLIP_CROP=x0,y0,x1,y1 in the environment gives another (the HUD
+turned off in the game's options and the bumper view: 0.04,0.06,0.96,0.98, clear of the runtime's FPS counter). repeat: the movie's frames each clip frame is shown for (2: pictures 66 ms apart under a 29.97 a
 second movie). The file: "FZCL", u32 width, height, frames, repeat, frames + 1 u32 offsets, then each frame a zlib
 stream of RGB565, top row first."""
 import glob, os, struct, sys, zlib
@@ -12,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 CROP = (0.26, 0.18, 0.77, 0.69)
+if os.environ.get('CLIP_CROP'): CROP = tuple(float(x) for x in os.environ['CLIP_CROP'].split(','))  # (the HUD off: nearly all of it)
 
 
 def main(folder, first, count, out, w=324, h=243, repeat=2):
