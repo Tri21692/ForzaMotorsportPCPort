@@ -24,6 +24,8 @@ import xb2
 
 
 COUNT_CAP, BYTE_CAP = 330, 12 * 2 ** 20
+if os.environ.get('CELLSTREAM_COUNT'): COUNT_CAP = int(os.environ['CELLSTREAM_COUNT'])   # (testing: past the game's pool, with XBRT_XRM_MB)
+if os.environ.get('CELLSTREAM_MB'): BYTE_CAP = int(float(os.environ['CELLSTREAM_MB']) * 2 ** 20)
 
 
 def plan(res, pvs, ppw, model=None):

@@ -51,6 +51,7 @@ TARMAC, KERB, GRASS, GRAVEL, LINE = 0, 1, 2, 3, 0x0A
 TREE = 0x63  # (drawn only: GT4's tree cards)
 FOREST = 0x64  # (drawn only: the woods' canopy)
 ARMCO, FENCE = 0x65, 0x66  # (drawn only: along the walls)
+SKIRT = 0x67  # (drawn only: the grass bank from the run-off's edge down to the ground beyond)
 FAR_KIND = 0x70  # (drawn only: GT4's far ring, a kind for each of its pictures from here)
 
 
@@ -294,6 +295,7 @@ MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24
              FOREST: (83, 430, 40.0),     # the woods: terrain_hillside_distantbrush_001
              ARMCO: (130, 107, 1.0),      # guardrail_white_001 and racedeco catchfence_001 on a railing's material
              FENCE: (130, 319, 1.0)}      # (24-byte vertices, cut out; their own meshes take 20-byte ones)
+MATERIALS[SKIRT] = MATERIALS[GRASS]
 MATERIALS.update({FAR_KIND + i: (5628, None, 1.0) for i in range(11)})  # (GT4's far cards: their textures FAR_SLOTS)
 # a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
@@ -321,6 +323,7 @@ SUN_GAIN = 0.9
 ASPHALT_TONE = 0.55
 SHADE_BASE = {GRASS: 95.0, FOREST: 64.0, TARMAC: 72.0 / ASPHALT_TONE}   # (the asphalt darker than its texel's 87: it read pale)
 SHADE_PATCHES = {GRASS: ((70.0, 0.12), (18.0, 0.07)), FOREST: ((50.0, 0.16), (12.0, 0.10)), TARMAC: ((45.0, 0.06), (9.0, 0.04))}
+SHADE_BASE[SKIRT], SHADE_PATCHES[SKIRT] = SHADE_BASE[GRASS] * 0.9, SHADE_PATCHES[GRASS]
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
 ASPHALT = (32.0, 10.0)          # m along and across the track a repeat of the asphalt's strip texture (1024 x 256)
@@ -486,12 +489,42 @@ def build(disc, runway_dir, out):
     cf = to_forza(E['centre'])
     reach = runway_reach(Vf, F, cf, sides(cf)[1])
     clear = clearings(cf, sides(cf)[1], reach[:, 0], reach[:, 1])
-    Vt, Tt, ground_at, Kt, top_near = terrain(Vf, F, drawn, cf, read_ground(runway_dir), clear)
-    Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON, ground_at)
+    Vt, Tt, ground_at, Kt, top_near = terrain(Vf, F, area >= SLIVER, cf, read_ground(runway_dir), clear)  # (under the run-off's far grass too: drawn now)
+    rast = Raster(Vf, F, res=0.5)
+    terrain_at = ground_at
+
+    def ground_at(xz):
+        """The ground a thing stands on: the runway's own surface where it covers the place (its run-off's grass,
+        drawn since 10 Nov: props stood on the terrain 1 to 6 m under it were buried), else the terrain's."""
+        xz = np.atleast_2d(np.asarray(xz, float))
+        y = np.asarray(terrain_at(xz), float).copy()
+        ij = np.floor((xz - rast.lo) / rast.res).astype(int)
+        ok = (ij[:, 0] >= 0) & (ij[:, 1] >= 0) & (ij[:, 0] < rast.shape[1]) & (ij[:, 1] < rast.shape[0])
+        ry = np.full(len(xz), np.nan)
+        ry[ok] = rast.y[ij[ok, 1], ij[ok, 0]]
+        return np.where(np.isfinite(ry), ry, y)
+    Va, Ta = apron(cf, sides(cf)[1], reach[:, 0], *PIT_APRON, terrain_at)
     Vfar, Tfar, Kfar, top_far = far_terrain(Vf, F, cf, read_ground(runway_dir), clear, meet=top_near)
     Vtr, Ttr, UVtr = trees(runway_dir, cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at, clear, (top_near, top_far))
     Vw, Tw, UVw, Kw = dressing(walls, cf)
-    rast = Raster(Vf, F, res=0.5)
+    # the bank: from the run-off's edge (the outline's walls' feet) down to the terrain beyond, where that lies lower
+    # (the 16 m grid under the lowest runway near: an open step, the sky seen under the rails)
+    Vsk, Tsk, UVsk = [], [], []
+    run = 0.0
+    for q in walls:
+        a_, b_ = np.asarray(q[0], float), np.asarray(q[1], float)
+        ya, yb = float(terrain_at(a_[None, [0, 2]])[0]) - 0.6, float(terrain_at(b_[None, [0, 2]])[0]) - 0.6
+        ln = float(np.linalg.norm((b_ - a_)[[0, 2]]))
+        if min(a_[1] - ya, b_[1] - yb) < 0.75 or ln < 1e-3: run += ln; continue
+        b0 = len(Vsk)
+        Vsk += [a_ + (0, 0.02, 0), b_ + (0, 0.02, 0), (b_[0], yb, b_[2]), (a_[0], ya, a_[2])]
+        UVsk += [(0.0, 0.0), (ln / 24.0, 0.0), (ln / 24.0, (b_[1] - yb) / 24.0), (0.0, (a_[1] - ya) / 24.0)]  # (each quad from 0: a donor's strips lie apart, a running length passed s16)
+        Tsk += [(b0, b0 + 1, b0 + 2), (b0, b0 + 2, b0 + 3), (b0, b0 + 2, b0 + 1), (b0, b0 + 3, b0 + 2)]
+        run += ln
+    print('bank: %d quads from the run-off edge down to the ground beyond' % (len(Tsk) // 4))
+    if Tsk:
+        Tw, Vw = np.vstack([Tw.reshape(-1, 3), np.array(Tsk) + len(Vw)]), np.vstack([Vw.reshape(-1, 3), np.array(Vsk, float)])
+        UVw, Kw = np.vstack([UVw.reshape(-1, 2), np.array(UVsk)]), np.concatenate([Kw, np.full(len(Tsk), SKIRT)])
     lef_f, rig_f = to_forza(E['left']), to_forza(E['right'])
     half = np.linalg.norm((lef_f - rig_f)[:, [0, 2]], axis=1) / 2
     Vb, Tb, UVb, Kb, bwalls = barrier_geometry(shortcut_barriers(cf, half, rast, ground_at))
@@ -573,10 +606,16 @@ def build(disc, runway_dir, out):
             jobs.append((k, s))
     # the ground in blocks of 8 x 8 squares (a grid row's strip ran kilometres: past s16's texture coordinates)
     ground = []
-    for k_, tris, bsize in ((GRASS, (Tt + len(Vf))[Kt == GRASS], 8 * TERRAIN_CELL), (FOREST, (Tt + len(Vf))[Kt == FOREST], 8 * TERRAIN_CELL),
+    # (the run-off's grass beyond GRASS_REACH too, the user's 10 Nov audit: left undrawn, the ground seen there was the
+    # terrain's 16 m grid, 1 to 6 m under the collision on 13% of the drivable ground: cars rode in the air over it and
+    # the rails, at the collision's height, hung over it. In the ground's bigger donors, not the runway's small ones)
+    far_grass = T[(area >= SLIVER) & (kinds == GRASS) & (dist > GRASS_REACH)]
+    print('run-off grass beyond %.0f m drawn with the ground: %d triangles' % (GRASS_REACH, len(far_grass)))
+    for k_, tris, bsize in ((GRASS, far_grass, 4 * TERRAIN_CELL), (GRASS, (Tt + len(Vf))[Kt == GRASS], 8 * TERRAIN_CELL), (FOREST, (Tt + len(Vf))[Kt == FOREST], 8 * TERRAIN_CELL),
                             (TARMAC, Ta + o_a, 8 * TERRAIN_CELL), (GRASS, (Tfar + o_f)[Kfar == GRASS], 8 * FAR_CELL),
                             (FOREST, (Tfar + o_f)[Kfar == FOREST], 8 * FAR_CELL), (TREE, Ttr + o_t, 8 * TERRAIN_CELL),
                             (ARMCO, (Tw + o_w)[Kw == ARMCO], 8 * TERRAIN_CELL), (FENCE, (Tw + o_w)[Kw == FENCE], 8 * TERRAIN_CELL),
+                            (SKIRT, (Tw + o_w)[Kw == SKIRT], 8 * TERRAIN_CELL),
                             (KERB, Tk + o_k, 4 * TERRAIN_CELL)) + \
                            tuple((k_r, (Tr + o_r)[Kr == k_r], 1e6) for k_r in sorted(set(Kr.tolist()))):  # (the woods, the apron, the far ground, the trees)
         if not len(tris): continue
@@ -625,7 +664,7 @@ def build(disc, runway_dir, out):
         if FAR_KIND <= k < FAR_KIND + len(FAR_SLOTS): tex = FAR_SLOTS[k - FAR_KIND]
         mat_at, (mfl, _, _, _, _, _, _, mt0, mt1, msh) = record(res, model, mat)
         mt0 = tex or mt0
-        mt1, light = LIGHTMAP[0], {GRASS: GRASS_LIGHT, FOREST: FOREST_LIGHT, TARMAC: TARMAC_LIGHT}.get(k, LIGHTMAP[1:])
+        mt1, light = LIGHTMAP[0], {GRASS: GRASS_LIGHT, SKIRT: GRASS_LIGHT, FOREST: FOREST_LIGHT, TARMAC: TARMAC_LIGHT}.get(k, LIGHTMAP[1:])
         at, (fl, ab, nidx, vbytes, vbr, stride, prim, t0, t1, sh) = record(res, model, mesh)
         pts = np.vstack([Vd[s] for s in strips])
         org = np.floor(pts.min(0) / metres) * metres  # (texture coordinates from a whole repeat near the faces: s16 holds +-64 repeats)
@@ -2195,6 +2234,71 @@ def dressing(walls, centre=None, fence=True):
             T += [(b, b + 1, b + 2), (b, b + 2, b + 3), (b, b + 2, b + 1), (b, b + 3, b + 2)]
             K += [kind] * 4
     return np.array(V, float), np.array(T, int), np.array(UV, float), np.array(K, int)
+
+
+RAIL_SNAP = (-9.0, 3.0)   # m: a rail post moved at most this far down or up to the ground under it
+
+
+def ground_rails(Vd, Td, kinds_d, o_w, nw):
+    """The rails and fences stood on the ground drawn under them (the user's, 10 Nov: "floating fences"): a post took
+    the runway's outline's height, and where the ground falls away behind the edge the armco hung in the air (tree
+    trunks under it, one over a valley) or, the ground higher, stood 2 m under it, not drawn at all (an invisible wall).
+    Each post (the rails' vertices at one place) is moved so the armco's foot is ARMCO_H[0] under the ground there:
+    the drawn ground's near-level triangles (not the woods' canopy nor the far ring), sampled per metre, the mean
+    within 1.5 m of the post and within RAIL_SNAP of where it stood."""
+    Vd = Vd.copy()
+    gk = ~np.isin(kinds_d, [ARMCO, FENCE, TREE, FOREST]) & (kinds_d < FAR_KIND)
+    q = Vd[Td[gk]]
+    n = np.cross(q[:, 1] - q[:, 0], q[:, 2] - q[:, 0])
+    ar = np.linalg.norm(n, axis=1) + 1e-12
+    q = q[np.abs(n[:, 1]) / ar > 0.5]
+    ar = np.linalg.norm(np.cross(q[:, 1] - q[:, 0], q[:, 2] - q[:, 0]), axis=1) / 2
+    rng = np.random.default_rng(3)
+    pts = [q.reshape(-1, 3)]
+    for lo_, hi_, k in ((0, 4, 3), (4, 40, 24), (40, 400, 160), (400, 1e9, 900)):  # samples by the triangle's size
+        t = q[(ar >= lo_) & (ar < hi_)]
+        if not len(t): continue
+        e = rng.random((len(t), k, 2))
+        f_ = e.sum(2) > 1
+        e[f_] = 1 - e[f_]
+        pts.append((t[:, None, 0] + e[..., :1] * (t[:, None, 1] - t[:, None, 0]) + e[..., 1:] * (t[:, None, 2] - t[:, None, 0])).reshape(-1, 3))
+    G = np.vstack(pts)
+    lo = G[:, [0, 2]].min(0) - 2
+    wide = int(np.ceil(G[:, 2].max() + 2 - lo[1])) + 1
+    cell = np.floor(G[:, 0] - lo[0]).astype(np.int64) * wide + np.floor(G[:, 2] - lo[1]).astype(np.int64)
+    order = np.argsort(cell)
+    cell_s, G = cell[order], G[order]
+    used = np.unique(Td[np.isin(kinds_d, [ARMCO, FENCE])])
+    used = used[(used >= o_w) & (used < o_w + nw)]
+    armco = np.zeros(len(Vd), bool)
+    armco[np.unique(Td[kinds_d == ARMCO])] = True
+    posts = {}
+    for v in used: posts.setdefault((round(float(Vd[v, 0]), 2), round(float(Vd[v, 2]), 2)), []).append(v)
+    moved, far, none = [], 0, 0
+    for (x, z), vs in posts.items():
+        vs = np.array(vs)
+        a = vs[armco[vs]]
+        h0 = Vd[a, 1].min() - ARMCO_H[0] if len(a) else Vd[vs, 1].min() - FENCE_H[0]   # the edge's height the post was built on
+        i, j = int(np.floor(x - lo[0])), int(np.floor(z - lo[1]))
+        near = []
+        for di in (-2, -1, 0, 1, 2):
+            c0 = (i + di) * wide + j - 2
+            a_, b_ = np.searchsorted(cell_s, c0), np.searchsorted(cell_s, c0 + 5)
+            g = G[a_:b_]
+            g = g[(np.hypot(g[:, 0] - x, g[:, 2] - z) <= 1.5) & (g[:, 1] >= h0 + RAIL_SNAP[0]) & (g[:, 1] <= h0 + RAIL_SNAP[1])]
+            if len(g): near.append(g[:, 1])
+        if not near: none += 1; continue
+        ys = np.concatenate(near)
+        ys = ys[ys >= ys.max() - 1.0]   # (the top surface there: a layer under it, the far ground's, left out)
+        d = float(ys.mean()) - h0
+        if abs(d) < 0.05: continue
+        Vd[vs, 1] += d
+        moved.append(d)
+    m = np.array(moved) if moved else np.zeros(1)
+    print('rails on the ground: %d posts of %d moved (down to %.1f m, up to %.1f m; %d by over 0.5 m), %d with no ground under them'
+          % (len(moved), len(posts), m.min(), m.max(), int((np.abs(m) > 0.5).sum()), none))
+    return Vd
+
 
 
 def collision_of(files, Vf, T, kinds, Vk, Tk, walls):
