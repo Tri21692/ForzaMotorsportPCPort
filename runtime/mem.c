@@ -142,6 +142,7 @@ static Block *block_at(uint32_t addr) {
 
 /* Like the kernel, allocate from the top of the acceptable range down, so
  * low memory stays free for code that needs it. */
+static uint32_t phys_used, phys_peak, phys_said; /* pages */
 uint32_t rt_contig_alloc(uint32_t size, uint32_t lo, uint32_t hi, uint32_t align) {
     uint32_t n = (size + 0xFFF) / 0x1000;
     uint32_t step = align > 0x1000 ? align / 0x1000 : 1;
@@ -154,11 +155,17 @@ uint32_t rt_contig_alloc(uint32_t size, uint32_t lo, uint32_t hi, uint32_t align
         while (i < n && !page_used[p + i]) i++;
         if (i < n) continue;
         memset(page_used + p, 1, n);
+        phys_used += n;
+        if (phys_used > phys_peak) { /* (the 64 MB's most in use, said each 2 MB it grows past 48: the room the resource heap's size leaves) */
+            phys_peak = phys_used;
+            if (phys_peak >= 48 * 256 && phys_peak / 512 > phys_said) phys_said = phys_peak / 512, fprintf(stderr, "xbrt: physical memory: %u MB of 64 in use\n", phys_peak / 256);
+        }
         uint32_t va = RT_PHYS_VIEW + (uint32_t)p * 0x1000;
         block_add(va, n * 0x1000);
         memset(xb_mem + va, 0, n * 0x1000);
         return va;
     }
+    fprintf(stderr, "xbrt: physical memory: no room for %u KB (%u MB of 64 in use)\n", n * 4, phys_used / 256);
     return 0;
 }
 
@@ -166,6 +173,7 @@ void rt_contig_free(uint32_t va) {
     Block *b = block_at(va);
     if (!b || va < RT_PHYS_VIEW || va - RT_PHYS_VIEW >= RT_PHYS_SIZE) return;
     memset(page_used + (va - RT_PHYS_VIEW) / 0x1000, 0, b->size / 0x1000);
+    phys_used -= b->size / 0x1000;
     *b = blocks[--nblocks];
 }
 

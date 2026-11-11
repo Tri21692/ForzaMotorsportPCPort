@@ -643,7 +643,10 @@ K(MmAllocateContiguousMemory) { return rt_contig_alloc(ARG(0), 0, RT_PHYS_SIZE -
  * size changed in each place the heap's setup reads it. XBRT_XRM_HEAP=0:
  * the game's own size. */
 #define XRM_SIZE_AT 0x519320u
-#define XRM_BIG 0x2AEA540u
+/* (10 Nov: 48 MB. The streamed textures' pool is what the heap holds past its fixed budgets, 12.4 MB of 42.9: the
+ * Pacific Shipyards Circuit's fronts set back from the road drew their 32-texel copies. At 48 the pool is 17.5 MB and
+ * a race there peaks at 58 MB of the 64 in use (mem.c says so past 48); at 50, 60 MB: too near the end.) */
+#define XRM_BIG 0x3000000u
 static void xrm_heap(XbCtx *c) {
     static int on = -1;
     if (on < 0) on = !getenv("XBRT_XRM_HEAP") || atoi(getenv("XBRT_XRM_HEAP"));
