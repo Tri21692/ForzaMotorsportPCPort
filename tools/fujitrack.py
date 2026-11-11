@@ -344,7 +344,7 @@ STAND_SITES = [(0.029, 0.119, 'out'), (0.168, 0.232, 'in'), (0.316, 0.445, 'out'
                (0.615, 0.642, 'out'), (0.633, 0.673, 'in'), (0.719, 0.748, 'out'), (0.791, 0.863, 'out')]
 STAND_CLONES = ['seatsarea_02', 'outerpitstands01', 'seatsarea']
 STAND_GAP = 3.0
-STAND_PAD = 45.0   # m beyond the runway levelled at each stand site (terrain's pads): the stands stood sunk in the slopes
+STAND_PAD = 75.0   # m beyond the runway levelled at each stand site (terrain's pads): the stands stood sunk in the slopes
 STAND_PUSH = (0.0, 4.0, 10.0, 20.0, 35.0)  # m further out tried (a long straight stand by a bend)
 CLEARINGS += [(a, b, side, 75.0) for a, b, side in STAND_SITES]
 # The walls dressed (the user's photo: armco and catch fence round the track): on each wall (its line along the
@@ -357,6 +357,7 @@ RAIL_OFF = 0.3   # m: the rail at most this far from the walls' (smoothed) line
 RAIL_SMOOTH_PTS, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
 GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces within this of its first (fewer, bigger donors:
                                  # each is a draw in every cell; 2,000 small ones cost frames)
+STAND_NEEDS = [(860, 1560, 5), (420, 750, 5), (260, 390, 5), (90, 160, 6), (55, 120, 6)]  # (vertices, indices, donors kept: the stands' meshes)
 STAND_KEEP = 24                  # the biggest spare donors kept for the stands' copies
 CLONE_DONOR = 2000               # vertices: the largest streamed donor kept for the stands' copies
 # Shortcuts blocked (the user's "Forza touches"): armco and a wall to the cars wherever crossing the runway's
@@ -371,6 +372,7 @@ KERB_TURN, KERB_APEX, KERB_EXIT, KERB_IN, KERB_LIFT, KERB_SKIP = 1 / 120.0, 25.0
 # Every kerb one ribbon (more_kerbs; the user's 11 Nov review: too thin or flat, ragged ends, wrong places): this wide,
 # its crest this high, the rise over its ends' KERB_TAPER m; gaps under KERB_JOIN m closed, none shorter than KERB_LEAST m
 KERB_WIDE, KERB_RISE, KERB_TAPER, KERB_JOIN, KERB_LEAST = 1.6, 0.06, 3.0, 12.0, 10.0
+KERB_ALL = True   # the user's, 11 Nov after the drive: "put curbs all along the track": both edges, the whole lap
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -634,7 +636,10 @@ def build(disc, runway_dir, out):
     # the biggest donors first (each a draw in every cell: 2,000 small ones cost frames): the runway's, its strips
     # short and its donors' faces near (texture coordinates stay in s16's range: a kerb repeats every 4 m), then the
     # ground's; some 900-2,000-vertex ones kept for the stands' copies
-    keep_ = {p_[2] for p_ in sorted((p_ for p_ in pool if p_[4] not in svb and 900 <= p_[0] <= 2000), key=lambda p_: p_[0])[:STAND_KEEP]}
+    keep_ = set()  # (by what the stands' meshes need, vertices and indices: STAND_NEEDS; the kerbs round the whole lap took them)
+    for nv_, ni_, many in STAND_NEEDS:
+        keep_ |= {p_[2] for p_ in sorted((p_ for p_ in pool if p_[4] not in svb and p_[2] not in keep_ and p_[0] >= nv_ and p_[1] >= ni_ and p_[0] <= 2000),
+                                         key=lambda p_: (p_[0], p_[1]))[:many]}
     placed, left = pack_strips(jobs, Vd, [p_ for p_ in pool if p_[2] not in keep_], reach={KERB: 50.0, None: 120.0}, longest={KERB: 60.0, None: 100.0})
     if left: raise SystemExit('out of donor meshes: %d strips left over' % left)
     taken = {p_[0] for p_ in placed}
@@ -1221,8 +1226,8 @@ def stand_pads(centre, inner, reach_in, reach_out):
             side_in = np.einsum('ij,ij->i', q[a:a + 4000] - c2[j], inner[j][:, [0, 2]]) > 0
             share = j / n
             beyond = dist - np.where(side_in, reach_in[j], reach_out[j])
-            for s0, s1, side in STAND_SITES:
-                on = (share >= s0 - 0.004) & (share <= s1 + 0.004)
+            for s0, s1, side in STAND_SITES + [(a_, b_, sd_) for st_, a_, b_, sd_, *_ in ROWS if 'seatsarea' in st_]:  # (and the main straight's row)
+                on = (share >= s0 - 0.01) & (share <= s1 + 0.01) if s0 <= s1 else (share >= s0 - 0.01) | (share <= s1 + 0.01)
                 out[a:a + 4000] |= on & (side_in == (side == 'in')) & (beyond < STAND_PAD)
         return out
     return pad
@@ -2209,6 +2214,7 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
                 d = np.hypot(e[a:a + 500, None, 0] - gt4_kerbs[None, :, 0], e[a:a + 500, None, 1] - gt4_kerbs[None, :, 2])
                 mask[s_][a:a + 500] = d.min(1) < KERB_SKIP
     n_gt4 = [int(m_.sum()) for m_ in mask]
+    if KERB_ALL: mask = [np.ones(n, bool), np.ones(n, bool)]
     added = 0
     i = 0
     while i < n:  # the corners GT4 gives no kerb: the inside round the apex, the outside on the way out
@@ -2233,7 +2239,8 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
     cols = ((-KERB_IN, 0.0, 0.01, 0.0), (KERB_WIDE * 0.6 - KERB_IN, 0.6, 0.0, 1.0), (KERB_WIDE - KERB_IN, 1.0, 0.02, 0.0))  # (m out, u, lift, share of the rise)
     for s_, edge in enumerate(edges):
         m_ = mask[s_].copy()
-        if m_.all() or not m_.any(): continue
+        if not m_.any(): continue
+        whole = bool(m_.all())  # (round the whole lap: one closed ribbon, no ends)
         r0 = int(np.argmin(m_))  # (a place with none: the runs counted from there round the lap)
         order = [(r0 + q) % n for q in range(n)]
         mm = m_[order]
@@ -2254,19 +2261,23 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
             if not mm[q]: q += 1; continue
             e_ = q
             while e_ < n and mm[e_]: e_ += 1
-            run = [order[x] for x in range(q, e_)]
+            run = [order[x] for x in range(q, e_)] + ([order[0]] if whole else [])
             q = e_
             if len(run) < least: continue
+            if KERB_ALL:  # (a point every third on the straights: round the whole lap the kerbs took the stands' donors)
+                gentle = np.abs(k) < 1 / 500.0
+                gentle &= np.roll(gentle, 2) & np.roll(gentle, -2)
+                run = [q_ for x, q_ in enumerate(run) if x in (0, len(run) - 1) or not gentle[q_] or x % 3 == 0]
             made += 1
-            metres += (len(run) - 1) * step
             along = np.concatenate([[0.0], np.cumsum([np.linalg.norm(sm[run[x + 1]] - sm[run[x]]) for x in range(len(run) - 1)])])
-            for p0 in range(0, len(run) - 1, 50):  # (pieces of 100 m: the texture's count along stays in s16)
-                piece = list(range(p0, min(p0 + 51, len(run))))
+            metres += along[-1]
+            for p0 in range(0, len(run) - 1, 30):  # (pieces of 60 to 180 m: the texture's count along stays in s16)
+                piece = list(range(p0, min(p0 + 31, len(run))))
                 v0 = np.floor(along[p0] / 4.0)
                 b = len(V)
                 for x in piece:
                     q_ = run[x]
-                    ends = min(along[x], along[-1] - along[x])
+                    ends = 1e9 if whole else min(along[x], along[-1] - along[x])
                     rise = KERB_RISE * min(1.0, ends / KERB_TAPER)
                     for f, u, lift, share in cols:
                         xz = sm[q_] + out[q_] * f
