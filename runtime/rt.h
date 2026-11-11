@@ -347,6 +347,7 @@ void rt_kernel_init(void);
 void rt_fibers_init(void); /* hle_fiber.c: fiber stacks */
 void rt_crypto_init(void); /* crypto.c: the Xc* exports */
 void rt_sha1(const uint8_t *p, size_t n, uint8_t out[20]);
+void rt_clip_opened(const char *host); /* hle_clip.c: the game opens a .bik (file.c) */
 /* inflate.c: the zlib stream at in into out; the bytes written or -1, *used its length */
 long rt_inflate(const uint8_t *in, size_t n, uint8_t *out, size_t cap, size_t *used);
 /* Other files add handlers for their part of the kernel. A handler reads

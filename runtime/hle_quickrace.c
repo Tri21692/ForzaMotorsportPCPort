@@ -1474,8 +1474,8 @@ void rt_qr_tick(void) {
                 rt_qr_auto = 1, auto_until = 0, auto_k = -1, auto_speed = (float)autod;
             static int looks = -1; /* XBRT_AUTODRIVE_LOOKS=1: the camera turned round the car's looks, 1.5 s each (ahead,
                                     * back, the sides, the diagonals), for things drawn or not by the angle (the garage) */
-            if (looks < 0) looks = getenv("XBRT_AUTODRIVE_LOOKS") && atoi(getenv("XBRT_AUTODRIVE_LOOKS"));
-            if (looks && autod > 0 && car == me) rt_photo_lookback = (int)((rt_now_100ns() / 15000000) % 8);
+            if (looks < 0) looks = getenv("XBRT_AUTODRIVE_LOOKS") ? atoi(getenv("XBRT_AUTODRIVE_LOOKS")) : 0;
+            if (looks && autod > 0 && car == me) rt_photo_lookback = looks > 1 ? looks : (int)((rt_now_100ns() / 15000000) % 8); /* (over 1: that look held, 8 ahead) */
         }
         if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
             autopilot(car, xs, zs, np, dt);

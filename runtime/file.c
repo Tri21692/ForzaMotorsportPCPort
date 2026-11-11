@@ -474,6 +474,7 @@ uint32_t rt_open(uint32_t *handle, uint32_t oa, uint32_t desired, uint32_t share
     int read_only = from_mods;
     struct stat st;
     int exists = stat(host, &st) == 0;
+    { size_t xl = strlen(xbox); if (xl > 4 && !strcasecmp(xbox + xl - 4, ".bik")) rt_clip_opened(host); } /* (hle_clip.c: a clip of ours beside it) */
     int is_dir = exists && S_ISDIR(st.st_mode);
     if ((options & 0x40) && is_dir) return STATUS_ACCESS_DENIED; /* FILE_NON_DIRECTORY_FILE */
     int flags = O_RDWR | O_BINARY;

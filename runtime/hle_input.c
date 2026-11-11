@@ -356,6 +356,7 @@ static void host_pad(uint32_t pad) {
     if (!rt_photo_lookback) ; /* (none: the pad as it is; 0 once fell through to "left" below and held the camera there) */
     else if (rt_photo_lookback == 1) analog[A_Y] = 255; /* (hle_quickrace.c's photographs: the game looking back, or aside) */
     else if (rt_photo_lookback <= 3) thumbs[2] = rt_photo_lookback == 2 ? 32767 : -32767;
+    else if (rt_photo_lookback == 8) thumbs[3] = 32767; /* (straight ahead, for a clip: the game hides its HUD while the stick looks) */
     else thumbs[2] = rt_photo_lookback & 1 ? -23170 : 23170, thumbs[3] = rt_photo_lookback <= 5 ? -23170 : 23170; /* (4-7: diagonals, back or ahead) */
     set_pad(pad, buttons, analog, thumbs);
 }
