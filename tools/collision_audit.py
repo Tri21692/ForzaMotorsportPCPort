@@ -88,19 +88,44 @@ def clusters(mask):
     return out
 
 
-def collision_grids(col, ring, lo, W, H):
+def collision_grids(col, ring, lo, W, H, local=False):
     """The collision laid on the grid: ground within 3 m of the loop's height near it (not an
-    overpass's), and walls high enough to stop a car and not overhead. (ground, wall, near_y)."""
-    near_y = lambda p: ring[int(np.argmin(np.hypot(ring[:, 0] - p[0], ring[:, 2] - p[2]))), 1]
+    overpass's), and walls high enough to stop a car and not overhead. (ground, wall, near_y).
+    local: a course with no overpass whose ground runs far from its loop and metres above or under
+    it (Fuji's run-off: by the loop's height 1 km of its edge's rails read as buried, and the walls
+    sealing its open edges stood at the loop's height, not the ground's): all its ground, and near_y
+    the ground's own height there (the nearest ground within 4 m, else the loop's)."""
+    ring_y = lambda p: ring[int(np.argmin(np.hypot(ring[:, 0] - p[0], ring[:, 2] - p[2]))), 1]
+    near_y = ring_y
     hi = (lo[0] + W * CELL, lo[1] + H * CELL)
     ground = np.zeros((H, W), bool)
     wall = np.zeros((H, W), bool)
-    for s, pts, n, w in col.triangles():
+    tris_ = list(col.triangles())
+    if local:
+        Yg = np.full((H, W), np.nan)
+        for s, pts, n, w in tris_:
+            q = np.array(pts, float)
+            if abs(n[1]) <= 0.7 or q[:, 0].max() < lo[0] or q[:, 0].min() > hi[0] or q[:, 2].max() < lo[1] or q[:, 2].min() > hi[1]: continue
+            g = raster_tri(q, lo, W, H)
+            if g: Yg[g[0], g[1]] = q[:, 1].mean()
+        for _ in range(8):  # spread 4 m past the ground's edge
+            holes = np.isnan(Yg)
+            if not holes.any(): break
+            best = np.full((H, W), np.nan)
+            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                r_ = np.roll(np.roll(Yg, dr, 0), dc, 1)
+                best = np.where(np.isnan(best), r_, best)
+            Yg = np.where(holes, best, Yg)
+        def near_y(p):
+            c, r = int((p[0] - lo[0]) / CELL), int((p[2] - lo[1]) / CELL)
+            if 0 <= r < H and 0 <= c < W and not np.isnan(Yg[r, c]): return float(Yg[r, c])
+            return ring_y(p)
+    for s, pts, n, w in tris_:
         q = np.array(pts, float)
         if q[:, 0].max() < lo[0] or q[:, 0].min() > hi[0] or q[:, 2].max() < lo[1] or q[:, 2].min() > hi[1]: continue
         y0 = near_y(q.mean(0))
         if abs(n[1]) > 0.7:
-            if abs(q[:, 1].mean() - y0) > 3: continue
+            if abs(q[:, 1].mean() - y0) > 3 and not local: continue
             g = raster_tri(q, lo, W, H)
             if g: ground[g[0], g[1]] = True
         elif q[:, 1].min() < y0 + 1.2 and q[:, 1].max() > y0 + 0.3:  # high enough to stop a car, not overhead
@@ -157,7 +182,7 @@ def behind_wall(pts, ring, wall, lo):
     return behind > len(sample) / 2
 
 
-def seal_open_edges(col, ring, least=2, near=25.0, margin=MARGIN, one_face=False, lines=None):
+def seal_open_edges(col, ring, least=2, near=25.0, margin=MARGIN, one_face=False, lines=None, local=False):
     """Walls (both faces, from a metre under the road to 3 m over it) along every edge of the ground a
     car reaches from the loop where it ends with no wall (the void past it): where two walls' ends
     jogged 4 m apart past the hairpin a car went through and fell. Not those behind a wall (the
@@ -167,7 +192,7 @@ def seal_open_edges(col, ring, least=2, near=25.0, margin=MARGIN, one_face=False
     ring = np.asarray(ring, float)
     lo, hi = ring[:, [0, 2]].min(0) - margin, ring[:, [0, 2]].max(0) + margin
     W, H = grid_of(lo, hi)
-    ground, wall, near_y = collision_grids(col, ring, lo, W, H)
+    ground, wall, near_y = collision_grids(col, ring, lo, W, H, local)
     reach = flood(ground, wall, ring, lo)
     open_edge = reach & nb(~ground)
     xz = lambda r, c: (lo[0] + (c + 0.5) * CELL, lo[1] + (r + 0.5) * CELL)
@@ -249,9 +274,10 @@ def audit(mods, out, tag='VancouverLoop'):
     margin = MARGIN if len(sp[4]) == len(sp[5]) else 160.0  # (Fuji: paved run-off and grass 100 m and more off its line)
     lo, hi = ring[:, [0, 2]].min(0) - margin, ring[:, [0, 2]].max(0) + margin
     W, H = grid_of(lo, hi)
-    ground, wall, near_y = collision_grids(col, ring, lo, W, H)
+    ground, wall, near_y = collision_grids(col, ring, lo, W, H, local=len(sp[4]) != len(sp[5]))
     # what is drawn standing: any upright face from a kerb's height to a car's roof
     seen = np.zeros((H, W), bool)
+    off = np.full((H, W), 1e9)  # an upright face not counted: its foot over the collision's ground there, m
     drawn = sorted({struct.unpack_from('<H', e)[0] for c in cells for e in c[0]})
     for m in drawn:
         g = E.mesh_geometry(res, names, m)
@@ -263,9 +289,11 @@ def audit(mods, out, tag='VancouverLoop'):
             nrm = np.cross(q[1] - q[0], q[2] - q[0])
             if np.linalg.norm(nrm) < 1e-9 or abs(nrm[1]) > 0.7 * np.linalg.norm(nrm): continue
             y0 = near_y(q.mean(0))
+            r, c = raster_seg(*footprint(q), lo, W, H)
             if q[:, 1].min() < y0 + 1.5 and q[:, 1].max() > y0 + 0.1:
-                r, c = raster_seg(*footprint(q), lo, W, H)
                 seen[r, c] = True
+            else:  # (kept for the report: an upright face there, but under the ground or over a car's roof)
+                off[r, c] = np.where(np.abs(off[r, c]) < abs(q[:, 1].min() - y0), off[r, c], q[:, 1].min() - y0)
     # a metre's slack round what is drawn (a wall a little behind a fence is behind it)
     s2 = seen.copy()
     for dr in range(-2, 3):
@@ -304,7 +332,7 @@ def audit(mods, out, tag='VancouverLoop'):
         c, r = int((p[0] - lo[0]) / CELL), int((p[2] - lo[1]) / CELL)
         img[max(r - 1, 0):r + 2, max(c - 1, 0):c + 2] = (0, 220, 255, 255)
     forzaxpr.png(os.path.join(out, 'audit.png'), np.ascontiguousarray(img[::-1, ::-1]))
-    np.savez_compressed(os.path.join(out, 'audit.npz'), img=img, lo=lo)  # for close-ups (zoom())
+    np.savez_compressed(os.path.join(out, 'audit.npz'), img=img, lo=lo, off=off, invisible=invisible, seen=seen)  # for close-ups (zoom())
     # cameras along the reachable edge, every 20 m or so of it, 1.6 m up, looking out
     edge = reach & nb(~reach)
     pts = np.array([xz(r, c) for r, c in zip(*np.nonzero(edge))])

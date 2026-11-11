@@ -352,7 +352,8 @@ CLEARINGS += [(a, b, side, 75.0) for a, b, side in STAND_SITES]
 ARMCO_H, FENCE_H, RAIL_REPEAT = (-0.5, 0.8), (0.8, 3.8), 4.0   # (the armco's foot in the grass, 0.3 m under the runway)
 FENCE_NEAR = 35.0   # m from the centre line: the outline dressed only this near the track
 FENCE_RISE = 3.0    # m: and no higher or lower than the track there (up the embankment by the last bend it stood in the sky)
-RAIL_SMOOTH, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
+RAIL_OFF = 0.3   # m: the rail at most this far from the walls' (smoothed) line
+RAIL_SMOOTH_PTS, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
 GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces within this of its first (fewer, bigger donors:
                                  # each is a draw in every cell; 2,000 small ones cost frames)
 STAND_KEEP = 24                  # the biggest spare donors kept for the stands' copies
@@ -536,12 +537,13 @@ def build(disc, runway_dir, out):
     col = collision_of(files, Vf, T, kinds, Vk, Tk, walls + bwalls)
     import collision_audit
     seal_lines = []
-    collision_audit.seal_open_edges(col, cf, margin=160.0, one_face=True, lines=seal_lines)
+    collision_audit.seal_open_edges(col, cf, margin=160.0, one_face=True, lines=seal_lines, local=True)
     seal_quads = [np.array([a_, b_, b_ + (0, WALL_H, 0), a_ + (0, WALL_H, 0)]) for a_, b_ in seal_lines]
     Vs, Ts, UVs, Ks = dressing(seal_quads, cf, fence=False)
     Tw, Vw = np.vstack([Tw.reshape(-1, 3), Ts.reshape(-1, 3) + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vs.reshape(-1, 3)])
     UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVs.reshape(-1, 2)]), np.concatenate([Kw, Ks])
     print('sealed edges dressed: %d armco quads along %.0f m' % (len(Ts) // 4, sum(np.linalg.norm((b_ - a_)[[0, 2]]) for a_, b_ in seal_lines)))
+    if os.environ.get('FUJI_RAILS_DEBUG'): np.savez(os.environ['FUJI_RAILS_DEBUG'], seal=np.array(seal_lines), walls=np.array([q_[:2] for q_ in walls]), Vs=Vs, Ts=Ts, bwalls=np.array([q_[:2] for q_ in bwalls]), Vw=Vw, Tw=Tw, Kw=Kw)
     Vr, Tr, UVr, Kr = far_ring(runway_dir)
     Vd = np.vstack([Vf, Vt, Va, Vfar, Vtr, Vw, Vr, Vk])
     o_a, o_f = len(Vf) + len(Vt), len(Vf) + len(Vt) + len(Va)
@@ -760,7 +762,7 @@ def build(disc, runway_dir, out):
     # the collision: Road Atlanta's file emptied, its grid grown over Fuji (made above, with the walls)
     # and the ground's edges a car reaches with nothing past them (outside_walls left 3,753 outline edges open, taken
     # for seams with ground beyond; the 4 Nov audit, tools/collision_audit.py, found 2.5 km of them open to the void)
-    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, to_forza(E['centre']), margin=160.0, one_face=True))
+    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, to_forza(E['centre']), margin=160.0, one_face=True, local=True))
     col_bytes = col.to_bytes()
     big = max(len(col.block_bytes(b)) for b in col.blocks)
     print('collision: grid %d x %d, %d blocks, the largest %d KB; %d wall quads' % (col.cols, col.rows, len(col.blocks), big >> 10, len(walls)))
@@ -2020,6 +2022,18 @@ def outline_runs(walls, centre):
     out = []
     for run, closed in runs:
         p = run.copy()
+        # (11 Nov: the sealed edges' lines are the grid's 0.5 m steps: smoothed over RAIL_SMOOTH points they kept their
+        # stairs, and a post every RAIL_STEP m cut the bends' corners: 550 m of their walls stood over a metre from
+        # their rail, invisible. Smoothed over 3 m of points now, and the posts where the line turns: below)
+        # (and the outline's own walls run up to 98 m between points: smoothed over 5 of those the rail stood 3 m off
+        # the wall along the pit straight. The run first as a point every 0.5 m, then smoothed over 3 m of them.)
+        qq = np.vstack([p, p[:1]]) if closed else p
+        sa = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(qq[:, [0, 2]], axis=0), axis=1))])
+        if sa[-1] > 1.0:
+            tt = np.linspace(0, sa[-1], int(sa[-1] / 0.5) + 2)
+            if closed: tt = tt[:-1]
+            p = np.stack([np.interp(tt, sa, qq[:, j]) for j in range(3)], 1)
+        RAIL_SMOOTH = 7
         if len(p) > RAIL_SMOOTH:
             w = np.ones(RAIL_SMOOTH) / RAIL_SMOOTH
             pad = RAIL_SMOOTH // 2
@@ -2030,9 +2044,22 @@ def outline_runs(walls, centre):
             p = np.where((d1 < d0 - 0.3)[:, None], p, sm)
         q = np.vstack([p, p[:1]]) if closed else p
         sarc = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(q[:, [0, 2]], axis=0), axis=1))])
-        m = max(2, int(sarc[-1] / RAIL_STEP) + 1)
-        tt = np.linspace(0, sarc[-1], m)
-        out.append(np.stack([np.interp(tt, sarc, q[:, j]) for j in range(3)], 1))
+        # the posts: the fewest that keep the rail within RAIL_OFF m of the line (Douglas-Peucker, in plan), none
+        # further than RAIL_STEP m from the last
+        keep = np.zeros(len(q), bool); keep[[0, -1]] = True
+        todo = [(0, len(q) - 1)]
+        while todo:
+            i0, i1 = todo.pop()
+            if i1 - i0 < 2: continue
+            a_, b_ = q[i0, [0, 2]], q[i1, [0, 2]]; ab = b_ - a_; l2 = float(ab @ ab)
+            pq = q[i0 + 1:i1, [0, 2]] - a_
+            t_ = np.clip(pq @ ab / l2, 0, 1) if l2 > 1e-9 else np.zeros(len(pq))
+            dev = np.hypot(*(pq - t_[:, None] * ab).T)
+            j = int(dev.argmax())
+            if dev[j] > RAIL_OFF or sarc[i1] - sarc[i0] > RAIL_STEP:
+                j = i0 + 1 + (j if dev[j] > RAIL_OFF else int(np.argmin(np.abs(sarc[i0 + 1:i1] - (sarc[i0] + sarc[i1]) / 2))))
+                keep[j] = True; todo += [(i0, j), (j, i1)]
+        out.append(q[keep])
     return out
 
 
@@ -2205,13 +2232,16 @@ def dressing(walls, centre=None, fence=True):
             cur, cur_near = [], None
             for q, ok in zip(r, near):
                 if cur and bool(ok) != cur_near:
-                    if len(cur) >= 2: split.append((np.array(cur + [q]), cur_near))
+                    split.append((np.array(cur + [q]), cur_near))  # (11 Nov: a lone point's piece was dropped with its rail to the next: no armco for 8-16 m wherever the fence rule switched)
                     cur = []
                 cur.append(q); cur_near = bool(ok)
             if len(cur) >= 2: split.append((np.array(cur), cur_near))
         for r, nr in split:  # (pieces of at most 200 m, each its texture from 0: a loop's two ends
-            k_ = max(1, int(200 / RAIL_STEP))   # meet, a donor holding both ran past s16's coordinates)
-            runs += [(r[i:i + k_ + 1], nr) for i in range(0, len(r) - 1, k_)]
+            i0, ln_ = 0, 0.0                    # meet, a donor holding both ran past s16's coordinates; by length, 11 Nov: the posts stand unevenly now)
+            for i in range(1, len(r)):
+                ln_ += float(np.linalg.norm((r[i] - r[i - 1])[[0, 2]]))
+                if ln_ >= 100.0 or i == len(r) - 1:
+                    runs.append((r[i0:i + 1], nr)); i0, ln_ = i, 0.0
         for r, nr in runs:
             u = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(r[:, [0, 2]], axis=0), axis=1))]) / RAIL_REPEAT
             for kind, (y0, y1) in ((ARMCO, ARMCO_H), (FENCE, FENCE_H)) if nr and fence else ((ARMCO, ARMCO_H),):
