@@ -26,3 +26,4 @@ B4AA0   # a racer over the line recorded (thiscall, the racer; its place from +0
 258A60  # CSpeedComputer::GetBrakeAdjustedOptimalSpeed (thiscall): hle_listcheck.c, with XBRT_HEAP_TRAP its object and the pointers in it checked against the freed blocks held
 EEE30   # a car's transmission loaded for a race (thiscall; +8 the final drive, +0xC the ratios' count, +0x10 the ratios): hle_quickrace.c, Mayhem's 7 gears
 EF2B0   # a car's aero loaded for a race (thiscall; +0 LongitudinalDrag): hle_quickrace.c, Mayhem's lower drag
+32E010  # the leaderboard cache trimmed to its limit (thiscall): hle_qol.c raises the limit (+0x2DC) from 1 MB, past which the scoreboard just loaded was thrown out and "Updating scoreboards" called through 0

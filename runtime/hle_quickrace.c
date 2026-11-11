@@ -79,6 +79,7 @@ static int mayhem_race;
 static struct { int track, nz; float zone[MM_ZONES][5]; char name[40], todo[120]; int got; } mm[MM_MAX]; /* zone: x, z, radius, top y, track (the user's, 8 Nov: Lights, Camera, Wreck-tion at every crane over the road, Alpine Ring's and Silverstone's); track: the first line's */
 static struct { int track; float share; } mspread[32]; /* "spread <track> <percent>": the rivals over that much of the lap */
 static int nmspread;
+static float mspread_p2p = 0.10f; /* "spread pointtopoint <percent>": a point-to-point race's (the user's, 10 Nov) */
 static int nmm, mm_loaded;
 static int mm_prize; /* "prize <car ordinal>": the car for every Moment found (the user's, 7 Nov) */
 static uint32_t mayhem_ev[32];
@@ -103,6 +104,9 @@ static void mayhem_load_once(void) {
             for (unsigned long v; nmayhem_ev < 32 && (v = strtoul(s, &e, 10), e != s); s = e) mayhem_ev[nmayhem_ev++] = (uint32_t)v;
         } else if (!strncmp(line, "prize ", 6)) {
             mm_prize = atoi(line + 6);
+        } else if (!strncmp(line, "spread pointtopoint ", 20)) {
+            float pct = (float)atof(line + 20);
+            if (pct > 0 && pct <= 100) mspread_p2p = pct / 100.0f;
         } else if (!strncmp(line, "spread ", 7) && nmspread < 32) {
             int track;
             float pct;
@@ -222,6 +226,17 @@ float rt_qr_mayhem_share(void) {
     if (track < 0 && cm) track = atoi(cm + 1); /* (testing: an arcade race has no event record; XBRT_QR_TEST's track) */
     for (int i = 0; i < nmspread; i++)
         if (mspread[i].track == track) return mspread[i].share;
+    /* A race counted in percent, not laps (the user's, 10 Nov: "don't spread the opponents out as much"): a
+     * point-to-point event (its type, event +0x1C, 11: the XML's type="Point to Point", parsed at 0x7DF90 against the
+     * names at 0x51BED0), the rivals over mayhem.txt's "spread pointtopoint" share of the road, else 10%. (Not by the
+     * racing line's ends, the first try: it missed Dockyard Demolition.) */
+    if (ev && ev < RT_USER_LIMIT && xb_rd32(ev + 0x1C) == 11) {
+        static uint32_t said_ev;
+        if (said_ev != ev)
+            said_ev = ev, fprintf(stderr, "xbrt: mayhem: a point-to-point (event %u): the rivals over %.0f%% of the road\n",
+                                  xb_rd32(ev + 0x10), mspread_p2p * 100.0f);
+        return mspread_p2p;
+    }
     return 1.0f;
 }
 void rt_mm_get(int i, const char **name, const char **todo, int *got) {
@@ -2098,12 +2113,13 @@ int rt_qr_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thumbs[4]
  * can set the car back on the line (above). So while any car is NaN, the distance is not a number, or the driver's
  * line follower (+0x2E8) is not an object, the walk answers the driver's own point and 0; the car is set back on the
  * next tick. */
+int rt_is_object(uint32_t a); /* (hle_career.c) */
 void orig_f_0024C070(XbCtx *c);
 void f_0024C070(XbCtx *c) {
     uint32_t d = c->ecx, pidx = xb_rd32(c->esp + 8), pfrac = xb_rd32(c->esp + 12);
     float dist = rdf(c->esp + 4);
     uint32_t fol = d && d < RT_USER_LIMIT ? xb_rd32(d + 0x2E8) : 0;
-    const char *why = !(dist > -1e6f && dist < 1e6f) ? "the distance not a number" : fol < 0x10000 || fol >= RT_PHYS_SIZE ? "its line follower not an object" : NULL;
+    const char *why = !(dist > -1e6f && dist < 1e6f) ? "the distance not a number" : !rt_is_object(fol) ? "its line follower not an object" : NULL;
     if (!why) {
         uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
         for (uint32_t i = 0; arr && arr < RT_USER_LIMIT && n <= 64 && i < n && !why; i++) {

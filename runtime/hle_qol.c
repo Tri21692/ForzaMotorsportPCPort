@@ -49,3 +49,34 @@ void f_003F602C(XbCtx *c) {
     orig_f_003F602C(c);
     if (on) rt_apu_tick();
 }
+
+/* The scoreboards' cache (the user's crash after a Fuji race, 10 Nov; the same at Tsukuba, 9 Nov). The leaderboard
+ * manager (0x5929E8) holds every scoreboard loaded, keyed by id (Leaderboard106500 is 100000 + 6500): its getter
+ * (vtable +4, 0x32E1A0) makes one it lacks, adds it and then trims the cache (0x32E010) while the scoreboards'
+ * sizes (vtable +0x38, 0x32BBA0) pass the manager's limit (+0x2DC, 1 MB from 0x3308E3), each time throwing out the
+ * least lately used one not in use. Past the limit the one just made is that one: the getter then finds nothing
+ * and returns 0, and "Updating scoreboards" after a race (0xA2040) calls through it (the indirect call to 0 at
+ * 0xA208A). With the added cars and tracks the scoreboards pass 1 MB; the limit is 8 MB here
+ * (XBRT_SCOREBOARD_MB). */
+void orig_f_0032E010(XbCtx *c); /* the leaderboard cache trimmed to its limit (thiscall) (wraps.txt) */
+void f_0032E010(XbCtx *c) {
+    static uint32_t limit;
+    if (!limit) {
+        const char *e = getenv("XBRT_SCOREBOARD_MB");
+        limit = (uint32_t)(e && atoi(e) > 0 ? atoi(e) : 8) << 20;
+    }
+    uint32_t self = c->ecx;
+    if (xb_rd32(self + 0x2DC) < limit) xb_wr32(self + 0x2DC, limit);
+    static int logged;
+    if (logged < 4) {
+        uint32_t eax = c->eax, edx = c->edx; /* (the sizes' sum, as the trim measures it) */
+        xb_push(c, 0x0032E01Bu); f_0032BBA0(c);
+        uint32_t used = c->eax;
+        c->eax = eax; c->edx = edx; c->ecx = self;
+        if (used > (1u << 20)) {
+            logged++;
+            fprintf(stderr, "xbrt: scoreboards: %u KB loaded, past the game's 1 MB (the limit is %u MB)\n", used >> 10, limit >> 20);
+        }
+    }
+    orig_f_0032E010(c);
+}

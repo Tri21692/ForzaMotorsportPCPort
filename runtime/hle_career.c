@@ -378,7 +378,7 @@ void f_000410E0(XbCtx *c) {
         int32_t moved = place;
         if (mine) moved = 1;
         else if (k >= 0 && points > 0) {
-            float share = rt_qr_mayhem() ? rt_qr_mayhem_share() : 1.0f; /* (Mayhem: mayhem.txt's spread for the track) */
+            float share = rt_qr_mayhem() || rt_qr_mayhem_grid() ? rt_qr_mayhem_share() : 1.0f; /* (Mayhem: mayhem.txt's spread; the grid is laid before the race is Mayhem's, rt_qr_mayhem_grid: by rt_qr_mayhem alone, since 9 Nov's grid-time spread, every Mayhem grid was spread round the whole lap) */
             /* from the pole (the line's point 36, ResetPositionForGrid's place 1) on, so every rival starts ahead of the
              * player (the user's, 7 Nov: "make sure when you space out, everyone starts in front of the user": on a
              * point-to-point the line begins well behind the grid, and the first rivals at 3% and 6% of it stood
@@ -1064,10 +1064,19 @@ void f_00243F30(XbCtx *c) {
  * start) the follower held 0x42C80000, 100.0 as a float, not an object: the driver's memory not set yet, or written
  * through an old pointer. The update is skipped while it is not a heap address, and logged (the first few) with the
  * driver's other fields, to find who leaves it so. */
+/* An address an object can be at: low RAM, or memory the game allocated (its heaps are virtual allocations from
+ * 0x01000000, and here they pass the 64 MB of RAM: 10 Nov, the followers of a Mayhem field at 0x0494xxxx were taken
+ * for garbage, those rivals' updates skipped all race, and they drove badly). */
+int rt_is_object(uint32_t a) {
+    uint32_t base, size, protect, state;
+    if (a >= 0x10000 && a < RT_PHYS_SIZE) return 1;
+    return a < RT_USER_LIMIT && rt_user_query(a, &base, &size, &protect, &state) && state == 0x1000;
+}
+
 void orig_f_0024DDD0(XbCtx *c);
 void f_0024DDD0(XbCtx *c) {
     uint32_t d = c->ecx, f = d && d < RT_USER_LIMIT ? xb_rd32(d + 0x2E8) : 0;
-    if (d && d < RT_USER_LIMIT && (f < 0x10000 || f >= RT_PHYS_SIZE)) {
+    if (d && d < RT_USER_LIMIT && !rt_is_object(f)) {
         static int said;
         if (said++ < 8)
             fprintf(stderr, "xbrt: AI driver %08x: its racing-line follower (+0x2E8) is %08x, not an object: its update skipped (+0x2B4 %08x, +0x2D4 %d, +0x2E0 %08x, +0x2E4 %08x, +0x2EC %08x)\n",

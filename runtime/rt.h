@@ -139,6 +139,7 @@ extern volatile float rt_cam_vp[4][4]; /* the world's view and projection as the
 int rt_qr_flame(float pos[3], float back[3], float *power);
 int rt_qr_mayhem(void); /* a Mayhem race on */ /* Mayhem's boost flame: 1 while it burns, at pos, pointing back */
 float rt_qr_mayhem_share(void); /* the share of the lap Mayhem's rivals are spread over (mayhem.txt "spread") */
+int rt_qr_mayhem_grid(void); /* the grid being laid is a Mayhem event's (hle_quickrace.c) */
 extern volatile float rt_toon; /* Mayhem's cartoon look, 0..1 (hle_quickrace.c sets it, glfill.c draws it) */
 extern volatile uint64_t rt_present_hold_until; /* the shown picture held until then (glfill.c; the camera probe) */
 extern volatile float rt_pad_steer, rt_pad_throttle, rt_pad_brake; /* the pad as given to the game: -1..1 (right +), 0..1, 0..1 (hle_input.c) */
