@@ -12,40 +12,38 @@ c = carbin.read(open(src, 'rb').read())
 part = {p['name']: p for p in c['parts']}
 body = part['bumperF_LOD1']
 L = LP.loops(c)
+PAINT_UV = (1625, 29945)  # build.log's "paint: texel at u, v = 0.025, 0.457" (the body's plain paint vertices have it)
 
-def glass(name, tris_pts):
-    """tris_pts: list of (3 points, metres); drawn from both sides, the template part's first vertex's shading/uv"""
+def glass(name, pts, nrms, tris):
+    """pts (metres), their outward normals, triangles over them: drawn from both sides. (11 Nov, the user's "striped
+    pattern on the glass": first the template glass's texture coordinates by nearest vertex drew the livery atlas across
+    the panes; a Most Wanted car's glass is drawn from the livery's paint texel, as the converter's. Then each
+    triangle's own normal: a pane's edge is a few mm off flat, and the glass's reflection showed every wedge of the fan
+    lighter or darker. One normal a pane, the windscreen's smooth across it.)"""
     p = part[name]
-    verts, tris = [], []
-    for T in tris_pts:
-        T = np.array(T); n = np.cross(T[1] - T[0], T[2] - T[0]); l = np.linalg.norm(n)
-        if l < 1e-9: continue
-        n = n / l
-        if n @ (T.mean(0) - np.array([0, 0.5, 0])) > 0: n = -n  # stored normals: as the body's (opposite the winding's cross)
-        b = len(verts)
-        for q in T:
-            j = int(((np.array([v[:3] for v in p['verts']]) / U - q) ** 2).sum(1).argmin())
-            verts.append(tuple(int(round(x * U)) for x in q) + tuple(int(round(-x * 32767)) for x in n) + tuple(p['verts'][j][6:12]))
-        tris += [(b, b + 1, b + 2), (b, b + 2, b + 1)]
+    verts = [tuple(int(round(x * U)) for x in q) + tuple(int(round(x * 32767)) for x in n) + (215, 205, 0, 0) + PAINT_UV for q, n in zip(pts, nrms)]
     tm = p['subparts'][0]
     ids = [s['id'] for s in p['subparts']]
     p['verts'] = verts
-    p['subparts'] = [{'version': tm['version'], 'id': i, 'material': WINDOW, 'prim': 6, 'extra': bytes(16), 'indices': strip(tris), 'tail': b''} for i in ids]
-    print(name, len(tris) // 2, 'triangles')
+    both = [t for a_, b_, c_ in tris for t in ((a_, b_, c_), (a_, c_, b_))]
+    p['subparts'] = [{'version': tm['version'], 'id': i, 'material': WINDOW, 'prim': 6, 'extra': bytes(16), 'indices': strip(both), 'tail': b''} for i in ids]
+    print(name, len(tris), 'triangles')
 
-def fan(Q, inset=0.004):
+def fan(name, Q, inset=0.004):
     c0 = Q.mean(0)
-    inw = np.array([-np.sign(c0[0]) * inset, 0, 0])
-    Q = Q + inw; c0 = c0 + inw
-    return [(c0, Q[i], Q[(i + 1) % len(Q)]) for i in range(len(Q))]
+    n = np.linalg.svd(Q - c0)[2][2]
+    if n[0] * c0[0] < 0: n = -n  # outward: away from the car's middle
+    Q = Q - (Q - c0) @ n[:, None] * n - n * inset  # flat on its best plane, a little inside the frame
+    k = len(Q)
+    glass(name, [c0 - n * inset] + list(Q), [n] * (k + 1), [(0, 1 + i, 1 + (i + 1) % k) for i in range(k)])
 
 def pick(test):
     got = [Q for perim, closed, Q in L if test(perim, closed, Q.mean(0), Q.max(0) - Q.min(0))]
     assert len(got) == 1, len(got)
     return got[0]
 for nm, sg in (('L', -1), ('R', 1)):
-    glass('glass%sF_LOD1' % nm, fan(pick(lambda pe, cl, m, b: cl and sg * m[0] > 0.5 and m[1] > 0.8 and abs(m[2] - 0.07) < 0.1 and b[2] > 1.0)))
-    glass('glass%sR_LOD1' % nm, fan(pick(lambda pe, cl, m, b: cl and sg * m[0] > 0.5 and m[1] > 0.8 and abs(m[2] + 0.57) < 0.1 and 0.25 < b[2] < 0.5)))
+    fan('glass%sF_LOD1' % nm, pick(lambda pe, cl, m, b: cl and sg * m[0] > 0.5 and m[1] > 0.8 and abs(m[2] - 0.07) < 0.1 and b[2] > 1.0))
+    fan('glass%sR_LOD1' % nm, pick(lambda pe, cl, m, b: cl and sg * m[0] > 0.5 and m[1] > 0.8 and abs(m[2] + 0.57) < 0.1 and 0.25 < b[2] < 0.5))
 # the windscreen: its lower edge (an open chain at y 0.69, z 1.05) and upper edge (y 0.99, z 0.22), each mirrored
 lo = pick(lambda pe, cl, m, b: not cl and abs(m[1] - 0.69) < 0.03 and abs(m[2] - 1.05) < 0.05 and b[0] > 1.0)
 hi = pick(lambda pe, cl, m, b: not cl and abs(m[1] - 0.99) < 0.02 and abs(m[2] - 0.22) < 0.05 and b[0] > 0.5)
@@ -53,15 +51,20 @@ def edge(Q, n=13):
     Q = np.vstack([Q, Q * [-1, 1, 1]]); Q = Q[np.argsort(Q[:, 0])]
     w = np.abs(Q[:, 0]).max()
     xs = np.linspace(-w, w, n)
-    return np.stack([xs, np.interp(xs, Q[:, 0], Q[:, 1]), np.interp(xs, Q[:, 0], Q[:, 2])], 1)
+    y, z = np.interp(xs, Q[:, 0], Q[:, 1]), np.interp(xs, Q[:, 0], Q[:, 2])
+    cy, cz = np.polyfit(xs, y, 2), np.polyfit(xs, z, 2)  # a smooth bow, not the edge's every step
+    return np.stack([xs, np.polyval(cy, xs), np.polyval(cz, xs)], 1)
 A, B = edge(lo), edge(hi)
 print('windscreen: lower edge half width %.2f at y %.2f z %.2f, upper %.2f at y %.2f z %.2f' % (A[-1, 0], A[:, 1].mean(), A[:, 2].mean(), B[-1, 0], B[:, 1].mean(), B[:, 2].mean()))
-nrm = np.cross(A[-1] - A[0], B.mean(0) - A.mean(0)); nrm /= np.linalg.norm(nrm)
-if nrm[1] < 0: nrm = -nrm
-A, B = A - nrm * 0.004, B - nrm * 0.004
-T = []
-for i in range(len(A) - 1): T += [(A[i], A[i + 1], B[i + 1]), (A[i], B[i + 1], B[i])]
-glass('glassF_LOD1', T)
+N = []
+for i in range(len(A)):
+    j0, j1 = max(0, i - 1), min(len(A) - 1, i + 1)
+    n = np.cross(A[j1] - A[j0], B[i] - A[i]); n /= np.linalg.norm(n)
+    N.append(n if n[1] > 0 else -n)
+N = np.array(N)
+k = len(A)
+glass('glassF_LOD1', list(A - N * 0.004) + list(B - N * 0.004), list(N) + list(N),
+      [t for i in range(k - 1) for t in ((i, i + 1, k + i + 1), (i, k + i + 1, k + i))])
 
 # the arch liners
 import tyrecheck
