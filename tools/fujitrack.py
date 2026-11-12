@@ -393,7 +393,8 @@ KERB_TURN, KERB_APEX, KERB_EXIT, KERB_IN, KERB_LIFT, KERB_SKIP = 1 / 120.0, 25.0
 # its crest this high, the rise over its ends' KERB_TAPER m; gaps under KERB_JOIN m closed, none shorter than KERB_LEAST m
 KERB_WIDE, KERB_RISE, KERB_TAPER, KERB_JOIN, KERB_LEAST = 1.6, 0.06, 3.0, 12.0, 10.0
 KERB_STEADY = 40.0
-KERB_ALL = True   # the user's, 11 Nov after the drive: "put curbs all along the track": both edges, the whole lap
+KERB_ADD = False  # kerbs added at the corners GT4 gives none (the user's, 11 Nov: "add the correct curbs": the real track's only)
+KERB_ALL = False  # (was True on   # the user's, 11 Nov after the drive: "put curbs all along the track": both edges, the whole lap
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
 TERRAIN_REACH = 110.0           # m: that far beyond the runway (the forest cards stand 45-90 m beyond it)
@@ -506,6 +507,7 @@ def build(disc, runway_dir, out):
 
     # what is drawn: all but far grass and slivers (the collision keeps every triangle)
     E = np.load(os.path.join(runway_dir if os.path.exists(os.path.join(runway_dir, 'layout_edges.npz')) else out, 'layout_edges.npz'))
+    E, pit_run = straighten_pit(E, V, F)
     cen_g = E['centre'][:, [0, 2]]
     cent = V[F[:, :3]].mean(1)[:, [0, 2]]
     dist = np.array([np.min(np.hypot(*(cen_g - p).T)) for p in cent])
@@ -562,13 +564,23 @@ def build(disc, runway_dir, out):
     if len(Tg_):
         Tw, Vw = np.vstack([Tw.reshape(-1, 3), Tg_ + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vg_])
         UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVg_]), np.concatenate([Kw, Kg_])
+    # the pit wall: solid on both faces, armco along it
+    _mid_out = np.linalg.norm((lef_f - cf)[pit_run][:, [0, 2]], axis=1) if len(pit_run) else np.zeros(0)
+    _ins = sides(cf)[1]
+    _left_in = bool(len(pit_run)) and float(np.einsum('ij,ij->i', (lef_f - cf)[pit_run][:, [0, 2]], _ins[pit_run][:, [0, 2]]).mean()) > 0
+    _gy = lambda xz: float(np.asarray(ground_at(np.asarray(xz, float)[None]))[0])
+    pw_a, pw_b = pit_wall(cf, rig_f if _left_in else lef_f, lef_f if _left_in else rig_f, pit_run, _gy)
+    if pw_a:
+        Vpw, Tpw, UVpw, Kpw = dressing(pw_a, cf, fence=False)
+        Tw, Vw = np.vstack([Tw.reshape(-1, 3), Tpw.reshape(-1, 3) + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vpw.reshape(-1, 3)])
+        UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVpw.reshape(-1, 2)]), np.concatenate([Kw, Kpw])
     Vk, Tk, UVk = more_kerbs(cf, lef_f, rig_f, rast, Vf[T[kinds == KERB]].mean(1) if (kinds == KERB).any() else np.zeros((0, 3)))
     # the walls that will close the ground's open edges (the collision's below: collision_audit.seal_open_edges, on
     # the same collision made now), armco drawn along them as along the outline's
-    col = collision_of(files, Vf, T, kinds, Vk, Tk, walls + bwalls)
+    col = collision_of(files, Vf, T, kinds, Vk, Tk, walls + bwalls + pw_a + pw_b)
     import collision_audit
     seal_lines = []
-    collision_audit.seal_open_edges(col, cf, margin=160.0, one_face=True, lines=seal_lines, local=True)
+    collision_audit.seal_open_edges(col, cf, near=80.0, margin=160.0, one_face=True, lines=seal_lines, local=True)
     seal_quads = [np.array([a_, b_, b_ + (0, WALL_H, 0), a_ + (0, WALL_H, 0)]) for a_, b_ in seal_lines]
     Vs, Ts, UVs, Ks = dressing(seal_quads, cf, fence=False)
     Tw, Vw = np.vstack([Tw.reshape(-1, 3), Ts.reshape(-1, 3) + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vs.reshape(-1, 3)])
@@ -799,7 +811,7 @@ def build(disc, runway_dir, out):
     # the collision: Road Atlanta's file emptied, its grid grown over Fuji (made above, with the walls)
     # and the ground's edges a car reaches with nothing past them (outside_walls left 3,753 outline edges open, taken
     # for seams with ground beyond; the 4 Nov audit, tools/collision_audit.py, found 2.5 km of them open to the void)
-    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, to_forza(E['centre']), margin=160.0, one_face=True, local=True))
+    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, to_forza(E['centre']), near=80.0, margin=160.0, one_face=True, local=True))
     col_bytes = col.to_bytes()
     big = max(len(col.block_bytes(b)) for b in col.blocks)
     print('collision: grid %d x %d, %d blocks, the largest %d KB; %d wall quads' % (col.cols, col.rows, len(col.blocks), big >> 10, len(walls)))
@@ -814,6 +826,12 @@ def build(disc, runway_dir, out):
         npt = (r[4] + 4) // 16
         e = inner if nm.endswith('inner') else outer
         res[r[3]:r[3] + 12 * npt] = open_lap(e, npt).astype('<f4').tobytes()
+    # and sealed once more exactly as the audit looks (its loop: the curbing splines' middle; a 6 m edge beyond the last
+    # bend showed on that grid alone, 11 Nov)
+    sp_ = collision_audit.edge_splines(bytes(res), names)
+    j_ = np.argmin(np.hypot(sp_[4][:, None, 0] - sp_[5][None, :, 0], sp_[4][:, None, 2] - sp_[5][None, :, 2]), axis=1)
+    print('open edges sealed on the audit grid: %.0f m of wall' % collision_audit.seal_open_edges(col, (sp_[4] + sp_[5][j_]) / 2, near=1e9, margin=160.0, one_face=True, local=True))
+    col_bytes = col.to_bytes()
 
     os.makedirs(out, exist_ok=True)
     for name, data in (('roadatlanta.res', res), ('QuickPreview1.col', col_bytes), ('QuickPreview1.pvs', pvs),
@@ -842,6 +860,13 @@ ROWS = [
     (['sunocosign'], 0.075, 0.1, 'out', 10.0, 0.0),
 ]
 ROW_PUSH = (0.0, 3.0, 8.0, 16.0)   # m further out tried when a row's piece would reach over the runway
+# The main straight (the 11 Nov overlay on OpenStreetMap's Fuji Speedway: the lines 4 m apart on average, but on the
+# main straight the game's 20 m off): GT4's runway there is one band of asphalt PIT_BAND m or more wide, the track
+# and the pit lane with no surface between them, and the layout's line wandered across it. Where the band is that
+# wide the track is its outer PIT_TRACK_W m (OpenStreetMap's line lies 12 to 14 m from the band's outer edge, its
+# pit lane 30 to 32 m), and a wall stands PIT_WALL m from the outer edge, both faces solid, armco along it, open
+# over PIT_GAP m at each end (the ways in and out): the asphalt beyond it is the pit lane.
+PIT_BAND, PIT_TRACK_W, PIT_WALL, PIT_GAP = 30.0, 24.0, 25.0, 60.0
 PIT_APRON = (0.935, 0.02, [(-0.3, False), (15.0, False), (30.0, True), (55.0, True), (80.0, True), (105.0, True), (130.0, True)])
                                    # the pit lane's apron and the paddock behind it (tarmac, drawn only; the user's photo:
                                    # all paved): from and to (shares of the lap), its columns (apron) beyond the runway's
@@ -1239,6 +1264,99 @@ def apron(centre, inner, reach_in, s0, s1, cols, ground_at=None):
     flip = nrm[:, 1] > 0
     T[flip] = T[flip][:, [0, 2, 1]]
     return V, T
+
+
+def straighten_pit(E, V, F):
+    """The layout's lines (GT4's coordinates) where the runway is a band PIT_BAND m wide: the track its outer
+    PIT_TRACK_W m. Also a loop in the centre line taken out. Returns (the layout, the indices changed)."""
+    E = {k: np.array(E[k], float) for k in ('centre', 'left', 'right')}
+    c = E['centre'][:, [0, 2]]
+    n = len(c)
+    r = Raster(V, F, res=0.25)
+    tar = lambda xz: int(r.at(np.asarray(xz, float)[None])[0]) in (TARMAC, LINE, KERB)
+    tg = np.roll(c, -3, 0) - np.roll(c, 3, 0); tg /= np.linalg.norm(tg, axis=1, keepdims=True)
+    nrm = np.stack([-tg[:, 1], tg[:, 0]], 1)
+    outer, width = np.full((n, 2), np.nan), np.zeros(n)
+    for i in range(n):
+        if not tar(c[i]): continue
+        sgn = -1.0 if inside((c[i] + nrm[i] * 6.0)[None], c)[0] else 1.0  # (outward: away from the loop's inside)
+        do = next((k * 0.25 for k in range(1, 320) if not tar(c[i] + nrm[i] * sgn * k * 0.25)), None)
+        di = next((k * 0.25 for k in range(1, 320) if not tar(c[i] - nrm[i] * sgn * k * 0.25)), None)
+        if do is None or di is None: continue
+        width[i] = do + di
+        outer[i] = c[i] + nrm[i] * sgn * do
+    wide = width >= PIT_BAND
+    # (the longest run of it: the main straight's; short gaps in it closed)
+    w2 = wide.copy()
+    for k in range(1, 8): w2 |= np.roll(wide, k) & np.roll(wide, -k)
+    best, i = (0, 0), 0
+    order = [(int(np.argmin(w2)) + q) % n for q in range(n)]
+    while i < n:
+        if not w2[order[i]]: i += 1; continue
+        j = i
+        while j < n and w2[order[j]]: j += 1
+        if j - i > best[0]: best = (j - i, i)
+        i = j
+    run = [order[q] for q in range(best[1], best[1] + best[0])]
+    if len(run) < 30:
+        print('main straight: no wide band found'); return E, []
+    O = outer[run]
+    for a in range(2):  # (gaps filled along the run, then smoothed)
+        ok = np.isfinite(O[:, a]); O[:, a] = np.interp(np.arange(len(run)), np.nonzero(ok)[0], O[ok, a])
+    Os = np.stack([np.convolve(np.concatenate([np.full(6, O[0, a]), O[:, a], np.full(6, O[-1, a])]), np.ones(13) / 13, 'valid') for a in range(2)], 1)
+    tr = np.gradient(Os, axis=0); tr /= np.linalg.norm(tr, axis=1, keepdims=True)
+    inw = np.stack([-tr[:, 1], tr[:, 0]], 1)
+    if ((c[run] - Os) * inw).sum(1).mean() < 0: inw = -inw
+    moved = 0.0
+    for q, i in enumerate(run):
+        f = min(1.0, (q + 1) / 3.0, (len(run) - q) / 3.0)  # (blended in over 6 m at each end: the layout is right up to the band)
+        new_o, new_i = Os[q] + inw[q] * 0.0, Os[q] + inw[q] * PIT_TRACK_W
+        new_c = (new_o + new_i) / 2
+        moved = max(moved, float(np.linalg.norm(new_c - c[i])) * f)
+        lo_, ro_ = np.linalg.norm(E['left'][i, [0, 2]] - Os[q]), np.linalg.norm(E['right'][i, [0, 2]] - Os[q])
+        ko, ki = ('left', 'right') if lo_ <= ro_ else ('right', 'left')
+        for key, new in ((ko, new_o), (ki, new_i), ('centre', new_c)):
+            E[key][i, [0, 2]] = E[key][i, [0, 2]] * (1 - f) + new * f
+    print('main straight: %d m of the layout moved onto the track (the band %.0f m wide there; at most %.1f m)' % (2 * len(run), np.median(width[run]), moved))
+    # a loop in the centre line (a turn of more than 0.5 rad in a step): the points round it laid straight between their neighbours
+    c = E['centre'][:, [0, 2]]
+    d_ = np.roll(c, -1, 0) - c
+    ang = np.arctan2(d_[:, 1], d_[:, 0])
+    turn_ = np.abs(np.angle(np.exp(1j * (ang - np.roll(ang, 1)))))
+    seg_ = np.linalg.norm(d_, axis=1)
+    path_ = sum(np.roll(seg_, -q) for q in range(-6, 6))
+    wander = path_ / np.maximum(np.linalg.norm(np.roll(c, -6, 0) - np.roll(c, 6, 0), axis=1), 1e-9)
+    bad = np.nonzero((turn_ > 0.5) | (wander > 1.08))[0]  # (the two places the layout loops at a run-off road: 1.13 and 1.11; the bends 1.04 at most)
+    picked = []
+    for i in bad:  # (one a place: the worst within 20 points)
+        if all(min(abs(i - j), n - abs(i - j)) > 20 for j in picked): picked.append(int(max((j for j in bad if min(abs(i - j), n - abs(i - j)) <= 20), key=lambda j: wander[j])))
+    for i in picked:
+        a, b = (i - 8) % n, (i + 8) % n
+        for q in range(1, 16):
+            j = (a + q) % n
+            for key in ('centre', 'left', 'right'): E[key][j] = E[key][a] + (E[key][b] - E[key][a]) * q / 16.0
+        print('layout: a kink at point %d (lap %.3f) laid straight' % (i, i / n))
+    return E, run
+
+
+def pit_wall(centre, outer_edge, inner_edge, run, ground_y):
+    """The pit wall along `run` (the lap's indices of the main straight's band): quads PIT_WALL m from the track's
+    outer edge, PIT_GAP m left open at each end. Returns (one face's quads, the other's)."""
+    if len(run) < 40: return [], []
+    o, i_ = outer_edge[run][:, [0, 2]], inner_edge[run][:, [0, 2]]
+    inw = i_ - o; inw /= np.maximum(np.linalg.norm(inw, axis=1, keepdims=True), 1e-9)
+    line = o + inw * PIT_WALL
+    along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
+    keep = (along >= PIT_GAP) & (along <= along[-1] - PIT_GAP)
+    a_, b_ = [], []
+    ks = np.nonzero(keep)[0][::2]
+    for k0, k1 in zip(ks[:-1], ks[1:]):
+        p = np.array([line[k0][0], ground_y(line[k0]), line[k0][1]]); q = np.array([line[k1][0], ground_y(line[k1]), line[k1][1]])
+        p[1] -= 0.3; q[1] -= 0.3
+        quad = np.array([p, q, q + (0, WALL_H, 0), p + (0, WALL_H, 0)])
+        a_.append(quad); b_.append(quad[[1, 0, 3, 2]])
+    print('pit wall: %.0f m, %.0f m open at each end' % (along[ks[-1]] - along[ks[0]] if len(ks) else 0, PIT_GAP))
+    return a_, b_
 
 
 def stand_pads(centre, inner, reach_in, reach_out):
@@ -2336,6 +2454,7 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
     added = 0
     i = 0
     while i < n:  # the corners GT4 gives no kerb: the inside round the apex, the outside on the way out
+        if not KERB_ADD: break
         if not bent[i]: i += 1; continue
         j = i
         while j < n and bent[j]: j += 1
@@ -2374,7 +2493,7 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
         out = sm - c
         out = (np.roll(out, 1, 0) + out + np.roll(out, -1, 0)) / 3
         out /= np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
-        if KERB_ALL:  # the edge's distance from the centre line steadied (the user's 11 Nov shots: at the run-off roads'
+        if True:  # the edge's distance from the centre line steadied (the user's 11 Nov shots: at the run-off roads'
             # junctions the layout's edge swings out and back, and the kerb ran across the asphalt): the least
             # within KERB_STEADY m each way, smoothed
             wd = np.einsum('ij,ij->i', sm - c, out)
