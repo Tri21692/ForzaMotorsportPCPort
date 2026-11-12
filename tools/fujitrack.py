@@ -342,7 +342,8 @@ CLEARINGS = [(0.88, 0.06, 'in', 170.0), (0.88, 0.06, 'out', 70.0)]
 # the runway; the woods kept off them.
 STAND_SITES = [(0.029, 0.119, 'out'), (0.168, 0.232, 'in'), (0.316, 0.445, 'out'), (0.427, 0.458, 'in'),
                (0.615, 0.642, 'out'), (0.633, 0.673, 'in'), (0.719, 0.748, 'out'), (0.791, 0.863, 'out')]
-STAND_CLONES = ['seatsarea_02', 'outerpitstands01', 'seatsarea']
+STAND_CLONES = ['seatsarea_02', 'seatsarea']   # (not outerpitstands01: a copy is only its 24-byte meshes, its roof's frame alone in the sky: the user's 11 Nov shots)
+BACK_TO_FRONT = {'outerpitstands01'}  # (turned round: it stood with its white back wall to the track)
 STAND_GAP = 3.0
 STAND_PAD = 75.0   # m beyond the runway levelled at each stand site (terrain's pads): the stands stood sunk in the slopes
 STAND_PUSH = (0.0, 4.0, 10.0, 20.0, 35.0)  # m further out tried (a long straight stand by a bend)
@@ -357,7 +358,7 @@ RAIL_OFF = 0.3   # m: the rail at most this far from the walls' (smoothed) line
 RAIL_SMOOTH_PTS, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
 GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces within this of its first (fewer, bigger donors:
                                  # each is a draw in every cell; 2,000 small ones cost frames)
-STAND_NEEDS = [(860, 1560, 5), (420, 750, 5), (260, 390, 5), (90, 160, 6), (55, 120, 6)]  # (vertices, indices, donors kept: the stands' meshes)
+STAND_NEEDS = [(860, 1560, 9), (420, 750, 8), (55, 120, 14)]  # (vertices, indices, donors kept: the stands' meshes)
 STAND_KEEP = 24                  # the biggest spare donors kept for the stands' copies
 CLONE_DONOR = 2000               # vertices: the largest streamed donor kept for the stands' copies
 # Shortcuts blocked (the user's "Forza touches"): armco and a wall to the cars wherever crossing the runway's
@@ -372,6 +373,7 @@ KERB_TURN, KERB_APEX, KERB_EXIT, KERB_IN, KERB_LIFT, KERB_SKIP = 1 / 120.0, 25.0
 # Every kerb one ribbon (more_kerbs; the user's 11 Nov review: too thin or flat, ragged ends, wrong places): this wide,
 # its crest this high, the rise over its ends' KERB_TAPER m; gaps under KERB_JOIN m closed, none shorter than KERB_LEAST m
 KERB_WIDE, KERB_RISE, KERB_TAPER, KERB_JOIN, KERB_LEAST = 1.6, 0.06, 3.0, 12.0, 10.0
+KERB_STEADY = 40.0
 KERB_ALL = True   # the user's, 11 Nov after the drive: "put curbs all along the track": both edges, the whole lap
 STREAMED_DONOR = 600            # vertices: the largest donor whose buffer is streamed (the svb's small ones ran out)
 TERRAIN_CELL = 16.0            # m: the ground beyond the runway, drawn as a grid of this
@@ -806,7 +808,7 @@ def build(disc, runway_dir, out):
 # main grandstand opposite (92% to 2%), the paddock behind the pits (its buildings 40 to 120 m from the straight).
 ROWS = [
     (['hangar01', 'hangar02', 'hangar03', 'garages01', 'pirellabuilding'], 0.935, 0.02, 'in', 17.0, 4.0),
-    (['seatsarea', 'outerpitstands01', 'seatsarea_02'], 0.92, 0.03, 'out', 3.0, 3.0),
+    (['seatsarea', 'seatsarea_02'], 0.92, 0.03, 'out', 3.0, 3.0),  # (not outerpitstands01: white walls on every side, the user's 11 Nov shots: blank sheds)
     (['fuelstation01', 'restroom01', 'restroom02', 'restroom03', 'truckcambody01k_284', 'truckcambody02k_285'], 0.93, 0.02, 'in', 50.0, 12.0),
     ((r'(broadcast_trailer|semitrailer|trailerlarge)\w*$', 53), 0.93, 0.02, 'in', 72.0, 4.0),
     ((r'rvlarge\w*$', 60), 0.93, 0.02, 'in', 92.0, 5.0),
@@ -940,7 +942,7 @@ def instance_geometry(res, names, model, ms):
     return bufs, (np.vstack(allp) if allp else np.zeros((0, 3)))
 
 
-def place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, lift):
+def place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, lift, drape=None):
     """An object's vertices turned by R (2 x 2, on x and z) about `mid` onto `target`, raised by `lift`, normals
     turned with them, the svb copies and the ppw spheres (a mesh whose sphere is not found is left out) moved.
     Returns (meshes, textures, vertex buffers) to show and stream in every cell."""
@@ -952,6 +954,7 @@ def place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, targe
         v = raw[:, :3].view('<f4').astype(float)
         xz = (v[:, [0, 2]] - mid[[0, 2]]) @ R.T + target[[0, 2]]
         v[:, 0], v[:, 2], v[:, 1] = xz[:, 0], xz[:, 1], v[:, 1] + lift
+        if drape: v[:, 1] += drape(xz)  # (a stand follows the ground along it: the slope's rise from its foot)
         raw[:, :3] = v.astype('<f4').view('<u4')
         if stride >= 4:  # its normals (the word after the position) turned the same way
             for j in range(n):
@@ -980,7 +983,7 @@ def place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, targe
     return meshes, texs, vbs
 
 
-def clone_instance(res, names, model, ppw, svb, svb_out, ms, mid, R, target, lift, spare):
+def clone_instance(res, names, model, ppw, svb, svb_out, ms, mid, R, target, lift, spare, drape=None):
     """A copy of an object's meshes (as the disc has them: ORIG_RES) in spare donors (rows [vertices, indices, mesh,
     sphere, buffer], taken from `spare`, each the smallest that fits), turned by R about `mid` onto `target` and
     raised by `lift` as place_instance's, with the mesh's own material (flags, format, textures, shader) and
@@ -1005,6 +1008,7 @@ def clone_instance(res, names, model, ppw, svb, svb_out, ms, mid, R, target, lif
         v = raw[:, :3].view('<f4').astype(float)
         xz = (v[:, [0, 2]] - mid[[0, 2]]) @ R.T + target[[0, 2]]
         v[:, 0], v[:, 2], v[:, 1] = xz[:, 0], xz[:, 1], v[:, 1] + lift
+        if drape: v[:, 1] += drape(xz)
         raw[:, :3] = v.astype('<f4').view('<u4')
         for j in range(nv):
             nv_ = sc.unpack_normal(int(raw[j, 3]))
@@ -1525,6 +1529,7 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
             square = length < 1.4 * float(np.ptp(xz @ short_axis))  # (its long side no guide: any right angle)
             a = max([base + k_ * np.pi / (2 if square else 1) for k_ in range(4 if square else 2)],
                     key=lambda a_: np.cos(f0 + a_) * -d[0] + np.sin(f0 + a_) * -d[2])  # its front to the track
+            if stem in BACK_TO_FRONT: a += np.pi
             R = turn(a)
             near_side = (xz @ R.T @ d[[0, 2]]).min()
             for push in ROW_PUSH:
@@ -1532,7 +1537,8 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
                 if clear(xz @ R.T + target[[0, 2]]): break
             else: continue
             foot = ground_at(xz @ R.T + target[[0, 2]]).min() if ground_at else centre[i0][1]
-            m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, foot - allp[:, 1].min())
+            drape = (lambda q, foot=foot: np.asarray(ground_at(q), float) - foot) if ground_at and ('seats' in stem or 'stands' in stem) else None
+            m_, t_, v_ = place_instance(res, names, model, ppw, svb, svb_out, ms, bufs, mid, R, target, foot - allp[:, 1].min(), drape)
             if m_: placed += 1
             meshes += m_; texs |= t_; vbs |= v_
             used.add(stem)
@@ -1573,7 +1579,8 @@ def scatter(res, names, model, ppw, svb, svb_out, centre, reach_in, reach_out, u
                     if clear(xz @ R.T + target[[0, 2]]): break
                 else: why['over the runway'] += 1; continue
                 foot = ground_at(xz @ R.T + target[[0, 2]]).min() if ground_at else centre[i0][1]
-                m_, t_, v_ = clone_instance(res, names, model, ppw, svb, svb_out, ms, mid, R, target, foot - allp[:, 1].min(), spare)
+                drape = (lambda q, foot=foot: np.asarray(ground_at(q), float) - foot) if ground_at else None
+                m_, t_, v_ = clone_instance(res, names, model, ppw, svb, svb_out, ms, mid, R, target, foot - allp[:, 1].min(), spare, drape)
                 if m_: copies += 1; why['copied'] += 1
                 else: why['no donors'] += 1
                 meshes += m_; texs |= t_; vbs |= v_
@@ -2256,6 +2263,14 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
         out = sm - c
         out = (np.roll(out, 1, 0) + out + np.roll(out, -1, 0)) / 3
         out /= np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
+        if KERB_ALL:  # the edge's distance from the centre line steadied (the user's 11 Nov shots: at the run-off roads'
+            # junctions the layout's edge swings out and back, and the kerb ran across the asphalt): the least
+            # within KERB_STEADY m each way, smoothed
+            wd = np.einsum('ij,ij->i', sm - c, out)
+            h_ = int(round(KERB_STEADY / step))
+            wd = np.min([np.roll(wd, r_) for r_ in range(-h_, h_ + 1)], 0)
+            wd = np.convolve(np.concatenate([wd[-h_:], wd, wd[:h_]]), np.ones(2 * h_ + 1) / (2 * h_ + 1), 'valid')
+            sm = c + out * wd[:, None]
         q = 0
         while q < n:
             if not mm[q]: q += 1; continue
@@ -2282,7 +2297,10 @@ def more_kerbs(centre, left, right, rast, gt4_kerbs):
                     for f, u, lift, share in cols:
                         xz = sm[q_] + out[q_] * f
                         ij = np.floor((xz - rast.lo) / rast.res).astype(int)
-                        y = rast.y[ij[1], ij[0]] if 0 <= ij[0] < rast.shape[1] and 0 <= ij[1] < rast.shape[0] else np.nan
+                        y = np.nan
+                        if 2 <= ij[0] < rast.shape[1] - 2 and 2 <= ij[1] < rast.shape[0] - 2:  # (the highest within a metre: a grass sheet lay over it)
+                            near_ = rast.y[ij[1] - 2:ij[1] + 3, ij[0] - 2:ij[0] + 3]
+                            if np.isfinite(near_).any(): y = float(np.nanmax(near_))
                         V.append((xz[0], (y if np.isfinite(y) else edge[q_][1]) + lift + share * rise, xz[1])); UV.append((u, along[x] / 4.0 - v0))
                 for x in range(len(piece) - 1):
                     for col in range(2):
