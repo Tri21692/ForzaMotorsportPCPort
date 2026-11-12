@@ -16,6 +16,17 @@ centre = E['centre']
 half = np.linalg.norm(E['inner'] - E['outer'], axis=1) / 2
 wps, nseg, sounds = aitrack.install(mega, F.TAG, (E['inner'] + E['outer']) / 2, half, line=F.racing_line(build_dir))
 print('AI files: %d waypoints, %d segments; sounds kept %s' % (len(wps), nseg, sounds))
+if 'pit_marks' in E.files and len(E['pit_marks']):
+    import mlp
+    gv, _ = mlp.read(mega.files['ai' + B + 'drivatarv2' + B + F.TAG.lower() + 'geometry.bin'])
+    wp_xz = np.stack([np.array(gv['fWaypointX']), np.array(gv['fWaypointY'])], 1)   # (the file's Y is the world's z)
+    key_q = next(k for k in mega.files if k.lower() == 'tracks' + B + F.TAG.lower() + B + 'quickpreview.xml')
+    xml, line = F.pitting_xml(mega.files[key_q].decode('latin-1'), E['pit_marks'], wp_xz)
+    mega.files[key_q] = xml.encode('latin-1')
+    print('pitting:', line)
+key_c = next(k for k in mega.files if k.lower() == 'tracks' + B + F.TAG.lower() + B + 'pitcams.xml')
+mega.files[key_c] = mega.files[next(k for k in mega.files if k.lower() == 'tracks' + B + 'tsukuba' + B + 'pitcams.xml')]
+print('pit camera: Tsukuba (a view set off the car)')
 xpr = addcar.Archive(disc, mods, 'MegaXPR.ca2')
 key = next(k for k in xpr.files if k.lower() == 'frontend' + B + 'gfx_trackmaps.xpr')
 xpr.files[key] = addseries.put_tile(xpr.files[key], F.MAP_TILE, sl.trackmap(centre.copy()), (128, 128, 4))

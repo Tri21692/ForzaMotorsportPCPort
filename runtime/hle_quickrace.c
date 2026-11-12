@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "rt.h"
 
@@ -655,6 +656,43 @@ static uint64_t auto_until; /* real time: the autopilot let go by then at the la
 volatile int rt_qr_auto;     /* the autopilot: 2 just started, 1 on (hle_input.c ends it) */
 static float auto_speed, auto_p[2];
 static int auto_k = -1;
+/* The pit lanes (the user's, 11 Nov: "mayhem mode is affecting it": a car standing in its pit stall 3 s was "stuck" and
+ * put back on the line, RESPAWN, and a pitting rival could be taken down): <mods>/pitzones.txt, lines "<track folder>
+ * <x> <z>": points every few metres along each track's pit splines (tools/pitzones.py). A car within PIT_NEAR m of one
+ * of the loaded track's points is in the pits: no takedown of it or by it, never stuck. */
+#define PIT_NEAR 7.0f
+static float *pitz;
+static int npitz = -1;
+static char pitz_track[64];
+static int in_pits(const float *p) {
+    const char *t = rt_loading_track();
+    if (npitz < 0 || strcasecmp(t, pitz_track)) {
+        char path[1100];
+        snprintf(path, sizeof path, "%s/pitzones.txt", mods_dir());
+        snprintf(pitz_track, sizeof pitz_track, "%s", t);
+        npitz = 0;
+        FILE *f = fopen(path, "r");
+        if (f) {
+            char name[64]; float x, z;
+            if (!pitz) pitz = malloc(2 * 2048 * sizeof(float));
+            while (pitz && npitz < 2048 && fscanf(f, "%63s %f %f", name, &x, &z) == 3)
+                if (!strcasecmp(name, t)) pitz[2 * npitz] = x, pitz[2 * npitz + 1] = z, npitz++;
+            fclose(f);
+        }
+        fprintf(stderr, "xbrt: quick race: %d pit lane points for %s\n", npitz, t);
+    }
+    for (int i = 0; i < npitz; i++) {
+        float dx = p[0] - pitz[2 * i], dz = p[2] - pitz[2 * i + 1];
+        if (dx * dx + dz * dz < PIT_NEAR * PIT_NEAR) return 1;
+    }
+    return 0;
+}
+/* XBRT_AUTODRIVE_PATH=<file of "x z" lines> (testing: Fuji's pit lane, 11 Nov): the autopilot leaves the AI line for
+ * this path when the car comes within 12 m of its first point, follows it at 14 m/s, and lets the car go at its
+ * end (the game's own driving from there: a pit stop, if the path ran into the pit lane). Once a race. */
+static float *path_xz;
+static int path_n = -1, path_k = -1, path_done;
+static float path_p[2];
 
 int rt_qr_cam_active(void) { return tdcam_until != 0; }
 
@@ -1470,12 +1508,49 @@ void rt_qr_tick(void) {
            * the AI line at that speed, the camera behind it as when driven (XBRT_QR_ALWAYS=1 to run outside Quick Race) */
             static int autod = -1;
             if (autod < 0) autod = getenv("XBRT_AUTODRIVE") ? atoi(getenv("XBRT_AUTODRIVE")) : 0;
-            if (autod > 0 && car == me && have_line && !rt_qr_auto && !tdcam_until)
+            if (path_n < 0) {
+                path_n = 0;
+                FILE *pf = getenv("XBRT_AUTODRIVE_PATH") ? fopen(getenv("XBRT_AUTODRIVE_PATH"), "r") : NULL;
+                if (pf) {
+                    path_xz = malloc(2 * 4096 * sizeof(float));
+                    while (path_xz && path_n < 4096 && fscanf(pf, "%f %f", &path_xz[2 * path_n], &path_xz[2 * path_n + 1]) == 2) path_n++;
+                    fclose(pf);
+                    fprintf(stderr, "xbrt: autodrive: a path of %d points\n", path_n);
+                }
+            }
+            if (lap < 0) path_k = -1, path_done = 0;
+            if (autod > 0 && car == me && have_line && !rt_qr_auto && !tdcam_until && !path_done)
                 rt_qr_auto = 1, auto_until = 0, auto_k = -1, auto_speed = (float)autod;
             static int looks = -1; /* XBRT_AUTODRIVE_LOOKS=1: the camera turned round the car's looks, 1.5 s each (ahead,
                                     * back, the sides, the diagonals), for things drawn or not by the angle (the garage) */
             if (looks < 0) looks = getenv("XBRT_AUTODRIVE_LOOKS") ? atoi(getenv("XBRT_AUTODRIVE_LOOKS")) : 0;
             if (looks && autod > 0 && car == me) rt_photo_lookback = looks > 1 ? looks : (int)((rt_now_100ns() / 15000000) % 8); /* (over 1: that look held, 8 ahead) */
+        }
+        if (car == me && rt_qr_auto && have_line && path_n > 1 && !path_done && lap >= 0) {
+            float cx = rdf(car + 0x14), cz = rdf(car + 0x1C);
+            if (path_k < 0 && (cx - path_xz[0]) * (cx - path_xz[0]) + (cz - path_xz[1]) * (cz - path_xz[1]) < 144) {
+                path_k = 0, path_p[0] = cx, path_p[1] = cz;
+                fprintf(stderr, "xbrt: autodrive: onto the path at %.3f s (%.0f, %.0f)\n", now / 1e7, cx, cz);
+            }
+            if (path_k >= 0) {
+                float m = 14.0f * (float)dt, fx = 0, fz = 1;
+                while (path_k + 1 < path_n) {
+                    float tx = path_xz[2 * path_k + 2] - path_p[0], tz = path_xz[2 * path_k + 3] - path_p[1], d = sqrtf(tx * tx + tz * tz);
+                    if (d > 1e-4f) fx = tx / d, fz = tz / d;
+                    if (d > m) { path_p[0] += fx * m, path_p[1] += fz * m; break; }
+                    path_p[0] += tx, path_p[1] += tz, m -= d, path_k++;
+                }
+                float pose[12] = {path_p[0], rdf(car + 0x18), path_p[1], fz, 0, -fx, 0, 1, 0, fx, 0, fz};
+                for (int j = 0; j < 12; j++) wrf(car + 0x14 + 4 * j, pose[j]);
+                wrf(car + 0x44, fx * 14.0f), wrf(car + 0x4C, fz * 14.0f);
+                if (path_k + 1 >= path_n) {
+                    path_done = 1, rt_qr_auto = 0;
+                    fprintf(stderr, "xbrt: autodrive: the path's end at %.3f s (%.0f, %.0f): the car let go\n", now / 1e7, path_p[0], path_p[1]);
+                }
+                cs[i].v[0] = rdf(car + 0x44), cs[i].v[1] = rdf(car + 0x48), cs[i].v[2] = rdf(car + 0x4C);
+                cs[i].still_since = 0;
+                continue;
+            }
         }
         if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
             autopilot(car, xs, zs, np, dt);
@@ -1721,7 +1796,9 @@ void rt_qr_tick(void) {
             if (loff > 3 && loff < 25) v[0] += lxp / loff * (float)(2.0 * dt), v[2] += lzp / loff * (float)(2.0 * dt);
             wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
         }
-        if (mods & QR_TAKEDOWNS) {
+        int pitting = in_pits(p) || (me && in_pits(mp));
+        if (pitting) cs[i].still_since = 0, cs[i].hit_at = 0;
+        if ((mods & QR_TAKEDOWNS) && !pitting) {
             /* After Burnout 3 (the user's reference video): a slam from the side throws the rival sideways across the
              * road, a shunt from behind punts it on, both turning it out of grip; if it then hits a wall, stops or
              * leaves the road within 3 s it is a takedown (banner, count, half a nitro tank) and the wreck comes back

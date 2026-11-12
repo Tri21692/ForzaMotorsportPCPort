@@ -819,13 +819,27 @@ def build(disc, runway_dir, out):
     # the lap: Fuji's edges into the six edge splines
     cen, lef, rig = to_forza(E['centre']), to_forza(E['left']), to_forza(E['right'])
     area = 0.5 * np.sum(cen[:-1, 0] * cen[1:, 2] - cen[1:, 0] * cen[:-1, 2])
-    inner, outer = (rig, lef) if area < 0 else (lef, rig)  # (round a clockwise loop, the right edge is inside)
+    # the inside edge: the one whose loop is the smaller (Road Atlanta's roadinner is). By the lap's sense alone, as it
+    # was until 11 Nov, Fuji's were the wrong way round (its layout's left and right are GT4's, mirrored into Forza's
+    # world): the pit lane's test, the game stopped the car 4 s at the pit entrance and drove the lane with no limit
+    loop_area = lambda e_: abs(0.5 * np.sum(e_[:, 0] * np.roll(e_[:, 2], -1) - np.roll(e_[:, 0], -1) * e_[:, 2]))
+    inner, outer = (rig, lef) if loop_area(rig) < loop_area(lef) else (lef, rig)
     print('lap: signed area %.0f (Road Atlanta\'s negative: %s)' % (area, 'same way round' if area < 0 else 'REVERSED'))
     for nm in SPLINES:
         r = next(r for r in names if r[0] == 'vbuff_quickpreview_splines_%s_vb0' % nm)
         npt = (r[4] + 4) // 16
         e = inner if nm.endswith('inner') else outer
         res[r[3]:r[3] + 12 * npt] = open_lap(e, npt).astype('<f4').tobytes()
+    # the pit lane's splines (pit_paths), each as many points as Road Atlanta's
+    pit_enter, pit_leave, pit_marks = [], [], np.zeros((0, 2))
+    if len(pit_run) >= 40:
+        # (the pit side by the loop's inside, sides(): the splines' "inner" by the lap's signed area is the other edge here,
+        # and the first pit lane's splines ran over the grass by the grandstands)
+        paths, pit_enter, pit_leave, pit_marks = pit_paths(cen, lef if _left_in else rig, rig if _left_in else lef, pit_run, _gy)
+        for nm in PIT_SPLINES:
+            r = next(r for r in names if r[0] == 'vbuff_quickpreview_splines_%s_vb0' % nm)
+            npt = (r[4] + 4) // 16
+            res[r[3]:r[3] + 12 * npt] = open_resample(paths[nm], npt).astype('<f4').tobytes()
     # and sealed once more exactly as the audit looks (its loop: the curbing splines' middle; a 6 m edge beyond the last
     # bend showed on that grid alone, 11 Nov)
     sp_ = collision_audit.edge_splines(bytes(res), names)
@@ -837,7 +851,7 @@ def build(disc, runway_dir, out):
     for name, data in (('roadatlanta.res', res), ('QuickPreview1.col', col_bytes), ('QuickPreview1.pvs', pvs),
                        ('QuickPreview1.pvs.ppw', ppw), ('quickpreview1.xbp.svb', zlib_like(files['quickpreview1.xbp.svb'], svb_out))):
         open(os.path.join(out, name), 'wb').write(bytes(data))
-    np.savez(os.path.join(out, 'fuji_forza.npz'), centre=cen, inner=inner, outer=outer)
+    np.savez(os.path.join(out, 'fuji_forza.npz'), centre=cen, inner=inner, outer=outer, pit_enter=np.array(pit_enter), pit_leave=np.array(pit_leave), pit_marks=pit_marks)
     for f in ('fuji_logo.png', LOAD_PHOTO, 'new_fisco.ad'):  # (the menus' art and GT4's racing lines, for install)
         shutil.copy(os.path.join(runway_dir, f), os.path.join(out, f))
     build_png(placed, Vd, os.path.join(out, 'build_check.png'))
@@ -1357,6 +1371,97 @@ def pit_wall(centre, outer_edge, inner_edge, run, ground_y):
         a_.append(quad); b_.append(quad[[1, 0, 3, 2]])
     print('pit wall: %.0f m, %.0f m open at each end' % (along[ks[-1]] - along[ks[0]] if len(ks) else 0, PIT_GAP))
     return a_, b_
+
+
+# The pit lane working (the user's, 11 Nov: "make the pit lane functional"): the game drives a pitting car along splines
+# kept with the scenery (Road Atlanta's: pitin from the track to the lane's start, pitabort along the lane, pitparkin1-8
+# from the lane's start into each stall, pitparkout1-8 from each stall to the lane's end, pitout from there to the
+# track; entrancespline and exitspline two points each, lines across the lane's ends) and merges its AI at the
+# waypoints of quickpreview.xml's <Pitting>. Fuji's, on the main straight's band (metres from the track's outer edge:
+# the lane's line PIT_LINE, the stalls PIT_STALL; along the band from its start: the lane's ends PIT_ENDS m inside the
+# band's, the first stall PIT_FIRST m in, the way into a stall and out of it PIT_SWING m long; pitin begins and pitout
+# ends PIT_REACH m beyond the band on the track's inner part).
+PIT_LINE, PIT_STALL, PIT_ENDS, PIT_FIRST, PIT_SWING, PIT_REACH = 28.5, 34.0, 70.0, 115.0, 30.0, 150.0
+PIT_LEAD = 85.0
+PIT_SPLINES = ['pitin', 'pitout', 'pitabort', 'entrancespline', 'exitspline'] + ['pitparkin%d' % k for k in range(1, 9)] + ['pitparkout%d' % k for k in range(1, 9)]
+
+
+def pit_paths(cen, inner, outer, run, ground_y):
+    """PIT_*: {spline: points (n, 3)} and the lap's shares where pitin leaves the track and pitout is back on it."""
+    n = len(cen)
+    ext = int(PIT_REACH / STEP)
+    idx = [(run[0] - ext + q) % n for q in range(ext)] + list(run) + [(run[-1] + 1 + q) % n for q in range(ext)]
+    O = outer[idx][:, [0, 2]]
+    inw = (inner - outer)[idx][:, [0, 2]]
+    w = np.linalg.norm(inw, axis=1); inw /= np.maximum(w[:, None], 1e-9)
+    sm = lambda a, k=9: np.stack([np.convolve(np.concatenate([np.repeat(a[:1], k // 2, 0), a, np.repeat(a[-1:], k // 2, 0)])[:, j], np.ones(k) / k, 'valid') for j in range(a.shape[1])], 1)
+    O, inw = sm(O), sm(inw); inw /= np.linalg.norm(inw, axis=1, keepdims=True)
+    st = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(O, axis=0), axis=1))])
+    st -= st[ext]                      # (metres along the band from its start)
+    L = float(st[ext + len(run) - 1])
+    ss = lambda x: np.clip(x, 0, 1) ** 2 * (3 - 2 * np.clip(x, 0, 1))
+    on_track = 0.72 * np.minimum(w, PIT_TRACK_W)
+
+    def path(s0, s1, d):  # points from s0 to s1 along the band, d(s) m from the outer edge
+        k = np.nonzero((st >= s0 - 1e-6) & (st <= s1 + 1e-6))[0]
+        dd = np.array([d(st[q], q) for q in k])
+        xz = O[k] + inw[k] * dd[:, None]
+        return np.array([[x, ground_y((x, z)), z] for x, z in xz])
+    lane = lambda s_, q: PIT_LINE
+    d_in = lambda s_, q: on_track[q] + (PIT_LINE - on_track[q]) * ss((s_ + 10.0) / 70.0)
+    d_out = lambda s_, q: on_track[q] + (PIT_LINE - on_track[q]) * ss((L + 10.0 - s_) / 70.0)
+    d_end = lambda s_, q: d_out(s_, q) + (0.5 * min(w[q], PIT_TRACK_W) - on_track[q]) * ss((s_ - L - 20.0) / (PIT_REACH - 30.0))
+    # (pitin runs on PIT_LEAD m past the entrance's line, as Road Atlanta's 90 m: with 8 m the game braked the car to a
+    # stop at pitin's end and held it 4 s before driving on)
+    A, B_ = PIT_ENDS + PIT_LEAD, L - PIT_ENDS
+    out = {'pitin': path(-PIT_REACH + 2.0, A, d_in), 'pitabort': path(A, B_, lane), 'pitout': path(B_, L + PIT_REACH - 2.0, d_end)}
+    stalls = np.linspace(A + 50.0, B_ - 45.0, 8)
+    for k_, sk in enumerate(stalls, 1):
+        out['pitparkin%d' % k_] = path(A, sk, lambda s_, q, sk=sk: PIT_LINE + (PIT_STALL - PIT_LINE) * ss((s_ - (sk - PIT_SWING)) / PIT_SWING))
+        out['pitparkout%d' % k_] = path(sk, B_, lambda s_, q, sk=sk: PIT_STALL + (PIT_LINE - PIT_STALL) * ss((s_ - sk) / PIT_SWING))
+
+    def across(s_, d0, d1):
+        q = int(np.argmin(np.abs(st - s_)))
+        return np.array([[*(O[q] + inw[q] * d)[:1], ground_y(O[q] + inw[q] * d), (O[q] + inw[q] * d)[1]] for d in (d0, d1)])
+    out['entrancespline'] = across(PIT_ENDS - 8.0, PIT_WALL + 12.5, PIT_WALL + 0.5)   # (the far side first, as Road Atlanta's)
+    # (the exit's line where pitout is back on the track, as Road Atlanta's, four fifths along it: the game drives the car
+    # up to it. At the lane's end, the first try, it let the car go there and it rolled straight on over the grass)
+    qx = int(np.argmin(np.abs(st - (L + 55.0))))
+    wx = float(min(w[qx], PIT_TRACK_W))
+    out['exitspline'] = across(L + 55.0, wx - 0.5, 0.45 * wx)
+    share = lambda q: (idx[q] % n) / n
+    q_in, q_out = int(np.argmin(np.abs(st - (-PIT_REACH + 2.0)))), int(np.argmin(np.abs(st - (L + PIT_REACH - 2.0))))
+    lap = float(np.linalg.norm(np.diff(np.vstack([cen, cen[:1]])[:, [0, 2]], axis=0), axis=1).sum())
+    enter = [(share(q_in) + m_ / lap) % 1.0 for m_ in (95.0, 110.0, 125.0)]   # (Road Atlanta's merge 100 to 135 m after pitin leaves the line)
+    leave = [(share(q_out) + m_ / lap) % 1.0 for m_ in (100.0, 165.0)]
+    print('pit lane: the band %.0f m; the lane from %.0f to %.0f m, 8 stalls from %.0f m every %.0f m; pitin %.0f m, pitout %.0f m; merges in at lap %.3f, out by %.3f' %
+          (L, A, B_, stalls[0], stalls[1] - stalls[0], len(out['pitin']) * STEP, len(out['pitout']) * STEP, enter[0], leave[1]))
+    # (the places the merges are counted from, in AI waypoints: pitting_xml)
+    marks = np.array([out['pitin'][0][[0, 2]], out['exitspline'].mean(0)[[0, 2]], out['pitout'][-1][[0, 2]]])
+    return out, enter, leave, marks
+
+
+def open_resample(P, npt):
+    """The open line P as npt points evenly along it (its ends kept)."""
+    s_ = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+    t = np.linspace(0, s_[-1], npt)
+    return np.stack([np.interp(t, s_, P[:, j]) for j in range(3)], 1)
+
+
+def pitting_xml(src, marks, wp_xz):
+    """quickpreview.xml's <Pitting>: the merges' AI waypoints (wp_xz: the waypoints' x, z), placed as Road Atlanta's
+    are (its waypoints 2 m apart: the three in 13, 23 and 33 waypoints after pitin leaves the line; the two out between
+    the exit's line and pitout's end, 0.42 and 0.88 of the way: 28 and 58 of its 66). marks: pit_paths'."""
+    import re
+    nw = len(wp_xz)
+    near = lambda q: int(np.argmin(np.hypot(wp_xz[:, 0] - q[0], wp_xz[:, 1] - q[1])))
+    w_in, w_exit, w_end = near(marks[0]), near(marks[1]), near(marks[2])
+    span = (w_end - w_exit) % nw
+    vals = [(w_in + 13) % nw, (w_in + 23) % nw, (w_in + 33) % nw, (w_exit + int(round(0.42 * span))) % nw, (w_exit + int(round(0.88 * span))) % nw]
+    new = '<Pitting speedlimit="60.0" EnterFirstMergeWP="%d" EnterLastMergeWP="%d" EnterMergeCompleteWP="%d" ExitMergeWP="%d" ExitMergeCompleteWP="%d"/>' % tuple(vals)
+    out, k = re.subn(r'<Pitting[^>]*/>', new, src, count=1)
+    if not k: out = src.replace('</track>', new + '</track>')
+    return out, new + '  (pitin leaves at waypoint %d, the exit line %d, pitout ends %d, of %d)' % (w_in, w_exit, w_end, nw)
 
 
 def stand_pads(centre, inner, reach_in, reach_out):
@@ -2969,6 +3074,8 @@ def install(disc, build_dir, mods):
         if low.endswith('collobjs.xml'):  # Road Atlanta's solid objects would stand invisible on Fuji
             v = re.sub(rb'(<[A-Za-z]+[^>]*>).*(</[A-Za-z]+>\s*)$', lambda m_: m_.group(1) + b'\r\n' + m_.group(2), v, flags=re.S)
         if low.endswith(('drift1.xml', 'specialzones.xml')): continue  # (Road Atlanta's places)
+        if low.endswith('pitcams.xml'):  # (Road Atlanta's pit camera flies between places of its own world)
+            v = mega.files[next(k_ for k_ in mega.files if k_.lower() == 'tracks' + B + 'tsukuba' + B + 'pitcams.xml')]  # (Tsukuba's: set off the car)
         mega.files['tracks' + B + TAG.lower() + B + k[len(src):]] = v
     xpr = addcar.Archive(disc, mods, 'MegaXPR.ca2')
     key = next(k for k in xpr.files if k.lower() == 'frontend' + B + 'gfx_trackmaps.xpr')
