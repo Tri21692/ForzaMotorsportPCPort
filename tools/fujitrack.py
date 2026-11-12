@@ -51,6 +51,7 @@ TARMAC, KERB, GRASS, GRAVEL, LINE = 0, 1, 2, 3, 0x0A
 TREE = 0x63  # (drawn only: GT4's tree cards)
 FOREST = 0x64  # (drawn only: the woods' canopy)
 ARMCO, FENCE = 0x65, 0x66  # (drawn only: along the walls)
+STAND, STAND_W = 0x68, 0x69  # (drawn only: the grandstands' tiers, and their walls and roofs)
 SKIRT = 0x67  # (drawn only: the grass bank from the run-off's edge down to the ground beyond)
 FAR_KIND = 0x70  # (drawn only: GT4's far ring, a kind for each of its pictures from here)
 
@@ -296,6 +297,7 @@ MATERIALS = {TARMAC: (64, None, 8.0), KERB: (64, 497, 4.0), GRASS: (83, None, 24
              ARMCO: (130, 107, 1.0),      # guardrail_white_001 and racedeco catchfence_001 on a railing's material
              FENCE: (130, 319, 1.0)}      # (24-byte vertices, cut out; their own meshes take 20-byte ones)
 MATERIALS[SKIRT] = MATERIALS[GRASS]
+MATERIALS[STAND], MATERIALS[STAND_W] = (113, 136, 3.0), (113, 473, 6.0)  # (seatsarea's material: its brick terraces' texture; a white wall's)
 MATERIALS.update({FAR_KIND + i: (5628, None, 1.0) for i in range(11)})  # (GT4's far cards: their textures FAR_SLOTS)
 # a lightmap texel each material samples (lightmap coordinates are (s + 32768) / 512 across the lightmap): a
 # mid-lit one, ~85 of 255 (the templates' own median texels were 106, the road looked washed out, and for the grass
@@ -324,6 +326,8 @@ ASPHALT_TONE = 0.55
 SHADE_BASE = {GRASS: 95.0, FOREST: 64.0, TARMAC: 72.0 / ASPHALT_TONE}   # (the asphalt darker than its texel's 87: it read pale)
 SHADE_PATCHES = {GRASS: ((70.0, 0.12), (18.0, 0.07)), FOREST: ((50.0, 0.16), (12.0, 0.10)), TARMAC: ((45.0, 0.06), (9.0, 0.04))}
 SHADE_BASE[SKIRT], SHADE_PATCHES[SKIRT] = SHADE_BASE[GRASS] * 0.9, SHADE_PATCHES[GRASS]
+SHADE_BASE[STAND], SHADE_PATCHES[STAND] = 105.0, ((20.0, 0.05),)
+SHADE_BASE[STAND_W], SHADE_PATCHES[STAND_W] = 135.0, ((30.0, 0.03),)
 COLLISION = {TARMAC: 0x0000, LINE: 0x0000, KERB: 0x0600, GRASS: 0x0200, GRAVEL: 0x1B00}  # Road Atlanta's codes for them
 WALL, WALL_H = 0x0400, 2.0      # round the runway's outside: a tyre wall's code, this high
 ASPHALT = (32.0, 10.0)          # m along and across the track a repeat of the asphalt's strip texture (1024 x 256)
@@ -345,6 +349,12 @@ STAND_SITES = [(0.029, 0.119, 'out'), (0.168, 0.232, 'in'), (0.316, 0.445, 'out'
 STAND_CLONES = ['seatsarea_02', 'seatsarea']   # (not outerpitstands01: a copy is only its 24-byte meshes, its roof's frame alone in the sky: the user's 11 Nov shots)
 BACK_TO_FRONT = {'outerpitstands01'}  # (turned round: it stood with its white back wall to the track)
 STAND_GAP = 3.0
+MAIN_STAND = (0.92, 0.03, 'out')   # the main straight's
+# Grandstands of our own (the user's, 11 Nov: Road Atlanta's seating terraces, made to lie in a hillside, "look
+# really unnatural" stood on Fuji's level ground): at each site blocks GS_LEN m long, GS_SPACE m apart, GS_OUT m
+# beyond the runway, level, along the track: a front wall GS_FRONT m high, GS_TIERS tiers (tread, riser), a back
+# wall up to a roof reaching forward over the upper tiers.
+GS_LEN, GS_SPACE, GS_OUT, GS_FRONT, GS_TIERS, GS_TREAD, GS_RISER, GS_ROOF = 36.0, 5.0, 6.0, 1.2, 8, 0.9, 0.45, (3.0, 0.55)
 STAND_PAD = 75.0   # m beyond the runway levelled at each stand site (terrain's pads): the stands stood sunk in the slopes
 STAND_PUSH = (0.0, 4.0, 10.0, 20.0, 35.0)  # m further out tried (a long straight stand by a bend)
 CLEARINGS += [(a, b, side, 75.0) for a, b, side in STAND_SITES]
@@ -358,7 +368,7 @@ RAIL_OFF = 0.3   # m: the rail at most this far from the walls' (smoothed) line
 RAIL_SMOOTH_PTS, RAIL_STEP = 5, 8.0   # the dressing's line: the walls' outline smoothed over this many points, a point every RAIL_STEP m
 GROUND_REACH = 300.0             # m: a ground, tree or fence donor's faces within this of its first (fewer, bigger donors:
                                  # each is a draw in every cell; 2,000 small ones cost frames)
-STAND_NEEDS = [(860, 1560, 9), (420, 750, 8), (55, 120, 14)]  # (vertices, indices, donors kept: the stands' meshes)
+STAND_NEEDS = []  # (vertices, indices, donors kept: the stands' meshes)
 STAND_KEEP = 24                  # the biggest spare donors kept for the stands' copies
 CLONE_DONOR = 2000               # vertices: the largest streamed donor kept for the stands' copies
 # Shortcuts blocked (the user's "Forza touches"): armco and a wall to the cars wherever crossing the runway's
@@ -539,6 +549,10 @@ def build(disc, runway_dir, out):
     Vb, Tb, UVb, Kb, bwalls = barrier_geometry(shortcut_barriers(cf, half, rast, ground_at))
     Tw, Vw = np.vstack([Tw.reshape(-1, 3), Tb + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vb])
     UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVb]), np.concatenate([Kw, Kb])
+    Vg_, Tg_, UVg_, Kg_ = grandstands(cf, sides(cf)[1], reach[:, 0], reach[:, 1], ground_at)
+    if len(Tg_):
+        Tw, Vw = np.vstack([Tw.reshape(-1, 3), Tg_ + len(Vw)]), np.vstack([Vw.reshape(-1, 3), Vg_])
+        UVw, Kw = np.vstack([UVw.reshape(-1, 2), UVg_]), np.concatenate([Kw, Kg_])
     Vk, Tk, UVk = more_kerbs(cf, lef_f, rig_f, rast, Vf[T[kinds == KERB]].mean(1) if (kinds == KERB).any() else np.zeros((0, 3)))
     # the walls that will close the ground's open edges (the collision's below: collision_audit.seal_open_edges, on
     # the same collision made now), armco drawn along them as along the outline's
@@ -626,6 +640,7 @@ def build(disc, runway_dir, out):
                             (FOREST, (Tfar + o_f)[Kfar == FOREST], 8 * FAR_CELL), (TREE, Ttr + o_t, 8 * TERRAIN_CELL),
                             (ARMCO, (Tw + o_w)[Kw == ARMCO], 8 * TERRAIN_CELL), (FENCE, (Tw + o_w)[Kw == FENCE], 8 * TERRAIN_CELL),
                             (SKIRT, (Tw + o_w)[Kw == SKIRT], 8 * TERRAIN_CELL),
+                            (STAND, (Tw + o_w)[Kw == STAND], 8 * TERRAIN_CELL), (STAND_W, (Tw + o_w)[Kw == STAND_W], 8 * TERRAIN_CELL),
                             (KERB, Tk + o_k, 4 * TERRAIN_CELL)) + \
                            tuple((k_r, (Tr + o_r)[Kr == k_r], 1e6) for k_r in sorted(set(Kr.tolist()))):  # (the woods, the apron, the far ground, the trees)
         if not len(tris): continue
@@ -759,7 +774,7 @@ def build(disc, runway_dir, out):
 
     # Road Atlanta's buildings, stands and props set round Fuji (ROWS, SCATTER), drawn in every cell with their
     # buffers streamed in
-    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], set(), ground_at, spare=spare)
+    sm, st_, sv = scatter(res, names, model, ppw, svb, svb_out, cf, reach[:, 0], reach[:, 1], set(), ground_at, spare=None)  # (no copies of Road Atlanta's terraces: grandstands())
     meshes += sm; tex_used |= st_; vbs_used |= sv
 
     # the visibility: every cell the same, Fuji's meshes only
@@ -808,7 +823,6 @@ def build(disc, runway_dir, out):
 # main grandstand opposite (92% to 2%), the paddock behind the pits (its buildings 40 to 120 m from the straight).
 ROWS = [
     (['hangar01', 'hangar02', 'hangar03', 'garages01', 'pirellabuilding'], 0.935, 0.02, 'in', 17.0, 4.0),
-    (['seatsarea', 'seatsarea_02'], 0.92, 0.03, 'out', 3.0, 3.0),  # (not outerpitstands01: white walls on every side, the user's 11 Nov shots: blank sheds)
     (['fuelstation01', 'restroom01', 'restroom02', 'restroom03', 'truckcambody01k_284', 'truckcambody02k_285'], 0.93, 0.02, 'in', 50.0, 12.0),
     ((r'(broadcast_trailer|semitrailer|trailerlarge)\w*$', 53), 0.93, 0.02, 'in', 72.0, 4.0),
     ((r'rvlarge\w*$', 60), 0.93, 0.02, 'in', 92.0, 5.0),
@@ -1230,11 +1244,82 @@ def stand_pads(centre, inner, reach_in, reach_out):
             side_in = np.einsum('ij,ij->i', q[a:a + 4000] - c2[j], inner[j][:, [0, 2]]) > 0
             share = j / n
             beyond = dist - np.where(side_in, reach_in[j], reach_out[j])
-            for s0, s1, side in STAND_SITES + [(a_, b_, sd_) for st_, a_, b_, sd_, *_ in ROWS if 'seatsarea' in st_]:  # (and the main straight's row)
+            for s0, s1, side in STAND_SITES + [MAIN_STAND]:
                 on = (share >= s0 - 0.01) & (share <= s1 + 0.01) if s0 <= s1 else (share >= s0 - 0.01) | (share <= s1 + 0.01)
                 out[a:a + 4000] |= on & (side_in == (side == 'in')) & (beyond < STAND_PAD)
         return out
     return pad
+
+
+def grandstands(centre, inner, reach_in, reach_out, ground_at):
+    """GS_*: (vertices, triangles, texture coordinates in repeats, kinds). A face's front: cross(p1 - p0, p2 - p0)
+    against its outward normal, as the ground's."""
+    n = len(centre)
+    c2 = centre[:, [0, 2]]
+    arc, lap = lap_arc(centre)
+    tg = np.roll(c2, -2, 0) - np.roll(c2, 2, 0); tg /= np.linalg.norm(tg, axis=1, keepdims=True)
+    V, T, UV, K = [], [], [], []
+
+    def clear(p):
+        d = np.hypot(p[:, None, 0] - c2[None, :, 0], p[:, None, 1] - c2[None, :, 1])
+        j = d.argmin(1)
+        ins = np.einsum('ij,ij->i', p - c2[j], inner[j][:, [0, 2]]) > 0
+        return bool(np.all(d[np.arange(len(p)), j] >= np.where(ins, reach_in[j], reach_out[j]) + 2.0))
+
+    def quad(p, nrm, kind, uv):
+        b = len(V)
+        p = [np.asarray(q, float) for q in p]
+        if np.dot(np.cross(p[1] - p[0], p[2] - p[0]), nrm) > 0: p, uv = p[::-1], uv[::-1]
+        V.extend(p); UV.extend(uv); T.extend([(b, b + 1, b + 2), (b, b + 2, b + 3)]); K.extend([kind, kind])
+    depth = GS_TIERS * GS_TREAD
+    made = 0
+    for s0, s1, side in STAND_SITES + [MAIN_STAND]:
+        at, end = s0 * lap, s1 * lap + (lap if s1 < s0 else 0)
+        while at + GS_LEN <= end:
+            i0 = int(np.searchsorted(arc, (at + GS_LEN / 2) % lap)) % n
+            at += GS_LEN + GS_SPACE
+            t = tg[i0]
+            d = inner[i0][[0, 2]] * (1 if side == 'in' else -1); d = d - t * (d @ t); d /= np.linalg.norm(d)
+            reach = reach_in[i0] if side == 'in' else reach_out[i0]
+            for push in (0.0, 4.0, 10.0, 18.0):
+                f0 = c2[i0] + d * (reach + GS_OUT + push)
+                foot = np.array([f0 + t * a_ + d * b_ for a_ in np.linspace(-GS_LEN / 2, GS_LEN / 2, 7) for b_ in np.linspace(-1.0, depth + 1.5, 5)])
+                if clear(foot): break
+            else: continue
+            g = np.asarray(ground_at(foot), float)
+            if not np.isfinite(g).all() or g.max() - g.min() > 4.0: continue  # (a bank: no level place)
+            y0, ylo = float(g.max()) + 0.05, float(g.min()) - 0.6
+            up = np.array([0.0, 1.0, 0.0])
+            t3, d3 = np.array([t[0], 0.0, t[1]]), np.array([d[0], 0.0, d[1]])
+            o = np.array([f0[0], 0.0, f0[1]])
+            P = lambda a_, b_, y_: o + t3 * a_ + d3 * b_ + up * y_
+            h, L = GS_LEN / 2, GS_LEN / 3.0
+            top = y0 + GS_FRONT + (GS_TIERS - 1) * GS_RISER
+            roof_f, roof_b = top + GS_ROOF[0] + 0.5, top + GS_ROOF[0]
+            quad([P(-h, 0, ylo), P(h, 0, ylo), P(h, 0, y0 + GS_FRONT), P(-h, 0, y0 + GS_FRONT)], -d3, STAND_W,
+                 [(0, 0), (GS_LEN / 6, 0), (GS_LEN / 6, 0.5), (0, 0.5)])
+            for k_ in range(GS_TIERS):
+                y_ = y0 + GS_FRONT + k_ * GS_RISER
+                b0, b1 = k_ * GS_TREAD, (k_ + 1) * GS_TREAD
+                quad([P(-h, b0, y_), P(h, b0, y_), P(h, b1, y_), P(-h, b1, y_)], up, STAND, [(0, k_ * 0.25), (L, k_ * 0.25), (L, k_ * 0.25 + 0.2), (0, k_ * 0.25 + 0.2)])
+                if k_ < GS_TIERS - 1:
+                    quad([P(-h, b1, y_), P(h, b1, y_), P(h, b1, y_ + GS_RISER), P(-h, b1, y_ + GS_RISER)], -d3, STAND,
+                         [(0, k_ * 0.25 + 0.2), (L, k_ * 0.25 + 0.2), (L, k_ * 0.25 + 0.25), (0, k_ * 0.25 + 0.25)])
+            for sgn in (-1, 1):  # the ends: up to the front wall's top, then the tiers' slope
+                a_ = sgn * h
+                quad([P(a_, 0, ylo), P(a_, depth, ylo), P(a_, depth, y0 + GS_FRONT), P(a_, 0, y0 + GS_FRONT)], t3 * sgn, STAND_W, [(0, 0), (1.2, 0), (1.2, 0.5), (0, 0.5)])
+                quad([P(a_, 0, y0 + GS_FRONT), P(a_, depth, y0 + GS_FRONT), P(a_, depth, top), P(a_, depth, top)], t3 * sgn, STAND_W, [(0, 0.5), (1.2, 0.5), (1.2, 1.0), (1.2, 1.0)])
+            # the back wall up to the roof, the roof forward over the upper tiers (its top and its underside), its front edge
+            quad([P(-h, depth, ylo), P(h, depth, ylo), P(h, depth, roof_b), P(-h, depth, roof_b)], d3, STAND_W, [(0, 0), (GS_LEN / 6, 0), (GS_LEN / 6, 1.5), (0, 1.5)])
+            quad([P(-h, depth, top), P(h, depth, top), P(h, depth, roof_b), P(-h, depth, roof_b)], -d3, STAND_W, [(0, 0), (GS_LEN / 6, 0), (GS_LEN / 6, 0.6), (0, 0.6)])
+            rf = depth * (1 - GS_ROOF[1])
+            for nrm_, dy in ((up, 0.12), (-up, 0.0)):
+                quad([P(-h, rf, roof_f + dy), P(h, rf, roof_f + dy), P(h, depth + 0.4, roof_b + dy), P(-h, depth + 0.4, roof_b + dy)], nrm_, STAND_W,
+                     [(0, 0), (GS_LEN / 6, 0), (GS_LEN / 6, 0.8), (0, 0.8)])
+            quad([P(-h, rf, roof_f), P(h, rf, roof_f), P(h, rf, roof_f + 0.12), P(-h, rf, roof_f + 0.12)], -d3, STAND_W, [(0, 0), (GS_LEN / 6, 0), (GS_LEN / 6, 0.05), (0, 0.05)])
+            made += 1
+    print('grandstands: %d blocks of %.0f m, %d triangles' % (made, GS_LEN, len(T)))
+    return np.array(V, float).reshape(-1, 3), np.array(T, int).reshape(-1, 3), np.array(UV, float).reshape(-1, 2), np.array(K, int)
 
 
 def grid_sampler(Hg, lo, cell):
