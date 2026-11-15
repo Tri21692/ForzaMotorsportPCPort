@@ -5,7 +5,7 @@ What is here
   run/mods_next/              the mods folder: Fuji Speedway, the Pacific Shipyards Circuit (both ways), the 47 add-on
                               cars, Mayhem, Drift, Catch-Up, Time Trial and the other career additions, the dealer
                               backgrounds, the preview clips, pitzones.txt (the pit lanes for the Mayhem rules)
-  runtime/forza-next.exe      the game build these mods were checked on (11 Nov, 23:30)
+  runtime/forza-next.exe      the game build (15 Nov: the 11 Nov build the mods were checked on, plus Kaizo Mode)
   Play Forza (New mods).bat   starts the game with this mods folder
 
 To use
@@ -26,6 +26,11 @@ What was checked (overnight, 11-12 Nov, on forza-next's build, sound off, on a c
 Since the audit (15 Nov, seen in the dealer only, not raced)
   The 32 newer add-on cars wear their own rims in place of their template cars' (the Lamborghinis had Ferrari's).
   The 1991 240SX (S13) rebuilt: smooth shading, its tail lamps and badge.
+
+Kaizo Mode (15 Nov)
+  F1 (or Back + Start) > the Kaizo Mode tab. On: you start last; a hit, leaving the road or damage ends the race
+  at once, last and DNF; a clean finish pays the race's winnings twice. Not in Mayhem races or drift events.
+  Checked on test runs: the tab, the last-place start, a race ended by leaving the road, the doubled payout.
 
 Known and open
   Fuji's pit lane: the game drives the car through and lets go at the exit, and nothing respawns it there. Against

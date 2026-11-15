@@ -292,14 +292,14 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     if (rt_overlay_page() != 2) ov_text(OVF_MENU, X0 + 590, 26, "PC Settings", white, 1);
     int n = rt_overlay_items(), sel = rt_overlay_selected();
     /* The tabs (Display, Graphics, HDR, Game, Audio), the one shown picked out; Q / E, Tab or the triggers switch */
-    const char *tabs[8];
-    int cur, nt = rt_overlay_tabs(tabs, 8, &cur);
+    const char *tabs[10];
+    int cur, nt = rt_overlay_tabs(tabs, 10, &cur);
     float tx = X0 + 56;
     for (int i = 0; i < nt; i++) {
-        float w = ov_width(&ov_font[OVF_ITEM], tabs[i]) + (nt > 6 ? 14 : 28); /* (narrower with many: all in 4:3) */
+        float w = ov_width(&ov_font[OVF_ITEM], tabs[i]) + (nt > 7 ? 6 : nt > 6 ? 14 : 28); /* (narrower with many: all in 4:3) */
         if (i == cur) ov_rect(tx, 72, tx + w, 96, ink), ov_rect(tx, 94, tx + w, 97, green);
-        ov_text(OVF_ITEM, tx + (nt > 6 ? 7 : 14), 74, tabs[i], i == cur ? white : grey, 0);
-        tx += w + 6;
+        ov_text(OVF_ITEM, tx + (nt > 7 ? 3 : nt > 6 ? 7 : 14), 74, tabs[i], i == cur ? white : grey, 0);
+        tx += w + (nt > 7 ? 3 : 6);
     }
     float y = 106, row = 30;
     /* Eight rows at a time, scrolled to keep the chosen one in view: all of
@@ -388,6 +388,11 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
             ov_text(OVF_ITEM, X0 + 574, y + 1, value, grey, 1);
         }
         y += row;
+    }
+    { /* a tab's own text under its settings (Kaizo Mode's rules) */
+        int nn;
+        const char *const *notes = rt_overlay_notes(&nn);
+        for (int i = 0; notes && i < nn; i++) ov_text(OVF_TEXT, X0 + 72, y + 12 + 20 * (float)i, notes[i], ink, 0);
     }
     /* What the chosen setting does, and whether it waits for a restart. */
     ov_text(OVF_TEXT, X0 + 64, 362, rt_overlay_help(sel), grey, 0);

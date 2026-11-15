@@ -4,6 +4,7 @@
 410E0   # CCar::ResetPositionForGrid: hle_career.c's catch-up start (XBRT_MODS catchup.txt)
 78080   # the profile's level getter: hle_minigame.c finds the profile by it
 78050   # the profile's credits getter (the career menus' status bar): likewise
+78940   # the profile's add-credits: hle_kaizo.c, a clean Kaizo race's rewards doubled
 75050   # the grid order (racer list, thiscall): hle_career.c, a big field (over 8 racers) never the random order (8 places on the stack)
 76370   # the random grid order (racer list, by its vtable): hle_career.c, a big field (over 8) in order instead
 BDCE0   # the replay keeps an AI racer's seed (10 of them): hle_career.c, a big field's 11th on not kept

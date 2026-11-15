@@ -23,7 +23,7 @@ endif
 
 GEN_SRC = $(wildcard $(GEN)/*.c)
 GEN_OBJ = $(patsubst $(GEN)/%.c,build/gen/%.o,$(GEN_SRC))
-RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c apu_vp.c hle_input.c hle_net.c hle_fiber.c hle_d3d.c hle_career.c hle_drift.c hle_career_panel.c hle_career_cats.c hle_cheats.c hle_qol.c hle_clip.c hle_achieve.c hle_minigame.c hle_quickrace.c hle_listcheck.c hle_fclass.c hle_unlock.c crypto.c inflate.c display.c raster.c gl.c hdr.c settings.c overlay.c soundtrack.c spotify.c
+RT_SRC = main.c mem.c thread.c kernel.c file.c dpc.c hw.c nv2a.c kelvin.c apu.c apu_vp.c hle_input.c hle_net.c hle_fiber.c hle_d3d.c hle_career.c hle_drift.c hle_kaizo.c hle_career_panel.c hle_career_cats.c hle_cheats.c hle_qol.c hle_clip.c hle_achieve.c hle_minigame.c hle_quickrace.c hle_listcheck.c hle_fclass.c hle_unlock.c crypto.c inflate.c display.c raster.c gl.c hdr.c settings.c overlay.c soundtrack.c spotify.c
 RT_OBJ = $(patsubst %.c,build/%.o,$(RT_SRC))
 
 TARGET ?= forza$(EXE)

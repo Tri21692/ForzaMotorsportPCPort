@@ -166,6 +166,7 @@ void f_000755D0(XbCtx *c) {
     c->eax = found;
     if (found && list == 0x58DAA0) tt_place(found);
     if (found && list == 0x58DAA0) rt_drift_place(found);
+    if (found && list == 0x58DAA0) rt_kaizo_place(found);
     if (list == 0x58DAA0 && count == 2 && getenv("XBRT_CATCHUP_DUMP")) { /* debugging: both racers' laps and times, every 5 s */
         static uint64_t next;
         uint64_t now = rt_now_100ns();
@@ -360,6 +361,21 @@ void f_000410E0(XbCtx *c) {
         for (uint32_t k = 0; k < 0x80000; k++) rt_grid_globals[k] = xb_rd32(0x400000 + 4 * k);
     int32_t place = (int32_t)xb_rd32(c->esp + 4);
     uint32_t car = c->ecx;
+    { /* Kaizo Mode: the player's car last, the rivals behind it up one (those already laid, laid again) */
+        uint32_t cars[16];
+        int32_t places[16], kp;
+        int again = 0;
+        kp = rt_kaizo_grid(car, place, cars, places, &again);
+        for (int i = 0; i < again; i++) {
+            XbCtx was = *c;
+            c->ecx = cars[i];
+            xb_push(c, (uint32_t)places[i]);
+            xb_push(c, 0x000410E0u); /* (a return address: the call comes back here, not through it) */
+            orig_f_000410E0(c);
+            *c = was;
+        }
+        if (kp != place) place = kp, xb_wr32(c->esp + 4, (uint32_t)place);
+    }
     static int nospread = -1;
     if (nospread < 0) nospread = getenv("XBRT_BIG_NOSPREAD") != NULL; /* (testing: the game's own places) */
     int big = spread_field() && !nospread;
@@ -810,6 +826,7 @@ static void mayhem_places(void) {
 void orig_f_000B4AA0(XbCtx *c);
 void f_000B4AA0(XbCtx *c) {
     uint32_t racer = xb_rd32(c->esp + 4), race = xb_rd32(0x592984);
+    if (racer && racer < RT_USER_LIMIT) rt_kaizo_place(racer); /* (a race Kaizo ended: recorded last) */
     if (racer && racer < RT_USER_LIMIT && race && race == cross_race && rt_qr_mayhem()) {
         uint32_t k = 0;
         while (k < cross_n && cross_r[k] != racer) k++;
@@ -897,6 +914,7 @@ void rt_career_tick(XbCtx *c) {
     }
     if (xb_rd32(0x592984)) tt_watch();
     rt_drift_tick();
+    rt_kaizo_tick();
     mayhem_spread(c);
     big_tick();
     if (!cu_active) return;

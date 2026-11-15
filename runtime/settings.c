@@ -32,6 +32,7 @@ static RtSetting settings[] = {
     {"skip_intro", "XBRT_SKIP_INTRO", "1", "The intro video at the start skipped (A pressed for you): 1 on, 0 off"},
     {"fast_loading", "XBRT_FAST_LOADING", "1", "Races load without the game's least time on the loading screen (1 to 3 s a load): 1 on, 0 off"},
     {"show_fps", "XBRT_SHOW_FPS", "0", "The frame rate in the top left corner: 1 on, 0 off"},
+    {"kaizo", "XBRT_KAIZO_SET", "0", "Kaizo Mode: start last; a hit, leaving the road or damage ends the race; a clean finish pays double: 1 on, 0 off"},
     {"soft_shadows", "XBRT_SOFT_SHADOWS", "1", "Shadows' edges smoothed over a few texels of the shadow map, not stepped: 1 on, 0 off"},
     {"sharpen", "XBRT_SHARPEN", "0.5", "Sharpening of the shown picture (contrast-adaptive): 0 off to 1"},
     {"bloom", "XBRT_BLOOM", "0.3", "Glow round bright light (sky, sun on paint, lamps): 0 off to 1"},

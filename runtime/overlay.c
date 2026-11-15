@@ -62,6 +62,8 @@ static const OvItem items[] = {
     {"skip_intro", "Skip Intro Video", {"0", "1"}, {"Off", "On"}, 0, "Skips the intro video when the game starts."},
     {"fast_loading", "Fast Loading", {"0", "1"}, {"Off", "On"}, 1,
      "Skips the game's least time on loading screens: races start and restart about a second sooner."},
+    {NULL, "Kaizo Mode", {NULL}, {NULL}, 0, NULL},
+    {"kaizo", "Kaizo Mode", {"0", "1"}, {"Off", "On"}, 1, "One mistake ends the race. Takes effect from the next race you start."},
     {NULL, "Audio", {NULL}, {NULL}, 0, NULL},
     {"volume", "Volume", {"0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1"},
      {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}, 1, "Sound volume."},
@@ -78,7 +80,7 @@ static volatile int open_, sel, tab, scroll; /* sel: within the tab; scroll: a t
 static int changed_restart; /* something changed that needs a restart */
 
 /* The tabs: each one's header entry, the first of its settings and how many. */
-#define MAXTABS 8
+#define MAXTABS 10
 static int ntabs, tab_head[MAXTABS], tab_first[MAXTABS], tab_n[MAXTABS];
 static void tabs_init(void) {
     if (ntabs) return;
@@ -138,6 +140,24 @@ const char *rt_overlay_help(int i) {
                                   : "What you have earned so far. Up and down scroll the list.";
 }
 int rt_overlay_scroll(void) { return scroll; }
+/* A tab's own text under its settings (glover.c draws it): Kaizo Mode's rules. */
+const char *const *rt_overlay_notes(int *n) {
+    static const char *const kaizo[] = {
+        "You always start in last place.",
+        "The race ends at once, and you are placed last, if you:",
+        "    -  hit another car, or are hit by one",
+        "    -  hit a wall or a barrier",
+        "    -  leave the road",
+        "    -  damage the car's body, or wear its engine past a quarter",
+        "Finish clean and the race's credits are doubled.",
+        "Not in Mayhem races or drift events: their rules are hits and slides.",
+    };
+    tabs_init();
+    *n = 0;
+    if (strcmp(items[tab_head[tab]].label, "Kaizo Mode")) return NULL;
+    *n = (int)(sizeof kaizo / sizeof kaizo[0]);
+    return kaizo;
+}
 
 static void apply(const OvItem *it, const char *v) {
     rt_settings_set(it->setting, v);
@@ -156,7 +176,7 @@ static void apply(const OvItem *it, const char *v) {
     else if (!strcmp(it->setting, "vibrance")) rt_post_vibrance = (float)atof(v);
     else if (!strcmp(it->setting, "background_mute")) { if (!atoi(v)) rt_apu_set_muted(0); } /* (display.c mutes on the next switch away) */
     else if (!strcmp(it->setting, "spotify")) rt_spotify_enable(atoi(v));
-    else if (!strcmp(it->setting, "spotify_popup") || !strcmp(it->setting, "spotify_race_music")) {} /* (read as they're needed) */
+    else if (!strcmp(it->setting, "spotify_popup") || !strcmp(it->setting, "spotify_race_music") || !strcmp(it->setting, "kaizo")) {} /* (read as they're needed) */
     else changed_restart = 1;
 }
 

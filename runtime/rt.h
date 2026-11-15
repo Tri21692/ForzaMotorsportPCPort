@@ -167,6 +167,12 @@ typedef struct {
 } RtDriftHud;
 void rt_drift_tick(void);
 void rt_drift_place(uint32_t racer);
+/* Kaizo Mode (hle_kaizo.c): the run judged from the career tick, the place of a race it ended, the grid's last place. */
+void rt_kaizo_tick(void);
+void rt_kaizo_place(uint32_t racer);
+int rt_kaizo_setting(void);
+int32_t rt_kaizo_grid(uint32_t car, int32_t place, uint32_t *cars, int32_t *places, int *again);
+const char *const *rt_overlay_notes(int *n);
 int rt_drift_hud(RtDriftHud *h);
 extern volatile uint8_t rt_gamma[256][3]; /* the DAC palette, D3D's gamma ramp (nv2a.c); applied as shown */
 extern volatile uint32_t rt_gamma_seq;     /* counts palette entries written */
