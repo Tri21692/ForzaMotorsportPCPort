@@ -915,6 +915,7 @@ void rt_career_tick(XbCtx *c) {
     if (xb_rd32(0x592984)) tt_watch();
     rt_drift_tick();
     rt_kaizo_tick();
+    rt_mayhem_car_tick();
     mayhem_spread(c);
     big_tick();
     if (!cu_active) return;

@@ -958,6 +958,43 @@ static void *device_main(void *arg) {
                     if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
                     rt_log("nv2a: RAM dumped to %s\n", path);
                 }
+                { /* XBRT_RAM_DUMP_ON=<trigger file>: when that file appears, the RAM saved to the path it holds and the
+                   * trigger removed (scripted runs: a dump at a menu step) */
+                    static const char *trig;
+                    static int ck;
+                    if (!ck) ck = 1, trig = getenv("XBRT_RAM_DUMP_ON");
+                    FILE *t = trig && (nv2a.vblanks % 15) == 0 ? fopen(trig, "r") : NULL;
+                    if (t) {
+                        char path[1024] = "";
+                        if (fgets(path, sizeof path, t)) path[strcspn(path, "\r\n")] = 0;
+                        fclose(t);
+                        remove(trig);
+                        FILE *f = path[0] ? fopen(path, "wb") : NULL;
+                        if (f) fwrite(xb_mem + RT_PHYS_VIEW, 1, RT_PHYS_SIZE, f), fclose(f);
+                        fprintf(stderr, "xbrt: RAM saved to %s\n", path);
+                        { /* and, by their addresses: the profile object (<path>.prof, 16 KB) and the player's car
+                           * (<path>.car, 32 KB), which a dump of the RAM does not line up from run to run */
+                            uint32_t rt_mg_profile(void);
+                            uint32_t prof = rt_mg_profile(), arr = xb_rd32(0x58DAA0 + 4), n = xb_rd32(0x58DAA0 + 0x10), car = 0;
+                            for (uint32_t i = 0; arr && arr < RT_USER_LIMIT && i < n && i < 64 && !car; i++) {
+                                uint32_t r = xb_rd32(arr + 4 * i);
+                                if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) car = xb_rd32(r + 0xA0);
+                            }
+                            char p2[1100];
+                            uint32_t race = xb_rd32(0x592984);
+                            struct { uint32_t at, size; const char *ext; } obj[3] = {{prof, 0x4000, "prof"}, {car, 0x8000, "car"}, {race, 0x2000, "race"}};
+                            for (int o = 0; o < 3; o++) {
+                                if (!obj[o].at || obj[o].at >= RT_USER_LIMIT) continue;
+                                snprintf(p2, sizeof p2, "%s.%s", path, obj[o].ext);
+                                FILE *g = fopen(p2, "wb");
+                                if (!g) continue;
+                                for (uint32_t k = 0; k < obj[o].size; k += 4) { uint32_t v = xb_rd32(obj[o].at + k); fwrite(&v, 4, 1, g); }
+                                fclose(g);
+                                fprintf(stderr, "xbrt: %s at %08x saved to %s\n", obj[o].ext, obj[o].at, p2);
+                            }
+                        }
+                    }
+                }
                 { /* XBRT_F4_AT=<seconds>: press F4 then (unattended runs) */
                     static double at = -1;
                     if (at < 0) at = getenv("XBRT_F4_AT") ? atof(getenv("XBRT_F4_AT")) : 0;

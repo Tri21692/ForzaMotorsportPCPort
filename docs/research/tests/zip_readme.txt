@@ -32,6 +32,9 @@ Kaizo Mode (15 Nov)
   at once, last and DNF; a clean finish pays the race's winnings twice. Not in Mayhem races or drift events.
   Checked on test runs: the tab, the last-place start, a race ended by leaving the road, the doubled payout.
 
+Mayhem races (15 Nov): your car is on the automatic gearbox with cosmetic damage for that race only; Set Difficulty
+  and the save are not changed. Checked: a car set to Manual changed up by itself; the damage level was not driven.
+
 Known and open
   Fuji's pit lane: the game drives the car through and lets go at the exit, and nothing respawns it there. Against
   Road Atlanta it still holds the car about 4 s at the entrance, sets no speed limit and shows no pit camera.

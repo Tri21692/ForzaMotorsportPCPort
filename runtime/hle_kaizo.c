@@ -43,7 +43,7 @@ static float rdf(uint32_t a) { uint32_t v = xb_rd32(a); float f; memcpy(&f, &v, 
 static struct {
     uint32_t racer; unsigned serial;
     int on, failed, clear, told;
-    float penalty, v[3];
+    float penalty, v[3], pos[3];
     uint64_t v_at, began, said_at, failed_at;
     int lapped, ended, winning; /* winning: XBRT_KAIZO_WIN_AT's finish, 1st (testing the payout) */
     float dmg0[DMG_N]; /* the damage records as the race began (some stand above none on a whole car) */
@@ -136,6 +136,22 @@ void rt_kaizo_tick(void) {
         memset(&k, 0, sizeof k);
         k.racer = r, k.serial = serial, k.on = kaizo_race();
         if (k.on) fprintf(stderr, "xbrt: kaizo: this race\n");
+    }
+    /* A restart (the user's, 15 Nov: "have a restart clear the failed flag. it seems like restarting a race quickly
+     * makes the user fail immediately"): the racer stays and the races-begun count had not moved yet, so the run
+     * Kaizo had ended was ended again as soon as the clock ran. Back on the grid (state 3, or the lap count back at
+     * -1 with the car put somewhere else) is a new run: nothing failed, the measures taken again, the lights'
+     * grace again; the setting read again too. */
+    {
+        float pos[3] = {rdf(car + 0x14), rdf(car + 0x18), rdf(car + 0x1C)};
+        double moved = hypot(pos[0] - k.pos[0], pos[2] - k.pos[2]);
+        int jumped = (k.pos[0] != 0 || k.pos[2] != 0) && moved > 20;
+        memcpy(k.pos, pos, sizeof pos);
+        if ((state == 3 || jumped) && (k.failed || k.winning || k.began)) {
+            fprintf(stderr, "xbrt: kaizo: a restart (%s): a new run%s\n", state == 3 ? "the grid" : "the car moved", k.failed ? ", the failed one forgotten" : "");
+            k.failed = k.winning = k.lapped = k.ended = k.clear = 0, k.began = 0, k.failed_at = 0;
+            k.on = kaizo_race();
+        }
     }
     if (!k.on) return;
     float v[3] = {rdf(car + 0x44), rdf(car + 0x48), rdf(car + 0x4C)}, pen = rdf(timing + 0x98);

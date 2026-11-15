@@ -169,6 +169,7 @@ void rt_drift_tick(void);
 void rt_drift_place(uint32_t racer);
 /* Kaizo Mode (hle_kaizo.c): the run judged from the career tick, the place of a race it ended, the grid's last place. */
 void rt_kaizo_tick(void);
+void rt_mayhem_car_tick(void); /* hle_mayhemcar.c: a Mayhem race's car: automatic, cosmetic damage */
 void rt_kaizo_place(uint32_t racer);
 int rt_kaizo_setting(void);
 int32_t rt_kaizo_grid(uint32_t car, int32_t place, uint32_t *cars, int32_t *places, int *again);

@@ -79,6 +79,7 @@ void f_00078050(XbCtx *c) {
     orig_f_00078050(c);
 }
 
+uint32_t rt_mg_profile(void) { return profile; } /* (the profile object, once a getter has been asked: 0 before) */
 void rt_mg_menu_seen(void) { menu_at = rt_now_100ns(); }
 
 static int level(void) {
