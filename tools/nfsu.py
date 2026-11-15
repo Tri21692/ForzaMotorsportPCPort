@@ -68,7 +68,7 @@ def solids(d):
                             u = jdlz(d[at:at + packed])
                             for uid, uo, usize in chunks(u, 0, len(u)):
                                 if uid == 0x80134010: yield u, uo, usize
-                        elif struct.unpack_from('<I', d, at)[0] == 0x80134010 and at + 8 not in seen:
+                        elif at + 8 <= len(d) and struct.unpack_from('<I', d, at)[0] == 0x80134010 and at + 8 not in seen:
                             # unpacked but outside the 80134000 chunk (an add-on's: the MX-5's), found only through the list
                             seen.add(at + 8)
                             yield d, at + 8, struct.unpack_from('<I', d, at + 4)[0]

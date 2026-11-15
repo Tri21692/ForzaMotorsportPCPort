@@ -1,4 +1,4 @@
-Forza Motorsport mods, 12 November 2026
+Forza Motorsport mods, 15 November 2026
 =======================================
 
 What is here
@@ -22,6 +22,10 @@ What was checked (overnight, 11-12 Nov, on forza-next's build, sound off, on a c
   Career   the first series of each Race Type started from the menus and raced, Mayhem's first two both as Mayhem
            races. Several second series could not be entered: the test profile owns no car of their class.
   Archives Cars.ca2, Mega.ca2, MegaXPR.ca2 read back whole.
+
+Since the audit (15 Nov, seen in the dealer only, not raced)
+  The 32 newer add-on cars wear their own rims in place of their template cars' (the Lamborghinis had Ferrari's).
+  The 1991 240SX (S13) rebuilt: smooth shading, its tail lamps and badge.
 
 Known and open
   Fuji's pit lane: the game drives the car through and lets go at the exit, and nothing respawns it there. Against

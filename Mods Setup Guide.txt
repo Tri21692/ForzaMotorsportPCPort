@@ -1,6 +1,6 @@
 Getting the mods working
 ========================
-For "Forza mods 2026-11-12.zip". About five minutes.
+For "Forza mods 2026-11-15.zip". About five minutes.
 
 What you need first
   1. The Forza Motorsport Remastered folder (the PC port), already able to start the plain game with "Play Forza.bat".
@@ -9,7 +9,7 @@ What you need first
 
 Steps
   1. Close the game if it is running.
-  2. Unzip "Forza mods 2026-11-12.zip" straight into the Forza Motorsport Remastered folder and let it merge.
+  2. Unzip "Forza mods 2026-11-15.zip" straight into the Forza Motorsport Remastered folder and let it merge.
      Afterwards you should have:
          Forza Motorsport Remastered\Play Forza (New mods).bat
          Forza Motorsport Remastered\runtime\forza-next.exe
