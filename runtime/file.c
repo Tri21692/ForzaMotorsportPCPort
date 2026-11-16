@@ -317,7 +317,28 @@ static char loading_track[64];
 static int track_file(const char *rest, char *out, size_t n) {
     char p[800];
     snprintf(p, sizeof p, "\\track\\%s%s", loading_track, rest);
-    if (!loading_track[0] || !mod_file(p, out, n)) return 0;
+    if (!loading_track[0]) return 0;
+    if (!mod_file(p, out, n)) {
+        /* track\<track>\use.txt names another track's folder to look in as well (Fujimi Kaido at night, 16 Nov: the
+         * hill climb and the down hill share one 167 MB night scenery, kept under the first's folder) */
+        static char use_for[64], use[64];
+        if (strcasecmp(use_for, loading_track)) {
+            char up[900], host[1200];
+            snprintf(use_for, sizeof use_for, "%s", loading_track);
+            use[0] = 0;
+            snprintf(up, sizeof up, "\\track\\%s\\use.txt", loading_track);
+            if (mod_file(up, host, sizeof host)) {
+                FILE *f = fopen(host, "r");
+                if (f) {
+                    if (fscanf(f, "%63s", use) != 1) use[0] = 0;
+                    fclose(f);
+                }
+            }
+        }
+        if (!use[0]) return 0;
+        snprintf(p, sizeof p, "\\track\\%s%s", use, rest);
+        if (!mod_file(p, out, n)) return 0;
+    }
     fprintf(stderr, "xbrt: mods: %s (for %s)\n", out, loading_track);
     return 1;
 }
