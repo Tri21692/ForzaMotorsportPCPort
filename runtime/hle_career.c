@@ -827,6 +827,7 @@ void orig_f_000B4AA0(XbCtx *c);
 void f_000B4AA0(XbCtx *c) {
     uint32_t racer = xb_rd32(c->esp + 4), race = xb_rd32(0x592984);
     if (racer && racer < RT_USER_LIMIT) rt_kaizo_place(racer); /* (a race Kaizo ended: recorded last) */
+    if (racer && racer < RT_USER_LIMIT) rt_elim_place(racer);  /* (an Eliminator race: by the round it went out in) */
     if (racer && racer < RT_USER_LIMIT && race && race == cross_race && rt_qr_mayhem()) {
         uint32_t k = 0;
         while (k < cross_n && cross_r[k] != racer) k++;
@@ -845,6 +846,7 @@ void orig_f_000B3530(XbCtx *c); /* the game's ranking (wraps.txt) */
 void f_000B3530(XbCtx *c) {
     orig_f_000B3530(c);
     mayhem_places();
+    rt_elim_places();
 }
 
 void rt_career_tick(XbCtx *c) {
@@ -915,6 +917,7 @@ void rt_career_tick(XbCtx *c) {
     if (xb_rd32(0x592984)) tt_watch();
     rt_drift_tick();
     rt_kaizo_tick();
+    rt_elim_tick();
     rt_mayhem_car_tick();
     mayhem_spread(c);
     big_tick();

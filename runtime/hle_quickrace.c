@@ -625,6 +625,8 @@ volatile char rt_photo_path[512];
 #define AI_PUSH 3.0f      /* m/s^2: Mayhem's rivals pushed on along the straights (the user's, 5 Nov: "return them to original
                            * values": 4 a while) */
 #define AI_PUSH_TOP 85.0f /* m/s: under this (90 a while) */
+#define MAYHEM_TURN 0.85f /* rad/s from the stick held over, on top of the game's own turn (0.55 before 15 Nov) */
+#define MAYHEM_GRIP 5.5f  /* the slide across the heading closed at this rate a second (3.2 before 15 Nov) */
 #define MAYHEM_PULL 3.5f  /* m/s^2 at full throttle, on top of the game's: the player's (5 before the user's, 5 Nov: "make the
                            * acceleration a little slower") */
 #define DRIFT_OUT 9000000ull /* 100 ns: the way out of a drift eased over 0.9 s */
@@ -1586,7 +1588,11 @@ void rt_qr_tick(void) {
              * is the drift's own "knock" too, a fifth of the speed gone) */
             static float gbase = 30.0f;
             if (lap < 0) gbase = 30.0f;
-            float bar = gbase * 3.0f < 100.0f ? 100.0f : gbase * 3.0f;
+            /* (the user's, 15 Nov: "The car barely turns" out of a drift: in that evening's play log the handling stood
+             * down 216 times in three races at the bar of 100, 132 of them on knocks of 100-150 and only 28 over a
+             * wall's own 300: kerbs and bumps at Mayhem's speeds, each one 0.4 s without the stick's turn. The bar's
+             * floor 200 now.) */
+            float bar = gbase * 3.0f < 200.0f ? 200.0f : gbase * 3.0f;
             /* (and the tick a drift begins, brake and stick: the log's first "wall", 171, came the tick before the drift's in) */
             int drifty = me_drift || (rt_pad_brake > 0.06f && (rt_pad_steer > 0.3f || rt_pad_steer < -0.3f));
             /* (the user's, 7 Nov evening: "return the brake-to-drift code pre wall fix": a drift's own knocks ran 300-440
@@ -1759,15 +1765,24 @@ void rt_qr_tick(void) {
                         wrf(car + 0x44, v[0]), wrf(car + 0x48, v[1]), wrf(car + 0x4C, v[2]);
                     }
                 } else {
-                    float ramp = vf > 25 ? 1.0f : vf > 0 ? vf / 25 : 0;
-                    float turn = on_wall ? 0 : steer * 0.55f * ramp; /* rad/s (none on a wall: the body turned into the barrier) */
+                    /* (the user's, 15 Nov: "Mayhem's handling when not braking to drift should be grippier. The car
+                     * barely turns": the stick's turn 0.55 rad/s from 25 m/s before, the slide across the heading
+                     * closed at 3.2 a second. Now MAYHEM_TURN from 18 m/s and MAYHEM_GRIP; XBRT_MAYHEM_TURN and
+                     * XBRT_MAYHEM_GRIP to try others) */
+                    static float turn_max = -1, grip;
+                    if (turn_max < 0) {
+                        const char *et = getenv("XBRT_MAYHEM_TURN"), *eg = getenv("XBRT_MAYHEM_GRIP");
+                        turn_max = et && atof(et) > 0 ? (float)atof(et) : MAYHEM_TURN, grip = eg && atof(eg) > 0 ? (float)atof(eg) : MAYHEM_GRIP;
+                    }
+                    float ramp = vf > 18 ? 1.0f : vf > 0 ? vf / 18 : 0;
+                    float turn = on_wall ? 0 : steer * turn_max * ramp; /* rad/s (none on a wall: the body turned into the barrier) */
                     if (turn > 0.001f || turn < -0.001f) {
                         yaw(car, turn * (float)dt);
                         hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
                         if (hl > 0.1f) hx /= hl, hz /= hl;
                         rx = hz, rz = -hx; /* (vf and vl kept: the velocity turns with the car, the speed carried round) */
                     }
-                    vl *= expf(-3.2f * (float)dt);
+                    vl *= expf(-grip * (float)dt);
                     if (!on_wall && thr > 0.05f && vf > -1 && vf < 95) vf += MAYHEM_PULL * thr * (float)dt;
                     if (brk > 0.05f && vf > 0) vf -= (vf < 14.0f * brk * (float)dt ? vf : 14.0f * brk * (float)dt); /* (14 m/s^2 on the game's: the user's "more effective"; was 8) */
                     v[0] = hx * vf + rx * vl, v[2] = hz * vf + rz * vl;
