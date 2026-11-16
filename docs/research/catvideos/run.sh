@@ -18,6 +18,7 @@ until [ -f "$O/p_$(( 25000 / ${SHOT_MS:-1000} )).ppm" ] || [ -f "$O/p_0$(( 25000
 p A 4; p A 5; p A 6; p A 6
 for k in $(seq ${5:-0}); do p ${CLASS_KEY:-RIGHT} 1.2; done; p A 6
 for k in $(seq ${6:-0}); do p RIGHT 1.2; done; p A 8
+for k in $ASSIST_KEYS; do p $k 1.0; done   # (the assists menu: e.g. "RIGHT DOWN RIGHT DOWN RIGHT" = the line, STM and TCS switched)
 p A 6
 for k in $(seq ${LINE_OFF:-0}); do p ${LINE_KEY:-LEFT} 1.2; done
 p A 6; p A 8

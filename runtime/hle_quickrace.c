@@ -1048,6 +1048,158 @@ static void autopilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, doubl
     wrf(car + 0x44, vx * auto_speed), wrf(car + 0x4C, vz * auto_speed);
 }
 
+/* XBRT_PILOT=<top speed, m/s> (the categories' videos again, the user's, 16 Nov: "the wheels having better, realistic
+ * autopilot ... make sure the car behaves normally too"): the player's car driven as a player drives it, through the
+ * pad alone (hle_input.c gives the game rt_pilot_steer / _thr / _brk), so the game's own physics carry it: its
+ * suspension, its roll, its wheels where they belong. The autopilot above writes the car's place and facing every
+ * tick, and the wheels, pulled along by a body that never rolled or slid, stood out of the arches.
+ *  - the wheel: at a point of the racing line ahead (further the faster), by the angle to it from the way the car
+ *    goes, the nose's slide against that way steered out (a counter-steer), eased as a hand turns it;
+ *  - the pedals: the line ahead read for its bends, each one's speed what XBRT_PILOT_GRIP (m/s^2 across, 9) allows,
+ *    braked for in time at XBRT_PILOT_BRAKE (m/s^2, 7); the throttle eased while the car slides.
+ *  - XBRT_PILOT_DRIFT=<degrees>: in a bend the throttle holds the nose that far inside the way the car goes (a
+ *    powered slide), entered with a touch of the handbrake (A). */
+volatile float rt_pilot_steer, rt_pilot_thr, rt_pilot_brk;
+volatile int rt_pilot_hand;
+static int hunt_on; /* XBRT_PILOT_HUNT=1 (Mayhem's video): a rival close ahead is steered at, for the takedown */
+static float hunt_x, hunt_z;
+static int pilot_over; /* XBRT_PILOT_ONCE: the race driven and done; no pilot after it */
+volatile uint64_t rt_pilot_at; /* (rt_now_100ns of the last word: hle_input.c heeds it for 0.2 s) */
+static float envf(const char *name, float dflt) { const char *s = getenv(name); return s && *s ? (float)atof(s) : dflt; }
+static void pilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, double dt, float top, int on_grid) {
+    enum { NS = 200 };
+    static const float STEP = 4.0f;
+    static uint32_t pcar;
+    static int pk = -1;
+    static float steer, grip = -1, brake_a, drift_deg, ksteer, kslip, hand_until;
+    static uint64_t told;
+    if (grip < 0) {
+        grip = envf("XBRT_PILOT_GRIP", 9.0f), brake_a = envf("XBRT_PILOT_BRAKE", 5.5f), drift_deg = envf("XBRT_PILOT_DRIFT", 0);
+        ksteer = envf("XBRT_PILOT_STEER", 1.5f), kslip = envf("XBRT_PILOT_SLIP", 1.5f);
+    }
+    float x = rdf(car + 0x14), z = rdf(car + 0x1C), vx = rdf(car + 0x44), vz = rdf(car + 0x4C), v = sqrtf(vx * vx + vz * vz);
+    float fx = rdf(car + 0x38), fz = rdf(car + 0x40), fl = sqrtf(fx * fx + fz * fz);
+    if (fl < 0.1f) return;
+    fx /= fl, fz /= fl;
+    if (pcar != car || pk < 0) pk = nearest(xs, zs, np, x, z), pcar = car, steer = 0;
+    else { /* (the line's point by the car: looked for on from the last, the whole line only when lost) */
+        float best = 1e30f;
+        int bk = pk;
+        for (int j = -5; j < 60; j++) {
+            int k = ((pk + j) % (int)np + (int)np) % (int)np;
+            float ex = rdf(xs + 4 * k) - x, ez = rdf(zs + 4 * k) - z, d = ex * ex + ez * ez;
+            if (d < best) best = d, bk = k;
+        }
+        pk = best > 900 ? nearest(xs, zs, np, x, z) : bk;
+    }
+    if (pk < 0) return;
+    /* the line ahead, a point every 4 m */
+    float sx[NS], sz[NS];
+    {
+        float px = rdf(xs + 4 * pk), pz = rdf(zs + 4 * pk), need = 0;
+        int k = pk, ns = 0;
+        for (int guard = 0; guard < 4000 && ns < NS; guard++) {
+            int k2 = (k + 1) % (int)np;
+            float tx = rdf(xs + 4 * k2) - px, tz = rdf(zs + 4 * k2) - pz, d = sqrtf(tx * tx + tz * tz);
+            if (d < 1e-4f) { k = k2; continue; }
+            if (d < need) { need -= d, px += tx, pz += tz, k = k2; continue; }
+            px += tx / d * need, pz += tz / d * need;
+            sx[ns] = px, sz[ns] = pz, ns++, need = STEP;
+        }
+        for (; ns < NS; ns++) sx[ns] = sx[ns ? ns - 1 : 0], sz[ns] = sz[ns ? ns - 1 : 0];
+    }
+    /* the speed the bends ahead allow here, and the bend the car is in (+ right) */
+    float allow = top, bend_here = 0;
+    for (int i = 3; i + 3 < NS; i++) {
+        float ax = sx[i] - sx[i - 3], az = sz[i] - sz[i - 3], bx = sx[i + 3] - sx[i], bz = sz[i + 3] - sz[i];
+        float al = sqrtf(ax * ax + az * az), bl = sqrtf(bx * bx + bz * bz);
+        if (al < 0.1f || bl < 0.1f) continue;
+        float sn = (az * bx - ax * bz) / (al * bl); /* (+: the line turns right) */
+        float curv = fabsf(sn) / (3 * STEP);
+        if (i < 9 && fabsf(sn) > fabsf(bend_here)) bend_here = sn;
+        float vmax = curv > 1e-4f ? sqrtf(grip / curv) : top;
+        if (vmax > top) vmax = top;
+        float here = sqrtf(vmax * vmax + 2 * brake_a * (float)(i - 3) * STEP);
+        if (here < allow) allow = here;
+        if ((float)i * STEP > v * v / (2 * brake_a) + 80) break;
+    }
+    /* the wheel */
+    float look = envf("XBRT_PILOT_LOOK0", 7) + envf("XBRT_PILOT_LOOK", 0.5f) * v;
+    int li = (int)(look / STEP);
+    if (li >= NS) li = NS - 1;
+    float tx = sx[li] - x, tz = sz[li] - z;
+    if (hunt_on) tx = hunt_x - x, tz = hunt_z - z;
+    float hx = fx, hz = fz; /* (the way the car goes: its speed's above a walk, its nose's under) */
+    if (v > 6) hx = vx / v, hz = vz / v;
+    static float flip = 0;
+    if (flip == 0) flip = envf("XBRT_PILOT_FLIP", 0) != 0 ? -1.0f : 1.0f;
+    float aim = atan2f(tx * hz - tz * hx, tx * hx + tz * hz) * flip; /* (+: the point to the right of the way it goes) */
+    float slip = atan2f(fx * hz - fz * hx, fx * hx + fz * hz) * flip; /* (+: the nose right of the way it goes) */
+    bend_here *= flip;
+    static float bend_min = -1; /* (a bend worth a slide: tighter than some 55 m) */
+    if (bend_min < 0) bend_min = envf("XBRT_PILOT_BEND", 0.22f);
+    int bending = fabsf(bend_here) > bend_min && v > 12;
+    float want_slip = drift_deg > 0 && bending ? (bend_here > 0 ? 1.0f : -1.0f) * drift_deg * 0.01745f : 0;
+    { /* (from one bend into the other the angle wanted swings over in its time, not at once) */
+        static float wsm;
+        float step = 0.9f * (float)dt, dw = want_slip - wsm;
+        wsm += dw > step ? step : dw < -step ? -step : dw;
+        if (drift_deg <= 0) wsm = 0;
+        want_slip = wsm;
+    }
+    static float slip_was, slip_rate, kd = -1, hand_s;
+    if (kd < 0) kd = envf("XBRT_PILOT_KD", 0.3f), hand_s = envf("XBRT_PILOT_HAND", 0.2f);
+    if (dt > 1e-4) slip_rate += ((slip - slip_was) / (float)dt - slip_rate) * (1 - expf(-15.0f * (float)dt)); /* (how fast the tail comes round: caught early) */
+    slip_was = slip;
+    float raw = ksteer * aim - kslip * (slip - want_slip) - (drift_deg > 0 ? kd * slip_rate : 0);
+    if (raw > 1) raw = 1;
+    if (raw < -1) raw = -1;
+    steer += (raw - steer) * (1 - expf(-(drift_deg > 0 ? 18.0f : 10.0f) * (float)dt)); /* (quicker hands in a slide) */
+    /* the pedals */
+    static float thr_was, brk_was;
+    float thr = 0, brk = 0, err = allow - v;
+    if (on_grid) thr = 1;
+    else if (err < -0.5f) brk = -err / 4 < 0.15f ? 0.15f : -err / 4 > 0.9f ? 0.9f : -err / 4;
+    else thr = err / 4 < 0.25f ? 0.25f : err / 4 > 1 ? 1 : err / 4;
+    int sliding = drift_deg > 0 && !on_grid && bending && brk < 0.5f && v > 9;
+    if (!on_grid && !sliding) { /* (a foot, not a switch: pressed over 0.6 s; less of it with the wheel turned or the car sliding) */
+        float cap = 1 - 0.75f * fabsf(steer), sl = 1 - fabsf(slip) / 0.21f;
+        if (sl < 0.1f) sl = 0.1f;
+        if (drift_deg > 0 && v < 8) cap = 0.6f, sl = 1; /* (after a spin: away gently, no wheelspin on the lock) */
+        if (thr > cap) thr = cap;
+        thr *= sl;
+        if (thr > thr_was + (float)dt / 0.6f) thr = thr_was + (float)dt / 0.6f;
+        if (brk > brk_was + (float)dt / 0.3f) brk = brk_was + (float)dt / 0.3f;
+        float bcap = 1 - 0.8f * fabsf(steer); /* (the brakes let off as the wheel turns in; eased in a slide, or it spins) */
+        if (brk > bcap) brk = bcap;
+        if (fabsf(slip) > 0.12f) brk *= 0.4f;
+    }
+    int hand = 0;
+    float now_s = (float)(rt_game_now_100ns() / 1e7);
+    if (sliding) { /* (the slide held on the throttle: more of it short of the angle, less past it or while the tail still comes round) */
+        float sg = bend_here > 0 ? 1.0f : -1.0f, inside = slip * sg, wd = fabsf(want_slip), rate_in = slip_rate * sg;
+        static float kthr = -1, kthr_d, thr0;
+        if (kthr < 0) kthr = envf("XBRT_PILOT_THR_P", 2.0f), kthr_d = envf("XBRT_PILOT_THR_D", 0.3f), thr0 = envf("XBRT_PILOT_THR0", 0.55f);
+        brk = 0;
+        thr = thr0 + kthr * (wd - inside) - kthr_d * rate_in;
+        if (thr > 1) thr = 1;
+        if (thr < 0.05f) thr = 0.05f;
+        if (inside < -0.12f && thr > 0.25f) thr = 0.25f; /* (the tail out the other way still: no power into it) */
+        if (inside < 0.1f && rate_in < 0.3f && now_s > hand_until + 2.0f) hand_until = now_s + hand_s; /* (not sliding yet: the handbrake's touch) */
+        hand = now_s < hand_until;
+    }
+    thr_was = thr, brk_was = brk;
+    static float dz = -1; /* (the game heeds nothing of the stick's first quarter: the wheel's word starts past it) */
+    if (dz < 0) dz = envf("XBRT_PILOT_DZ", 0.24f);
+    float out = fabsf(steer) < 0.01f ? 0 : (steer > 0 ? 1.0f : -1.0f) * (dz + (1 - dz) * fabsf(steer));
+    rt_pilot_steer = out, rt_pilot_thr = thr, rt_pilot_brk = brk, rt_pilot_hand = hand, rt_pilot_at = rt_now_100ns();
+    if (rt_now_100ns() - told > 10000000) {
+        told = rt_now_100ns();
+        fprintf(stderr, "xbrt: pilot: point %d, %.0f m/s (allowed %.0f), slip %.0f deg (wanted %.0f), steer %.2f, throttle %.2f, brake %.2f%s\n",
+                pk, v, allow, slip * 57.3f, want_slip * 57.3f, steer, thr, brk, hand ? ", handbrake" : "");
+    }
+}
+
 /* Finding a car's damage (for the takedown's wrecks): XBRT_DMGSCAN=1, watched from the race's start: the player's
  * car's first 32 KB and the first 4 KB of every object its first 2 KB points at (up to 48). Damage only grows, so
  * the floats that were 0 then and never went down since (looked at every 0.2 s) and now stand above 0 (up to 5)
@@ -1437,6 +1589,7 @@ void rt_qr_tick(void) {
         uint32_t laps = evp && evp < RT_USER_LIMIT ? xb_rd32(evp + 0x24) : 0;
         /* the player's run done (+0x1B8), once its laps are all done (the event's, +0x24) */
         int done = rme && (xb_rd32(rme + 0x1B8) & 0xFF) && (laps == 0 || laps > 99 || lapn >= (int)laps) && !getenv("XBRT_MM_PHOTO");
+        if (laps > 0 && laps <= 99 && lapn >= (int)laps && getenv("XBRT_PILOT_ONCE")) pilot_over = 1; /* (Arcade: its laps done, never marked) */
         int why = paused ? 1 : done ? 2 : rme && (xb_rd32(rme + 0x1B8) & 0xFF) ? 3 : 0;
         if (lapn != lap_was || why != why_was) {
             fprintf(stderr, "xbrt: quick race: lap %d of %u, clock %.1f s, %s\n", lapn, laps, clock,
@@ -1445,6 +1598,7 @@ void rt_qr_tick(void) {
         }
         if (paused) return;
         if (done) {
+            if (getenv("XBRT_PILOT_ONCE")) pilot_over = 1; /* (the replay after it: the recorded pad's alone, the replay's bar left be) */
             if (tdcam_until) tdcam_end();
             rt_qr_auto = 0;
             return;
@@ -1452,6 +1606,33 @@ void rt_qr_tick(void) {
     }
     qr_ticks++;
     float mp[3] = {0, 0, 0}, mdv[3] = {0, 0, 0}, mjolt = 0, mv0[3] = {0, 0, 0};
+    if (me && have_line) {
+        static float pilot_top = -1;
+        if (pilot_top < 0) pilot_top = envf("XBRT_PILOT", 0);
+        uint32_t ptm = rme ? xb_rd32(rme + 0xC0) : 0;
+        hunt_on = 0;
+        if (pilot_top > 0 && getenv("XBRT_PILOT_HUNT")) { /* (the nearest rival within 70 m ahead and 10 m to a side, not one already down) */
+            float px = rdf(me + 0x14), pz = rdf(me + 0x1C), hx = rdf(me + 0x38), hz = rdf(me + 0x40), best = 70;
+            for (uint32_t j = 0; j < n; j++) {
+                uint32_t r2 = xb_rd32(arr + 4 * j), c2 = r2 && r2 < RT_USER_LIMIT ? xb_rd32(r2 + 0xA0) : 0;
+                if (!c2 || c2 == me || c2 >= RT_USER_LIMIT || (int)j >= MAXCARS || cs[j].down_at) continue;
+                float ex = rdf(c2 + 0x14) - px, ez = rdf(c2 + 0x1C) - pz, along = ex * hx + ez * hz, side = ex * hz - ez * hx;
+                { /* XBRT_PILOT_RIVALS=<m/s>: the rivals held to that pace (eased off above it), so a car driven as a
+                   * player drives catches them */
+                    static float cap = -1;
+                    if (cap < 0) cap = envf("XBRT_PILOT_RIVALS", 0);
+                    float rvx = rdf(c2 + 0x44), rvz = rdf(c2 + 0x4C), rs = sqrtf(rvx * rvx + rvz * rvz);
+                    if (cap > 0 && rs > cap && !cs[j].hit_at && !cs[j].tumble_until) {
+                        float k = 1 - 1.2f * (float)dt;
+                        wrf(c2 + 0x44, rvx * k), wrf(c2 + 0x4C, rvz * k);
+                    }
+                }
+                if (along > 6 && along < best && fabsf(side) < 10) best = along, hunt_on = 1, hunt_x = rdf(c2 + 0x14), hunt_z = rdf(c2 + 0x1C);
+            }
+        }
+        if (pilot_top > 0 && ptm && ptm < RT_USER_LIMIT && !tdcam_until && !pilot_over)
+            pilot(me, xs, zs, np, dt, pilot_top, (int)xb_rd32(ptm + 0x9C) < 0 && rdf(ptm + 0xA0) <= 0);
+    }
     if (me) {
         mp[0] = rdf(me + 0x14), mp[1] = rdf(me + 0x18), mp[2] = rdf(me + 0x1C);
         if (cs[im].car == me) { /* the player's own jolt this tick (a touch jolts both cars) */

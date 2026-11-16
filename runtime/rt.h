@@ -142,6 +142,9 @@ float rt_qr_mayhem_share(void); /* the share of the lap Mayhem's rivals are spre
 int rt_qr_mayhem_grid(void); /* the grid being laid is a Mayhem event's (hle_quickrace.c) */
 extern volatile float rt_toon; /* Mayhem's cartoon look, 0..1 (hle_quickrace.c sets it, glfill.c draws it) */
 extern volatile uint64_t rt_present_hold_until; /* the shown picture held until then (glfill.c; the camera probe) */
+extern volatile float rt_pilot_steer, rt_pilot_thr, rt_pilot_brk; /* XBRT_PILOT (hle_quickrace.c): the pad a test's driver holds */
+extern volatile int rt_pilot_hand;
+extern volatile uint64_t rt_pilot_at;
 extern volatile float rt_pad_steer, rt_pad_throttle, rt_pad_brake; /* the pad as given to the game: -1..1 (right +), 0..1, 0..1 (hle_input.c) */
 extern volatile float rt_vblank_rate; /* vertical blanks at this share of 59.94 Hz (nv2a.c): the game's slow motion */
 void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */

@@ -319,6 +319,11 @@ static void host_pad(uint32_t pad) {
         if (hold || st == 2) thumbs[0] = 0;
         start_was = (buttons & 0x10) != 0;
     }
+    if (rt_pilot_at && rt_now_100ns() - rt_pilot_at < 2000000) { /* XBRT_PILOT (hle_quickrace.c): the car driven through the pad */
+        thumbs[0] = (int16_t)(rt_pilot_steer * 32767);
+        analog[A_RT] = (uint8_t)(rt_pilot_thr * 255), analog[A_LT] = (uint8_t)(rt_pilot_brk * 255);
+        if (rt_pilot_hand) analog[A_A] = 255;
+    }
     /* what the game is given to drive with (Mayhem's arcade handling, hle_quickrace.c, works from it) */
     rt_pad_steer = thumbs[0] / 32767.0f, rt_pad_throttle = analog[A_RT] / 255.0f, rt_pad_brake = analog[A_LT] / 255.0f;
     /* Our menus (F1, Quick Race, Prize Match) open, or closed with something still held: the game sees nothing
