@@ -1009,9 +1009,43 @@ static void autopilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, doubl
         if (d > m) { auto_p[0] += fx * m, auto_p[1] += fz * m; break; }
         auto_p[0] += tx, auto_p[1] += tz, m -= d, auto_k = k2;
     }
+    float vx = fx, vz = fz;
+    { /* XBRT_AUTODRIVE_DRIFT=<degrees> (recording the Drift category's video, 15 Nov): the nose turned into the
+       * corner, up to so far, by how much the line turns over the next 35 m; the car still goes along the line */
+        static float drift_max = -1, slip;
+        if (drift_max < 0) drift_max = getenv("XBRT_AUTODRIVE_DRIFT") ? (float)atof(getenv("XBRT_AUTODRIVE_DRIFT")) * 0.01745f : 0;
+        if (drift_max > 0) {
+            float px = auto_p[0], pz = auto_p[1], left = 35.0f, lx = fx, lz = fz;
+            int k = auto_k;
+            for (int guard = 0; guard < 200 && left > 0; guard++) {
+                int k2 = (k + 1) % (int)np;
+                float tx = rdf(xs + 4 * k2) - px, tz = rdf(zs + 4 * k2) - pz, d = sqrtf(tx * tx + tz * tz);
+                if (d > 1e-4f) lx = tx / d, lz = tz / d;
+                left -= d, px += tx, pz += tz, k = k2;
+            }
+            float want = asinf(fx * lz - fz * lx) * 2.2f;
+            if (want > drift_max) want = drift_max;
+            if (want < -drift_max) want = -drift_max;
+            if (want > -0.12f && want < 0.12f) want = 0; /* (a straight: straight) */
+            slip += (want - slip) * (1 - expf(-2.5f * (float)dt));
+            float c = cosf(slip), sn = sinf(slip), nx = fx * c - fz * sn, nz = fx * sn + fz * c;
+            fx = nx, fz = nz;
+        }
+    }
+    if (getenv("XBRT_AUTODRIVE_NODAMAGE")) { /* (the videos: the damage records kept as they stood when the autopilot took the car) */
+        static uint32_t base_car;
+        static float base[DMG_N];
+        int k = 0;
+        for (uint32_t r = DMG_FIRST; r <= DMG_LAST; r += 0x80)
+            for (uint32_t o = 0x70; o <= 0x78; o += 4, k++) {
+                if (base_car != car) base[k] = rdf(car + r + o);
+                else if (rdf(car + r + o) != base[k]) wrf(car + r + o, base[k]);
+            }
+        base_car = car;
+    }
     float pose[12] = {auto_p[0], rdf(car + 0x18), auto_p[1], fz, 0, -fx, 0, 1, 0, fx, 0, fz};
     for (int j = 0; j < 12; j++) wrf(car + 0x14 + 4 * j, pose[j]);
-    wrf(car + 0x44, fx * auto_speed), wrf(car + 0x4C, fz * auto_speed);
+    wrf(car + 0x44, vx * auto_speed), wrf(car + 0x4C, vz * auto_speed);
 }
 
 /* Finding a car's damage (for the takedown's wrecks): XBRT_DMGSCAN=1, watched from the race's start: the player's
@@ -1205,6 +1239,27 @@ void rt_qr_tick(void) {
     for (uint32_t i = 0; i < n; i++) {
         uint32_t r = xb_rd32(arr + 4 * i);
         if (r && r < RT_USER_LIMIT && xb_rd32(r + 0x14) == 0) me = xb_rd32(r + 0xA0), im = (int)i, rme = r;
+    }
+    if (!me && n >= 2 && n <= 16 && getenv("XBRT_REPLAY_DRIVE")) {
+        /* (recording the categories' videos, 15 Nov: in a replay no racer is of the player's type, 0, so nothing of ours
+         * drove the car the autopilot had driven and it went straight on at the first corner. With XBRT_REPLAY_DRIVE the
+         * one racer whose type no other has is taken for the player's, so the autopilot drives the replay too.) */
+        static uint32_t told;
+        for (uint32_t i = 0; i < n && !me; i++) {
+            uint32_t r = xb_rd32(arr + 4 * i), same = 0;
+            if (!r || r >= RT_USER_LIMIT) continue;
+            for (uint32_t j = 0; j < n; j++) {
+                uint32_t r2 = xb_rd32(arr + 4 * j);
+                same += j != i && r2 && r2 < RT_USER_LIMIT && xb_rd32(r2 + 0x14) == xb_rd32(r + 0x14);
+            }
+            if (!same) me = xb_rd32(r + 0xA0), im = (int)i, rme = r;
+        }
+        if (told != rme + 1) {
+            told = rme + 1;
+            fprintf(stderr, "xbrt: quick race: a replay: the racers' types");
+            for (uint32_t i = 0; i < n; i++) fprintf(stderr, " %u", xb_rd32(xb_rd32(arr + 4 * i) + 0x14));
+            fprintf(stderr, "; the player's taken to be racer %d\n", im);
+        }
     }
     { /* the camera's hold on the player's car, looked for once on the grid (the camera still there: its copies match) */
         static uint64_t grid_since;
@@ -1413,7 +1468,10 @@ void rt_qr_tick(void) {
         int lap = (int)xb_rd32(timing + 0x9C);
         float v[3] = {rdf(car + 0x44), rdf(car + 0x48), rdf(car + 0x4C)}, p[3] = {rdf(car + 0x14), rdf(car + 0x18), rdf(car + 0x1C)};
         if (cs[i].car != car) { memset(&cs[i], 0, sizeof cs[i]); cs[i].car = car; memcpy(cs[i].v, v, sizeof v); memcpy(cs[i].pos, p, sizeof p); continue; }
-        if (lap < 0 && rdf(timing + 0xA0) <= 0) { memcpy(cs[i].v, v, sizeof v); memcpy(cs[i].pos, p, sizeof p); continue; } /* (the grid: the race's clock not yet started) */
+        /* (XBRT_REPLAY_DRIVE, the videos: in a replay a powerful car spun off the grid before it reached the line, where
+         * the clock starts and the autopilot took it in the race: once it moves, it is the autopilot's there too) */
+        int launched = car == me && getenv("XBRT_REPLAY_DRIVE") && v[0] * v[0] + v[2] * v[2] > 4.0f;
+        if (lap < 0 && rdf(timing + 0xA0) <= 0 && !launched) { memcpy(cs[i].v, v, sizeof v); memcpy(cs[i].pos, p, sizeof p); continue; } /* (the grid: the race's clock not yet started) */
         static const char *photo = (const char *)1; /* XBRT_MM_PHOTO=<folder> (tools/mayhemphotos.py): a Mayhem Moment staged for
                                                      * its photographs, three times, a camera each (the user's: "a mix of
                                                      * everything but straight on"): the player's car put on the line 60 m
