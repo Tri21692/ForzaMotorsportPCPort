@@ -2726,7 +2726,11 @@ def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None):
     import numpy as np
     import forzaxpr as fx
     d = bytearray(zlib.decompress(open(template_bin, 'rb').read()))
-    head = 1136
+    # (the header's own size, at +4: 1136 with a wing's view, 996 without, on half the disc's cars. Taken as 1136
+    # always, detail's indices and palette went 140 bytes late on the 996 ones: 25 add-on cars' paint shop detail
+    # wrong and the next view's first texels written over; the vinyl audit, 16 Nov)
+    head = struct.unpack_from('<I', d, 4)[0]
+    assert head in (996, 1136), 'liveries.bin header of %d bytes in %s' % (head, template_bin)
     idx_at = pal_at = None
     for o in range(0, head - 20, 4):  # detail's texture headers: indices (format 0x1B) then the palette
         com, data, _, fmt, _ = struct.unpack_from('<5I', d, o)
