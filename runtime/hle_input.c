@@ -319,6 +319,7 @@ static void host_pad(uint32_t pad) {
         if (hold || st == 2) thumbs[0] = 0;
         start_was = (buttons & 0x10) != 0;
     }
+    const int own_steer = thumbs[0], own_rt = analog[A_RT], own_lt = analog[A_LT]; /* (the player's own, before any pilot's) */
     if (rt_pilot_at && rt_now_100ns() - rt_pilot_at < 2000000) { /* XBRT_PILOT (hle_quickrace.c): the car driven through the pad */
         thumbs[0] = (int16_t)(rt_pilot_steer * 32767);
         analog[A_RT] = (uint8_t)(rt_pilot_thr * 255), analog[A_LT] = (uint8_t)(rt_pilot_brk * 255);
@@ -340,11 +341,16 @@ static void host_pad(uint32_t pad) {
         static int let_off;
         if (rt_qr_auto == 2) let_off = 0, rt_qr_auto = 1;
         int took = 0;
-        if (analog[A_RT] < 100) let_off = 1; /* (eased off: a partial lift counts) */
+        /* (by the player's own stick and pedals: with the pad-driven pilot (rt_qr_auto_pad) the pad's values here are
+         * the pilot's, and stay as it gave them) */
+        if (own_rt < 100) let_off = 1; /* (eased off: a partial lift counts) */
         else if (let_off && !rt_qr_cam_active()) took = 1;
-        if (!rt_qr_cam_active() && (abs(thumbs[0]) > 3300 || analog[A_LT] > 40)) took = 1; /* (a tenth of the stick) */
-        if (took) rt_qr_auto = 0;
-        else thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
+        if (!rt_qr_cam_active() && (abs(own_steer) > 3300 || own_lt > 40)) took = 1; /* (a tenth of the stick) */
+        if (held) took = 0;
+        if (took) {
+            rt_qr_auto = 0;
+            if (rt_qr_auto_pad) rt_pilot_at = 0, thumbs[0] = (int16_t)own_steer, analog[A_RT] = (uint8_t)own_rt, analog[A_LT] = (uint8_t)own_lt, analog[A_A] = 0;
+        } else if (!rt_qr_auto_pad) thumbs[0] = 0, analog[A_LT] = 0, analog[A_RT] = 140; /* (the engine heard pulling) */
     }
     { /* Mayhem's camera led round the turns (hle_quickrace.c: the user's "make it spin quicker after turning"): the game's own look round the car
        * (the right stick) at the angle hle_quickrace.c wants (rt_drift_look, + right: the camera kept behind the nose),

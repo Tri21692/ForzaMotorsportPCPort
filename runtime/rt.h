@@ -145,6 +145,7 @@ extern volatile uint64_t rt_present_hold_until; /* the shown picture held until 
 extern volatile float rt_pilot_steer, rt_pilot_thr, rt_pilot_brk; /* XBRT_PILOT (hle_quickrace.c): the pad a test's driver holds */
 extern volatile int rt_pilot_hand;
 extern volatile uint64_t rt_pilot_at;
+extern volatile int rt_qr_auto_pad; /* the takedown autopilot drives through the pad (hle_quickrace.c) */
 extern volatile float rt_pad_steer, rt_pad_throttle, rt_pad_brake; /* the pad as given to the game: -1..1 (right +), 0..1, 0..1 (hle_input.c) */
 extern volatile float rt_vblank_rate; /* vertical blanks at this share of 59.94 Hz (nv2a.c): the game's slow motion */
 void rt_toast(const char *msg);     /* a note on the picture for a moment (display.c; glover.c draws it) */

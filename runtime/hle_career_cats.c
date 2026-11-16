@@ -108,7 +108,7 @@ static void cat_opened(void) { setup(); }
 static uint32_t cat_end(void) { return cat_base() + count * CAT_SIZE; }
 
 /* The icon for the list item of the entry at e, whose kind is k. */
-static uint32_t cat_frame(uint32_t e, uint32_t k) {
+uint32_t cat_frame(uint32_t e, uint32_t k) {
     uint32_t nm = xb_rd32(e);
     if (nm == TT_NAME) return 6;
     for (unsigned i = 0; i < nadded; i++)

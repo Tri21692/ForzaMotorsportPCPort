@@ -19,6 +19,7 @@
 #pragma GCC diagnostic ignored "-Wunused-label"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 
+uint32_t cat_frame(uint32_t e, uint32_t k); /* the category's icon tile (hle_career_cats.c) */
 uint32_t cat_base(void); /* the categories' table (hle_career_cats.c: moved when there are more than six) */
 
 static int tt_first_tile(uint32_t index) {
@@ -71,7 +72,9 @@ void f_00184C30(XbCtx *c) {
     /* 00184C63  call 0x129bf0 */
     xb_push(c, 0x00184C68u); f_00129BF0(c);
     /* 00184C68  mov eax, dword ptr [esi+0x4] */
-    c->eax = (uint32_t)(xb_rd32((uint32_t)(c->esi + 0x00000004u)));
+    c->eax = cat_frame(c->esi, xb_rd32((uint32_t)(c->esi + 0x00000004u))); /* changed: the big icon over the video is the
+                                                                             * category's own tile, as the list's small one (the user's, 16 Nov:
+                                                                             * Time Trial, Drift and Mayhem showed the icon of their kind) */
     /* 00184C6B  mov edx, dword ptr [edi+0x2048] */
     c->edx = (uint32_t)(xb_rd32((uint32_t)(c->edi + 0x00002048u)));
     /* 00184C71  lea ecx, ptr [edi+0x2048] */

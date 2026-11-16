@@ -656,6 +656,12 @@ static uint64_t cam_retry_at;
 static uint64_t tdcam_until; /* real time */
 static uint64_t auto_until; /* real time: the autopilot let go by then at the latest (7 s after the camera is back) */
 volatile int rt_qr_auto;     /* the autopilot: 2 just started, 1 on (hle_input.c ends it) */
+/* The takedown camera's autopilot drives through the pad (pilot(), the user's, 16 Nov: "implement the new autopilot you
+ * made into Mayhem"): the car on its own suspension and tyres while the camera is away, not moved along the line by
+ * hand. XBRT_TD_PILOT=0: the old one. The tests' and the photo runs' autopilot (XBRT_AUTODRIVE, XBRT_MM_PHOTO) stays
+ * the old one: they need the car at a place, not driven well. */
+volatile int rt_qr_auto_pad;
+static int pilot_td;         /* pilot() called for the takedown camera: its grip and brakes Mayhem's or the road's */
 static float auto_speed, auto_p[2];
 static int auto_k = -1;
 /* The pit lanes (the user's, 11 Nov: "mayhem mode is affecting it": a car standing in its pit stall 3 s was "stuck" and
@@ -991,6 +997,7 @@ static void tdcam_start(uint32_t car, uint32_t racer, uint32_t me, float speed) 
     cam_cut(me, car); /* (straight onto the wreck) */
     rt_time_scale(TDCAM_SLOW), rt_vblank_rate = (float)TDCAM_SLOW; /* (the blanks slow the race; the clock our nudges' steps) */
     tdcam_until = rt_now_100ns() + (uint64_t)(TDCAM_S * 1e7);
+    if (!rt_qr_auto) rt_qr_auto_pad = !getenv("XBRT_TD_PILOT") || atoi(getenv("XBRT_TD_PILOT"));
     rt_qr_auto = 2, auto_speed = speed < 15 ? 15 : speed, auto_k = -1;
 }
 
@@ -1077,6 +1084,11 @@ static void pilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, double dt
         grip = envf("XBRT_PILOT_GRIP", 9.0f), brake_a = envf("XBRT_PILOT_BRAKE", 5.5f), drift_deg = envf("XBRT_PILOT_DRIFT", 0);
         ksteer = envf("XBRT_PILOT_STEER", 1.5f), kslip = envf("XBRT_PILOT_SLIP", 1.5f);
     }
+    /* (the takedown camera's: Mayhem's handling holds 16 m/s^2 across and brakes at 8, the Mayhem video's figures;
+     * the road's own the pilot's 9 and 5.5; no slides, no hunting) */
+    const float grip_u = pilot_td == 2 ? envf("XBRT_TD_PILOT_GRIP", 16.0f) : pilot_td ? 9.0f : grip;
+    const float brake_u = pilot_td == 2 ? envf("XBRT_TD_PILOT_BRAKE", 8.0f) : pilot_td ? 5.5f : brake_a;
+    const float drift_u = pilot_td ? 0 : drift_deg;
     float x = rdf(car + 0x14), z = rdf(car + 0x1C), vx = rdf(car + 0x44), vz = rdf(car + 0x4C), v = sqrtf(vx * vx + vz * vz);
     float fx = rdf(car + 0x38), fz = rdf(car + 0x40), fl = sqrtf(fx * fx + fz * fz);
     if (fl < 0.1f) return;
@@ -1117,18 +1129,18 @@ static void pilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, double dt
         float sn = (az * bx - ax * bz) / (al * bl); /* (+: the line turns right) */
         float curv = fabsf(sn) / (3 * STEP);
         if (i < 9 && fabsf(sn) > fabsf(bend_here)) bend_here = sn;
-        float vmax = curv > 1e-4f ? sqrtf(grip / curv) : top;
+        float vmax = curv > 1e-4f ? sqrtf(grip_u / curv) : top;
         if (vmax > top) vmax = top;
-        float here = sqrtf(vmax * vmax + 2 * brake_a * (float)(i - 3) * STEP);
+        float here = sqrtf(vmax * vmax + 2 * brake_u * (float)(i - 3) * STEP);
         if (here < allow) allow = here;
-        if ((float)i * STEP > v * v / (2 * brake_a) + 80) break;
+        if ((float)i * STEP > v * v / (2 * brake_u) + 80) break;
     }
     /* the wheel */
     float look = envf("XBRT_PILOT_LOOK0", 7) + envf("XBRT_PILOT_LOOK", 0.5f) * v;
     int li = (int)(look / STEP);
     if (li >= NS) li = NS - 1;
     float tx = sx[li] - x, tz = sz[li] - z;
-    if (hunt_on) tx = hunt_x - x, tz = hunt_z - z;
+    if (hunt_on && !pilot_td) tx = hunt_x - x, tz = hunt_z - z;
     float hx = fx, hz = fz; /* (the way the car goes: its speed's above a walk, its nose's under) */
     if (v > 6) hx = vx / v, hz = vz / v;
     static float flip = 0;
@@ -1139,33 +1151,33 @@ static void pilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, double dt
     static float bend_min = -1; /* (a bend worth a slide: tighter than some 55 m) */
     if (bend_min < 0) bend_min = envf("XBRT_PILOT_BEND", 0.22f);
     int bending = fabsf(bend_here) > bend_min && v > 12;
-    float want_slip = drift_deg > 0 && bending ? (bend_here > 0 ? 1.0f : -1.0f) * drift_deg * 0.01745f : 0;
+    float want_slip = drift_u > 0 && bending ? (bend_here > 0 ? 1.0f : -1.0f) * drift_u * 0.01745f : 0;
     { /* (from one bend into the other the angle wanted swings over in its time, not at once) */
         static float wsm;
         float step = 0.9f * (float)dt, dw = want_slip - wsm;
         wsm += dw > step ? step : dw < -step ? -step : dw;
-        if (drift_deg <= 0) wsm = 0;
+        if (drift_u <= 0) wsm = 0;
         want_slip = wsm;
     }
     static float slip_was, slip_rate, kd = -1, hand_s;
     if (kd < 0) kd = envf("XBRT_PILOT_KD", 0.3f), hand_s = envf("XBRT_PILOT_HAND", 0.2f);
     if (dt > 1e-4) slip_rate += ((slip - slip_was) / (float)dt - slip_rate) * (1 - expf(-15.0f * (float)dt)); /* (how fast the tail comes round: caught early) */
     slip_was = slip;
-    float raw = ksteer * aim - kslip * (slip - want_slip) - (drift_deg > 0 ? kd * slip_rate : 0);
+    float raw = ksteer * aim - kslip * (slip - want_slip) - (drift_u > 0 ? kd * slip_rate : 0);
     if (raw > 1) raw = 1;
     if (raw < -1) raw = -1;
-    steer += (raw - steer) * (1 - expf(-(drift_deg > 0 ? 18.0f : 10.0f) * (float)dt)); /* (quicker hands in a slide) */
+    steer += (raw - steer) * (1 - expf(-(drift_u > 0 ? 18.0f : 10.0f) * (float)dt)); /* (quicker hands in a slide) */
     /* the pedals */
     static float thr_was, brk_was;
     float thr = 0, brk = 0, err = allow - v;
     if (on_grid) thr = 1;
     else if (err < -0.5f) brk = -err / 4 < 0.15f ? 0.15f : -err / 4 > 0.9f ? 0.9f : -err / 4;
     else thr = err / 4 < 0.25f ? 0.25f : err / 4 > 1 ? 1 : err / 4;
-    int sliding = drift_deg > 0 && !on_grid && bending && brk < 0.5f && v > 9;
+    int sliding = drift_u > 0 && !on_grid && bending && brk < 0.5f && v > 9;
     if (!on_grid && !sliding) { /* (a foot, not a switch: pressed over 0.6 s; less of it with the wheel turned or the car sliding) */
         float cap = 1 - 0.75f * fabsf(steer), sl = 1 - fabsf(slip) / 0.21f;
         if (sl < 0.1f) sl = 0.1f;
-        if (drift_deg > 0 && v < 8) cap = 0.6f, sl = 1; /* (after a spin: away gently, no wheelspin on the lock) */
+        if (drift_u > 0 && v < 8) cap = 0.6f, sl = 1; /* (after a spin: away gently, no wheelspin on the lock) */
         if (thr > cap) thr = cap;
         thr *= sl;
         if (thr > thr_was + (float)dt / 0.6f) thr = thr_was + (float)dt / 0.6f;
@@ -1187,6 +1199,19 @@ static void pilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, double dt
         if (inside < -0.12f && thr > 0.25f) thr = 0.25f; /* (the tail out the other way still: no power into it) */
         if (inside < 0.1f && rate_in < 0.3f && now_s > hand_until + 2.0f) hand_until = now_s + hand_s; /* (not sliding yet: the handbrake's touch) */
         hand = now_s < hand_until;
+    }
+    if (pilot_td) {
+        /* the takedown camera's: a takedown at the end of a straight leaves more speed than any brakes take off before
+         * the bend (the test of 16 Nov: 42 m/s where 22 would do, and into the wall with the camera away), so over the
+         * speed the bends ahead allow the car is slowed as well, up to 18 m/s^2 along the way it goes; and no brake
+         * pedal with the wheel turned, which Mayhem's handling reads as the tap that starts a drift */
+        if (v > allow + 1 && v > 1) {
+            /* (Mayhem's 30: its drifts carry 43 m/s into a hairpin good for 18, and the camera is away for 1.5 s of the race) */
+            float most = (pilot_td == 2 ? 30.0f : 18.0f) * (float)dt;
+            float cut = v - allow < most ? v - allow : most, k = (v - cut) / v;
+            wrf(car + 0x44, vx * k), wrf(car + 0x4C, vz * k);
+        }
+        if (fabsf(steer) > 0.04f) brk = 0; /* (the stick past its dead zone is already a third over) */
     }
     thr_was = thr, brk_was = brk;
     static float dz = -1; /* (the game heeds nothing of the stick's first quarter: the wheel's word starts past it) */
@@ -1630,7 +1655,7 @@ void rt_qr_tick(void) {
                 if (along > 6 && along < best && fabsf(side) < 10) best = along, hunt_on = 1, hunt_x = rdf(c2 + 0x14), hunt_z = rdf(c2 + 0x1C);
             }
         }
-        if (pilot_top > 0 && ptm && ptm < RT_USER_LIMIT && !tdcam_until && !pilot_over)
+        if (pilot_top > 0 && ptm && ptm < RT_USER_LIMIT && !tdcam_until && !pilot_over && !(rt_qr_auto && rt_qr_auto_pad))
             pilot(me, xs, zs, np, dt, pilot_top, (int)xb_rd32(ptm + 0x9C) < 0 && rdf(ptm + 0xA0) <= 0);
     }
     if (me) {
@@ -1695,7 +1720,7 @@ void rt_qr_tick(void) {
                     if (d < best && rdf(ys + 4 * k) < zn[3]) best = d, target_k = k;
                 }
                 respawn(car, xs, zs, ys, np, (target_k - 34 + (int)np) % (int)np); /* (30 points on: 60 m before) */
-                rt_qr_auto = 1, auto_until = 0, auto_k = -1, auto_speed = 26.0f;
+                rt_qr_auto = 1, rt_qr_auto_pad = 0, auto_until = 0, auto_k = -1, auto_speed = 26.0f;
                 stage = 1, shots = 0;
                 fprintf(stderr, "xbrt: mm photo: %s, line point %d, angle %d\n", mm[mi].name, target_k, angle);
                 continue;
@@ -1761,7 +1786,7 @@ void rt_qr_tick(void) {
             }
             if (lap < 0) path_k = -1, path_done = 0;
             if (autod > 0 && car == me && have_line && !rt_qr_auto && !tdcam_until && !path_done)
-                rt_qr_auto = 1, auto_until = 0, auto_k = -1, auto_speed = (float)autod;
+                rt_qr_auto = 1, rt_qr_auto_pad = 0, auto_until = 0, auto_k = -1, auto_speed = (float)autod;
             static int looks = -1; /* XBRT_AUTODRIVE_LOOKS=1: the camera turned round the car's looks, 1.5 s each (ahead,
                                     * back, the sides, the diagonals), for things drawn or not by the angle (the garage) */
             if (looks < 0) looks = getenv("XBRT_AUTODRIVE_LOOKS") ? atoi(getenv("XBRT_AUTODRIVE_LOOKS")) : 0;
@@ -1793,7 +1818,14 @@ void rt_qr_tick(void) {
                 continue;
             }
         }
-        if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
+        if (car == me && rt_qr_auto && rt_qr_auto_pad && have_line && lap >= 0) {
+            /* the takedown camera's autopilot, through the pad: the car driven on as a player would, at no more than the
+             * speed it had, Mayhem's handling and the rest below acting on it as on a driven car */
+            pilot_td = mayhem_race ? 2 : 1;
+            pilot(car, xs, zs, np, dt, auto_speed, 0);
+            pilot_td = 0;
+            v[0] = rdf(car + 0x44), v[2] = rdf(car + 0x4C); /* (slowed for a bend, perhaps) */
+        } else if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
             autopilot(car, xs, zs, np, dt);
             cs[i].v[0] = rdf(car + 0x44), cs[i].v[1] = rdf(car + 0x48), cs[i].v[2] = rdf(car + 0x4C);
             cs[i].still_since = 0;
@@ -1926,6 +1958,8 @@ void rt_qr_tick(void) {
              * bump, a crest's hop) is carried over, the heading taken afresh. (It once ended on any missed tick, and on
              * the car 25 m off the AI's line, "stuck" to the respawner: the user's drifts that stopped working) */
             if (drift_car != car || qr_ticks - drift_tick > 24) drifting = 0, out_until = 0, drift_car = car;
+            if (rt_qr_auto && rt_qr_auto_pad) drifting = 0, out_until = 0; /* (the takedown's pilot drives no drift: one under way
+                                                                            * kept its own speed, 42 m/s into the hairpin's wall, the test of 16 Nov) */
             int resumed = drift_tick + 1 != qr_ticks;
             drift_tick = qr_ticks;
             float hx = rdf(car + 0x38), hz = rdf(car + 0x40), hl = sqrtf(hx * hx + hz * hz);
@@ -2154,7 +2188,8 @@ void rt_qr_tick(void) {
             if (car == me && me_drift) spun = 0; /* (the player's drift is no spin: held 55 degrees across, a rival's knock
                                                   * under 3 s before had it "TAKEN DOWN" mid-drift, the drift lost) */
             int crashed = sp < 3.0f || rdf(car + 0x30) < 0.3f || spun;
-            if (car == me && mayhem_race && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || crashed)) {
+            if (car == me && mayhem_race && fresh && cs[i].impact >= 9.0f && !cs[i].down_at && (wall || crashed)
+                && !(rt_qr_auto && rt_qr_auto_pad)) { /* (not while the autopilot has the car: no wreck the player had no hand in) */
                 /* Mayhem: the player taken down: wrecked, slow motion on its own crash (the camera already on it), then
                  * back on the line ahead, repaired (below) */
                 cs[i].down_at = now;
