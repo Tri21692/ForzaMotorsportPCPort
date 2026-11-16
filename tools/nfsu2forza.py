@@ -38,6 +38,10 @@ Gallardo): its own spoiler is a shop choice instead.
 --liveries: the template's media/cars/<car>.liveries.bin; writes the
 paint shop's copy of the new livery to liveries.bin beside the output
 (addcar.py --liveries), or every repaint takes the new lamps' texture.
+With it the painted body also takes the vinyl editor's own layout: each
+triangle the flat projection of the view it faces, in that view's rectangle
+of the atlas, and the views' masks the new body's outline (project_layout;
+without it, or on a vinyl canvas, the template's layout copied as before).
 --vinyl NAME:base[,swatch[,colour]]: a Most Wanted vinyl of the car's own
 VINYLS.BIN (the Hero's M3 GTR: PSRTEST:b7b7b7, its preset's vinyl on its
 silver) baked into a second livery, liveries/standard/livery1*.xpr, for a
@@ -396,6 +400,318 @@ def apply_layout(car, layout, paint):
     print('vinyls: %d painted triangles on the template\'s layout' % changed)
 
 
+# The vinyl editor's own rule (the vinyl audit, 16 Nov): a vinyl is a flat picture drawn into a view's rectangle
+# of the atlas (<car>.liveries.bin: left, right, top, front, back, each a place and a mask), and the body shows
+# it right only where a painted triangle's coordinates are that view's flat projection of it, one scale and
+# offset a view (the disc's cars: 95% of their paint within 8 texels of it). apply_layout copied the template's
+# triangle maps instead, onto another shape: 4-36% of every converted car's paint stretched, 2-30% far off.
+VIEW_DIR = {'left': (-1, 0, 0), 'right': (1, 0, 0), 'top': (0, 1, 0), 'front': (0, 0, 1), 'back': (0, 0, -1)}
+VIEW_ORDER = ('top', 'left', 'right', 'front', 'back')  # who takes a texel two views' rectangles share
+
+
+def view_fits(car, seed=7, tol=4.0):
+    """A car's (the template's) projection a view, {view: ((su, sv), (ou, ov))}: texel = s * position + o, the
+    position in carbin units / 4096 on the plane the view sees (PROJ), texels of the 1024 atlas (u16 / 32768).
+    Fitted over its painted exterior facing the view: the pair of vertices whose line most others lie on
+    (within tol texels), then least squares over those."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    P, UV = [], []
+    for p in car['parts']:
+        if p['name'] not in PAINTED or p['name'].startswith('mirror') or not p['verts']: continue
+        V = np.array(p['verts'], float)
+        for sp in p['subparts']:
+            if sp['id'] != 1 or sp['material'] != BODY: continue
+            t = np.array(strip_tris(sp['indices']), int).reshape(-1, 3)
+            if len(t): P.append(V[t][:, :, :3] / 4096); UV.append(V[t][:, :, 10:12] / 32768 * 1024)
+    if not P: return {}
+    P, UV = np.concatenate(P), np.concatenate(UV)
+    n = -np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0])
+    n /= np.maximum(np.linalg.norm(n, axis=1), 1e-12)[:, None]
+    fits = {}
+    for view in VIEW_ORDER:
+        a, b = PROJ[view]
+        k = (n @ np.array(VIEW_DIR[view], float)) > 0.5
+        if k.sum() < 20: continue
+        X, U = P[k].reshape(-1, 3)[:, [a, b]], UV[k].reshape(-1, 2)
+        pick = rng.choice(len(X), 6000, replace=False) if len(X) > 6000 else np.arange(len(X))
+        Xs, Us = X[pick], U[pick]
+        i, j = rng.integers(0, len(Xs), 800), rng.integers(0, len(Xs), 800)
+        d = Xs[i] - Xs[j]
+        ok = (np.abs(d) > 0.2).all(1)
+        i, j, d = i[ok], j[ok], d[ok]
+        if not len(i): continue
+        s = (Us[i] - Us[j]) / d; o = Us[i] - s * Xs[i]
+        ok = (np.abs(s) > 40).all(1) & (np.abs(s) < 400).all(1)
+        s, o = s[ok], o[ok]
+        if not len(s): continue
+        best = int((np.abs(Xs[None] * s[:, None] + o[:, None] - Us[None]).max(2) < tol).sum(1).argmax())
+        e = np.abs(X * s[best] + o[best] - U).max(1) < tol
+        if e.sum() < 10: continue
+        su, ou = np.polyfit(X[e, 0], U[e, 0], 1); sv, ov = np.polyfit(X[e, 1], U[e, 1], 1)
+        fits[view] = ((float(su), float(sv)), (float(ou), float(ov)))
+    return fits
+
+
+def shop_views(d):
+    """The vinyl editor's views in an unpacked <car>.liveries.bin: {name: (x, y, w, h, pitch, offset)}, the
+    rectangle of the 1024 atlas a view's vinyls go into and where its mask (A8, pitch bytes a row) lies in d."""
+    head = struct.unpack_from('<I', d, 4)[0]
+    out = {}
+    for k in range(struct.unpack_from('<I', d, 12)[0]):
+        e = 0x10 + 0x8c * k
+        name = d[e + 44:e + 88].split(b'\0')[0].decode('latin-1').lower()
+        if d[e:e + 44].split(b'\0')[0] or not name.endswith('.tga'): continue
+        x, y = struct.unpack_from('<2H', d, e + 0x58)
+        data, size = struct.unpack_from('<I', d, e + 0x68)[0], struct.unpack_from('<I', d, e + 0x74)[0]
+        out[name[:-4]] = (x, y, (size & 0xfff) + 1, ((size >> 12) & 0xfff) + 1, (((size >> 24) & 0xff) + 1) * 64, head + data)
+    return out
+
+
+def grow_mask(m, r):
+    """m (2D bool) with every texel within r of a set one (a square) set too."""
+    import numpy as np
+    if r <= 0: return m.copy()
+    h, w = m.shape
+    S = np.zeros((h + 2 * r + 1, w + 2 * r + 1), np.int32)
+    S[r + 1:r + 1 + h, r + 1:r + 1 + w] = m
+    S = S.cumsum(0).cumsum(1)
+    k = 2 * r + 1
+    return (S[k:, k:] - S[:-k, k:] - S[k:, :-k] + S[:-k, :-k]) > 0
+
+
+def tri_texels(q, grow=0.02):
+    """The texels (rows, columns) a triangle covers, as uv_raster marks them (not wrapped)."""
+    import numpy as np
+    x0, y0 = np.floor(q.min(0)).astype(int); x1, y1 = np.ceil(q.max(0)).astype(int)
+    ys, xs = np.mgrid[y0:y1 + 1, x0:x1 + 1] + 0.5
+    (ax, ay), (bx, by), (cx, cy) = q
+    den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if abs(den) < 1e-9: return np.array([int(ay)]), np.array([int(ax)])
+    l0 = ((by - cy) * (xs - cx) + (cx - bx) * (ys - cy)) / den
+    l1 = ((cy - ay) * (xs - cx) + (ax - cx) * (ys - cy)) / den
+    m = (l0 >= -grow) & (l1 >= -grow) & (1 - l0 - l1 >= -grow)
+    return (ys[m] - 0.5).astype(int), (xs[m] - 0.5).astype(int)
+
+
+# Materials whose coordinates are not places in the livery atlas (their own textures: glass, plain black, red lamp glass, the race wings'
+# carbon, 28): over twelve disc cars under 31% of the texels their triangles span hold any picture, where the lamps', cabin's, badges'
+# and trim's all do (95-100%). A window's banner takes only the atlas's alpha: clear texels are nothing to it.
+PANES = (WINDOW, BLACKGLASS, BLACK, REDGLASS, 19, 28)
+RAGDOLL = ('Abdomen', 'Chest', 'Head', 'Left_', 'Right_')
+
+
+def off_atlas(name):
+    """Parts that are not drawn from the livery atlas by their coordinates, or not drawn: the brake discs (theirs
+    cover a quarter of it), the driver (a race car's is drawn from all of it), the disc GTO's leftover `old`."""
+    return not name.endswith('_LOD1') and ('rotor' in name or name.startswith(('driver', 'old') + RAGDOLL))
+
+
+def footprints(car, picked=None, plain=None, skip=()):
+    """The texels (1024 x 1024, u16 / 32768, wrapped) of every triangle that stays as it is: `spread` the ones
+    drawn from a stretch of the atlas, `single` the ones held on one texel. picked: {(part, subpart): mask over
+    its triangles} left out (the paint being moved). Also the single texels (u, v as the vertices have them)
+    that are plain paint (plain: 1024 x 1024) and no stretched triangle's corner: the old paint texel, whose
+    users (chrome, plastic, the panes) can all go to a new one; and the parts outside the shop's slots painted
+    whole from plain paint (the Civic's brake calipers, an octagon of it between two views, where the
+    Gallardo's roof edge now comes): they can go there too. Left out: triangles across 3/8 of the atlas or
+    more (wrapped, as the converter's packing took them at half, or smeared: the Maloo's cabin has some from
+    its seats to the far corner), slivers over 64 texels long (a line of texels, no picture), and glass and
+    off_atlas parts altogether, and the parts named in skip. Returns spread, single, how many were left out
+    as wrapped, those plain texels and those parts' (part, subpart)s (both empty without plain)."""
+    import numpy as np
+    from PIL import Image, ImageDraw
+    picked = picked or {}
+    im = Image.new('L', (1024, 1024), 0)
+    draw = ImageDraw.Draw(im)
+    single = np.zeros((1024, 1024), bool)
+    wide, loose, corners, plain_parts = 0, set(), set(), []
+    for pi, p in enumerate(car['parts']):
+        if not p['verts'] or p['name'] in skip: continue
+        raw = [v[10:12] for v in p['verts']]
+        UV = np.array(raw, float) / 32
+        for si, sp in enumerate(p['subparts']):
+            ghost = sp['material'] in PANES or off_atlas(p['name'])  # (nothing of theirs kept, but their paint texel moves with the rest)
+            t = np.array(strip_tris(sp['indices']), int).reshape(-1, 3)
+            if not len(t): continue
+            if (pi, si) in picked: t = t[~picked[(pi, si)]]
+            q = UV[t]
+            span = np.ptp(q, axis=1).max(1)
+            for j in np.nonzero(span < 1.0)[0]:
+                x, y = np.floor(q[j, 0]).astype(int) % 1024
+                if plain is not None and raw[t[j, 0]] == raw[t[j, 1]] == raw[t[j, 2]] and plain[y, x]: loose.add(raw[t[j, 0]])
+                elif not ghost: single[y, x] = True
+            corners.update(raw[i] for i in t[span >= 1.0].ravel())
+            if ghost: continue
+            e1, e2 = q[:, 1] - q[:, 0], q[:, 2] - q[:, 0]
+            thin = (span > 64) & (np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]) < 0.04 * span * span)
+            real = (span >= 1.0) & (span < 384) & ~thin
+            wide += int(((span >= 384) | thin).sum())
+            own = plain is not None and sp['material'] == BODY and not p['name'].endswith('_LOD1')  # (a caliper: see plain_parts)
+            if own and real.any():
+                im2 = Image.new('L', (1024, 1024), 0)
+                draw2 = ImageDraw.Draw(im2)
+            for j in np.nonzero(real)[0]:
+                tri = q[j] - np.floor(q[j].min(0) / 1024) * 1024 - 0.5
+                for dx in ((0, -1024) if tri[:, 0].max() >= 1023.5 else (0,)):
+                    for dy in ((0, -1024) if tri[:, 1].max() >= 1023.5 else (0,)):
+                        (draw2 if own else draw).polygon([(x + dx, y + dy) for x, y in tri.tolist()], fill=1, outline=1)
+            if own and real.any():
+                m = np.asarray(im2, bool)
+                if plain[m].all(): plain_parts.append((pi, si))
+                else: draw.bitmap((0, 0), im2.point(lambda x: 255 * x).convert('1'), fill=1)
+    loose -= corners
+    for u, v in loose: single[v // 32 % 1024, u // 32 % 1024] = False
+    return np.asarray(im, bool), single, wide, loose, plain_parts
+
+
+def project_layout(car, fits, rects, pick, blocked=None, paint=None, fit_in=('left', 'right', 'top'), plain=None):
+    """The painted triangles pick(part, V, t) chooses (V the part's vertices as an array, t its Body triangles'
+    indices, n x 3; returns a mask) given the vinyl editor's coordinates: each the projection (fits: view_fits
+    of the template) of the view it faces most, into that view's rectangle (rects: {view: (x, y, w, h)}, from
+    shop_views). A view of fit_in is first made to hold the whole body: the template's scale kept where the
+    body fits its rectangle (moved the least), made smaller where it does not (the Huayra's flank ran 73
+    texels past the Carrera GT's). A triangle that leaves its rectangle (the ends' rectangles hold only the
+    bumpers), meets blocked texels (1024 x 1024: other parts' textures) or texels another view took (the
+    rectangles overlap; VIEW_ORDER) goes to the next view it faces (over 0.2), and failing all to one clear
+    texel outside every view, plain paint no vinyl reaches: found here, away from everything (in the middle of
+    48 texels square that are plain paint already, given plain, 1024 x 1024: the smaller levels of the atlas
+    blend its surroundings in, and among dark art the far car's chrome and insides would go grey), unless
+    there is no room (then `paint`, u16). Vertices are made per view (copied at the seams between views, alike ones
+    shared), a part's vertices no triangle uses any more dropped, its damage shape following.
+    Returns None if nothing was picked, else a dict: cover (1024 x 1024, every texel the body's paint takes),
+    views ({view: its texels}: the masks), fits (as used), spare ((u, v) u16 of the clear texel, or None) and
+    spare_box (x, y, size: texels to make plain paint round it), share (of the picked area: first view, another
+    view, none)."""
+    import numpy as np
+    from PIL import Image, ImageDraw
+    views = [v for v in VIEW_ORDER if v in fits and v in rects]
+    found, P, loose = [], [], []
+    for pi, p in enumerate(car['parts']):
+        if not p['verts']: continue
+        V = np.array(p['verts'], float)
+        for si, sp in enumerate(p['subparts']):
+            if sp['material'] != BODY: continue
+            t = np.array(strip_tris(sp['indices']), int).reshape(-1, 3)
+            if not len(t): continue
+            k = np.asarray(pick(p, V, t), bool)
+            if not k.any(): continue
+            found.append((pi, si, t, k)); P.append(V[t[k]][:, :, :3] / 4096)
+            loose += [p['name'].startswith(('mirror', 'wing'))] * int(k.sum())  # (not what a view is sized to)
+    if not P or not views: return None
+    P, loose = np.concatenate(P), np.array(loose)
+    n = -np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0])  # (Forza's winding)
+    area = np.linalg.norm(n, axis=1) / 2
+    n /= np.maximum(2 * area, 1e-12)[:, None]
+    cos = np.stack([n @ np.array(VIEW_DIR[v], float) for v in views], 1)
+    prefer = np.argsort(-cos, axis=1, kind='stable')
+    fits = {v: (np.array(fits[v][0], float), np.array(fits[v][1], float)) for v in views}
+    for vi, v in enumerate(views):
+        k = (prefer[:, 0] == vi) & (cos[:, vi] > 0.3) & ~loose
+        if v not in fit_in or not k.any(): continue
+        s, o = fits[v]
+        q = P[k].reshape(-1, 3)[:, PROJ[v]] * s + o
+        x, y, w, h = rects[v]
+        lo, hi = q.min(0), q.max(0)
+        f = max(0.7, min(1.0, (w - 4) / (hi[0] - lo[0]), (h - 4) / (hi[1] - lo[1])))  # (no smaller: what still sticks out goes to its next view)
+        c = (lo + hi) / 2
+        lo, hi = c + (lo - c) * f, c + (hi - c) * f
+        d = np.maximum(0, (x + 2, y + 2) - lo) - np.maximum(0, hi - (x + w - 2, y + h - 2))
+        if f < 1 or np.abs(d).max() > 0:
+            fits[v] = (s * f, o * f + c * (1 - f) + d)
+            print('vinyls: the %s view scaled %.3f, moved %+.0f, %+.0f texels to hold the body' % (v, f, d[0], d[1]))
+    blocked = np.zeros((1024, 1024), bool) if blocked is None else blocked
+    owner = np.full((1024, 1024), -1, np.int8)
+    took = np.full(len(P), -1)
+    UV = np.zeros((len(P), 3, 2))
+    covers = [np.zeros((1024, 1024), bool) for _ in views]
+    for rank in range(len(views)):  # each triangle's first view, then the next ones for those left
+        for vi, v in enumerate(views):
+            cand = np.nonzero((took < 0) & (prefer[:, rank] == vi) & ((rank == 0) | (cos[:, vi] > 0.2)))[0]
+            if not len(cand): continue
+            s, o = fits[v]
+            q = P[cand][:, :, PROJ[v]] * s + o
+            x, y, w, h = rects[v]
+            no = np.ones((1024, 1024), bool)
+            no[y:y + h, x:x + w] = False
+            no |= blocked | ((owner >= 0) & (owner != vi))
+            S = np.zeros((1025, 1025), np.int32); S[1:, 1:] = no.cumsum(0).cumsum(1)
+            x0, y0 = (np.floor(q.min(1)).astype(int) - 1).T; x1, y1 = (np.ceil(q.max(1)).astype(int) + 1).T
+            inside = (x0 >= 0) & (y0 >= 0) & (x1 < 1024) & (y1 < 1024)
+            x0, y0, x1, y1 = (np.clip(c_, 0, 1023) for c_ in (x0, y0, x1, y1))
+            hits = S[y1 + 1, x1 + 1] - S[y0, x1 + 1] - S[y1 + 1, x0] + S[y0, x0]
+            ok = inside & (hits == 0)
+            for j in np.nonzero(inside & (hits > 0))[0]:  # (its box meets some: texel by texel)
+                ys, xs = tri_texels(q[j])
+                ok[j] = not no[ys, xs].any()
+            took[cand[ok]] = vi; UV[cand[ok]] = q[ok]
+            im = Image.new('L', (1024, 1024), 0)
+            draw = ImageDraw.Draw(im)
+            for tri in (q[ok] - 0.5).tolist(): draw.polygon([tuple(c_) for c_ in tri], fill=1, outline=1)
+            got = np.asarray(im, bool) & ~no
+            covers[vi] |= got
+            owner[got & (owner < 0)] = vi
+    cover = np.logical_or.reduce(covers)
+    # the clear texel: 24 x 24 free of the body's paint and of everything else, outside the views' rectangles if it can be
+    busy = cover | blocked
+    inrect = np.zeros((1024, 1024), bool)
+    for x, y, w, h in rects.values():  # (the wing's too)
+        inrect[y:y + h, x:x + w] = True
+    spare = box = None
+    white = [(size, busy | inrect | ~plain) for size in (48, 32, 24)] if plain is not None else []
+    for size, room in white + [(24, busy | inrect), (24, busy), (12, busy | inrect), (12, busy)]:
+        S = np.zeros((1025, 1025), np.int32); S[1:, 1:] = room.cumsum(0).cumsum(1)
+        free = np.argwhere((S[size:, size:] - S[:-size, size:] - S[size:, :-size] + S[:-size, :-size]) == 0)
+        if len(free):
+            y, x = (int(c_) for c_ in free[0])
+            box = (x + 2, y + 2, size - 4)
+            spare = ((x + size // 2) * 32 + 16, (y + size // 2) * 32 + 16)
+            break
+    flat = spare or paint
+    if (took < 0).any() and flat is None: raise SystemExit('vinyls: no clear texel for the triangles no view holds')
+    UV16 = np.clip(np.round(UV * 32), 0, 32767).astype(int)
+    UV16[took < 0] = flat if flat is not None else 0
+    at = 0
+    by_part = {}
+    for pi, si, t, k in found:
+        by_part.setdefault(pi, []).append((si, t, k, UV16[at:at + int(k.sum())]))
+        at += int(k.sum())
+    for pi, subs in by_part.items():
+        p = car['parts'][pi]
+        V, dmg = p['verts'], p['Damage'][1]
+        nd = struct.unpack_from('<I', dmg)[0] if len(dmg) >= 4 else 0
+        shape = (lambda i: dmg[4 + 12 * i:16 + 12 * i]) if nd == len(V) else (lambda i: b'')
+        new, src, made = [], [], {}
+        for si, t, k, uv in subs:
+            out = [tuple(int(i) for i in tri) for tri in t[~k]]
+            for tri, uv3 in zip(t[k].tolist(), uv.tolist()):
+                nt = []
+                for i, (u_, v_) in zip(tri, uv3):
+                    key = (V[i][:10], shape(i), u_, v_)
+                    if key not in made:
+                        made[key] = len(V) + len(new)
+                        new.append(tuple(V[i][:10]) + (u_, v_)); src.append(i)
+                    nt.append(made[key])
+                out.append(tuple(nt))
+            s = strip_long(out)
+            p['subparts'][si]['indices'] = (s if strip_triangles(s) == strip_triangles(strip(out)) else strip(out)) if out else [0, 0, 0]
+        V, src = V + new, list(range(len(V))) + src
+        used = sorted({i for sp in p['subparts'] for i in sp['indices']})
+        place = {i: j for j, i in enumerate(used)}
+        for sp in p['subparts']: sp['indices'] = [place[i] for i in sp['indices']]
+        if nd == len(p['verts']):
+            p['Damage'] = (p['Damage'][0], struct.pack('<I', len(used)) + b''.join(dmg[4 + 12 * src[i]:16 + 12 * src[i]] for i in used) + dmg[4 + 12 * nd:])
+        p['verts'] = [V[i] for i in used]
+        assert len(p['verts']) < 65536, p['name']
+    tot = max(area.sum(), 1e-12)
+    first = took == prefer[:, 0]
+    share = (float(area[first].sum() / tot), float(area[(took >= 0) & ~first].sum() / tot), float(area[took < 0].sum() / tot))
+    print('vinyls: %d painted triangles projected into the views (%.1f%% of their area by the view they face, %.1f%% by another, %.1f%% on the clear texel)'
+          % (len(P), 100 * share[0], 100 * share[1], 100 * share[2]))
+    return dict(cover=cover, views=dict(zip(views, covers)), fits={v: (tuple(f[0].tolist()), tuple(f[1].tolist())) for v, f in fits.items()},
+                spare=spare, spare_box=box, share=share)
+
+
 DRIVER_SCALE = 0.606  # carbin units (/4096) to the Driver chunk's metres: the Civic's steering wheel at 1.04 high, its grip point at 0.628
 
 
@@ -710,7 +1026,9 @@ def pack_atlas(images, livery_dir, out_dir, keep=(), pad=4, protect=(), cover=No
         used |= cover.reshape(H, 2, W, 2).any((1, 3))
         white = np.array([255, 255, 255, 0], np.uint8)
         hiimg[grow] = white
-        badge = lo_ & (ncimg[0, ..., 3] > 0)
+        # (the damaged slices too where the clean one was not paint already: a badge, or since the body's own cover
+        # (project_layout) the template's dark art, its windscreen: left, a dented roof would blend to it)
+        badge = lo_ & ((ncimg[0, ..., 3] > 0) | (ncimg[0, ..., :3].min(-1) < 200))
         ncimg[0][lo_] = white; volimg[0][lo_] = white
         for z in range(1, D):
             ncimg[z][badge] = white; volimg[z][badge] = white
@@ -951,10 +1269,30 @@ def two_sided(p, tris, base):
     return [t for t, k in zip(tris, inner) if not k]
 
 
-def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None, stock_wing=True, clear_livery=False, vinyl=None):
+def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, liveries=None, stock_wing=True, clear_livery=False, vinyl=None, shop=None):
     import numpy as np
     car = carbin.read(open(template_path, 'rb').read())
     tlayout, tcover = template_layout(car)  # (before its parts are replaced)
+    # The vinyl editor's layout (project_layout; with --liveries, whose file has the views' rectangles): the texels
+    # the new body's paint takes must be known before the atlas is packed (nothing packed there, the paint shop's
+    # masks drawn from them), and the body is built after it (its lamps' coordinates are their places in the
+    # atlas). So the conversion runs twice: first quietly as it always did, as far as the body's projection
+    # (shop False: returns it), then for good with that (shop: project_layout's result).
+    views = None
+    if liveries and not (vinyl or SKIN):  # (a vinyl canvas has its own layout)
+        import zlib
+        views = (view_fits(car), {v: r[:4] for v, r in shop_views(zlib.decompress(open(liveries, 'rb').read())).items()})
+        if not set(views[0]) & set(views[1]): views = None  # (a race template: no views, or none its paint fits; the old way)
+        if views and shop is None:
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                shop = convert(template_path, nfsu_dir, out_path, keep_glass, badges, liveries, stock_wing, clear_livery, vinyl, shop=False)
+    body_cover = tcover
+    if shop:  # (with the clear paint texel's surroundings: plain paint, nothing packed there, in no view's mask)
+        body_cover = shop['cover'].copy()
+        if shop['spare']:
+            x_, y_, size_ = shop['spare_box']
+            body_cover[y_:y_ + size_, x_:x_ + size_] = True
     nparts = nfsu.read(os.path.join(nfsu_dir, 'GEOMETRY.BIN'))
     textures = nfsu.read_textures(os.path.join(nfsu_dir, 'TEXTURES.BIN'))
     prefix = part_prefix(nparts, os.path.basename(os.path.normpath(nfsu_dir)).upper())
@@ -1195,12 +1533,13 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
                         uv_raster(keep_mask, np.array([us, vs]).T * 1024)
     atlas = pack_atlas(images, livery_dir,
                        os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'),
-                       keep=[paint, dark] + ([(paint[0] * 2 % 65536, paint[1] * 2 % 65536)] if mw else []),  # (both readings: see the paint texel)
-                       protect=protect, cover=None if vinyl or SKIN else tcover, clear_rest=clear_livery, protect_mask=keep_mask if mw else None)
-    if liveries:
+                       keep=[paint, dark] + ([(paint[0] * 2 % 65536, paint[1] * 2 % 65536)] if mw else [])  # (both readings: see the paint texel)
+                       + ([(2 * shop['spare'][0], 2 * shop['spare'][1])] if shop and shop['spare'] else []),  # (keep counts 65536 a span)
+                       protect=protect, cover=None if vinyl or SKIN else body_cover, clear_rest=clear_livery, protect_mask=keep_mask if mw else None)
+    if liveries and shop is not False:
         paint_shop(liveries, os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries.bin'),
                    os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'), [r for h, r in atlas.items() if not (isinstance(h, tuple) and h[0] == CANVAS)],
-                   paint=tcover)
+                   paint=body_cover, masks=shop['views'] if shop else None)
     if vinyl:
         bake_vinyl(os.path.join(nfsu_dir, 'VINYLS.BIN'), prefix, *vinyl, [(atlas[(CANVAS, k)], b) for k, b in enumerate(bands)],
                    os.path.join(os.path.dirname(os.path.abspath(out_path)), 'liveries', 'standard'))
@@ -2190,8 +2529,21 @@ def convert(template_path, nfsu_dir, out_path, keep_glass=False, badges=None, li
         if t[o + 8:t.index(b'\0', o + 8)] != b'Line': kept += t[o:o + size]
         o += size
     car['tail'] = kept + t[o:]
-    apply_layout(car, tlayout, paint)
     mine = {d for d in done if '(' not in d} | {d.split('(')[0] for d in done if 'panes)' in d}
+    if views:
+        # Clear of the template parts that stay (their texels, eight round; the converted parts' own textures are
+        # packed clear of the cover) and of the black texel the insides are held on
+        spread, single, _, _, _ = footprints(car, skip=mine)
+        x_, y_ = dark_read[0] // 32 % 1024, dark_read[1] // 32 % 1024
+        single[y_, x_] = True
+        new = project_layout(car, views[0], views[1], lambda p, V, t: (V[t][:, :, 10:12] == paint).all((1, 2)),
+                             blocked=grow_mask(spread, 10) | grow_mask(single, 3), paint=paint)
+        if shop is False: return new
+        if new and new['spare']:  # the old paint texel's other users (chrome, plastic, the panes) with it: it lies in a view, where a vinyl would colour them all
+            for p in car['parts']:
+                p['verts'] = [tuple(v[:10]) + new['spare'] if tuple(v[10:12]) == tuple(paint) else v for v in p['verts']]
+    else:
+        apply_layout(car, tlayout, paint)
     turned = sum(orient_normals(p) for p in car['parts'] if p['name'] in mine)
     print('normals: %d turned to their faces' % turned)
     if SMOOTH:  # (a part thinned in Blender: see smooth_normals)
@@ -2711,7 +3063,7 @@ def bake_canvas(vinyl, base, rooms, livery_dir):
         open(os.path.join(livery_dir, n_.replace('livery0', 'livery1')), 'wb').write(files[n_])
 
 
-def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None):
+def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None, masks=None, alpha=None):
     """The paint shop's copy of the livery: <car>.liveries.bin (zlib) holds,
     after a 1136-byte header of D3D texture headers, the car's views for the
     vinyl editor, 'damage' and 'detail': 1024x1024 8-bit indices (linear)
@@ -2721,7 +3073,11 @@ def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None):
     atlas over the new car's lamps (packed where the Civic is paint): every
     repaint took their texture. Here detail is the new atlas (livery0hi)
     in 256 colours, its alpha the template's with the packed textures'
-    boxes (0..1) opaque."""
+    boxes (0..1) opaque. masks: {view: its texels, 1024 x 1024} (project_layout's
+    views): each view's mask drawn again as the new body's own outline (the
+    template's, kept, let a vinyl through only where the template had paint).
+    alpha: detail's alpha to start from instead of the file's (vinylfix.py: a
+    file whose detail was written 140 bytes late)."""
     import zlib
     import numpy as np
     import forzaxpr as fx
@@ -2741,7 +3097,14 @@ def paint_shop(template_bin, out_bin, livery_dir, boxes, pad=4, paint=None):
     assert idx_at, 'no detail texture in %s' % template_bin
     old_i = np.frombuffer(bytes(d[idx_at:idx_at + (1 << 20)]), np.uint8).reshape(1024, 1024)
     old_p = np.frombuffer(bytes(d[pal_at:pal_at + 1024]), np.uint8).reshape(256, 4)
-    alpha = old_p[old_i][..., 3].copy()
+    alpha = old_p[old_i][..., 3].copy() if alpha is None else alpha.copy()
+    for view, m in (masks or {}).items():
+        if view not in shop_views(d): continue
+        x, y, w, h, pitch, at = shop_views(d)[view]
+        img = np.zeros((h, pitch), np.uint8)
+        sub = m[y:y + h, x:x + w]
+        img[:sub.shape[0], :sub.shape[1]] = sub * 255
+        d[at:at + pitch * h] = img.tobytes()
     if paint is not None: alpha[paint] = 0  # the body's paint (see pack_atlas's cover): repaints reach it
     for u0, v0, u1, v1 in boxes:
         alpha[max(0, int(v0 * 1024) - pad):int(v1 * 1024) + pad + 1, max(0, int(u0 * 1024) - pad):int(u1 * 1024) + pad + 1] = 255
