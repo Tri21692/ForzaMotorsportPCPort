@@ -28,7 +28,15 @@ CARS = [('NissanSilvia', 'NissanSilviaDSpec', 'Silvia S15 D-Spec'),
         ('ToyotaTrueno', 'ToyotaTruenoDSpec', 'Trueno D-Spec'),
         ('NissanSilviaS15R', 'NissanSilviaS15RDSpec', 'Silvia Spec-R D-Spec'),
         ('DodgeNeonCoupe', 'DodgeNeonCoupeDSpec', 'Neon Coupe D-Spec', 'NissanSilvia'),
-        ('ToyotaCelicaGT4', 'ToyotaCelicaGT4DSpec', 'Celica GT-Four D-Spec', 'NissanSilvia')]
+        ('ToyotaCelicaGT4', 'ToyotaCelicaGT4DSpec', 'Celica GT-Four D-Spec', 'NissanSilvia'),
+        # (the user's, 16 Nov: "RX7 Spirit, Skyline R34, Miata, RX8, and the Impreza's"; the four-wheel-drive Skyline
+        # and Imprezas rear-driven, as the Celica)
+        ('Mazda_RX7', 'MazdaRX7SpiritDSpec', 'RX-7 Spirit R D-Spec'),
+        ('NissanSkyline', 'NissanSkylineR34DSpec', 'Skyline R34 D-Spec', 'NissanSilvia'),
+        ('MazdaMiata', 'MazdaMiataDSpec', 'Miata D-Spec'),
+        ('MazdaRX8', 'MazdaRX8DSpec', 'RX-8 D-Spec'),
+        ('WRX', 'SubaruWRXDSpec', 'Impreza WRX STi D-Spec', 'NissanSilvia'),
+        ('Subaru22b', 'Subaru22bDSpec', 'Impreza 22B D-Spec', 'NissanSilvia')]
 # (the MX-5 RADBUL's, MazdaMX5RadbulDSpec, taken out with the MX-5 RADBUL on 2 Nov: tools/removecar.py)
 TUNE = ['--shift', 'drivetraindiff:LimittedSlipTorqueAccel=600', '--shift', 'drivetraindiff:LimittedSlipTorqueDecel=300',
         '--scale', 'tiremod:RearFrictionScale=0.86', '--scale', 'tiremod:FrontFrictionScale=1.05',
@@ -47,12 +55,35 @@ def install(disc, mods):
         if new in have:
             print('%s: there already (%d)' % (new, have[new]))
             continue
-        subprocess.run([sys.executable, os.path.join(here, 'addcar.py'), disc, mods, src, new, '--name', name, '--short', name], check=True)
+        # (the first free ordinal past 279: 165, the removed MX-5 RADBUL D-Spec's, still has its strings and is refused)
+        xml = addcar.Archive(disc, mods, 'Mega.ca2').files['cars' + chr(92) + 'carlist.xml'].decode('latin-1')
+        taken = {int(o) for o in re.findall(r'Ordinal="(\d+)"', xml)}
+        free = next(o for o in range(280, addcar.MAX_ORDINAL + 1) if o not in taken)
+        subprocess.run([sys.executable, os.path.join(here, 'addcar.py'), disc, mods, src, new, '--name', name, '--short', name, '--ordinal', str(free)], check=True)
         drive = ['--physics-like', '%s:drivetraindiff' % rwd[0]] if rwd else []
         subprocess.run([sys.executable, os.path.join(here, 'tunecar.py'), disc, mods, new] + drive + TUNE, check=True)
     for new, o in sorted(ordinals(disc, mods).items(), key=lambda kv: kv[1]): print('%s: ordinal %d' % (new, o))
 
 
+def restrict(disc, mods, extra=()):
+    """The Drift Championship's entry in place (its series file's <Restrictions>: re-running the series' tool would
+    number it anew): one <or> a D-Spec car there is, each with `extra` restrictions [(attribute, func, value)]."""
+    mega = addcar.Archive(disc, mods, 'Mega.ca2')
+    cars = sorted(ordinals(disc, mods).values())
+    n = 0
+    for k in list(mega.files):
+        if not k.lower().startswith('events' + chr(92) + 'drift' + chr(92)): continue
+        x = mega.files[k].decode('latin-1')
+        body = ''.join('\t\t<or>\r\n' + ''.join('\t\t<Restriction Attrib="%s" Func="%s" Value="%s" />\r\n' % r for r in [('carid', '=', c)] + list(extra)) + '\t\t</or>\r\n'
+                       for c in cars)
+        x2, m = re.subn(r'(<Restrictions>\r?\n).*?(\t</Restrictions>)', lambda q: q.group(1) + body + q.group(2), x, count=1, flags=re.S)
+        if m: mega.files[k] = x2.encode('latin-1'); n += 1
+    mega.check()
+    mega.write()
+    print('%d Drift series open to the D-Spec cars %s' % (n, cars))
+
+
 if __name__ == '__main__':
-    if len(sys.argv) != 3: raise SystemExit(__doc__)
-    install(sys.argv[1], sys.argv[2])
+    if len(sys.argv) not in (3, 4): raise SystemExit(__doc__)
+    if len(sys.argv) == 4 and sys.argv[3] == 'restrict': restrict(sys.argv[1], sys.argv[2])
+    else: install(sys.argv[1], sys.argv[2])

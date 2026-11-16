@@ -379,6 +379,9 @@ def series_xml(tracks):
 
 
 def install_series(disc, mods, tracks):
+    global DSPEC
+    import driftcars
+    DSPEC = tuple(sorted(driftcars.ordinals(disc, mods).values())) or DSPEC  # (every D-Spec car there is)
     with tempfile.TemporaryDirectory() as tmp:
         p = os.path.join(tmp, 'touge.xml')
         open(p, 'w', encoding='latin-1', newline='').write(series_xml(tracks))
