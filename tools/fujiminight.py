@@ -45,9 +45,9 @@ TRACKS = (('JapaneseMountain', 'JapaneseMountain', 'FujimiNight', 'Fujimi Kaido 
 TIME = '22.00'
 # a lightmap texel c (0.5 leaves the texture as it is) becomes c (1 - LIFT) + TONE LIFT: the day's sun and shade
 # brought close together and down, towards a blue
-LIGHT = (float(os.environ.get('NIGHT_LIFT', 0.86)), tuple(float(v) for v in os.environ.get('NIGHT_TONE', '0.042,0.062,0.125').split(',')))
-CAR_LIGHT = tuple(float(v) for v in os.environ.get('NIGHT_CAR', '0.34,0.40,0.58').split(','))  # the cars' light along the track, of the day's
-SKY_TONE = (0.90, (0.010, 0.018, 0.050))
+LIGHT = (float(os.environ.get('NIGHT_LIFT', 0.92)), tuple(float(v) for v in os.environ.get('NIGHT_TONE', '0.024,0.037,0.080').split(',')))
+CAR_LIGHT = tuple(float(v) for v in os.environ.get('NIGHT_CAR', '0.22,0.27,0.42').split(','))  # the cars' light along the track, of the day's
+SKY_TONE = (0.94, (0.006, 0.011, 0.032))
 MOON = (0.35, (0.80, 0.85, 1.0))  # the sun's disc, paled: the moon
 INI = {
     'GeneralRender\\Lighting\\Ambient\\Red': '0.10', 'GeneralRender\\Lighting\\Ambient\\Green': '0.12', 'GeneralRender\\Lighting\\Ambient\\Blue': '0.19',
@@ -96,8 +96,8 @@ DRIVERS = (22, 36, 50)
 # user's, 16 Nov: "make some of the scenery darker as well ... so it doesn't look weird": the leafy trees by the road
 # a light green, the houses white): its own textures taken down, by group; the road signs and the tunnel's lamps
 # left as they are, to be read and to glow.
-DARK = {'vegetation_final': (float(os.environ.get('NIGHT_VEG', 0.70)), (0.02, 0.035, 0.07)),
-        'buildings': (float(os.environ.get('NIGHT_BLDG', 0.62)), (0.03, 0.04, 0.08)),
+DARK = {'vegetation_final': (float(os.environ.get('NIGHT_VEG', 0.82)), (0.02, 0.035, 0.07)),
+        'buildings': (float(os.environ.get('NIGHT_BLDG', 0.75)), (0.03, 0.04, 0.08)),
         'ambient_objects': (0.40, (0.03, 0.04, 0.08)),
         'temp': (0.40, (0.03, 0.04, 0.08))}
 KEEP = ('roadsigns', 'light')
