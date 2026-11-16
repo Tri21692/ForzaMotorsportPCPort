@@ -92,6 +92,40 @@ RIVALS = (29, 89, 131, 133)
 DRIVERS = (22, 36, 50)
 
 
+# The scenery that has no lightmap over it, or too little of one, and stood out a day's colour in the night (the
+# user's, 16 Nov: "make some of the scenery darker as well ... so it doesn't look weird": the leafy trees by the road
+# a light green, the houses white): its own textures taken down, by group; the road signs and the tunnel's lamps
+# left as they are, to be read and to glow.
+DARK = {'vegetation_final': (float(os.environ.get('NIGHT_VEG', 0.58)), (0.02, 0.035, 0.07)),
+        'buildings': (float(os.environ.get('NIGHT_BLDG', 0.50)), (0.03, 0.04, 0.08)),
+        'ambient_objects': (0.40, (0.03, 0.04, 0.08)),
+        'temp': (0.40, (0.03, 0.04, 0.08))}
+KEEP = ('roadsigns', 'light')
+
+
+def how_of(name):
+    """(lift, tone, a lightmap: its format told by its blocks) for a texture of the night's, or None."""
+    if is_light(name): return LIGHT + (True,)
+    if name == SKY: return SKY_TONE + (True,)
+    if name == SUN: return MOON + (True,)
+    if name.startswith(PREFIX + 'textures_'):
+        group, _, rest = name[len(PREFIX + 'textures_'):].partition('__')
+        if group in DARK and not any(k in rest for k in KEEP): return DARK[group] + (False,)
+    return None
+
+
+def tone_blocks(data, f, lift, colour):
+    """A DXT texture's levels (f: 0x0C DXT1, 0x0E DXT3, 0x0F DXT5) with its colours c -> c (1 - lift) + colour lift."""
+    evening.LIFT, evening.WARM = lift, colour
+    if f == 0x0C:
+        n = len(data) // 8 * 8
+        return evening.lift_blocks(np.frombuffer(data[:n], np.uint8).copy(), False).tobytes() + data[n:]
+    n = len(data) // 16 * 16
+    blocks = np.frombuffer(data[:n], np.uint8).reshape(-1, 16).copy()
+    blocks[:, 8:] = evening.lift_blocks(np.ascontiguousarray(blocks[:, 8:]).reshape(-1), True).reshape(-1, 8)
+    return blocks.tobytes() + data[n:]
+
+
 def tone(data, lift, colour):
     evening.LIFT, evening.WARM = lift, colour
     return evening.lift_lightmap(data)
@@ -101,14 +135,34 @@ def is_light(name):
     return name.startswith(PREFIX + 'textures_shadows__') or name.startswith(PREFIX + 'treelightmaps__')
 
 
-def night_res(res):
+def stx_formats(data, names):
+    """{texture name: its D3D format} from QuickPreview1.pvs.stx's headers (night_stx's layout)."""
+    import struct
+    size, slots, _, nres = struct.unpack_from('<4I', data, 20)
+    table = np.frombuffer(data, '<i4', nres, 36)
+    heads = 36 + 4 * nres
+    out = {}
+    for j, r in enumerate(names):
+        if j + 9 < nres and table[j + 9] >= 0:
+            out[r[0]] = (struct.unpack_from('<5I', data, heads + 20 * int(table[j + 9]))[3] >> 8) & 0xFF
+    return out
+
+
+def night_res(res, stx):
     names, _ = xb2.resources(bytes(res))
+    formats = stx_formats(stx, names)
     n = 0
+    import struct
     for r in names:
-        how = LIGHT if is_light(r[0]) else SKY_TONE if r[0] == SKY else MOON if r[0] == SUN else None
-        if how:
-            res[r[3]:r[3] + r[4]] = tone(bytes(res[r[3]:r[3] + r[4]]), *how)
-            n += 1
+        how = how_of(r[0])
+        if not how: continue
+        if how[2]:
+            res[r[3]:r[3] + r[4]] = tone(bytes(res[r[3]:r[3] + r[4]]), *how[:2])
+        else:
+            f = formats.get(r[0])  # (from the small textures' file: the bundle's own headers are not where its index says)
+            if f not in (0x0C, 0x0E, 0x0F): continue
+            res[r[3]:r[3] + r[4]] = tone_blocks(bytes(res[r[3]:r[3] + r[4]]), f, *how[:2])
+        n += 1
     return names, n
 
 
@@ -123,8 +177,9 @@ def night_stx(data, names):
     base = heads + 20 * slots
     done = 0
     for j, r in enumerate(names):
-        how = LIGHT if is_light(r[0]) else SKY_TONE if r[0] == SKY else MOON if r[0] == SUN else None
+        how = how_of(r[0])
         if not how or j + 9 >= nres: continue
+        how = how[:2]
         k = table[j + 9]
         if k < 0: continue
         _, word, _, fmt, _ = struct.unpack_from('<5I', data, heads + 20 * k)
@@ -258,10 +313,10 @@ def install_tracks(disc, mods):
     first = os.path.join(mods, 'track', TRACKS[0][2])
     if os.environ.get('NIGHT_SCENERY') == '0' and os.path.exists(os.path.join(first, 'hdd', 'Partition5', 'JapaneseMountain.res')): return ordinals
     res = shipyardloop.unpack_xb2(addcar.disc_file(disc, 'media', 'tracks', 'JapaneseMountain', 'QuickPreview1.xb2'))
-    names, n = night_res(res)
+    names, n = night_res(res, open(addcar.disc_file(disc, 'media', 'tracks', 'JapaneseMountain', 'QuickPreview1.pvs.stx'), 'rb').read())
     os.makedirs(os.path.join(first, 'hdd', 'Partition5'), exist_ok=True)
     open(os.path.join(first, 'hdd', 'Partition5', 'JapaneseMountain.res'), 'wb').write(res)
-    print('%d lightmaps and sky textures taken down to night' % n)
+    print('%d lightmaps, sky and scenery textures taken down to night' % n)
     for folder in ('JapaneseMountain', 'JapaneseMtReverse'):
         data, k = night_stx(open(addcar.disc_file(disc, 'media', 'tracks', folder, 'QuickPreview1.pvs.stx'), 'rb').read(), names)
         os.makedirs(os.path.join(first, 'media', 'tracks', folder), exist_ok=True)
