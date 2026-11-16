@@ -74,6 +74,7 @@ static const char *fs_src =
     "uniform float u_alpha_ref;\n"
     "uniform sampler2D u_tex0, u_tex1, u_tex2, u_tex3;\n"
     "uniform samplerCube u_cube0, u_cube1, u_cube2, u_cube3;\n"
+    "uniform sampler2D u_vol0, u_vol1, u_vol2, u_vol3;\n" /* a volume texture's second slice (kind 5: a car's damaged paint) */
     "vec4 R[16], P[16];\n" /* P: the registers before the stage, which both its halves read */
     "vec3 E, F;\n"
     "float map_in(float x, uint m) {\n"
@@ -134,7 +135,7 @@ static const char *fs_src =
     "    case 4: return a > b; case 5: return a != b; case 6: return a >= b; }\n"
     "    return true;\n"
     "}\n"
-    "vec4 fetch(int i, vec4 q, sampler2D t, samplerCube cube) {\n"
+    "vec4 fetch(int i, vec4 q, sampler2D t, samplerCube cube, sampler2D vol) {\n"
     "    if (u_mode[i] == 0) return vec4(0.0);\n"
     "    if (u_mode[i] == 4) return clamp(q, 0.0, 1.0);\n"
     "    if (u_kind[i] == 0) return vec4(0.0);\n"
@@ -160,6 +161,10 @@ static const char *fs_src =
     "    vec2 st = q.w != 0.0 && q.w != 1.0 ? q.xy / q.w : q.xy;\n"
     "    if (i > 0 && u_mode[i] == 15) return texture(t, R[7 + i].ar);\n" /* dependent: at the stage before's alpha and red (0..1) */
     "    if (i > 0 && u_mode[i] == 16) return texture(t, R[7 + i].gb);\n" /* ... or green and blue */
+    "    if (u_kind[i] == 5) {\n" /* two slices, their centres at r = 1/4 and 3/4: between them by r, as a linear filter clamped */
+    "        float r = q.w != 0.0 && q.w != 1.0 ? q.z / q.w : q.z;\n"
+    "        return mix(texture(t, st * u_scale[i]), texture(vol, st * u_scale[i]), clamp(r * 2.0 - 0.5, 0.0, 1.0));\n"
+    "    }\n"
     "    return texture(t, st * u_scale[i]);\n"
     "}\n"
     "void main() {\n"
@@ -167,10 +172,10 @@ static const char *fs_src =
     "    E = vec3(0.0); F = vec3(0.0);\n"
     "    R[3] = vec4(u_fogc, clamp(v_fog, 0.0, 1.0));\n"
     "    R[4] = v_c0; R[5] = v_c1;\n"
-    "    R[8] = fetch(0, v_t0, u_tex0, u_cube0);\n"
-    "    R[9] = fetch(1, v_t1, u_tex1, u_cube1);\n"
-    "    R[10] = fetch(2, v_t2, u_tex2, u_cube2);\n"
-    "    R[11] = fetch(3, v_t3, u_tex3, u_cube3);\n"
+    "    R[8] = fetch(0, v_t0, u_tex0, u_cube0, u_vol0);\n"
+    "    R[9] = fetch(1, v_t1, u_tex1, u_cube1, u_vol1);\n"
+    "    R[10] = fetch(2, v_t2, u_tex2, u_cube2, u_vol2);\n"
+    "    R[11] = fetch(3, v_t3, u_tex3, u_cube3, u_vol3);\n"
     "    R[12].a = u_mode[0] != 0 ? R[8].a : 1.0;\n" /* R0.a starts as T0.a */
     "    int stages = min(int(u_ctl & 255u), 8);\n"
     "    bool msb = (u_ctl & 256u) != 0u;\n"
@@ -233,7 +238,7 @@ static void gl_vao_bind(GLuint v) {
 }
 static int gl_k = 1; /* XBRT_GL_SCALE: see gl_proxy */
 static GLint u_size, u_zmax, u_cicw, u_cocw, u_aicw, u_aocw, u_c0, u_c1, u_fc0, u_fc1, u_ctl, u_f0, u_f1;
-static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4], u_zr, u_zoff;
+static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_func, u_alpha_ref, u_tex[4], u_cube[4], u_zr, u_zoff, u_vol[4];
 
 /* A linked program and its uniforms' locations: the CPU path's vertex
  * shader, or one made from a vertex program (glvsh.c), each with the one
@@ -241,11 +246,11 @@ static GLint u_fogc, u_mode, u_kind, u_scale, u_dmax, u_shadow_func, u_alpha_fun
 static GLint *const gl_loc_var[] = {&u_size, &u_zmax, &u_cicw, &u_cocw, &u_aicw, &u_aocw, &u_c0, &u_c1, &u_fc0, &u_fc1,
                                     &u_ctl, &u_f0, &u_f1, &u_fogc, &u_mode, &u_kind, &u_scale, &u_dmax, &u_shadow_func,
                                     &u_alpha_func, &u_alpha_ref, &u_tex[0], &u_tex[1], &u_tex[2], &u_tex[3], &u_cube[0],
-                                    &u_cube[1], &u_cube[2], &u_cube[3], &u_zr, &u_zoff};
+                                    &u_cube[1], &u_cube[2], &u_cube[3], &u_zr, &u_zoff, &u_vol[0], &u_vol[1], &u_vol[2], &u_vol[3]};
 static const char *const gl_loc_name[] = {"u_size", "u_zmax", "u_cicw", "u_cocw", "u_aicw", "u_aocw", "u_c0", "u_c1", "u_fc0",
                                           "u_fc1", "u_ctl", "u_f0", "u_f1", "u_fogc", "u_mode", "u_kind", "u_scale", "u_dmax",
                                           "u_shadow_func", "u_alpha_func", "u_alpha_ref", "u_tex0", "u_tex1", "u_tex2", "u_tex3",
-                                          "u_cube0", "u_cube1", "u_cube2", "u_cube3", "u_zr", "u_zoff"};
+                                          "u_cube0", "u_cube1", "u_cube2", "u_cube3", "u_zr", "u_zoff", "u_vol0", "u_vol1", "u_vol2", "u_vol3"};
 #define GL_NLOC (int)(sizeof gl_loc_var / sizeof gl_loc_var[0])
 
 typedef struct GlProg GlProg;
@@ -386,7 +391,7 @@ static int gl_link_finish(GlProg *p) {
     glUseProgram(p->prog);
     gl_using = NULL;
     for (int i = 0; i < 4; i++) /* 2D on units 0-3, cubes on 4-7 */
-        glUniform1i(p->loc[21 + i], i), glUniform1i(p->loc[25 + i], 4 + i);
+        glUniform1i(p->loc[21 + i], i), glUniform1i(p->loc[25 + i], 4 + i), glUniform1i(p->loc[GL_NLOC - 4 + i], 8 + i);
     return 1;
 }
 
@@ -2302,6 +2307,18 @@ static GLuint gl_texture(Texture *t) {
     glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     t->gl_version = t->version;
+    if (t->texels2) { /* a volume texture's second slice: a texture of its own, its smaller levels made here */
+        if (t->gl2) glDeleteTextures(1, &t->gl2);
+        glGenTextures(1, &t->gl2);
+        glBindTexture(GL_TEXTURE_2D, t->gl2);
+        int lv = 1;
+        for (int m = t->w > t->h ? t->w : t->h; m > 1; m >>= 1) lv++;
+        glTexStorage2D(GL_TEXTURE_2D, lv, GL_RGBA8, t->w, t->h);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->w, t->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, t->texels2);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        free(t->texels2), t->texels2 = NULL, t->gl2_version = t->version;
+        glBindTexture(target, t->gl);
+    } else if (t->gl2 && t->gl2_version != t->version) glDeleteTextures(1, &t->gl2), t->gl2 = 0;
     free(t->texels), t->texels = tex_dropped; /* the GPU has them now */
     return t->gl;
 }
@@ -2557,6 +2574,15 @@ static void gl_frag_state(const DrawState *d, const GlSurf *s) {
         GlSampling kc = {GL_REPEAT, GL_REPEAT, GL_NEAREST, GL_NEAREST, 0, 1, {0, 0, 0, 0}};
         if (t && t->cube) gl_filter_of(&kc, t, KT(SET_TEXTURE_FILTER));
         glBindSampler(4 + (GLuint)i, gl_sampler(&kc));
+        if (t && !t->cube && !t->depth && !t->surface && t->gl2 && t->gl2_version == t->version) { /* the damaged slice, sampled as the first is */
+            kind[i] = 5;
+            static int show = -1; /* XBRT_DAMAGE_TEX=2 (testing): every such texture drawn as its damaged slice */
+            if (show < 0) show = getenv("XBRT_DAMAGE_TEX") && atoi(getenv("XBRT_DAMAGE_TEX")) == 2;
+            if (show) kind[i] = 1, glActiveTexture(GL_TEXTURE0 + (GLenum)i), glBindTexture(GL_TEXTURE_2D, t->gl2);
+            glActiveTexture(GL_TEXTURE8 + (GLenum)i);
+            glBindTexture(GL_TEXTURE_2D, t->gl2);
+            glBindSampler(8 + (GLuint)i, gl_sampler(&k));
+        }
     }
     glActiveTexture(GL_TEXTURE0);
     F.shadow_func = (GLint)(K(SET_SHADOW_DEPTH_FUNC) & 7);

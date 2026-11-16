@@ -145,6 +145,9 @@ typedef struct {
     size_t face_texels; /* texels in one face, all its levels */
     uint32_t depth;   /* a depth texture: texels hold depth, up to this maximum */
     uint32_t *texels; /* A8R8G8B8 */
+    uint32_t *texels2; /* a volume texture's second slice, level 0 (w x h), or NULL: Forza's damaged car paint and lamps */
+    GLuint gl2;       /* ... its GL texture (glfill.c), made from version gl2_version */
+    uint32_t gl2_version;
     uint32_t version; /* bumped at each decode */
     uint32_t decodes; /* decodes of this entry's key: many where the CPU redraws it (video, copies of the screen) */
     GLuint gl;        /* its GL texture, made from version gl_version */
@@ -485,6 +488,38 @@ static Texture *texture(int i) {
     for (int l = 0; l < nl; l++) face_texels += (size_t)(w >> l > 1 ? w >> l : 1) * (size_t)(h >> l > 1 ? h >> l : 1);
     if (t->texels != tex_dropped) free(t->texels);
     t->texels = malloc(face_texels * 4 * faces);
+    /* The damage the original game showed (the user's, 16 Nov: "implementing the damage that the original game had"):
+     * a car's paint and lamps are volume textures of two slices, the second the scratched and cracked one, sampled
+     * between by the third coordinate as the panel takes damage. Only the first was decoded, so no car ever looked
+     * scratched. The second slice's first level is kept beside it (DXT and 32-bit ones; XBRT_DAMAGE_TEX=0: not). */
+    free(t->texels2), t->texels2 = NULL;
+    {
+        static int dmg_tex = -1;
+        if (dmg_tex < 0) dmg_tex = !getenv("XBRT_DAMAGE_TEX") || atoi(getenv("XBRT_DAMAGE_TEX"));
+        if (dmg_tex && rt_gl_on && depth >= 2 && !cube && !linear && (dxt || color == 0x06 || color == 0x07)) {
+            const uint8_t *src = phys(base);
+            uint32_t *o = t->texels2 = malloc((size_t)w * h * 4);
+            if (o && dxt) {
+                int kind = color == 0x0C ? 1 : color == 0x0E ? 3 : 5, bs = kind == 1 ? 8 : 16, per = depth < 4 ? depth : 4;
+                uint32_t blk[16];
+                for (int by = 0; by < (h + 3) / 4; by++)
+                    for (int bx = 0; bx < (w + 3) / 4; bx++) {
+                        dxt_block(src + (((size_t)by * ((w + 3) / 4) + bx) * (size_t)per + 1) * bs, kind, blk);
+                        for (int i = 0; i < 16; i++) {
+                            int x = bx * 4 + i % 4, y = by * 4 + i / 4;
+                            if (x < w && y < h) o[y * w + x] = blk[i];
+                        }
+                    }
+            } else if (o) {
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++) {
+                        const uint8_t *p = src + (size_t)swizzle3((uint32_t)x, (uint32_t)y, 1, w, h, depth) * 4;
+                        uint32_t v = (uint32_t)(p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24);
+                        o[y * w + x] = color == 0x07 ? v | 0xFF000000u : v;
+                    }
+            }
+        }
+    }
     if (t != hit) { /* into its bucket */
         memcpy(t->key, key, sizeof key);
         uint32_t b = tex_hash(t->key);
