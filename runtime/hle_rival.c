@@ -156,7 +156,9 @@ void f_00043A90(XbCtx *c) {
 static float rdf(uint32_t a) { float f; memcpy(&f, xb_mem + a, 4); return f; }
 static void wrf(uint32_t a, float f) { memcpy(xb_mem + a, &f, 4); }
 
+static void dspec_tick(double dt);
 void rt_rival_tick(double dt) {
+    dspec_tick(dt);
     static int said;
     static uint64_t ticks;
     float dist, frac = rt_rival_pace(&dist);
@@ -218,5 +220,59 @@ void rt_rival_tick(double dt) {
         float k = -f * frac * (float)dt; /* (ahead: a little less ground; behind: a little more) */
         wrf(car + 0x14, p[0] + v[0] * k), wrf(car + 0x18, p[1] + v[1] * k), wrf(car + 0x1C, p[2] + v[2] * k);
         if (said < 3 || ticks % 600 == 0) said++, fprintf(stderr, "xbrt: rival pace: rival %u is %.0f m %s at %.0f m/s: its pace %+.1f%%\n", i, gap < 0 ? -gap : gap, gap < 0 ? "behind" : "ahead", sp, -f * frac * 100);
+    }
+}
+
+/* The D-Spec cars' speed held in a slide (the user's, 17 Nov, of the Touge in the Skyline R34 D-Spec: "the drifting
+ * handling slows you down tremendously": their rear tyres, 0.86 of the grip, let the tail out and the sliding tyres
+ * scrub the speed off). While the player's car is a D-Spec (a twin's first car in rivalmatch.txt), on the ground,
+ * going forward with the throttle down and no brake, and sliding (6 degrees across and more, in full from 14; less
+ * again past 70, a spin's): DSPEC_KEEP of the speed lost in the tick is put back, along the way it goes. Never
+ * more than it had, not a knock's loss (over 25 m/s^2), not in Mayhem (its drift is its own). XBRT_DSPEC_KEEP=<0-1>:
+ * another share, 0 none; XBRT_DSPEC_TEST=1: any car. Nothing of the car's data is changed. */
+#define DSPEC_KEEP 0.7f
+int rt_qr_mayhem(void);
+static void dspec_tick(double dt) {
+    static uint32_t car_was;
+    static float sp_was;
+    static uint64_t ticks, held_ticks;
+    static float held_sum;
+    static float keep = -1;
+    if (keep < 0) { const char *e = getenv("XBRT_DSPEC_KEEP"); keep = e ? (float)atof(e) : DSPEC_KEEP; if (keep > 1) keep = 1; if (keep < 0) keep = 0; }
+    if (keep <= 0 || dt <= 0 || dt > 0.25 || !xb_rd32(0x592984) || rt_qr_mayhem()) { car_was = 0; return; }
+    pthread_once(&rv_once, rv_load);
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4), me = 0, init = 0;
+    if (!arr || !rt_is_object(arr) || n > 64) { car_was = 0; return; }
+    for (uint32_t i = 0; i < n && !me; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i);
+        if (r && rt_is_object(r) && xb_rd32(r + 0x14) == 0) {
+            uint32_t tm = xb_rd32(r + 0xC0);
+            if (tm && rt_is_object(tm) && ((int)xb_rd32(tm + 0x9C) >= 0 || rdf(tm + 0xA0) > 0)) me = xb_rd32(r + 0xA0), init = xb_rd32(r + 0xB4);
+        }
+    }
+    if (!me || !rt_is_object(me) || !init || !rt_is_object(init)) { car_was = 0; return; }
+    int dspec = getenv("XBRT_DSPEC_TEST") != NULL;
+    for (int i = 0; i < ntw && !dspec; i++) dspec = tw[i][0] == xb_rd32(init);
+    if (!dspec) { car_was = 0; return; }
+    float v[3] = {rdf(me + 0x44), rdf(me + 0x48), rdf(me + 0x4C)}, sp = sqrtf(v[0] * v[0] + v[2] * v[2]);
+    float hx = rdf(me + 0x38), hz = rdf(me + 0x40), hl = sqrtf(hx * hx + hz * hz);
+    if (car_was != me || !(sp > 10.0f) || !(sp < 150.0f) || hl < 0.1f || rdf(me + 0x30) < 0.7f) { car_was = me, sp_was = sp; return; }
+    float along = (v[0] * hx + v[2] * hz) / (sp * hl);
+    float slip = along >= 1 ? 0 : along <= -1 ? 180.0f : acosf(along) * 57.29578f;
+    float w = slip < 6 ? 0 : slip < 14 ? (slip - 6) / 8 : slip < 70 ? 1 : slip < 90 ? (90 - slip) / 20 : 0;
+    float thr = rt_pad_throttle;
+    w *= thr < 0.2f ? 0 : thr > 0.6f ? 1 : (thr - 0.2f) / 0.4f;
+    if (rt_pad_brake > 0.1f) w = 0;
+    float loss = sp_was - sp;
+    ticks++;
+    if (w > 0 && loss > 0 && loss / (float)dt < 25.0f) {
+        float add = loss * keep * w, k = (sp + add) / sp;
+        wrf(me + 0x44, v[0] * k), wrf(me + 0x4C, v[2] * k);
+        sp += add, held_sum += add, held_ticks++;
+    }
+    sp_was = sp;
+    if (ticks % 600 == 0 && held_ticks) {
+        fprintf(stderr, "xbrt: d-spec: %.1f m/s of a slide's loss held over the last 10 s (%llu ticks sliding; now %.0f m/s, %.0f degrees across)\n", held_sum, (unsigned long long)held_ticks, sp, slip);
+        held_sum = 0, held_ticks = 0;
     }
 }
