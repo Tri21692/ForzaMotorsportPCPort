@@ -78,7 +78,9 @@ OPTIONS = ('<options>\r\n    <environment night="true" lit="%s"/>\r\n    <sun te
            % os.environ.get('NIGHT_LIT', 'false')).encode('latin-1')
 
 SERIES = 'Midnight Touge'
-DESC = 'Open to D-Spec cars of Class A and below. Two one-on-one runs on Fujimi Kaido at night: up the mountain, then down it.'
+DESC = ('Open to D-Spec cars of Class D. Two one-on-one runs on Fujimi Kaido at night: up the mountain, then down it. '
+        'First place receives the Mazda RX-7 Spirit R D-Spec.')   # (17 Nov: Class D only and the prize, tools/tougefix.py's in place)
+PRIZE = 'MazdaRX7SpiritDSpec'
 KIND = 'pointtopoint'
 LEVEL = 10
 SERIES_ID = 238
@@ -89,6 +91,7 @@ DSPEC = (250, 259, 263, 265, 111, 150, 159)   # the D-Spec cars (tools/driftcars
 # the test of 16 Nov) and are set up to slide, so the cars they are made from: Trueno, Silvia S15, 240SX, RX-7, stock
 # on Easy, a stage of upgrades more on Medium and on Hard (the list's +1000, +2000)
 RIVALS = (29, 89, 131, 133)
+PRIZE_ORD = None
 DRIVERS = (22, 36, 50)
 
 
@@ -364,8 +367,8 @@ def series_xml(tracks):
                  % (100 + car + 1000 * stage, driver, skill) for stage, (driver, skill) in enumerate(zip(DRIVERS, ('Easy', 'Medium', 'Hard'))) for car in RIVALS)
     x = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{SERIES_NAME_ID}" seriesdescid="{SERIES_DESC_ID}" '
          'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" Level="%d">\r\n'
-         '\t<Scoring>\r\n\t\t<score pos="1"></score>\r\n\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (SERIES, SERIES_ID, LEVEL) +
-         A.restrictions([[('carid', '=', car), ('perfclass', '<>', 'S')] for car in DSPEC]) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
+         '\t<Scoring>\r\n\t\t<score pos="1">{PRIZE}</score>\r\n\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (SERIES, SERIES_ID, LEVEL) +
+         A.restrictions([[('carid', '=', car), ('perfclass', '=', 'D')] for car in DSPEC]) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
     for k, track in enumerate(tracks):
         x += ('\t<event eventid="%d" displayname="%s" eventordinal="%d" eventtextid="{EVENT_NAME_ID}" eventdescid="{EVENT_DESC_ID}" '
               'type="Single" leaderboard="1450">\r\n'
@@ -375,13 +378,14 @@ def series_xml(tracks):
               '\t\t</AIModeSettings>\r\n\t\t<Scoring>\r\n'
               '\t\t\t<score pos="1" pts="10" xp="%d"></score>\r\n\t\t\t<score pos="2" pts="0" xp="0"></score>\r\n'
               '\t\t</Scoring>\r\n\t</event>\r\n' % (k + 1, SERIES, EVENT_ORDINAL + k, track, XP))
-    return x + '</series>\r\n'
+    return (x + '</series>\r\n').replace('{PRIZE}', '<rewards CareerCarUnlock="%d" CareerCarGift="%d" />' % (PRIZE_ORD, PRIZE_ORD) if PRIZE_ORD else '')
 
 
 def install_series(disc, mods, tracks):
-    global DSPEC
+    global DSPEC, PRIZE_ORD
     import driftcars
     DSPEC = tuple(sorted(driftcars.ordinals(disc, mods).values())) or DSPEC  # (every D-Spec car there is)
+    PRIZE_ORD = driftcars.ordinals(disc, mods).get(PRIZE)
     with tempfile.TemporaryDirectory() as tmp:
         p = os.path.join(tmp, 'touge.xml')
         open(p, 'w', encoding='latin-1', newline='').write(series_xml(tracks))

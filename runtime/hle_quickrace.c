@@ -442,6 +442,38 @@ static float line_turn(uint32_t xs, uint32_t zs, uint32_t np, int k) {
     return t < 0 ? -t : t;
 }
 
+/* XBRT_MAYHEM_AIR=1: Mayhem's player's car flies as it did before 17 Nov (80% of gravity, no hold on the road). */
+static int mayhem_air(void) {
+    static int on = -1;
+    if (on < 0) on = getenv("XBRT_MAYHEM_AIR") && atoi(getenv("XBRT_MAYHEM_AIR"));
+    return on;
+}
+
+/* The racing line's climb (rise over run) from about m0 metres to m1 metres on from point k (m0 under 0: behind),
+ * the way (dx, dz) goes along it (against the line: the other sign). */
+static float line_grade(uint32_t xs, uint32_t zs, uint32_t ys, uint32_t np, int k, float m0, float m1, float dx, float dz) {
+    int a = k, b = k;
+    float back = -m0, on = m1, run = 0;
+    for (int j = 0; j < 200 && back > 0; j++) {
+        int a2 = (a - 1 + (int)np) % (int)np;
+        float ex = rdf(xs + 4 * a) - rdf(xs + 4 * a2), ez = rdf(zs + 4 * a) - rdf(zs + 4 * a2);
+        back -= sqrtf(ex * ex + ez * ez), a = a2;
+    }
+    for (int j = 0; j < 200 && on > 0; j++) {
+        int b2 = (b + 1) % (int)np;
+        float ex = rdf(xs + 4 * b2) - rdf(xs + 4 * b), ez = rdf(zs + 4 * b2) - rdf(zs + 4 * b);
+        on -= sqrtf(ex * ex + ez * ez), b = b2;
+    }
+    float lx = rdf(xs + 4 * b) - rdf(xs + 4 * a), lz = rdf(zs + 4 * b) - rdf(zs + 4 * a);
+    run = sqrtf(lx * lx + lz * lz);
+    if (run < 2) return 0;
+    float g = (rdf(ys + 4 * b) - rdf(ys + 4 * a)) / run;
+    if (g > 0.5f) g = 0.5f;
+    if (g < -0.5f) g = -0.5f;
+    float along = (lx * dx + lz * dz) / run; /* (across the line: no climb of its; against it: the other way) */
+    return g * along;
+}
+
 /* The racing line's point about m metres behind point k (the takedown wreck's place: behind the player). */
 static int behind(uint32_t xs, uint32_t zs, uint32_t np, int k, float m) {
     for (int j = 0; j < (int)np && m > 0; j++) {
@@ -1226,6 +1258,78 @@ static void pilot(uint32_t car, uint32_t xs, uint32_t zs, uint32_t np, double dt
     }
 }
 
+/* The takedown camera's pilot kept on the road (the user's, 17 Nov: "prevent your car from spinning out after a
+ * takedown. Most of the time, a takedown happens and your car is on the side of the road": in that morning's play log
+ * three of four takedowns ended so: one taken with the car already on a wall at 4 m/s, one in a drift, the nose 34
+ * degrees across at 64 m/s and into the wall, one spun round from straight, the game's own tyres let go under the
+ * pad's wheel). The pad still drives; under it, while the pilot has the car:
+ *  - the nose is turned to the line ahead by us (up to 2.5 rad/s) and the game's own spin about the up axis damped,
+ *    and the slide across the nose closed, so it can't come round;
+ *  - a car that is stopped, on a wall, facing over 75 degrees off the line or 14 m and more off it when the pilot
+ *    takes it, or that gets so in its hands for a third of a second, is set on the line, facing along it, at the
+ *    speed it had (40 m/s at most, 15 at least): the camera is on the wreck, the jump unseen.
+ * XBRT_TD_STEADY=0: off. */
+static int td_steady(uint32_t car, uint32_t xs, uint32_t zs, uint32_t ys, uint32_t np, double dt, float top, int on_wall) {
+    static int on = -1;
+    static uint32_t scar;
+    static uint64_t last, bad_since;
+    if (on < 0) on = !getenv("XBRT_TD_STEADY") || atoi(getenv("XBRT_TD_STEADY"));
+    if (!on) return 0;
+    uint64_t now = rt_game_now_100ns();
+    int first = scar != car || now - last > 5000000 || now < last; /* (the pilot's first tick with the car this time) */
+    scar = car, last = now;
+    float x = rdf(car + 0x14), z = rdf(car + 0x1C), vx = rdf(car + 0x44), vz = rdf(car + 0x4C), v = sqrtf(vx * vx + vz * vz);
+    float fx = rdf(car + 0x38), fz = rdf(car + 0x40), fl = sqrtf(fx * fx + fz * fz);
+    int k = nearest(xs, zs, np, x, z);
+    if (k < 0 || fl < 0.1f) return 0;
+    fx /= fl, fz /= fl;
+    /* the line by the car: how far off, and its way 10 m and 10 m + half a second on */
+    float ox = rdf(xs + 4 * k) - x, oz = rdf(zs + 4 * k) - z, off = sqrtf(ox * ox + oz * oz);
+    int k1 = k, k2;
+    float left = 6;
+    for (int j = 0; j < 400 && left > 0; j++) {
+        int n2 = (k1 + 1) % (int)np;
+        float ex = rdf(xs + 4 * n2) - rdf(xs + 4 * k1), ez = rdf(zs + 4 * n2) - rdf(zs + 4 * k1);
+        left -= sqrtf(ex * ex + ez * ez), k1 = n2;
+    }
+    k2 = k1, left = 6 + 0.4f * v;
+    for (int j = 0; j < 400 && left > 0; j++) {
+        int n2 = (k2 + 1) % (int)np;
+        float ex = rdf(xs + 4 * n2) - rdf(xs + 4 * k2), ez = rdf(zs + 4 * n2) - rdf(zs + 4 * k2);
+        left -= sqrtf(ex * ex + ez * ez), k2 = n2;
+    }
+    float lx = rdf(xs + 4 * k1) - rdf(xs + 4 * k), lz = rdf(zs + 4 * k1) - rdf(zs + 4 * k), ll = sqrtf(lx * lx + lz * lz);
+    if (ll < 0.5f) return 0;
+    lx /= ll, lz /= ll;
+    int bad = v < 6 || (on_wall && v < 12) || fx * lx + fz * lz < 0.26f || off > 14 || rdf(car + 0x30) < 0.6f || (v > 6 && (vx * lx + vz * lz) / v < 0.26f);
+    if (!bad) bad_since = 0;
+    else if (!bad_since) bad_since = now;
+    if (bad && (first || now - bad_since > 3300000)) {
+        float sp = top > 40 ? 40 : top < 15 ? 15 : top;
+        fprintf(stderr, "xbrt: quick race: the pilot's car set on the line (%.0f m/s, %.0f m off it, %.0f degrees across%s): point %d, %.0f m/s\n",
+                v, off, acosf(fx * lx + fz * lz > 1 ? 1 : fx * lx + fz * lz < -1 ? -1 : fx * lx + fz * lz) * 57.3f, on_wall ? ", on a wall" : "", k, sp);
+        respawn(car, xs, zs, ys, np, k);
+        float nx = rdf(car + 0x38), nz = rdf(car + 0x40);
+        wrf(car + 0x44, nx * sp), wrf(car + 0x4C, nz * sp);
+        bad_since = 0;
+        return 1;
+    }
+    /* the nose to the line's point ahead; the spin damped; the slide across the nose closed */
+    float tx = rdf(xs + 4 * k2) - x, tz = rdf(zs + 4 * k2) - z;
+    float err = atan2f(tx * fz - tz * fx, tx * fx + tz * fz); /* (+: the point to the right of the nose, as yaw()) */
+    float turn = err * (1 - expf(-5.0f * (float)dt)), most = 2.5f * (float)dt;
+    if (turn > most) turn = most;
+    if (turn < -most) turn = -most;
+    yaw(car, turn);
+    wrf(car + 0x54, rdf(car + 0x54) * expf(-8.0f * (float)dt));
+    fx = rdf(car + 0x38), fz = rdf(car + 0x40), fl = sqrtf(fx * fx + fz * fz);
+    if (fl < 0.1f) return 0;
+    fx /= fl, fz /= fl;
+    float rx = fz, rz = -fx, vf = vx * fx + vz * fz, vl = (vx * rx + vz * rz) * expf(-6.0f * (float)dt);
+    wrf(car + 0x44, fx * vf + rx * vl), wrf(car + 0x4C, fz * vf + rz * vl);
+    return 0;
+}
+
 /* Finding a car's damage (for the takedown's wrecks): XBRT_DMGSCAN=1, watched from the race's start: the player's
  * car's first 32 KB and the first 4 KB of every object its first 2 KB points at (up to 48). Damage only grows, so
  * the floats that were 0 then and never went down since (looked at every 0.2 s) and now stand above 0 (up to 5)
@@ -1546,7 +1650,12 @@ void rt_qr_tick(void) {
                 uint32_t r = xb_rd32(arr + 4 * i);
                 if (r && r != rme && r < RT_USER_LIMIT) {
                     td_next = i + 1;
-                    tdcam_start(xb_rd32(r + 0xA0), r, me, 30);
+                    tdcam_start(xb_rd32(r + 0xA0), r, me, getenv("XBRT_TD_KICK") ? sqrtf(rdf(me + 0x44) * rdf(me + 0x44) + rdf(me + 0x4C) * rdf(me + 0x4C)) : 30);
+                    if (getenv("XBRT_TD_KICK")) { /* testing (17 Nov): the player's car knocked askew as the camera leaves: that many degrees, alternately, and spinning on */
+                        float kd = (float)atof(getenv("XBRT_TD_KICK")) * 0.01745f * (td_next & 1 ? 1.0f : -1.0f);
+                        yaw(me, kd), wrf(me + 0x54, rdf(me + 0x54) + (kd > 0 ? 3.0f : -3.0f));
+                        fprintf(stderr, "xbrt: td test: the player's car kicked %.0f degrees across\n", kd * 57.3f);
+                    }
                     damage_set((int)i, xb_rd32(r + 0xA0), DMG_FULL); /* (the damage path too, on what it has) */
                     td_real = rt_now_100ns(), td_clock = xb_rd32(tm + 0xA0), td_car = xb_rd32(r + 0xA0);
                     td_p[0] = rdf(td_car + 0x14), td_p[2] = rdf(td_car + 0x1C);
@@ -1823,9 +1932,15 @@ void rt_qr_tick(void) {
             /* the takedown camera's autopilot, through the pad: the car driven on as a player would, at no more than the
              * speed it had, Mayhem's handling and the rest below acting on it as on a driven car */
             pilot_td = mayhem_race ? 2 : 1;
+            float tv0 = rdf(car + 0x44), tv2 = rdf(car + 0x4C);
+            if (td_steady(car, xs, zs, ys, np, dt, auto_speed, cs[i].wall_until > now)) { /* (set on the line: no knock, no wall, in that) */
+                for (int j = 0; j < 3; j++) p[j] = rdf(car + 0x14 + 4 * (uint32_t)j), v[j] = cs[i].v[j] = rdf(car + 0x44 + 4 * (uint32_t)j);
+                cs[i].wall_until = 0, cs[i].still_since = 0;
+            }
             pilot(car, xs, zs, np, dt, auto_speed, 0);
             pilot_td = 0;
             v[0] = rdf(car + 0x44), v[2] = rdf(car + 0x4C); /* (slowed for a bend, perhaps) */
+            cs[i].v[0] += v[0] - tv0, cs[i].v[2] += v[2] - tv2; /* (what the pilot's hold changed is no knock: it read as a wall's, the test of 17 Nov) */
         } else if (car == me && rt_qr_auto && have_line) { /* the autopilot holds it on the line: nothing else acts on it */
             autopilot(car, xs, zs, np, dt);
             cs[i].v[0] = rdf(car + 0x44), cs[i].v[1] = rdf(car + 0x48), cs[i].v[2] = rdf(car + 0x4C);
@@ -1887,7 +2002,25 @@ void rt_qr_tick(void) {
             else if (now > next) fprintf(stderr, "xbrt: chaos: %d of %d ticks tilted, %d bouncing, %d spinning\n", tipped, ticks, flying, spinning), tipped = flying = spinning = ticks = 0, next = now + 300000000;
         }
         if (mods & QR_LOWGRAVITY) v[1] += (float)(9.81 * 0.6 * dt), wrf(car + 0x48, v[1]); /* (60% of the pull given back) */
-        else if (mayhem_race && !on_wall && (car == me || cs[i].tumble_until || cs[i].down_at)) v[1] += (float)(9.81 * 0.2 * dt), wrf(car + 0x48, v[1]);
+        else if (mayhem_race && !on_wall && ((car == me && mayhem_air()) || cs[i].tumble_until || cs[i].down_at)) v[1] += (float)(9.81 * 0.2 * dt), wrf(car + 0x48, v[1]);
+        if (mayhem_race && car == me && !mayhem_air() && have_line && lap >= 0 && !cs[i].down_at && !cs[i].tumble_until && !(mods & QR_LOWGRAVITY)) {
+            /* Mayhem's car kept on the road (the user's, 17 Nov: "keep the same handling system ... but prevent the car
+             * from going airborne"): the full pull of gravity on the player's car (80% before, for longer flights), and
+             * its speed upwards never more than the road's own climb takes at the speed it goes (the racing line's
+             * heights, by the car and just ahead: the steeper), and 1.5 m/s for its springs: over a crest it follows
+             * the road down, a kerb's or a wall's kick up is taken out. XBRT_MAYHEM_AIR=1: as before. */
+            int gk = nearest(xs, zs, np, p[0], p[2]);
+            float gl = sqrtf(v[0] * v[0] + v[2] * v[2]);
+            if (gk >= 0 && gl > 3) {
+                float g0 = line_grade(xs, zs, ys, np, gk, -8, 8, v[0] / gl, v[2] / gl), g1 = line_grade(xs, zs, ys, np, gk, 0, 14, v[0] / gl, v[2] / gl);
+                float most = gl * (g0 > g1 ? g0 : g1) + 1.5f;
+                if (v[1] > most) {
+                    static int said;
+                    if (v[1] > most + 2 && said++ < 12) fprintf(stderr, "xbrt: mayhem: kept on the road (%.1f m/s up, the road's %.1f)\n", v[1], most - 1.5f);
+                    v[1] = most, wrf(car + 0x48, v[1]);
+                }
+            }
+        }
         /* (Mayhem's over-the-top physics: 80% of the pull, longer flights: the player's car, and a rival only as a wreck,
          * thrown. On every rival it took a fifth of their tyres' load, and with the push below they reached the bends
          * too fast and stopped at the walls: 14-18 m/s their median on Tokyo, 19-22 without Mayhem, the tests of 5 Nov) */
