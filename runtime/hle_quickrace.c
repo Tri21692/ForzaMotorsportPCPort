@@ -1460,6 +1460,7 @@ void rt_qr_tick(void) {
     uint64_t now = rt_game_now_100ns(); /* (the game's clock: in the takedown's slow motion, everything here slows with it) */
     double dt = last ? (now - last) / 1e7 : 0;
     last = now;
+    { void rt_rival_tick(double dt); rt_rival_tick(dt); } /* (a matched event's pace matching: hle_rival.c) */
     { /* a race begun: Mayhem's, when on and a career menu was up within the minute before */
         static uint32_t race_was, ev_was;
         uint32_t race = xb_rd32(0x592984);

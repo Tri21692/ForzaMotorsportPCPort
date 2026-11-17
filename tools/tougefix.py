@@ -25,6 +25,8 @@ B = chr(92)
 SERIES = 'Midnight Touge'
 PRIZE = 'MazdaRX7SpiritDSpec'
 PRIZE_NAME = 'Mazda RX-7 Spirit R D-Spec'
+MODELS = (9901, 9902, 9903)  # the matched rival's AI car models: Easy, Medium, Hard
+MODEL_LIKE = 189             # (the stock Silvia S15's: what the rival is, should the runtime not change it)
 
 
 def main(disc, mods):
@@ -46,7 +48,27 @@ def main(disc, mods):
     sc = top.group(0).replace(old, '<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>' % (car, car), 1)
     x = x[:top.start()] + sc + x[top.end():]
     print('%s: %d alternatives ask for Class B and below; 1st: %s (%d)%s' % (key, x.count('Attrib="perfclass" Func="<>" Value="A"'), PRIZE_NAME, car, '' if x != was else ' (as it was)'))
-    if x != was:
+    # the matched rival's own AI car models (17 Nov: when an AI car is made the game does not yet say which event is
+    # loading, so runtime/hle_rival.c knows the Touge's rival by its model's Id): one a difficulty, copies of the
+    # stock Silvia S15's (189) under Ids nothing else has, each with a copy of its Drivatar controller; the series'
+    # rivals are these three, whose car and setup the runtime makes the player's
+    lk = {k.lower(): k for k in mega.files}
+    lname = lk['ai' + B + 'aicarmodellist.xml']
+    al = bytes(mega.files[lname]).decode('latin-1')
+    al0 = al
+    src = re.search(r'[ \t]*<AICarModel Id="%d">.*?</AICarModel>\r?\n' % MODEL_LIKE, al, re.S).group(0)
+    pred = lk['ai' + B + 'drivatarv2' + B + 'controllers' + B + '%d-pred.bin' % MODEL_LIKE]
+    for mid in MODELS:
+        if '<AICarModel Id="%d">' % mid not in al:
+            al = al.replace('</AICarModelList>', src.replace('Id="%d"' % MODEL_LIKE, 'Id="%d"' % mid, 1) + '</AICarModelList>')
+        mega.files.setdefault(pred.replace('%d-pred' % MODEL_LIKE, '%d-pred' % mid), bytes(mega.files[pred]))
+    if al != al0: mega.files[lname] = al.encode('latin-1')
+    field = re.search(r'\t<AIField>\r?\n.*?\t</AIField>', x, re.S)
+    rivals = ''.join('\t\t<AIPlayer name="If you see this, it is a bug" aicarmodelid="%d" AIDriverModelID="%d" AppearanceID="0" %s />\r\n' % r
+                     for r in zip(MODELS, (22, 36, 50), ('Easy', 'Medium', 'Hard')))
+    x = x[:field.start()] + '\t<AIField>\r\n' + rivals + '\t</AIField>' + x[field.end():]
+    print('the rival: AI car models %s (as %d), one a difficulty%s' % (MODELS, MODEL_LIKE, '' if (x, al) != (was, al0) else ' (as it was)'))
+    if x != was or al != al0:
         mega.files[key] = x.encode('latin-1')
         mega.check(); mega.write()
     head = re.search(r'<series [^>]*>', x).group(0)
@@ -67,6 +89,18 @@ def main(disc, mods):
         if changes:
             open(mp, 'wb').write(addcar.replace_strings(d, changes))
             print('%s: %s' % (lang, '; '.join('%d %r' % kv for kv in sorted(changes.items()))))
+    # the matched rival (the user's, 17 Nov: "give the opponent the same performance stats that I have, along with
+    # the pace matching"; runtime/hle_rival.c): the Touge's events, each D-Spec car's twin (the car it was made
+    # from: the rival drives that with the player's parts and tuning), and the pace matching (8%, in full 60 m apart)
+    carlist = mega.files['cars' + B + 'carlist.xml'].decode('latin-1')
+    evs = re.findall(r'eventordinal="(\d+)"', x)
+    lines = ['events ' + ' '.join(evs), 'models ' + ' '.join(str(m) for m in MODELS)]
+    for c in driftcars.CARS:
+        if re.search(r'<car name="%s"' % c[1], carlist) and re.search(r'<car name="%s"' % c[0], carlist):
+            lines.append('twin %d %d' % (addcar.ordinal_of(carlist, c[1]), addcar.ordinal_of(carlist, c[0])))
+    lines.append('pace %s %s' % (os.environ.get('TOUGE_PACE', '0.08'), os.environ.get('TOUGE_PACE_M', '60')))
+    open(os.path.join(mods, 'rivalmatch.txt'), 'w').write('\n'.join(lines) + '\n')
+    print('rivalmatch.txt: ' + '; '.join(lines))
 
 
 if __name__ == '__main__':

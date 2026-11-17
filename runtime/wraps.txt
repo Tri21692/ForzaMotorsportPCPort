@@ -29,3 +29,4 @@ EEE30   # a car's transmission loaded for a race (thiscall; +8 the final drive, 
 EF2B0   # a car's aero loaded for a race (thiscall; +0 LongitudinalDrag): hle_quickrace.c, Mayhem's lower drag
 32E010  # the leaderboard cache trimmed to its limit (thiscall): hle_qol.c raises the limit (+0x2DC) from 1 MB, past which the scoreboard just loaded was thrown out and "Updating scoreboards" called through 0
 3ACA10  # BinkCopyToBuffer: hle_clip.c, a track's preview clip of ours painted over the movie's frame
+43A90   # the AI car model list looked up by Id (thiscall, the Id): hle_rival.c, a matched event's rival given the player's car and setup
