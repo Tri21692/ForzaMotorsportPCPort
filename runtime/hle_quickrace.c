@@ -627,6 +627,7 @@ volatile char rt_photo_path[512];
 #define AI_PUSH_TOP 85.0f /* m/s: under this (90 a while) */
 #define MAYHEM_TURN 0.85f /* rad/s from the stick held over, on top of the game's own turn (0.55 before 15 Nov) */
 #define MAYHEM_GRIP 5.5f  /* the slide across the heading closed at this rate a second (3.2 before 15 Nov) */
+#define MAYHEM_MASS 2.0f  /* the player's car this many times heavier against the rivals than before 16 Nov (see mmass) */
 #define MAYHEM_PULL 3.5f  /* m/s^2 at full throttle, on top of the game's: the player's (5 before the user's, 5 Nov: "make the
                            * acceleration a little slower") */
 #define DRIFT_OUT 9000000ull /* 100 ns: the way out of a drift eased over 0.9 s */
@@ -2110,6 +2111,19 @@ void rt_qr_tick(void) {
              * (and halved again: "very easy to move opponents around") */
             float closing = touch ? ((mv0[0] - cs[i].v[0]) * dx + (mv0[2] - cs[i].v[2]) * dz) / dd : 0;
             int theirs = 0; /* Mayhem: the rival hit the player (it closed faster), not the player it */
+            /* Mayhem: the player's car MAYHEM_MASS times as heavy as it was against the rivals (the user's, 16 Nov:
+             * "Increase the mass of the user's car on Mayhem Events"). Not the body's own mass (its springs would sag
+             * under it): the share of every knock from a rival it keeps, cut by that. A hit of its own kept 40%, now
+             * 40% / mass; any other touch (a light one, a second within the second, a rival's slam) was kept whole,
+             * now 1 / mass, the rival taking half of what the player did not; a slam throws and spins it 1 / mass as
+             * far. XBRT_MAYHEM_MASS: 1 as before. */
+            static float mmass = -1;
+            if (mmass < 0) {
+                const char *e = getenv("XBRT_MAYHEM_MASS");
+                mmass = e && atof(e) >= 1 ? (float)atof(e) : MAYHEM_MASS;
+                if (mmass > 10) mmass = 10;
+            }
+            float mass = mayhem_race ? mmass : 1.0f;
             if (touch && closing >= 4.5f && mayhem_race && im >= 0 && now - cs[i].hit_at > 10000000 && !cs[i].down_at) {
                 float ux = dx / dd, uz = dz / dd;
                 theirs = -(cs[i].v[0] * ux + cs[i].v[2] * uz) > mv0[0] * ux + mv0[2] * uz;
@@ -2117,9 +2131,9 @@ void rt_qr_tick(void) {
             if (theirs) { /* the player slammed: thrown away from the rival, out of grip; a takedown if a wall or a stop follows */
                 float ux = dx / dd, uz = dz / dd, s = closing / 18 > 1 ? 1 : closing / 18, w[3];
                 (void)w;
-                cs[im].push[0] = -ux * 2.5f * s, cs[im].push[1] = -uz * 2.5f * s, cs[im].push_until = now + 2000000; /* (over 0.2 s) */
+                cs[im].push[0] = -ux * 2.5f * s / mass, cs[im].push[1] = -uz * 2.5f * s / mass, cs[im].push_until = now + 2000000; /* (over 0.2 s) */
                 cs[im].hit_at = now, cs[im].impact = closing, cs[im].kind = 1;
-                cs[im].spin = (rand() & 1 ? 1 : -1) * 1.5f * s, cs[im].spin_until = now + 5000000;
+                cs[im].spin = (rand() & 1 ? 1 : -1) * 1.5f * s / mass, cs[im].spin_until = now + 5000000;
                 cs[i].hit_at = now, cs[i].impact = 0; /* (its own crash after is no takedown of the player's) */
                 fresh = 0;
                 say("SLAMMED!");
@@ -2148,10 +2162,22 @@ void rt_qr_tick(void) {
                                  * 30% bounced it back off, half earlier let it shove through when the rivals were lighter) */
                     touched = 1;
                     float w[3];
-                    for (int j = 0; j < 3; j++) w[j] = rdf(me + 0x44 + 4 * (uint32_t)j) - 0.6f * mdv[j];
+                    for (int j = 0; j < 3; j++) w[j] = rdf(me + 0x44 + 4 * (uint32_t)j) - (1 - 0.4f / mass) * mdv[j];
                     wrf(me + 0x44, w[0]), wrf(me + 0x4C, w[2]); /* (not the up: no lift) */
                     if (im >= 0 && cs[im].car == me) cs[im].v[0] = w[0], cs[im].v[2] = w[2];
                 }
+            }
+            if (touch && mass > 1 && !touched && im >= 0 && cs[im].car == me) { /* any other touch: the heavier car's share */
+                touched = 1;
+                float g = 1 - 1 / mass, w0 = rdf(me + 0x44) - g * mdv[0], w2 = rdf(me + 0x4C) - g * mdv[2];
+                wrf(me + 0x44, w0), wrf(me + 0x4C, w2);
+                cs[im].v[0] = w0, cs[im].v[2] = w2;
+                if (!cs[i].down_at) {
+                    v[0] -= 0.5f * g * mdv[0], v[2] -= 0.5f * g * mdv[2];
+                    wrf(car + 0x44, v[0]), wrf(car + 0x4C, v[2]);
+                }
+                static int said;
+                if (said++ < 8) fprintf(stderr, "xbrt: mayhem mass %.1f: a touch, %.0f%% of the player's knock (%.1f m/s) given back\n", mass, g * 100, sqrtf(mdv[0] * mdv[0] + mdv[2] * mdv[2]));
             }
             if (cs[i].push_until > now) { /* a hit's shove, a share a tick */
                 v[0] += cs[i].push[0] * (float)(dt / 0.2), v[2] += cs[i].push[1] * (float)(dt / 0.2);

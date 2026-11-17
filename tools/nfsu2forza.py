@@ -2776,6 +2776,16 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
             rs = [np.hypot(p['verts'][i][0], p['verts'][i][2]) for i in idx0[f0:f0 + c0] if i < len(p['verts'])]
             rad.append(max(rs) if rs else 0.0)
         by_shape[id(p)] = {gi for gi, r in enumerate(rad) if 0 < r < 0.9 * max(rad)}
+        # (the user's, 16 Nov: "Some of them have bad geometry or weird coloring". A group whose middle is off the axle
+        # is no part of the rim: a valve stem, a brake caliper. Turning with the wheel they were a white or a dark
+        # patch going round in the spokes: the Diablo's, the Evora's, the Maloo's.)
+        for gi in sorted(by_shape[id(p)]):
+            g = p['groups'][gi]
+            f0, = struct.unpack_from('<I', g, 0x34); c0, = struct.unpack_from('<I', g, 12)
+            P = np.array([p['verts'][i][:3] for i in idx0[f0:f0 + c0] if i < len(p['verts'])], float)
+            if len(P) and np.hypot(P[:, 0].mean(), P[:, 2].mean()) > 0.15 * max(rad):
+                by_shape[id(p)].discard(gi)
+                print('wheel: group %d (%d triangles) off the axle: not the rim' % (gi, c0 // 3))
     def is_rim(p, si, gi=None):
         if id(p) in by_shape: return gi in by_shape[id(p)]
         return named(p, si)
@@ -2785,6 +2795,33 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
         big = max(((struct.unpack_from('<I', g, 12)[0], levels[0]['textures'][struct.unpack_from('<II', g, 0x1C)[0]])
                    for gi, g in enumerate(levels[0]['groups']) if is_rim(levels[0], struct.unpack_from('<II', g, 0x1C)[1], gi)), default=None)
         if big: main_tex = big[1]
+    # An add-on's rim is often painted from a corner of the car's whole sheet (the Maloo's from 2% of it): shrunk to
+    # the wheel texture's quarter the corner was three texels, blurred into its neighbours (a grey rim came out
+    # black). The stretch of the sheet the rim's corners use is what goes into the quarter, the corners moved with it.
+    box = None
+    if WHEEL_CROP and by_shape and main_tex in textures:
+        uvs = []
+        for p in levels[:2]:
+            if id(p) not in by_shape: continue
+            idx0 = [i for t in p['tris'] for i in t]
+            for gi in by_shape[id(p)]:
+                g = p['groups'][gi]
+                if p['textures'][struct.unpack_from('<II', g, 0x1C)[0]] != main_tex: continue
+                f0, = struct.unpack_from('<I', g, 0x34); c0, = struct.unpack_from('<I', g, 12)
+                uvs += [p['verts'][i][7:9] for i in idx0[f0:f0 + c0] if i < len(p['verts'])]
+        if uvs:
+            uvs = np.array(uvs, float)
+            lo, hi = uvs.min(0), uvs.max(0)
+            if lo.min() >= -0.001 and hi.max() <= 1.001 and (hi - lo).max() < 0.8:
+                pad = max(0.01, 0.04 * (hi - lo).max())
+                lo, hi = np.clip(lo - pad, 0, 1), np.clip(hi + pad, 0, 1)
+                side = max(hi - lo)   # (square, so the picture is not stretched more one way)
+                lo = np.clip(np.minimum(lo, 1 - side), 0, 1)
+                box = (float(lo[0]), float(lo[1]), float(side))
+                print('wheel: the rim painted from %.0f%% of its sheet across, at %.2f,%.2f: that stretch taken' % (side * 100, lo[0], lo[1]))
+    def quv(u, v):
+        if box: u, v = (u - box[0]) / box[2], (v - box[1]) / box[2]
+        return (int(min(max(u, 0), 1) * 0.5 * 65535), int(min(max(v, 0), 1) * 0.5 * 65535))
     V = np.array([v[:3] for v in part['verts']], float) / 4096
     rim_ix = sorted({i for sp in part['subparts'] if sp['material'] == RIM for i in sp['indices']})
     R = V[rim_ix]
@@ -2801,6 +2838,11 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
         if not rim: continue
         k = rim_r / max(np.hypot(v[0], v[2]) for v in rim)
         y0 = min(v[1] for v in rim)
+        if WHEEL_LIP and id(p) in by_shape:  # a spinner or a hub that stands out past the rim's lip (the Impala's, 4 cm) is not the
+            # face: taken as it, the whole rim sat that far inside its tyre, in the dark
+            rmax = max(np.hypot(v[0], v[2]) for v in rim)
+            lip = min(v[1] for v in rim if np.hypot(v[0], v[2]) > 0.85 * rmax)
+            if lip - y0 > 0.012: y0 = lip
         for gi, g in enumerate(p['groups']):
             cnt, = struct.unpack_from('<I', g, 12)
             first, = struct.unpack_from('<I', g, 0x34)
@@ -2816,7 +2858,7 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
                 pos3 = (face + (y - y0) * k, x * k, z * k)
                 out_verts.append(tuple(int(round(c * 4096)) for c in pos3)
                                  + tuple(int(round(min(max(c, -1.0), 1.0) * 32767)) for c in (ny, nx, nz)) + shade
-                                 + (int(min(max(u, 0), 1) * 0.5 * 65535), int(min(max(v, 0), 1) * 0.5 * 65535)))
+                                 + quv(u, v))
             tris = []
             for j in range(first, first + cnt - 2, 3):
                 a, b, c = idx[j:j + 3]
@@ -2838,7 +2880,13 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     src = nfsu_rgba(textures[tex]).astype(np.float32)
     sh, sw = src.shape[:2]
     q = 128 if sh >= 256 and nparts and nparts[0].get('materials') else 64
-    small = src.reshape(q, sh // q, q, sw // q, 4).mean((1, 3)) if sh >= q else src.repeat(q // sh, 0).repeat(q // sw, 1)
+    if box:
+        from PIL import Image
+        x0, y0b, x1, y1 = int(box[0] * sw), int(box[1] * sh), int(round((box[0] + box[2]) * sw)), int(round((box[1] + box[2]) * sh))
+        cut = Image.fromarray(np.clip(src[y0b:max(y1, y0b + 1), x0:max(x1, x0 + 1)], 0, 255).astype(np.uint8), 'RGBA')
+        small = np.asarray(cut.resize((q, q), Image.LANCZOS if cut.size[0] > q else Image.BILINEAR)).astype(np.float32)
+    else:
+        small = src.reshape(q, sh // q, q, sw // q, 4).mean((1, 3)) if sh >= q else src.repeat(q // sh, 0).repeat(q // sw, 1)
     for t2, at, n in other:
         if t2 in textures:
             o = nfsu_rgba(textures[t2]).astype(np.float32).reshape(-1, 4)
@@ -2861,6 +2909,14 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     img[:q, :q, 3] = 255
     open(out_xpr, 'wb').write(fx.write_dxt5(xd, img))
     print('wheel: %d rim triangles in %d levels, scale %.3f' % (sum(len(s) for _, s in subs), len(subs), rim_r / 0.223))
+
+
+# convert_wheel's two fixes that suit some add-ons only (wheels_all.py's FIX names them; the audit of 16 Nov): CROP,
+# the rim's stretch of its sheet taken alone (the Maloo, the Civic, the Impala: sharp again; on the Egoista, the Jesko,
+# the Senna, the Terzo and the RS5 it brought out orange and yellow swatches the blur had hidden); LIP, the rim's face
+# taken at its lip, not at a spinner that stands out past it (the Impala).
+WHEEL_CROP = False
+WHEEL_LIP = False
 
 
 VINYL_CANVAS = ('BODY', 'BODY_LEFT', 'BODY_RIGHT', 'BODY_TOP', 'BODY_REAR')  # Most Wanted's painted groups, laid out on its vinyl canvas

@@ -42,6 +42,9 @@ def convert(keys, mods=MODS0):
             open(os.path.join(od, 't_wheel.xpr'), 'wb').write(get(xpr, art + 'wheel.xpr'))
             sd = nc.stage(nc.CARS[k][0], k)
             print('%-10s %-28s on %s:' % (k, car, st), end=' ', flush=True)
+            # (16 Nov, the wheel audit: nfsu2forza's WHEEL_CROP / WHEEL_LIP, for the cars they suit)
+            fix = {'impala': ('crop', 'lip'), 'maloo': ('crop',), 'civicfn2': ('crop',)}.get(k, ())
+            nfsu2forza.WHEEL_CROP, nfsu2forza.WHEEL_LIP = 'crop' in fix, 'lip' in fix
             nfsu2forza.convert_wheel(os.path.join(od, 't_tire.carbin'), os.path.join(od, 't_wheel.xpr'), sd,
                                      os.path.join(od, 'tire.carbin'), os.path.join(od, 'wheel.xpr'))
         except (SystemExit, Exception) as e:
