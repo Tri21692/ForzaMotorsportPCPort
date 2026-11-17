@@ -78,7 +78,7 @@ OPTIONS = ('<options>\r\n    <environment night="true" lit="%s"/>\r\n    <sun te
            % os.environ.get('NIGHT_LIT', 'false')).encode('latin-1')
 
 SERIES = 'Midnight Touge'
-DESC = ('Open to D-Spec cars of Class D. Two one-on-one runs on Fujimi Kaido at night: up the mountain, then down it. '
+DESC = ('Open to D-Spec cars of Class B and below. Two one-on-one runs on Fujimi Kaido at night: up the mountain, then down it. '
         'First place receives the Mazda RX-7 Spirit R D-Spec.')   # (17 Nov: Class D only and the prize, tools/tougefix.py's in place)
 PRIZE = 'MazdaRX7SpiritDSpec'
 KIND = 'pointtopoint'
@@ -368,7 +368,7 @@ def series_xml(tracks):
     x = ('<?xml version="1.0"?>\r\n<series displayname="%s" seriesnameid="{SERIES_NAME_ID}" seriesdescid="{SERIES_DESC_ID}" '
          'seriesid="%d" seriesordinal="0" seriesorder="0" Icon="{ICON}" Level="%d">\r\n'
          '\t<Scoring>\r\n\t\t<score pos="1">{PRIZE}</score>\r\n\t\t<score pos="2"></score>\r\n\t</Scoring>\r\n\t<Restrictions>\r\n' % (SERIES, SERIES_ID, LEVEL) +
-         A.restrictions([[('carid', '=', car), ('perfclass', '=', 'D')] for car in DSPEC]) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
+         A.restrictions([[('carid', '=', car), ('perfclass', '<>', 'A'), ('perfclass', '<>', 'S')] for car in DSPEC]) + '\t</Restrictions>\r\n\t<AIField>\r\n' + ai + '\t</AIField>\r\n')
     for k, track in enumerate(tracks):
         x += ('\t<event eventid="%d" displayname="%s" eventordinal="%d" eventtextid="{EVENT_NAME_ID}" eventdescid="{EVENT_DESC_ID}" '
               'type="Single" leaderboard="1450">\r\n'

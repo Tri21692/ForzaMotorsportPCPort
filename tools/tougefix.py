@@ -36,12 +36,16 @@ def main(disc, mods):
     if car is None: raise SystemExit('no %s in %s' % (PRIZE, mods))
     x = bytes(mega.files[key]).decode('latin-1')
     was = x
-    x = x.replace('<Restriction Attrib="perfclass" Func="<>" Value="S" />', '<Restriction Attrib="perfclass" Func="=" Value="D" />')
+    # (17 Nov, later, the user: "just make the touge event B class. D is too hard now": Class B and below, said as
+    # not A and not S, both to hold within a car's alternative)
+    two = lambda m: m.group(1) + '<Restriction Attrib="perfclass" Func="<>" Value="A" />' + m.group(1) + '<Restriction Attrib="perfclass" Func="<>" Value="S" />'
+    if 'Attrib="perfclass" Func="<>" Value="A"' not in x:
+        x = re.sub(r'(\r?\n[ \t]*)<Restriction Attrib="perfclass" Func="(?:=" Value="D|<>" Value="S)" />', two, x)
     top = re.search(r'\t<Scoring>.*?</Scoring>', x, re.S)  # (the series' own: before its events)
     old = re.search(r'<score pos="1">.*?</score>', top.group(0)).group(0)
     sc = top.group(0).replace(old, '<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>' % (car, car), 1)
     x = x[:top.start()] + sc + x[top.end():]
-    print('%s: %d alternatives ask for Class D; 1st: %s (%d)%s' % (key, x.count('Attrib="perfclass" Func="=" Value="D"'), PRIZE_NAME, car, '' if x != was else ' (as it was)'))
+    print('%s: %d alternatives ask for Class B and below; 1st: %s (%d)%s' % (key, x.count('Attrib="perfclass" Func="<>" Value="A"'), PRIZE_NAME, car, '' if x != was else ' (as it was)'))
     if x != was:
         mega.files[key] = x.encode('latin-1')
         mega.check(); mega.write()
@@ -57,7 +61,7 @@ def main(disc, mods):
         for i in sorted(set(ids)):
             t = text_of(d, i)
             if t is None: continue
-            t2 = t.replace('Class A and below', 'Class D').replace('Class A or below', 'Class D')
+            t2 = t.replace('Class A and below', 'Class D').replace('Class A or below', 'Class D').replace('Class D', 'Class B and below')
             if i == sid: t2 = t2.split('First place receives the ')[0].rstrip() + ' First place receives the %s.' % PRIZE_NAME
             if t2 != t: changes[i] = t2
         if changes:
