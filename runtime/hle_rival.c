@@ -276,3 +276,17 @@ static void dspec_tick(double dt) {
         held_sum = 0, held_ticks = 0;
     }
 }
+
+/* Is the player's car a D-Spec (a twin's first car)? For the Touge's achievement (hle_achieve.c). */
+int rt_rival_dspec(void) {
+    pthread_once(&rv_once, rv_load);
+    uint32_t list = 0x58DAA0, n = xb_rd32(list + 0x10), arr = xb_rd32(list + 4);
+    if (!arr || !rt_is_object(arr) || n > 64) return 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t r = xb_rd32(arr + 4 * i), init = r && rt_is_object(r) && xb_rd32(r + 0x14) == 0 ? xb_rd32(r + 0xB4) : 0;
+        if (!init || !rt_is_object(init)) continue;
+        for (int k = 0; k < ntw; k++) if (tw[k][0] == xb_rd32(init)) return 1;
+        return 0;
+    }
+    return 0;
+}

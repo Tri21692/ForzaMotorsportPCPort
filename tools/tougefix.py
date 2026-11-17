@@ -43,11 +43,15 @@ def main(disc, mods):
     two = lambda m: m.group(1) + '<Restriction Attrib="perfclass" Func="<>" Value="A" />' + m.group(1) + '<Restriction Attrib="perfclass" Func="<>" Value="S" />'
     if 'Attrib="perfclass" Func="<>" Value="A"' not in x:
         x = re.sub(r'(\r?\n[ \t]*)<Restriction Attrib="perfclass" Func="(?:=" Value="D|<>" Value="S)" />', two, x)
+    # (17 Nov, evening, the user: "No D-Spec cars are required, it's just too difficult to keep speed": any car of
+    # Class B and below: no car alternatives, the class asked of every car, race cars out too)
+    body = ''.join('\t\t<Restriction Attrib="perfclass" Func="<>" Value="%s" />\r\n' % c for c in ('A', 'S', 'R'))
+    x = re.sub(r'(<Restrictions>\r?\n).*?(\t</Restrictions>)', lambda q: q.group(1) + body + q.group(2), x, count=1, flags=re.S)
     top = re.search(r'\t<Scoring>.*?</Scoring>', x, re.S)  # (the series' own: before its events)
     old = re.search(r'<score pos="1">.*?</score>', top.group(0)).group(0)
     sc = top.group(0).replace(old, '<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>' % (car, car), 1)
     x = x[:top.start()] + sc + x[top.end():]
-    print('%s: %d alternatives ask for Class B and below; 1st: %s (%d)%s' % (key, x.count('Attrib="perfclass" Func="<>" Value="A"'), PRIZE_NAME, car, '' if x != was else ' (as it was)'))
+    print('%s: open to Class B and below (%d car alternatives); 1st: %s (%d)%s' % (key, x.count('Attrib="carid"'), PRIZE_NAME, car, '' if x != was else ' (as it was)'))
     # the matched rival's own AI car models (17 Nov: when an AI car is made the game does not yet say which event is
     # loading, so runtime/hle_rival.c knows the Touge's rival by its model's Id): one a difficulty, copies of the
     # stock Silvia S15's (189) under Ids nothing else has, each with a copy of its Drivatar controller; the series'
@@ -83,7 +87,7 @@ def main(disc, mods):
         for i in sorted(set(ids)):
             t = text_of(d, i)
             if t is None: continue
-            t2 = t.replace('Class A and below', 'Class D').replace('Class A or below', 'Class D').replace('Class D', 'Class B and below')
+            t2 = t.replace('Class A and below', 'Class D').replace('Class A or below', 'Class D').replace('Class D', 'Class B and below').replace('Open to D-Spec cars of', 'Open to cars of')
             if i == sid: t2 = t2.split('First place receives the ')[0].rstrip() + ' First place receives the %s.' % PRIZE_NAME
             if t2 != t: changes[i] = t2
         if changes:

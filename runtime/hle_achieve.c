@@ -41,6 +41,9 @@ static const Ach ach[] = {
     {"laps100", "Lap Counter", "Complete 100 laps.", 100},
     {"miles500", "Marathon", "Drive 500 miles in races.", 500},
     {"shots25", "Shutterbug", "Take 25 screenshots (F12).", 25},
+    /* (the user's, 17 Nov, as the Touge was opened to every car: "make an achievement for if you beat it with a
+     * D-Spec car": both of its runs won in one, each counted once: the "touge <event>" lines of the file) */
+    {"touge_dspec", "Touge Purist", "Win both Midnight Touge runs in a D-Spec car.", 2},
 };
 #define NACH (int)(sizeof ach / sizeof ach[0])
 #define MAXTRACKS 64
@@ -51,6 +54,10 @@ static long long when[NACH]; /* unix time earned, 0 not yet */
 static double miles;
 static char tracks[MAXTRACKS][48];
 static int ntracks;
+static uint32_t touge[8]; /* the matched events (the Touge's runs) won in a D-Spec car */
+static int ntouge;
+int rt_rival_event(void);
+int rt_rival_dspec(void);
 static char banner[64];
 static uint64_t banner_until;
 
@@ -72,6 +79,7 @@ static void load(void) {
         if (line[0] == '#') continue;
         if (sscanf(line, "track %47s", a) == 1 && ntracks < MAXTRACKS) snprintf(tracks[ntracks++], sizeof tracks[0], "%s", a);
         else if (sscanf(line, "miles %lf", &d) == 1) miles = d;
+        else if (sscanf(line, "touge %d", &v) == 1) { if (ntouge < 8) touge[ntouge++] = (uint32_t)v; }
         else if (sscanf(line, "%63s %d %lld", a, &v, &t) == 3)
             for (int i = 0; i < NACH; i++)
                 if (!strcmp(ach[i].id, a)) prog[i] = v, when[i] = t;
@@ -86,6 +94,7 @@ static void save(void) {
     for (int i = 0; i < NACH; i++) fprintf(f, "%s %d %lld\n", ach[i].id, prog[i], when[i]);
     fprintf(f, "miles %.3f\n", miles);
     for (int i = 0; i < ntracks; i++) fprintf(f, "track %s\n", tracks[i]);
+    for (int i = 0; i < ntouge; i++) fprintf(f, "touge %u\n", touge[i]);
     fclose(f);
 }
 
@@ -208,6 +217,14 @@ void rt_ach_tick(void) {
             add("wins25", 1);
             if (clean) reach("clean_win", 1);
             if (field >= 4 && lap1_place == field) reach("comeback", 1);
+            if (ev && ev < RT_USER_LIMIT && rt_rival_event() && rt_rival_dspec()) { /* a Touge run won in a D-Spec car */
+                uint32_t o = xb_rd32(ev + 0x10);
+                int seen = 0;
+                for (int i = 0; i < ntouge; i++) seen |= touge[i] == o;
+                if (!seen && ntouge < 8) touge[ntouge++] = o;
+                fprintf(stderr, "xbrt: achievements: Touge event %u won in a D-Spec car (%d of its runs so far)\n", o, ntouge);
+                reach("touge_dspec", ntouge);
+            }
             if (rt_catchup_event()) reach("catchup", 1); /* (the event's: cu_active ends seconds in, so it never counted) */
         }
         if (rt_tt_running() && place == 1) reach("tt_gold", 1);
