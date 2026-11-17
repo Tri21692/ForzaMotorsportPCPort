@@ -40,7 +40,12 @@ CARS = [('NissanSilvia', 'NissanSilviaDSpec', 'Silvia S15 D-Spec'),
 # (the MX-5 RADBUL's, MazdaMX5RadbulDSpec, taken out with the MX-5 RADBUL on 2 Nov: tools/removecar.py)
 TUNE = ['--shift', 'drivetraindiff:LimittedSlipTorqueAccel=600', '--shift', 'drivetraindiff:LimittedSlipTorqueDecel=300',
         '--scale', 'tiremod:RearFrictionScale=0.86', '--scale', 'tiremod:FrontFrictionScale=1.05',
-        '--scale', 'nonupgradedata.xml:MaxAngle=1.5714']
+        '--scale', 'nonupgradedata.xml:MaxAngle=1.5714',
+        # (the user's, 17 Nov: "up D-Spec Accel just a little bit": the final drive 7% shorter at every gearbox level,
+        # more pull in every gear, the engine, class and price as they were. The thirteen there then were given it in
+        # place, once, by tunecar.py; undone with =0.934579. The six of 16 Nov got their tiles' D-SPEC badge the same
+        # day: tools/caricontile.py <disc> <mods> <ordinal>:badge)
+        '--scale', 'transmission:FinalDriveRatio=1.07']
 
 
 def ordinals(disc, mods):
