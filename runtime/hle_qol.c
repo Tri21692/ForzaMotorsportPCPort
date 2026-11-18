@@ -80,3 +80,38 @@ void f_0032E010(XbCtx *c) {
     }
     orig_f_0032E010(c);
 }
+
+/* The same crash a third time (the user's, 17 Nov, after a drift event on Pacific Shipyards: "indirect call to
+ * 00000000 ... return address 000a208c", Leaderboard106500 read just before), and no "scoreboards: ... KB loaded"
+ * line in the session: the cache never passed 1 MB, so the trim above was not what lost the scoreboard. What is
+ * sure: "Updating scoreboards" (0xA2040, thiscall, no arguments, called once from the scoreboards' set-up at
+ * 0xA2AAD) calls through the scoreboard at its +0x5C, which the set-up took from the manager's getter (0x32E1A0:
+ * base, id, param; 0 when the manager is not open, its byte at +0x2E0, when the scoreboard cannot be made, or when
+ * it is gone again after the trim) and never checks. So:
+ *  - the getter's every 0 is logged with what it was asked and the manager's state, to learn which it is;
+ *  - a set-up whose scoreboard at +0x5C is 0 has its update left out, logged: the race's result goes on to the
+ *    screen after it without the scoreboards' part, and the game stays up. */
+void orig_f_0032E1A0(XbCtx *c);
+void f_0032E1A0(XbCtx *c) {
+    uint32_t mgr = c->ecx, base = xb_rd32(c->esp + 4), id = xb_rd32(c->esp + 8), param = xb_rd32(c->esp + 12);
+    orig_f_0032E1A0(c);
+    if (!c->eax) {
+        static int said;
+        if (said++ < 40)
+            fprintf(stderr, "xbrt: scoreboards: none for Leaderboard%u (base %u, id %u, param %u): the manager %s (boards %u and %u, limit %u KB)\n",
+                    base + id + param, base, id, param, mgr && xb_rd8(mgr + 0x2E0) ? "open: not made, or thrown out again" : "not open",
+                    mgr ? xb_rd32(mgr + 0x18) : 0, mgr ? xb_rd32(mgr + 0x1C) : 0, mgr ? xb_rd32(mgr + 0x2DC) >> 10 : 0);
+    }
+}
+
+void orig_f_000A2040(XbCtx *c);
+void f_000A2040(XbCtx *c) {
+    uint32_t self = c->ecx;
+    if (self && !xb_rd32(self + 0x5C)) {
+        fprintf(stderr, "xbrt: scoreboards: the race's scoreboard is missing (kind %u, param %u; its others %08x %08x %08x %08x %08x): the update left out, not called through 0\n",
+                xb_rd32(self + 4), xb_rd32(self + 0x40), xb_rd32(self + 0x50), xb_rd32(self + 0x54), xb_rd32(self + 0x58), xb_rd32(self + 0x60), xb_rd32(self + 0x64));
+        c->esp += 4; /* ret */
+        return;
+    }
+    orig_f_000A2040(c);
+}

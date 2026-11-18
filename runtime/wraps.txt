@@ -31,3 +31,5 @@ EF2B0   # a car's aero loaded for a race (thiscall; +0 LongitudinalDrag): hle_qu
 3ACA10  # BinkCopyToBuffer: hle_clip.c, a track's preview clip of ours painted over the movie's frame
 43A90   # the AI car model list looked up by Id (thiscall, the Id): hle_rival.c, a matched event's rival given the player's car and setup
 16CFF0  # a car's performance figure (a CarInit and its physics): hle_rival.c, logged with XBRT_PERF_LOG to learn an upgraded car's class
+32E1A0  # the leaderboard manager's getter (thiscall: base, id, param): hle_qol.c, its every 0 logged
+A2040   # "Updating scoreboards" (thiscall): hle_qol.c, left out when its scoreboard is 0 (the crash at 0xA208A)
