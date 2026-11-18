@@ -659,12 +659,37 @@ def whole_objects(res, hide, near=20.0):
     return out
 
 
-def ground_test(res, hidden, lo, hi):
+def wide_tris(res, hidden, lo, hi):
+    """The level triangles ((3, 3)) of the meshes mesh_tris does not read, within the box lo, hi (x, z):
+    the course's roads and the side roads (28-byte vertices; blender_export reads them)."""
+    import struct
+    import xb2
+    import blender_export
+    names, _ = xb2.resources(bytes(res))
+    out = []
+    for i in range(struct.unpack_from('<I', res, L.MODEL)[0]):
+        if i in hidden: continue
+        a = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * i)[0]
+        fl, _, _, vbytes, vb, stride, prim = struct.unpack_from('<IIIIHHH', res, L.MODEL + a)
+        if not (9 <= vb < len(names) + 9) or stride != 6 or not vbytes or not (fl & 0x1004 or vbytes % 24): continue
+        g = blender_export.mesh_geometry(res, names, i)
+        if g is None: continue
+        v = g[0]
+        if v[:, 0].max() < lo[0] or v[:, 0].min() > hi[0] or v[:, 2].max() < lo[1] or v[:, 2].min() > hi[1]: continue
+        out += [v[k] for k in g[2] if facing_up(v[k])]
+    return out
+
+
+def ground_test(res, hidden, lo, hi, wide=False):
     """drawn(x, z, y): whether the scenery (but the meshes `hidden`) draws ground at (x, z) near
-    height y (from 3 m under it to 1.5 m over: a roof is no ground), within the box lo, hi (x, z)."""
+    height y (from 3 m under it to 1.5 m over: a roof is no ground), within the box lo, hi (x, z).
+    `wide`: the side roads' and the course's own road meshes counted too (wide_tris): without them
+    edge_ground laid 870 m2 of asphalt on the strip's side road, level with its concrete to 14 mm,
+    to flicker (the audit of 17 Nov)."""
     import xb2
     names, _ = xb2.resources(bytes(res))
     tris = [t for i, nm, t in mesh_tris(res, names, lambda nm: True, (*lo, *hi)) if i not in hidden and facing_up(t)]
+    if wide: tris += wide_tris(res, hidden, lo, hi)
     cells = {}
     for k, t in enumerate(tris):
         for gx in range(int(np.floor(t[:, 0].min() / 5)), int(np.floor(t[:, 0].max() / 5)) + 1):
@@ -729,12 +754,14 @@ def edge_ground(drawn, centre, half, dist, where, sp, past=12.0, reach=22.0, ski
                 pts = [centre[i][[0, 2]] + l2 * u for u in us]
                 bare = [u for u, p in zip(us, pts) if not drawn(p[0], p[1], centre[i][1])]
                 if bare and np.all(L.off_course([(p[0], centre[i][1], p[1]) for p in pts], sp, margin=0.0)):
-                    run.append((i, max(bare) + 0.5)); continue
+                    # (from just inside the first bare probe, not the road's edge: laid from the edge it lay on
+                    # the strip's drawn side road as far as the bare ground past it, level with it, 17 Nov)
+                    run.append((i, max(bare) + 0.5, max(min(bare) - 1.0, half[i] - 0.3))); continue
             if len(run) >= 2:
                 pairs = []
-                for j, w in run:
+                for j, w, w0 in run:
                     l3 = np.array([left[j][0], 0, left[j][1]]) * side
-                    a = centre[j] + l3 * (half[j] - 0.3) + (0, -0.03, 0)
+                    a = centre[j] + l3 * w0 + (0, -0.03, 0)
                     b = centre[j] + l3 * w + (0, -0.03, 0)
                     pairs.append(((a, up, -32000 + 53.0 * (a[0] % 600), -32000 + 51.7 * (a[2] % 600)),
                                   (b, up, -32000 + 53.0 * (b[0] % 600), -32000 + 51.7 * (b[2] % 600))))
@@ -742,6 +769,57 @@ def edge_ground(drawn, centre, half, dist, where, sp, past=12.0, reach=22.0, ski
                 if np.dot(np.cross(b0 - a0, a1 - a0), up) > 0: pairs = [(q, p) for p, q in pairs]
                 faces.append([v for pr in pairs for v in pr])
             run = []
+    return faces
+
+
+HAIRPIN_OUT = (-690.0, -146.0, -658.0, -103.0)  # x0, z0, x1, z1: outside the hairpin, between the strip's asphalt and the old
+# road's sidewalk west of it, nothing was drawn ((-662..-676, -105..-115) and (-666..-686, -115..-144): the audit of 17 Nov)
+
+
+def bare_ground(res, hidden, centre, box, sp, cell=2.0, under=0.06):
+    """Ground (strip faces, asphalt) over every `cell` m square of `box` (x0, z0, x1, z1) where nothing
+    is drawn at its middle or a corner: in rows, their corners shared, each at the height of what is
+    drawn within 3 m of it (the old road's sidewalk falls away west) or else the loop's there, `under`
+    m under it; not over the course's road (drawn, in meshes mesh_tris does not read). void_ground and
+    edge_ground leave the hairpin out (its edges fan apart)."""
+    import xb2
+    names, _ = xb2.resources(bytes(res))
+    lo, hi = np.array(box[:2]) - 6, np.array(box[2:]) + 6
+    tris = [t for i, nm, t in mesh_tris(res, names, lambda nm: True, (*lo, *hi)) if i not in hidden and facing_up(t)]
+    drawn = GroundMap(tris + wide_tris(res, hidden, lo, hi))
+    xs, zs = np.arange(box[0], box[2] + 1e-6, cell), np.arange(box[1], box[3] + 1e-6, cell)
+    c2 = centre[:, [0, 2]]
+    Y = np.zeros((len(zs), len(xs))); seen = np.zeros((len(zs), len(xs)), bool)
+    for a, z in enumerate(zs):
+        for b, x in enumerate(xs):
+            y = centre[int(np.argmin(np.hypot(c2[:, 0] - x, c2[:, 1] - z)))][1]
+            h = drawn.top(x, z, y, under=3.0)
+            seen[a, b] = h is not None
+            if h is None:
+                for r in (1.5, 3.0):
+                    hs = [v for v in (drawn.top(x + dx * r, z + dz * r, y, under=3.0) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1), (.7, .7), (-.7, .7), (.7, -.7), (-.7, -.7))) if v is not None]
+                    if hs: h = float(np.mean(hs)); break
+            Y[a, b] = (y if h is None else h) - under
+    up = np.array([0.0, 1.0, 0.0])
+    mids = [(xs[b] + cell / 2, 0.0, zs[a] + cell / 2) for a in range(len(zs) - 1) for b in range(len(xs) - 1)]
+    clear = L.off_course(mids, sp, margin=0.5).reshape(len(zs) - 1, len(xs) - 1)
+    faces = []
+    for a in range(len(zs) - 1):
+        bare = [bool(clear[a, b]) and not (seen[a:a + 2, b:b + 2].all() and drawn.top(xs[b] + cell / 2, zs[a] + cell / 2, Y[a, b], under=3.0) is not None) for b in range(len(xs) - 1)]
+        b = 0
+        while b < len(bare):
+            if not bare[b]: b += 1; continue
+            e = b
+            while e < len(bare) and bare[e]: e += 1
+            pairs = []
+            for k in range(b, e + 1):
+                p, q = np.array([xs[k], Y[a, k], zs[a]]), np.array([xs[k], Y[a + 1, k], zs[a + 1]])
+                pairs.append(((p, up, -32000 + 53.0 * (p[0] % 600), -32000 + 51.7 * (p[2] % 600)),
+                              (q, up, -32000 + 53.0 * (q[0] % 600), -32000 + 51.7 * (q[2] % 600))))
+            a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
+            if np.dot(np.cross(b0 - a0, a1 - a0), up) > 0: pairs = [(q, p) for p, q in pairs]
+            faces.append([v for pr in pairs for v in pr])
+            b = e
     return faces
 
 
@@ -937,6 +1015,9 @@ HEAD, HEAD_GLOW = 2158, 2159   # pole_streetlight154's head (its strip, and its 
 LAMP_EVERY = 32.0  # m between the tunnel's lamps, each wall in turn
 MARGIN = 2.0       # the track's edges (the suggested line) this far short of any wall
 EDGE_PAD, EDGE_MORE = 0.5, 6.0   # on the new road and round the hairpin: the edges out to the walls, this far short, at most this past the half
+EDGE_WIDE = 12.0   # and at most this past the half at the joins with the course (17 Nov)
+FLOOR_MORE, FLOOR_LAST = 1.6, 14   # the garage floor's last cross-sections (4 m apart, the last few 2 m) wider by this, m a side
+FLOOR_ON = 4   # points (2 m each) the floor goes on past the door onto side road 39 (a void 1 m2 each side of the line there)
 TUNNEL_LEAD = 12   # points (2 m each) the tunnel reaches back along side road 39, round the corner into the gap
 
 
@@ -1095,8 +1176,13 @@ def tunnel_faces(centre, half, idx, out=0.6, apron=6):
     # the floor, and on out of the mouth at the gap's start (the side road's drawn end falls short
     # of it: the void showed past the mouth)
     fk = list(range(max(0, idx[0] - apron), idx[0])) + keep
+    fk += list(range(idx[-1] + 1, min(len(centre), idx[-1] + 1 + FLOOR_ON)))  # (and on out of the door onto side road 39: 17 Nov)
     PF, LF = centre[fk], np.stack([left[fk][:, 0], np.zeros(len(fk)), left[fk][:, 1]], 1)
     WF = (half[fk] + out)[:, None]
+    # its last 40 m to the door onto side road 39 wider by FLOOR_MORE each side: that road's raised
+    # sidewalk, moved out of the garage (clear_tunnel), left a metre of nothing between it and the floor
+    # for 35 m, (-259, -693) to (-271, -722), 1.4 m from the line (the audit of 17 Nov); under the sidewalk
+    WF = WF + (FLOOR_MORE * np.clip((np.arange(len(fk)) - (len(fk) - 1 - FLOOR_LAST)) / 2.0, 0, 1))[:, None]
     fl, fr = PF + LF * WF + (0, 0.03, 0), PF - LF * WF + (0, 0.03, 0)
     # in the side roads' concrete, along the road as theirs (the asphalt met them at both doors, a
     # different road)
@@ -1279,6 +1365,7 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
     added = 0
     near_set = set(near)
     squares = []
+    lone = []  # the squares with no ground found round them, their heights settled at the end
     def square(p, y, w_):
         nonlocal added
         h = None
@@ -1286,14 +1373,39 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
             hs = [height(p[0] + dx, p[1] + dz, y) for dx, dz in ((r, 0), (-r, 0), (0, r), (0, -r))]
             hs = [x for x in hs if x is not None]
             if hs: h = float(min(hs)); break  # the lowest round it: a kerb's height beside it made a bump
-        h = y - 0.05 if h is None else h
         dc = np.hypot(c2[:, 0] - p[0], c2[:, 1] - p[1])
         k_ = int(np.argmin(dc))
-        if dc[k_] < half[k_] + 1.5: h = min(h, centre[k_][1])  # by the road never over it
-        squares.append((p[0], p[1], w_, h))  # laid at the end, merged (lay_squares)
+        cap = centre[k_][1] if dc[k_] < half[k_] + 1.5 else np.inf  # by the road never over it
+        if h is None: lone.append((len(squares), y - 0.05, cap)); h = y - 0.05
+        squares.append((p[0], p[1], w_, min(h, cap)))  # laid at the end, merged (lay_squares)
         added += 1
     def filled(p):
         return any(abs(p[0] - x) <= w and abs(p[1] - z) <= w for x, z, w, _ in squares[-400:])
+    def settle():
+        """The squares with no ground within 3 m: at the height of the squares beside them that found
+        some, ring by ring out from those, then evened out (each the mean of those within 1.6 m), not
+        at the loop's own height: west of the hairpin's apex the old road falls away, and squares at
+        the loop's height stood 0.3 to 1.0 m over the ground they met, ledges (the audit of 17 Nov)."""
+        if not lone or len(lone) == len(squares): return
+        P = np.array([s[:2] for s in squares], float)
+        Hh = np.array([s[3] for s in squares], float)
+        free = np.zeros(len(squares), bool); free[[k for k, _, _ in lone]] = True
+        known = ~free
+        for _ in range(200):
+            fu, fk = np.flatnonzero(~known), np.flatnonzero(known)
+            if not len(fu): break
+            d = np.hypot(P[fu, None, 0] - P[None, fk, 0], P[fu, None, 1] - P[None, fk, 1])
+            hit = d < 1.6
+            got = hit.any(1)
+            if not got.any(): break
+            Hh[fu[got]] = (np.where(hit, Hh[fk][None, :], 0).sum(1) / np.maximum(hit.sum(1), 1))[got]
+            known[fu[got]] = True
+        fu = np.flatnonzero(free & known)
+        if len(fu):
+            d = np.hypot(P[fu, None, 0] - P[None, :, 0], P[fu, None, 1] - P[None, :, 1]) < 1.6
+            for _ in range(20): Hh[fu] = (d * Hh[None, :]).sum(1) / d.sum(1)
+        for k, _, cap in lone:
+            if known[k]: squares[k] = squares[k][:3] + (float(min(Hh[k], cap)),)
     for i in near:  # the edges first, finely
         for side in (1, -1):
             for u in np.arange(half[i] - 0.25, half[i] + 3.0, 0.25):
@@ -1314,6 +1426,7 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
             y = centre[i][1]
             if height(p[0], p[1], y) is not None: continue
             square(p, y, step * 0.75)
+    settle()
     lay_squares(col, squares)
     if under:
         run = [i for i in near if (i - 1) % n in near_set]  # consecutive pairs (i - 1, i)
@@ -1342,6 +1455,132 @@ def fill_ground(col, centre, half, dist, where, step=1.0, margin=15, under=0.0):
     return added
 
 
+def tri_key(surface, pts):
+    """A collision triangle's name: its surface and corners to the centimetre (the disc's own told from ours)."""
+    return (surface, tuple(tuple(round(float(c), 2) for c in p) for p in pts))
+
+
+class GroundMap:
+    """Ground triangles ((3, 3) arrays) to ask heights of: top(x, z, y) the highest under (x, z) from 2 m
+    under y to 1.5 m over it, or None."""
+    def __init__(self, tris):
+        self.tris, self.cells = tris, {}
+        for k, t in enumerate(tris):
+            for gx in range(int(np.floor(t[:, 0].min() / 5)), int(np.floor(t[:, 0].max() / 5)) + 1):
+                for gz in range(int(np.floor(t[:, 2].min() / 5)), int(np.floor(t[:, 2].max() / 5)) + 1):
+                    self.cells.setdefault((gx, gz), []).append(k)
+
+    def top(self, x, z, y, under=2.0, over=1.5):
+        best = None
+        for k in self.cells.get((int(np.floor(x / 5)), int(np.floor(z / 5))), ()):
+            a, b, c = self.tris[k]
+            det = (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2])
+            if abs(det) < 1e-9: continue
+            u = ((x - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (z - a[2])) / det
+            v = ((b[0] - a[0]) * (z - a[2]) - (x - a[0]) * (b[2] - a[2])) / det
+            if u < -1e-4 or v < -1e-4 or u + v > 1 + 1e-4: continue
+            h = a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1])
+            if y - under < h < y + over and (best is None or h > best): best = h
+        return best
+
+
+def hairpin_ground(col, stock, centre, half, dist, where, cell=2.0, margin=15, band=4.0, floats=0.04):
+    """The hairpin's ground made one surface (the audit of 17 Nov: ledges of 0.3 to 1.0 m west of its
+    apex, where the old road falls away west under the link's flat ground and the squares put beside it
+    at the loop's height). Round loop points `where` and `margin` either side, inside the walls (`dist`):
+
+      our ground standing more than `floats` m over the course's own (`stock`: the disc's triangles'
+      names, tri_key) is taken out, the course's road the surface there;
+      where no ground is left, ground on a grid `cell` m apart, its corners shared: on what ground
+      there is at its height, else at the loop's height there, sloping to it over `band` m from the
+      ground it meets; level cells merged (lay_squares' way).
+
+    fill_ground after it finds only what this leaves. Returns (triangles taken out, cells laid, triangles)."""
+    n = len(centre)
+    near = sorted({(i + k) % n for i in where for k in range(-margin, margin + 1)})
+    near_set = set(near)
+    left, _ = frame(centre)
+    c2 = centre[:, [0, 2]]
+    reach = max(dist.get((sd, i), half[i] + 8.0) for i in near for sd in (1, -1)) + 3.0
+    glo, ghi = c2[near].min(0) - reach, c2[near].max(0) + reach
+    def where_at(p):
+        """(inside the walls round the hairpin, the loop's height there) for (x, z): fill_ground's test."""
+        d = np.hypot(c2[:, 0] - p[0], c2[:, 1] - p[1])
+        i = int(np.argmin(d))
+        if i not in near_set: return False, centre[i][1]
+        lat = (p - c2[i]) @ left[i]
+        side = 1 if lat > 0 else -1
+        other = np.abs((np.arange(n) - i + n // 2) % n - n // 2) > 25
+        between = d[other].min() < half[np.argmin(np.where(other, d, 1e9))] + 15 and d[i] < half[i] + 15
+        return bool(abs(lat) <= dist.get((side, i), half[i] + 8.0) + 2.5 or between), centre[i][1]
+    def ground_tris(want):
+        out = []
+        for s, pts, nrm, _ in col.triangles():
+            q = np.array(pts, float)
+            if abs(nrm[1]) <= 0.7 or q[:, 0].max() < glo[0] - 20 or q[:, 0].min() > ghi[0] + 20 or q[:, 2].max() < glo[1] - 20 or q[:, 2].min() > ghi[1] + 20: continue
+            if want is None or (tri_key(s, pts) in stock) == want: out.append((tri_key(s, pts), q))
+        return out
+    course = GroundMap([q for _, q in ground_tris(True)])
+    floating = set()
+    for key, q in ground_tris(False):
+        m = q.mean(0)
+        if not where_at(m[[0, 2]])[0]: continue
+        k = int(max(np.hypot(*(q[1] - q[0])[[0, 2]]), np.hypot(*(q[2] - q[0])[[0, 2]])) / 1.0) + 2
+        for a in range(k + 1):  # a metre apart over it, a little inside its edges
+            for b in range(k + 1 - a):
+                p = m + ((q[0] + (q[1] - q[0]) * a / k + (q[2] - q[0]) * b / k) - m) * 0.97
+                h = course.top(p[0], p[2], p[1])
+                if h is not None and p[1] - h > floats: floating.add(key); break
+            if key in floating: break
+    gone = col.remove(lambda s, pts: tri_key(s, pts) not in floating) if floating else 0
+    known = GroundMap([q for _, q in ground_tris(None)])
+    xs = np.arange(np.floor(glo[0] / cell) * cell, ghi[0] + cell, cell)
+    zs = np.arange(np.floor(glo[1] / cell) * cell, ghi[1] + cell, cell)
+    ins = np.zeros((len(zs), len(xs)), bool); ref = np.zeros((len(zs), len(xs))); kh = np.full((len(zs), len(xs)), np.nan)
+    for a, z in enumerate(zs):
+        for b, x in enumerate(xs):
+            ins[a, b], ref[a, b] = where_at(np.array([x, z]))
+            h = known.top(x, z, ref[a, b])
+            if h is not None: kh[a, b] = h
+    lay = np.zeros((len(zs) - 1, len(xs) - 1), bool)
+    for a in range(len(zs) - 1):
+        for b in range(len(xs) - 1):
+            if not (ins[a:a + 2, b:b + 2].any() or where_at(np.array([xs[b] + cell / 2, zs[a] + cell / 2]))[0]): continue
+            if not np.isnan(kh[a:a + 2, b:b + 2]).any() and known.top(xs[b] + cell / 2, zs[a] + cell / 2, ref[a, b]) is not None: continue  # ground there already
+            lay[a, b] = True
+    # the corners' heights: on ground, its own; else the loop's (to the centimetre: level cells merge),
+    # sloping to the nearest corner on ground over `band` m
+    Hc = np.round(ref, 2)
+    ka, kb = np.nonzero(~np.isnan(kh))
+    KP, KH = np.stack([xs[kb], zs[ka]], 1), kh[ka, kb]
+    used = np.zeros_like(ins)
+    for a, b in zip(*np.nonzero(lay)): used[a:a + 2, b:b + 2] = True
+    for a, b in zip(*np.nonzero(used)):
+        if not np.isnan(kh[a, b]): Hc[a, b] = kh[a, b]; continue
+        if not len(KP): continue
+        d = np.hypot(KP[:, 0] - xs[b], KP[:, 1] - zs[a])
+        j = int(np.argmin(d))
+        if d[j] < band: Hc[a, b] = round(float(KH[j] + (Hc[a, b] - KH[j]) * d[j] / band), 3)
+    level = np.zeros_like(lay)
+    for a, b in zip(*np.nonzero(lay)): level[a, b] = np.ptp(Hc[a:a + 2, b:b + 2]) < 1e-6
+    tris, free = 0, lay.copy()
+    span = int(8.0 / cell)
+    for a in range(lay.shape[0]):
+        for b in range(lay.shape[1]):
+            if not free[a, b]: continue
+            a1, b1 = a + 1, b + 1
+            if level[a, b]:  # level cells at one height, in one rectangle
+                h0 = Hc[a, b]
+                same = lambda a_, b_: free[a_, b_] and level[a_, b_] and abs(Hc[a_, b_] - h0) < 1e-6
+                while b1 < lay.shape[1] and b1 - b < span and same(a, b1): b1 += 1
+                while a1 < lay.shape[0] and a1 - a < span and all(same(a1, b_) for b_ in range(b, b1)): a1 += 1
+            free[a:a1, b:b1] = False
+            q = [(xs[b], Hc[a, b], zs[a]), (xs[b1], Hc[a, b1], zs[a]), (xs[b1], Hc[a1, b1], zs[a1]), (xs[b], Hc[a1, b], zs[a1])]
+            col.add_ground(0, [q[0], q[1], q[2]]); col.add_ground(0, [q[2], q[3], q[0]])
+            tris += 2
+    return gone, int(lay.sum()), tris
+
+
 def object_of(name):
     """A mesh's object: its resource name without the buffer number (_vbN) and the second copy's b."""
     import re
@@ -1349,11 +1588,14 @@ def object_of(name):
     return base[:-1] if base.endswith('b') else base
 
 
-def donor_pool(res, used, ppw, allowed):
+def donor_pool(res, used, ppw, allowed, records=None):
     """Meshes of model_quickpreview to rewrite: stride 6 strips the loop's visibility never shows
     (`used`: so their own place is never seen from it either), whose vertex buffer is in `allowed`
     and whose bounding sphere is found in the ppw; largest first, as (pairs of vertices they hold,
-    mesh, its sphere's offset)."""
+    mesh, its sphere's offset). `records`: the ppw's sphere records' offsets, one a mesh
+    (fujitrack.ppw_records), for the meshes whose sphere is not found by its value (not their vertices'
+    box): more donors, so each can hold one place's faces only (17 Nov: 146 of 151 were in use, their
+    faces 80 m and more from each donor's first, 15 donors' spread over 80 to 236 m)."""
     import struct
     import xb2
     names, _ = xb2.resources(bytes(res))
@@ -1376,6 +1618,7 @@ def donor_pool(res, used, ppw, allowed):
         if v is None: continue
         c = (v.min(0) + v.max(0)) / 2
         at = sphere_at(ppw, c, float(np.max(np.linalg.norm(v - c, axis=1))))
+        if at is None and records is not None and i < len(records): at = records[i]
         if at is not None: pool.append((pairs, i, at, vbytes // 24, nidx))
     return sorted(pool, key=lambda r: -r[0])
 
@@ -1545,13 +1788,40 @@ def simplify(face, tol=0.1):
     return [v for i in sorted(keep) for v in pairs[i]]
 
 
-def pack(faces, pool, mats, reach=40.0):
+def cut_long(face, most=40.0):
+    """A strip face in pieces no longer than `most` m (their pairs' middles), a pair put in wherever two
+    are further apart than that (simplify makes one quad of a straight 200 to 300 m long, and a donor
+    holding one had its bounding sphere 170 m wide: 15 donors over the 80 m the game is known to draw
+    whole, the audit of 17 Nov). The pieces overlap by a pair. [faces]."""
+    pairs = [face[i:i + 2] for i in range(0, len(face), 2)]
+    mid = lambda pr: (np.asarray(pr[0][0], float) + np.asarray(pr[1][0], float))[[0, 2]] / 2
+    dense = [pairs[0]]
+    for pr in pairs[1:]:
+        a = dense[-1]
+        k = int(np.ceil(np.hypot(*(mid(pr) - mid(a))) / most))
+        for j in range(1, k):
+            u = j / k
+            dense.append([(np.asarray(va[0], float) + (np.asarray(vb[0], float) - np.asarray(va[0], float)) * u, va[1],
+                           va[2] + (vb[2] - va[2]) * u, va[3] + (vb[3] - va[3]) * u) for va, vb in zip(a, pr)])
+        dense.append(pr)
+    out, cur = [], [dense[0]]
+    for pr in dense[1:]:
+        if np.hypot(*(mid(pr) - mid(cur[0]))) > most + 1e-6:
+            out.append(cur); cur = [cur[-1]]
+        cur.append(pr)
+    out.append(cur)
+    return [[v for pr in piece for v in pr] for piece in out]
+
+
+def pack(faces, pool, mats, reach=40.0, most_reach=2000.0):
     """Faces gathered by material into the donors (popped from `pool`, as donor_pool, the largest
     left first), as many to each as fit (write_strips joins them), one too long for what is left
     cut, its pieces overlapping by a pair: [(mesh, sphere offset, [pieces], material)]. Each donor
     takes faces within `reach` m of its first only (nearest first), so its bounding sphere stays on
     them: one sphere over faces 500 m apart, the game left some out (the garage's tin over its south
-    door, bricks on side road 04, drawn in Blender); with too few donors for that, `reach` doubles."""
+    door, bricks on side road 04, drawn in Blender); with too few donors for that, `reach` grows by a
+    quarter. A face is within `reach` when its farthest corner is (17 Nov: by its middle, a long face
+    reached far past it), so a donor's faces spread over twice `reach` at most."""
     pool0 = list(pool)
     print('donors: %d, room for %d pairs; needed %s' % (len(pool), sum(r[0] for r in pool), {str(m_): sum(len(f) // 2 for f, mm in zip(faces, mats) if mm == m_) for m_ in set(mats)}))
     while True:
@@ -1566,11 +1836,12 @@ def pack(faces, pool, mats, reach=40.0):
                 if not pool: short = True; break
                 _, mesh, at, nv, nidx = pool.pop(0)
                 seed = mid(queue[0])
-                queue.sort(key=lambda pr: np.hypot(*(mid(pr) - seed)))
+                far = lambda pr: max(np.hypot(*(np.asarray(q[0], float)[[0, 2]] - seed)) for p_ in pr for q in p_)
+                queue.sort(key=far)
                 pieces, v, ix = [], 0, 0
                 while queue:
                     pr = queue[0]
-                    if pieces and np.hypot(*(mid(pr) - seed)) > reach: break
+                    if pieces and far(pr) > reach: break
                     join = 3 if pieces else 0
                     k = min(nv - v, nidx - ix - join) // 2  # the pairs there is room for
                     if k >= len(pr): take = len(pr); queue.pop(0)
@@ -1581,9 +1852,9 @@ def pack(faces, pool, mats, reach=40.0):
                 out.append((mesh, at, pieces, m))
                 queue.sort(key=lambda pr: tuple(mid(pr)))
         if not short: break
-        if reach > 2000: raise SystemExit('out of donor meshes: %d faces' % len(faces))
-        reach *= 2
-    print('faces packed by place: each donor within %.0f m of its first face, %d donors' % (reach, len(out)))
+        if reach > most_reach: raise SystemExit('out of donor meshes: %d faces' % len(faces))
+        reach *= 1.25
+    print('faces packed by place: the faces of each donor within %.0f m of the middle of its first, %d donors' % (reach, len(out)))
     return out
 
 
@@ -1607,6 +1878,118 @@ def edges(centre, half, right=None):
     left /= np.linalg.norm(left, axis=1)[:, None]
     right = half if right is None else right
     return [centre + left * (-right if k % 2 else half)[:, None] for k in range(6)]
+
+
+def wall_reach(col, centre, most=40.0, feet_only=False):
+    """Per side of the loop (+1 the left, -1 the right) and point, how far out along its normal the
+    first wall that stops a car stands in the collision (`most` with none): {side: distances}; or, with
+    `feet_only`, those walls' feet (their ends A, B: (n, 2) each)."""
+    left, _ = frame(centre)
+    c2 = centre[:, [0, 2]]
+    lo, hi = c2.min(0) - most, c2.max(0) + most
+    feet = {}
+    for s, pts, n, _ in col.triangles():
+        if abs(n[1]) > 0.7: continue
+        q = np.array(pts, float)
+        if q[:, 0].max() < lo[0] or q[:, 0].min() > hi[0] or q[:, 2].max() < lo[1] or q[:, 2].min() > hi[1]: continue
+        a, b = footprint(q)
+        m = (a + b) / 2
+        y0 = centre[int(np.argmin(np.hypot(c2[:, 0] - m[0], c2[:, 1] - m[1])))][1]
+        if q[:, 1].min() < y0 + 1.2 and q[:, 1].max() > y0 + 0.3: feet[(tuple(np.round(a, 2)), tuple(np.round(b, 2)))] = (a, b)
+    A, Bv = np.array([f[0] for f in feet.values()]), np.array([f[1] for f in feet.values()])
+    if feet_only: return A, Bv
+    return {side: ray_reach(c2, left * side, A, Bv, most) for side in (1, -1)}
+
+
+def ray_reach(O, D, A, B, most):
+    """From each point O[i] along the unit vector D[i] (x, z), how far to the first of the segments A to
+    B (`most` with none)."""
+    E = B - A
+    out = np.full(len(O), float(most))
+    for i in range(len(O)):
+        den = D[i, 0] * E[:, 1] - D[i, 1] * E[:, 0]
+        ok = np.abs(den) > 1e-9
+        w = A - O[i]
+        t = np.where(ok, (w[:, 0] * E[:, 1] - w[:, 1] * E[:, 0]) / np.where(ok, den, 1), -1)
+        u = np.where(ok, (w[:, 0] * D[i, 1] - w[:, 1] * D[i, 0]) / np.where(ok, den, 1), -1)
+        hit = ok & (t > 0.05) & (t < most) & (u >= -0.02) & (u <= 1.02)
+        if hit.any(): out[i] = t[hit].min()
+    return out
+
+
+def unfold(E, fwd, window=110):
+    """An edge line (closed, point for point with the loop's centre; `fwd` the centre's way round at
+    each, (x, z)) with its loops cut out: where it crosses itself (inside a bend tighter than the edge is
+    far from the centre, it runs back on itself and round), the points between the crossing's two legs
+    all at the crossing; and no point behind the one before it. The track's edges folded so at the corner
+    from side road 31 onto 04 and at the hairpin (10 points stepping backwards, the audit of 17 Nov)."""
+    n = len(E)
+    P = E[:, [0, 2]]
+    out = E.copy()
+    def cross(p, q, r, s_):
+        d1, d2 = q - p, s_ - r
+        den = d1[0] * d2[1] - d1[1] * d2[0]
+        if abs(den) < 1e-12: return None
+        t = ((r[0] - p[0]) * d2[1] - (r[1] - p[1]) * d2[0]) / den
+        u = ((r[0] - p[0]) * d1[1] - (r[1] - p[1]) * d1[0]) / den
+        return p + d1 * t if 0 <= t <= 1 and 0 <= u <= 1 else None
+    i = 0
+    while i < n:
+        best = None
+        for j in range(i + 2, i + window):
+            x = cross(P[i], P[(i + 1) % n], P[j % n], P[(j + 1) % n])
+            if x is not None: best = (j, x)
+        if best is not None:
+            # (not quite all at the crossing: spread a little along the edge up to it and away from it, each a
+            # short step on from the last, so no two of the game's edge points are one)
+            m = best[0] - i
+            a_, b_ = P[i], P[(best[0] + 1) % n]
+            for q, k in enumerate(range(i + 1, best[0] + 1)):
+                u = (q + 1) / (m + 1)
+                at = a_ + (best[1] - a_) * (0.85 + 0.3 * u) if u < 0.5 else best[1] + (b_ - best[1]) * (0.3 * u - 0.15)
+                out[k % n, 0], out[k % n, 2] = at
+            i = best[0] + 1
+        else: i += 1
+    for _ in range(2):  # (twice round: the first pass's start may itself be moved)
+        for i in range(n):
+            a, b = out[i - 1], out[i]
+            if (b[0] - a[0]) * fwd[i][0] + (b[2] - a[2]) * fwd[i][1] < 0: out[i, 0], out[i, 2] = a[0], a[2]
+    return out
+
+
+def track_edges(centre, EL, ER, col, short=0.2):
+    """The track's edges for the game from the edge lines wanted (EL, ER: left and right, point for point
+    with the centre, not crossing themselves: unfold), each point the weighted mean of the five round it
+    (inside a tight bend the unfolded edge is one point for many of the centre's, a corner the others'
+    lines fan out from: rounded a little, so no two are quite the same point), their height the
+    collision's ground under the middle between them (round the hairpin that runs 6 m outside the centre
+    line, where the old road falls away west). The game's waypoints are those middles and its normals
+    half the lines across from edge to edge (aitrack.geometry's `edges`): where the half width, 8 and
+    14 m, was over the centre line's radius, 3 to 6 m, normals square to the centre line crossed inside
+    the edges, and the suggested line laid along them was knotted, points 0.3 m apart (the audit of 17
+    Nov). (left edge, right edge)."""
+    n = len(centre)
+    w = np.array([1, 4, 6, 4, 1], float) / 16
+    EL = sum(w[j] * np.roll(EL, 2 - j, 0) for j in range(5))
+    ER = sum(w[j] * np.roll(ER, 2 - j, 0) for j in range(5))
+    mid = (EL + ER) / 2
+    ground = GroundMap([np.array(pts, float) for _, pts, nrm, _ in col.triangles() if abs(nrm[1]) > 0.7])
+    y = np.array([centre[i][1] if (g := ground.top(mid[i, 0], mid[i, 2], centre[i][1], under=1.5, over=1.0)) is None else g for i in range(n)])
+    y = sum(w[j] * np.roll(y, 2 - j) for j in range(5))
+    EL[:, 1] = ER[:, 1] = y
+    # and neither past a wall along the line from the middle to it (the lines wanted are held to the
+    # walls along the centre line's normals; round a corner the line across leans, and met a wall's end
+    # the normals passed: 1.2 m past it at the corner onto the start road), `short` m short of it
+    A, Bv = wall_reach(col, centre, feet_only=True)
+    across = (EL - ER)[:, [0, 2]]
+    hw = np.linalg.norm(across, axis=1) / 2
+    u = across / np.maximum(2 * hw, 1e-6)[:, None]
+    for E, sg in ((EL, 1), (ER, -1)):
+        d = ray_reach(mid[:, [0, 2]], u * sg, A, Bv, 60.0)
+        d = np.minimum(d, np.minimum(np.roll(d, 1), np.roll(d, -1)))   # (a wall's end between two points' lines)
+        k = np.minimum(hw, np.maximum(d - short, 1.0))
+        E[:, 0], E[:, 2] = mid[:, 0] + sg * u[:, 0] * k, mid[:, 2] + sg * u[:, 1] * k
+    return EL, ER
 
 
 def runs(off):
@@ -1807,6 +2190,7 @@ def build(disc, mods, preview_png=None, reverse=False):
         loop, length = L.resample([x[::-1] for x in e], centre[::-1], START)
     print('loop %.0f m (%.2f mi); off-course stretches of %s m' % (length, length / 1609.344, [2 * len(r) for r in runs(off)]))
     col = coledit.Col(open(os.path.join(folder, 'QuickPreview1.col'), 'rb').read())
+    stock = {tri_key(s, pts) for s, pts, _, _ in col.triangles()}  # the disc's own triangles (hairpin_ground)
     walls = [L.across(sp, i) for i in CLOSED] + [tuple((x, z, ground_y(sp, x, z)) for x, z in w) for w in CLOSED_AT]
     for (x0, z0, _), (x1, z1, _) in walls:
         seg = np.array([[x0 + (x1 - x0) * t, z0 + (z1 - z0) * t] for t in np.linspace(0, 1, 50)])
@@ -1909,6 +2293,9 @@ def build(disc, mods, preview_png=None, reverse=False):
         m = q.mean(0)
         return not (JUNCTION_CORNER[0] <= m[0] <= JUNCTION_CORNER[2] and JUNCTION_CORNER[1] <= m[2] <= JUNCTION_CORNER[3])
     print('junction corner: %d wall triangles removed' % col.remove(not_corner))
+    # the hairpin's ground one surface with the old road's (the audit of 17 Nov: ledges west of its apex)
+    print('hairpin: %d triangles of our ground standing over the course\'s taken out; %d cells of ground laid where none was, %d triangles'
+          % hairpin_ground(col, stock, centre, half, dist, [i for i in range(len(centre)) if at_hairpin[i]]))
     print('hairpin: %d squares of ground where there was none, and a sheet under it all' % fill_ground(col, centre, half, dist, [i for i in range(len(centre)) if at_hairpin[i]], under=0.15))
     # and at Turn 2's exit onto side road 31 (a collision audit found the ground ending a metre short
     # of the wall there for 19 m: a gap to drive into)
@@ -2008,7 +2395,9 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('garage: floor laid at %d bare points' % shop_floor(col, centre))
     # its parked vehicles solid, each a box round its footprint (they are moved in after: park())
     import xb2
-    boxes = garage.parked_boxes(res_bytes, centre, xb2.resources(bytes(res_bytes))[0], L.MODEL, ppw, sphere_at)
+    import fujitrack
+    sphere_recs = fujitrack.ppw_records(bytes(ppw))   # (one a mesh: for the parked vehicle whose sphere is not found by value)
+    boxes = garage.parked_boxes(res_bytes, centre, xb2.resources(bytes(res_bytes))[0], L.MODEL, ppw, sphere_at, sphere_recs)
     for corners, fy in boxes:
         for a, b in zip(corners, corners[1:] + corners[:1]):
             q = [(a[0], fy - 0.5, a[1]), (b[0], fy - 0.5, b[1]), (b[0], fy + 1.8, b[1]), (a[0], fy + 1.8, a[1])]
@@ -2023,10 +2412,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     q = [(cx0, cy0 - 1, cz0), (cx1, cy1 - 1, cz1), (cx1, cy1 + 3, cz1), (cx0, cy0 + 3, cz0)]
     for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
         col.add(0x900, tri)
-    # and every edge of the ground a car reaches that ends with no wall (as the collision audit finds
-    # them: past the hairpin two walls' ends jogged 4 m apart and a car went through and fell)
     import collision_audit
-    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, centre))
     # walls on the course's own kerbs at the junction (the user: "along the edge of that sidewalk";
     # the course lets a car up onto it, its walls out at the fence)
     near_k = [i for i in range(len(centre)) if any(np.hypot(centre[i][0] - x, centre[i][2] - z) < KERB_R for x, z in KERB_SPOTS)]
@@ -2041,10 +2427,77 @@ def build(disc, mods, preview_png=None, reverse=False):
             for tri in ([q[0], q[1], q[2]], [q[2], q[3], q[0]], [q[2], q[1], q[0]], [q[0], q[3], q[2]]):
                 col.add(0x900, tri)  # (one_face keeps the road's side)
     print('walls on the junction\'s kerbs: %d points' % len(kerb_k))
+    # the openings between walls' ends closed (the audit of 17 Nov: 24 of them, up to 2.1 m, onto the
+    # ground behind the walls, its own edges unwalled), before the open edges are looked for (a car's
+    # flood through one sealed the edges of ground no car should reach) and again after (those walls'
+    # ends against the others')
+    def off_road(pts, end=None):  # (a join of walls' ends: never across the road, nor further into it than the end joined is)
+        return bool(np.all(into_road(centre, half, pts) < (-0.5 if end is None else min(into_road(centre, half, end)[0] + 0.05, 0.3))))
+    gaps = collision_audit.seal_gaps(col, centre)
+    # and every edge of the ground a car reaches that ends with no wall (as the collision audit finds
+    # them: past the hairpin two walls' ends jogged 4 m apart and a car went through and fell), after
+    # the junction's kerb walls (the flood went over that sidewalk and on down the bypassed course
+    # road, sealed for 1.3 km), each with its one face toward the ground it seals (17 Nov: one_face's
+    # "toward the nearest loop point" faced 12 m of them at the hairpin's infield toward the void)
+    sealed = []
+    print('open edges sealed: %.0f m of wall' % collision_audit.seal_open_edges(col, centre, one_face=True, made=sealed))
     print('walls one-faced: %d back faces dropped' % one_face(col, centre, boxes))
+    gaps += collision_audit.seal_gaps(col, centre, ends=off_road)
+    gaps += collision_audit.seal_gaps(col, centre, clear=1.75, deep=3.5, ends=off_road)
+    # (and the open edges once more: the walls across the openings change a little what a car reaches; 2 m of
+    # edge at Turn 2's exit, (-141, -308), was left open after them)
+    again = collision_audit.seal_open_edges(col, centre, one_face=True, made=sealed)
+    if again: print('open edges sealed after the openings: %.1f m more' % again)
+    print('openings between walls\' ends closed: %d%s' % (len(gaps), ': ' + ', '.join('(%.0f, %.0f) %.1f m' % g for g in gaps[:40]) if gaps else ''))
+    # every wall facing the ground a car reaches; the pieces of cut walls left standing alone in the
+    # hairpin's ground out; the sealing walls no car comes near dropped (the blocks' size)
+    def lone_ours(surface, pts):
+        m = np.mean(pts, 0)
+        return tri_key(surface, pts) not in stock and np.hypot(m[0] - HAIRPIN[0], m[2] - HAIRPIN[1]) < HAIRPIN_R + 30
+    print('walls turned to the ground a car reaches: %d triangles; pieces standing alone at the hairpin taken out: %d; sealing walls far from it dropped: %d'
+          % collision_audit.face_walls(col, centre, islands=lone_ours, far=sealed))
     down = sum(1 for _, pts, nrm, _ in col.triangles() if nrm[1] < -0.7 and np.hypot(*(centre[:, [0, 2]] - np.mean(pts, 0)[[0, 2]]).T).min() < 60)
     print('ground facing down near the loop: %d triangles%s' % (down, ' (the game takes them for ceilings: cars fall through)' if down else ''))
     col_bytes = col.to_bytes()
+    # the track's edges again, now the walls stand (the audit of 17 Nov): each side out to the wall the
+    # collision really has there, EDGE_PAD short of it (round the hairpin's outside they were 1.3 to 2.5 m
+    # past it: `dist` is what is drawn, the wall the old road's own), on the new road, round the hairpin
+    # and at the joins with the course (the corner from side road 39 onto the start road, the strip's
+    # end: the edges were well inside the asphalt a car runs wide on there, a time penalty on the road),
+    # but not at the junction (its width is held to 11 m on purpose: a fence the line cut through), and
+    # nowhere past a wall; then unfolded and laid about a middle line whose normals do not cross
+    reach_w = wall_reach(col, centre)
+    at_junction = np.hypot(centre[:, 0] - STRIP[0][0], centre[:, 2] - STRIP[0][1]) < 45.0
+    # (where a car runs wide onto more asphalt, further: at the joins the course's own road lies past the
+    # edge, 26 m of it outside the corner onto the start road)
+    roomy = ~off   # (not the strip's end into the hairpin as well: its edge 12 m out leant the normals round the hairpin 50 degrees, the disc's lean 30 at most)
+    for side in (1, -1):
+        wd = side_cap[side].copy()
+        rw = np.minimum(reach_w[side], np.minimum(np.roll(reach_w[side], 1), np.roll(reach_w[side], -1)))
+        for i in range(len(centre)):
+            ours = (side, i) in dist
+            if ours and not (in_lane[i] or in_gap_strict[i] or at_junction[i]):
+                wd[i] = max(wd[i], min(rw[i] - EDGE_PAD, half[i] + (EDGE_WIDE if roomy[i] else EDGE_MORE)))
+            wd[i] = min(wd[i], max(rw[i] - (EDGE_PAD if ours else 0.05), 3.0))
+        side_cap[side] = np.minimum(wd, sum(ws_[j] * np.roll(wd, -ks_[j]) for j in range(len(ks_))))
+    lf3_ = np.stack([left_c[:, 0], np.zeros(len(centre)), left_c[:, 1]], 1)
+    _, fwd_c = frame(centre)
+    EL = unfold(centre + lf3_ * side_cap[1][:, None], fwd_c)
+    ER = unfold(centre - lf3_ * side_cap[-1][:, None], fwd_c)
+    if os.environ.get('CIRCUIT_DUMP'):  # debugging: what the edges are made from
+        np.savez(os.environ['CIRCUIT_DUMP'], centre=centre, half=half, cap_l=side_cap[1], cap_r=side_cap[-1], EL=EL, ER=ER, reach_l=reach_w[1], reach_r=reach_w[-1])
+        open(os.environ['CIRCUIT_DUMP'] + '.col', 'wb').write(col_bytes)
+    EL, ER = track_edges(centre, EL, ER, col)
+    mid = (EL + ER) / 2
+    e = [EL if k % 2 == 0 else ER for k in range(6)]
+    if reverse:
+        loop, length = L.resample([e[k ^ 1] for k in range(6)], centre, START, by=mid)
+    else:
+        loop, length = L.resample([x[::-1] for x in e], centre[::-1], START, by=mid[::-1])
+    back = [int(np.sum(((np.roll(loop[k], -1, 0) - loop[k]) * (np.roll(loop[4] + loop[5], -1, 0) - np.roll(loop[4] + loop[5], 1, 0))).sum(1) < 0)) for k in (4, 5)]
+    print('track edges on the walls that stand: half widths %.1f to %.1f m, the middle line %.0f m round; edge points stepping backwards: %d left, %d right'
+          % (np.linalg.norm(loop[4] - loop[5], axis=1).min() / 2, np.linalg.norm(loop[4] - loop[5], axis=1).max() / 2, length, *back))
+    res_bytes = L.write_splines(res_bytes, loop)
     # and a concrete wall to be seen on each invisible one closing a branch of the course
     kerbs += [wall_strips((x0, y0, z0), (x1, y1, z1)) for (x0, z0, y0), (x1, z1, y1) in walls]
     mats = [None] * len(kerbs)
@@ -2143,10 +2596,13 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('ground over the void beside the road: %d pieces of %d stretches; guardrails on it %d, fences %d' % (len(skirts), len(found), masks, fences))
     # and at the road's very edge, where it is bare short of what is drawn (outside the garage, and
     # off the concrete walls' stretch)
-    drawn_ = ground_test(res_bytes, hide, centre[:, [0, 2]].min(0) - 20, centre[:, [0, 2]].max(0) + 20)
+    drawn_ = ground_test(res_bytes, hide, centre[:, [0, 2]].min(0) - 20, centre[:, [0, 2]].max(0) + 20, wide=True)
     edges_ = edge_ground(drawn_, centre, half, dist, [i for i in sorted({i for r in runs(off) for i in r}) if not (in_gap_strict[i] or by_concrete[i])], sp, skip=open_end)
     kerbs += [[f] for f in edges_]; mats += [ASPHALT] * len(edges_)
     print('ground at the road\'s bare edges: %d stretches, %d points' % (len(edges_), sum(len(f) // 2 for f in edges_)))
+    outside = bare_ground(res_bytes, hide, centre, HAIRPIN_OUT, sp)
+    kerbs += [[f] for f in outside]; mats += [ASPHALT] * len(outside)
+    print('ground outside the hairpin where nothing is drawn: %d rows, %d points' % (len(outside), sum(len(f) // 2 for f in outside)))
     # and a guardrail on every invisible wall left: the walls beside the new stretches with nothing
     # drawn standing on or by them (through turns, by the garage's parked row, round the hairpin: a
     # collision audit of the installed build found 700 m of them), the shorter stretches too
@@ -2178,9 +2634,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     print('brick walls joined across their gaps: %d' % len(joins))
     # each face simplified, then in pieces the size of buffers the scenery keeps loaded (the svb's):
     # larger ones stream in with their own part of the track only, and were never drawn here
-    faces, fmats = [], []
-    for fs, mat in zip(kerbs, mats):
-        for f in fs: faces.append(f if mat == HEAD else simplify(f)); fmats.append(mat)
+    # (and the long ones cut, as short as the donors have room for: cut_long)
+    plain = [(f if mat == HEAD else simplify(f), mat) for fs, mat in zip(kerbs, mats) for f in fs]
     svb_raw = bytearray(zlib.decompress(open(os.path.join(folder, 'quickpreview1.xbp.svb'), 'rb').read()))
     svb = read_svb(svb_raw)
     print('scenery moved out of the garage: %d vertices' % clear_tunnel(res_bytes, centre, half, tunnel_points(centre), svb, svb_raw, keep={L.DONOR}))
@@ -2194,10 +2649,21 @@ def build(disc, mods, preview_png=None, reverse=False):
     # the meshes whose textures the new faces take: never borrowed themselves (their textures are
     # streamed in by near_textures; drawn where they stand to load them, a piece of a building far
     # off floated in the sky)
-    sources = {int(m) for m in fmats if m is not None} | {SIDEWALK}
-    pool = donor_pool(res_bytes, shown | near | {L.DONOR} | sources, ppw, set(svb))
+    sources = {int(m) for _, m in plain if m is not None} | {SIDEWALK}
+    pool = donor_pool(res_bytes, shown | near | {L.DONOR} | sources, ppw, set(svb), sphere_recs)
     have = len(pool)
-    placed = pack(faces, pool, fmats)
+    room = sum(r[0] for r in pool)
+    placed = None
+    for most in (60.0, 80.0, 100.0, 140.0, 200.0, 1e9):  # (as short as the donors hold, each donor one place's)
+        faces, fmats = [], []
+        for f, mat in plain:
+            for piece in ([f] if mat == HEAD else cut_long(f, most)): faces.append(piece); fmats.append(mat)
+        if most < 1e9 and (sum(len(f) for f in faces) // 2 > 0.8 * room or len(faces) > 6 * len(pool)): continue
+        try: placed = pack(faces, pool, fmats, most_reach=most if most < 1e9 else 2000.0)
+        except SystemExit: continue
+        break
+    if placed is None: raise SystemExit('out of donor meshes: %d faces' % len(faces))
+    print('long faces cut to %.0f m: %d faces, %d vertex pairs of the %d the donors hold' % (most, len(faces), sum(len(f) for f in faces) // 2, room))
     print('pieces: %d faces, %d vertex pairs, in %d of %d loaded meshes' % (len(faces), sum(len(f) for f in faces) // 2, len(placed), have))
     picked = [(mesh, at) for mesh, at, _, _ in placed]
     kerbs = [pieces for _, _, pieces, _ in placed]
@@ -2237,7 +2703,7 @@ def build(disc, mods, preview_png=None, reverse=False):
     n_cells = len(cells_in)
     # the garage's parked vehicles, moved in from far off
     import xb2
-    parked, ppw = garage.park(res_bytes, centre, svb, svb_raw, ppw, xb2.resources(bytes(res_bytes))[0], L.MODEL, pack_normal, unpack_normal, sphere_at)
+    parked, ppw = garage.park(res_bytes, centre, svb, svb_raw, ppw, xb2.resources(bytes(res_bytes))[0], L.MODEL, pack_normal, unpack_normal, sphere_at, sphere_recs)
     hide -= set(parked)
     print('garage: %d parked vehicle meshes' % len(parked))
     # every cell streams in the textures (and lightmaps) the new faces take and the parked
@@ -2260,6 +2726,22 @@ def build(disc, mods, preview_png=None, reverse=False):
             min(len(u) for u in use), max(len(u) for u in use), min(len(p_[0]) for p_ in per), max(len(p_[0]) for p_ in per)))
     else:
         use, per = [list(range(0, 8))] * n_cells, None
+    # the meshes drawn as well whose vertex buffers nothing loads (not the svb's, not in Pacific
+    # Shipyards II's cells' lists: 179 of them were in the draw lists and never drawn, the audit of 17
+    # Nov): those within 60 m of the loop have their buffers and textures streamed in every cell (concrete
+    # pipes and a dumpster by the start road), the rest (parts of landmarks 150 to 900 m off, 2 MB of
+    # buffers) are left out of the lists
+    loaded = set(svb) | {struct.unpack_from('<H', e_)[0] for c_ in cells_in[:8] for e_ in c_[2]}
+    def buffer_of(m):
+        return struct.unpack_from('<H', res_bytes, L.MODEL + struct.unpack_from('<I', res_bytes, L.MODEL + 4 + 4 * m)[0] + 16)[0]
+    unloaded = {m for m in near - shown - dark if buffer_of(m) not in loaded}
+    close = near_meshes(res_bytes, centre, 60.0) & unloaded
+    for m in close:
+        a_ = struct.unpack_from('<I', res, L.MODEL + 4 + 4 * m)[0]
+        _, _, _, _, vb_, _, _, t0_, t1_ = struct.unpack_from('<IIIIHHHHH', res, L.MODEL + a_)
+        streamed[0].update(t for t in (t0_, t1_) if t >= 9); streamed[1].add(vb_)
+    near -= unloaded - close
+    print('drawn as well but never loaded: %d meshes; %d within 60 m streamed in, %d left out' % (len(unloaded), len(close), len(unloaded - close)))
     pvs, sizes = L.loop_pvs(pvs_in, use, per_cell=per, extra=[L.DONOR] + [m for m, _ in picked] + [g for (g, _), _ in glowed] + sorted(near - shown - dark) + parked, hide=hide,
                             textures=sorted(streamed[0]), buffers=sorted(streamed[1]))
     print('road: %d cross-sections on the strip; %d meshes hidden; visibility %d to %d meshes a cell' % (len(left), len(hide), min(sizes), max(sizes)))
@@ -2294,7 +2776,8 @@ def build(disc, mods, preview_png=None, reverse=False):
     import addcar, aitrack
     mega = addcar.Archive(disc, mods, 'Mega.ca2')
     ring = (loop[4] + loop[5]) / 2
-    wps, nseg, sounds = aitrack.install(mega, L.TAG, ring, np.linalg.norm(loop[4] - loop[5], axis=1) / 2)
+    # (17 Nov: the waypoints rounded off, the lap cut as the disc's are, and a line that uses the road)
+    wps, nseg, sounds = aitrack.install(mega, L.TAG, ring, np.linalg.norm(loop[4] - loop[5], axis=1) / 2, line=aitrack.racing_line_wide(), stock_like=True, edges=(loop[4], loop[5]))
     mega.check(); mega.write()
     # its audio spline, one record per AI waypoint (Pacific Shipyards II's has one per II's: the
     # audio engine walked off its end and called through nothing at the start)

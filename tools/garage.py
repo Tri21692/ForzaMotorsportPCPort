@@ -277,10 +277,11 @@ def collision(col, centre, half):
     return added
 
 
-def parked_boxes(res, centre, names, model, ppw, sphere_at):
+def parked_boxes(res, centre, names, model, ppw, sphere_at, records=None):
     """Where park() sets the PARKED vehicles: each one's footprint, four (x, z) corners in order,
     and the floor's height under it, for their collision (before they are moved: the collision is
-    written first); none for one park() leaves (a mesh's bounding sphere not found)."""
+    written first); none for one park() leaves (a mesh's bounding sphere not found). `records`: as
+    park()'s."""
     dt = np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)])
     g0, u, _ = basis()
     out = []
@@ -293,7 +294,7 @@ def parked_boxes(res, centre, names, model, ppw, sphere_at):
             o = names[vb - 9][3]
             p = np.frombuffer(bytes(res[o:o + vbytes]), dt)['p'].astype(float)
             c = (p.min(0) + p.max(0)) / 2
-            if sphere_at(bytes(ppw), c, float(np.max(np.linalg.norm(p - c, axis=1)))) is None: break
+            if sphere_at(bytes(ppw), c, float(np.max(np.linalg.norm(p - c, axis=1)))) is None and not (records and mesh < len(records)): break
             ps.append(p)
         if len(ps) != len(meshes): continue
         allp = np.concatenate(ps)
@@ -309,10 +310,13 @@ def parked_boxes(res, centre, names, model, ppw, sphere_at):
     return out
 
 
-def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_normal, sphere_at):
+def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_normal, sphere_at, records=None):
     """The PARKED vehicles moved into the shop, each one's meshes together: turned to its heading
     (from the long side of its footprint) and set on the floor; their svb copies and bounding
-    spheres (ppw) too. Returns ([meshes moved], ppw)."""
+    spheres (ppw) too. `records`: the ppw's sphere records' offsets, one a mesh in the model's order
+    (fujitrack.ppw_records), for a mesh whose sphere is not found by its value (cars_10_vb6, mesh 2595:
+    its sphere is not its vertices' box, and it was never moved in, the audit of 17 Nov).
+    Returns ([meshes moved], ppw)."""
     ppw = bytearray(ppw)
     moved = []
     dt = np.dtype([('p', '<f4', 3), ('n', '<u4'), ('st', '<i2', 4)])
@@ -328,6 +332,7 @@ def park(res, centre, svb, svb_raw, ppw, names, model, pack_normal, unpack_norma
             p = v['p'].astype(float)
             c = (p.min(0) + p.max(0)) / 2
             at = sphere_at(bytes(ppw), c, float(np.max(np.linalg.norm(p - c, axis=1))))
+            if at is None and records and mesh < len(records): at = records[mesh]
             if at is None: break
             parts.append((mesh, vb, o, vbytes, v, at))
         if len(parts) != len(meshes):

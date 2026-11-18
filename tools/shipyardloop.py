@@ -96,14 +96,16 @@ def loop_edges(sp, back=1, ahead=-2, pull=(1.2, 0.6)):
     return edges, centre, (a, b), np.vstack([c[b], link_c, c[a]])
 
 
-def resample(edges, centre, start, n=POINTS):
+def resample(edges, centre, start, n=POINTS, by=None):
     """n points on each edge at equal steps of the centre line, the loop reversed (II's direction)
-    and starting nearest the point `start` (x, z)."""
+    and starting nearest the point `start` (x, z). `by`: a line, point for point with the centre, whose
+    length sets the steps instead (shipyardcircuit's, 17 Nov: the middle of its edges, which runs wide of
+    the centre round the hairpin; by the centre's steps its points there were 6 m apart)."""
     edges = [e[::-1] for e in edges]
     centre = centre[::-1]
     i = nearest(centre, start)
     edges = [np.roll(e, -i, axis=0) for e in edges]
-    centre = np.roll(centre, -i, axis=0)
+    centre = np.roll(centre, -i, axis=0) if by is None else np.roll(by[::-1], -i, axis=0)
     closed = np.vstack([centre, centre[:1]])
     s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(closed, axis=0), axis=1))])
     length = s[-1]
