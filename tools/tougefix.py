@@ -25,8 +25,11 @@ B = chr(92)
 SERIES = 'Midnight Touge'
 PRIZE = 'MazdaRX7SpiritDSpec'
 PRIZE_NAME = 'Mazda RX-7 Spirit R D-Spec'
-MODELS = (9901, 9902, 9903)  # the matched rival's AI car models: Easy, Medium, Hard
-MODEL_LIKE = 189             # (the stock Silvia S15's: what the rival is, should the runtime not change it)
+ENTRY = ('ToyotaTrueno', 'ToyotaTruenoDSpec')
+MODELS = (9901, 9902, 9903)  # the rival's AI car models: Easy, Medium, Hard
+RIVAL_STAGE = int(os.environ.get('TOUGE_RIVAL_STAGE', '3'))  # the rival Trueno's upgrade stage (1-3)
+DESC = ('Open to the Toyota Trueno and its D-Spec. Two one-on-one runs on Fujimi Kaido at night against a Trueno tuned '
+        'to Class A: up the mountain, then down it. First place receives the %s.')
 
 
 def main(disc, mods):
@@ -38,40 +41,44 @@ def main(disc, mods):
     if car is None: raise SystemExit('no %s in %s' % (PRIZE, mods))
     x = bytes(mega.files[key]).decode('latin-1')
     was = x
-    # (17 Nov, later, the user: "just make the touge event B class. D is too hard now": Class B and below, said as
-    # not A and not S, both to hold within a car's alternative)
-    two = lambda m: m.group(1) + '<Restriction Attrib="perfclass" Func="<>" Value="A" />' + m.group(1) + '<Restriction Attrib="perfclass" Func="<>" Value="S" />'
-    if 'Attrib="perfclass" Func="<>" Value="A"' not in x:
-        x = re.sub(r'(\r?\n[ \t]*)<Restriction Attrib="perfclass" Func="(?:=" Value="D|<>" Value="S)" />', two, x)
-    # (17 Nov, evening, the user: "No D-Spec cars are required, it's just too difficult to keep speed": any car of
-    # Class B and below: no car alternatives, the class asked of every car, race cars out too)
-    body = ''.join('\t\t<Restriction Attrib="perfclass" Func="<>" Value="%s" />\r\n' % c for c in ('A', 'S', 'R'))
+    # (17 Nov, the day's last, the user: "Make the requirement the Trueno. For the opponent, do the same but have
+    # theirs upgraded to A class". Before it, the same day: Class D only, then Class B and below, then any car of
+    # that class with a rival in the player's own car and setup.) Entry: the Trueno or its D-Spec, an <or> each,
+    # whatever its upgrades.
+    carlist = mega.files['cars' + B + 'carlist.xml'].decode('latin-1')
+    cars = [addcar.ordinal_of(carlist, n) for n in ENTRY if re.search(r'<car name="%s"' % n, carlist)]
+    body = ''.join('\t\t<or>\r\n\t\t\t<Restriction Attrib="carid" Func="=" Value="%d" />\r\n\t\t</or>\r\n' % c for c in cars)
     x = re.sub(r'(<Restrictions>\r?\n).*?(\t</Restrictions>)', lambda q: q.group(1) + body + q.group(2), x, count=1, flags=re.S)
     top = re.search(r'\t<Scoring>.*?</Scoring>', x, re.S)  # (the series' own: before its events)
     old = re.search(r'<score pos="1">.*?</score>', top.group(0)).group(0)
     sc = top.group(0).replace(old, '<score pos="1"><rewards CareerCarUnlock="%d" CareerCarGift="%d" /></score>' % (car, car), 1)
     x = x[:top.start()] + sc + x[top.end():]
-    print('%s: open to Class B and below (%d car alternatives); 1st: %s (%d)%s' % (key, x.count('Attrib="carid"'), PRIZE_NAME, car, '' if x != was else ' (as it was)'))
-    # the matched rival's own AI car models (17 Nov: when an AI car is made the game does not yet say which event is
-    # loading, so runtime/hle_rival.c knows the Touge's rival by its model's Id): one a difficulty, copies of the
-    # stock Silvia S15's (189) under Ids nothing else has, each with a copy of its Drivatar controller; the series'
-    # rivals are these three, whose car and setup the runtime makes the player's
+    print('%s: open to cars %s; 1st: %s (%d)%s' % (key, cars, PRIZE_NAME, car, '' if x != was else ' (as it was)'))
+    # the rival: the Trueno tuned to Class A, an AI car model of its own a difficulty (MODELS; the drivers differ):
+    # the game's Trueno with every part at stage 3 (ai\aicarmodellist.xml's 3129) on its own engine
+    # (EngineInstalledId 0: 3129 names a fourth engine and the Trueno has three, its own and two swaps of up to
+    # 550 hp), each with a copy of that model's Drivatar controller. By the game's class figure
+    # (docs/research/cars.md) that is Class A for 190 to 345 hp, and the engine's power graph ends at 280:
+    # 1803 lb, 195 mm tyres and the stage's 0.05 give 0.281 before the power. Worked out, not read from the game.
     lk = {k.lower(): k for k in mega.files}
     lname = lk['ai' + B + 'aicarmodellist.xml']
     al = bytes(mega.files[lname]).decode('latin-1')
     al0 = al
-    src = re.search(r'[ \t]*<AICarModel Id="%d">.*?</AICarModel>\r?\n' % MODEL_LIKE, al, re.S).group(0)
-    pred = lk['ai' + B + 'drivatarv2' + B + 'controllers' + B + '%d-pred.bin' % MODEL_LIKE]
+    like = RIVAL_STAGE * 1000 + 100 + cars[0]
+    src = re.search(r'[ \t]*<AICarModel Id="%d">.*?</AICarModel>\r?\n' % like, al, re.S).group(0)
+    src = re.sub(r'EngineInstalledId="\d+"', 'EngineInstalledId="0"', src)
+    pred = lk['ai' + B + 'drivatarv2' + B + 'controllers' + B + '%d-pred.bin' % like]
     for mid in MODELS:
-        if '<AICarModel Id="%d">' % mid not in al:
-            al = al.replace('</AICarModelList>', src.replace('Id="%d"' % MODEL_LIKE, 'Id="%d"' % mid, 1) + '</AICarModelList>')
-        mega.files.setdefault(pred.replace('%d-pred' % MODEL_LIKE, '%d-pred' % mid), bytes(mega.files[pred]))
+        mine = src.replace('Id="%d"' % like, 'Id="%d"' % mid, 1)
+        old = re.search(r'[ \t]*<AICarModel Id="%d">.*?</AICarModel>\r?\n' % mid, al, re.S)
+        al = al.replace(old.group(0), mine) if old else al.replace('</AICarModelList>', mine + '</AICarModelList>')
+        mega.files[lk.get(pred.lower().replace('%d-pred' % like, '%d-pred' % mid), pred.replace('%d-pred' % like, '%d-pred' % mid))] = bytes(mega.files[pred])
     if al != al0: mega.files[lname] = al.encode('latin-1')
     field = re.search(r'\t<AIField>\r?\n.*?\t</AIField>', x, re.S)
     rivals = ''.join('\t\t<AIPlayer name="If you see this, it is a bug" aicarmodelid="%d" AIDriverModelID="%d" AppearanceID="0" %s />\r\n' % r
                      for r in zip(MODELS, (22, 36, 50), ('Easy', 'Medium', 'Hard')))
     x = x[:field.start()] + '\t<AIField>\r\n' + rivals + '\t</AIField>' + x[field.end():]
-    print('the rival: AI car models %s (as %d), one a difficulty%s' % (MODELS, MODEL_LIKE, '' if (x, al) != (was, al0) else ' (as it was)'))
+    print('the rival: AI car models %s (as %d, its own engine)%s' % (MODELS, like, '' if (x, al) != (was, al0) else ' (as it was)'))
     if x != was or al != al0:
         mega.files[key] = x.encode('latin-1')
         mega.check(); mega.write()
@@ -87,8 +94,7 @@ def main(disc, mods):
         for i in sorted(set(ids)):
             t = text_of(d, i)
             if t is None: continue
-            t2 = t.replace('Class A and below', 'Class D').replace('Class A or below', 'Class D').replace('Class D', 'Class B and below').replace('Open to D-Spec cars of', 'Open to cars of')
-            if i == sid: t2 = t2.split('First place receives the ')[0].rstrip() + ' First place receives the %s.' % PRIZE_NAME
+            t2 = DESC % PRIZE_NAME if i == sid else t
             if t2 != t: changes[i] = t2
         if changes:
             open(mp, 'wb').write(addcar.replace_strings(d, changes))
@@ -96,9 +102,10 @@ def main(disc, mods):
     # the matched rival (the user's, 17 Nov: "give the opponent the same performance stats that I have, along with
     # the pace matching"; runtime/hle_rival.c): the Touge's events, each D-Spec car's twin (the car it was made
     # from: the rival drives that with the player's parts and tuning), and the pace matching (8%, in full 60 m apart)
-    carlist = mega.files['cars' + B + 'carlist.xml'].decode('latin-1')
+    # (no "models" line since the Trueno rule: the rival is no longer given the player's car and setup; the twins
+    # still tell the runtime which cars are D-Specs, for the slide's speed hold and the achievement)
     evs = re.findall(r'eventordinal="(\d+)"', x)
-    lines = ['events ' + ' '.join(evs), 'models ' + ' '.join(str(m) for m in MODELS)]
+    lines = ['events ' + ' '.join(evs)]
     for c in driftcars.CARS:
         if re.search(r'<car name="%s"' % c[1], carlist) and re.search(r'<car name="%s"' % c[0], carlist):
             lines.append('twin %d %d' % (addcar.ordinal_of(carlist, c[1]), addcar.ordinal_of(carlist, c[0])))

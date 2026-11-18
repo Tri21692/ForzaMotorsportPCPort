@@ -113,6 +113,16 @@ static uint8_t was[ENTRY];     /* as it was */
 void orig_f_00043A90(XbCtx *c);
 void f_00043A90(XbCtx *c) {
     uint32_t id = xb_rd32(c->esp + 4);
+    { /* debugging (XBRT_RIVAL_FORCE=<Id>[,<Id>...]): every AI car model asked for is one of these, in turn */
+        const char *fo = getenv("XBRT_RIVAL_FORCE");
+        static int turn;
+        if (fo && *fo) {
+            uint32_t ids[8]; int nf = 0; char *e;
+            for (const char *q = fo; nf < 8; q = e + 1) { ids[nf++] = (uint32_t)strtoul(q, &e, 10); if (*e != ',') break; }
+            (void)turn; id = ids[id % (uint32_t)nf]; /* (by the Id asked for: the same at the preload and the making) */
+            xb_wr32(c->esp + 4, id);
+        }
+    }
     if (held) memcpy(xb_mem + held, was, ENTRY), held = 0;
     orig_f_00043A90(c);
     uint32_t e = c->eax;
@@ -159,6 +169,20 @@ static void wrf(uint32_t a, float f) { memcpy(xb_mem + a, &f, 4); }
 static void dspec_tick(double dt);
 void rt_rival_tick(double dt) {
     dspec_tick(dt);
+    if (getenv("XBRT_PERF_LOG") && xb_rd32(0x592984)) { /* debugging: each racer's car's physics (car +0x1B18), as 0x16CFF0 reads a garage car's */
+        static uint32_t seen[40]; static int nseen;
+        uint32_t l = 0x58DAA0, cnt = xb_rd32(l + 0x10), ar = xb_rd32(l + 4);
+        for (uint32_t i = 0; ar && rt_is_object(ar) && i < cnt && i < 32; i++) {
+            uint32_t r = xb_rd32(ar + 4 * i), car = r && rt_is_object(r) ? xb_rd32(r + 0xA0) : 0, init = r && rt_is_object(r) ? xb_rd32(r + 0xB4) : 0;
+            int known = 0;
+            for (int k = 0; k < nseen; k++) known |= seen[k] == car;
+            if (!car || !rt_is_object(car) || known || nseen >= 40) continue;
+            seen[nseen++] = car;
+            uint32_t ph = car + 0x1B18;
+            fprintf(stderr, "xbrt: perf figure: racer %u (type %u, CarInit %08x car %d), mass %g, torque %g, power %g, width %g\n", i, xb_rd32(r + 0x14), init,
+                    init && rt_is_object(init) ? (int)xb_rd32(init) : -1, rdf(ph + 0xA0), rdf(ph + 0x92C), rdf(ph + 0x93C), rdf(ph + 0x1920));
+        }
+    }
     static int said;
     static uint64_t ticks;
     float dist, frac = rt_rival_pace(&dist);
@@ -289,4 +313,19 @@ int rt_rival_dspec(void) {
         return 0;
     }
     return 0;
+}
+
+/* Debugging (XBRT_PERF_LOG=1): the game's performance figure (0x16CFF0: a CarInit and the car's physics as its
+ * arguments; docs/research/cars.md has the formula) logged with what it reads, to learn an upgraded car's class:
+ * the car, the byte at CarInit +0xA (the formula's E), and the physics' floats at +0xA0 (mass), +0x92C (torque),
+ * +0x93C (power) and +0x1920 (a tyre's width). */
+void orig_f_0016CFF0(XbCtx *c);
+void f_0016CFF0(XbCtx *c) {
+    if (getenv("XBRT_PERF_LOG")) {
+        uint32_t init = xb_rd32(c->esp + 4), ph = xb_rd32(c->esp + 8);
+        if (init && rt_is_object(init) && ph && rt_is_object(ph))
+            fprintf(stderr, "xbrt: perf figure: car %u, parts %08x %08x %08x, E %d, mass %g, torque %g, power %g, width %g\n", xb_rd32(init),
+                    xb_rd32(init + 4), xb_rd32(init + 8), xb_rd32(init + 12), (int)(int8_t)xb_rd8(init + 0xA), rdf(ph + 0xA0), rdf(ph + 0x92C), rdf(ph + 0x93C), rdf(ph + 0x1920));
+    }
+    orig_f_0016CFF0(c);
 }
