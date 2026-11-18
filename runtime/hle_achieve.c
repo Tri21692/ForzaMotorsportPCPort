@@ -66,7 +66,16 @@ static const Ach ach[] = {
     {"ring_clean", "Green Hell, Clean", "Win a Nurburgring race with no off-track penalty.", 1},
     {"flat_out", "Flat Out", "Hold 200 mph for 30 seconds without dropping below it.", 1},
     {"untouchable", "Untouchable", "Win 5 races in a row with no off-track penalty.", 5},
-    {"kaizo_ace", "Kaizo Ace", "Win 3 races in Kaizo Mode.", 3},
+    /* (the user's, 18 Nov: "do tiers for Kaizo Mode achievements. Kaizo Novice, Amateur, Professional, Master, and
+     * King (all original events). You decide on the events needed": the career's own events, the disc's (ordinals
+     * 0-80 and 117-350: 315 of them, 81-116 the online ones), each counted once when won with Kaizo Mode on: the
+     * "kaizo <event>" lines of the file. They take Kaizo Ace's place (3 wins of any race).
+     * Testing: XBRT_ACH_KAIZO=1 has Kaizo taken as on, 2 any finish counted as well.) */
+    {"kaizo1", "Kaizo Novice", "Win 5 different original career events in Kaizo Mode.", 5},
+    {"kaizo2", "Kaizo Amateur", "Win 25 different original career events in Kaizo Mode.", 25},
+    {"kaizo3", "Kaizo Professional", "Win 75 different original career events in Kaizo Mode.", 75},
+    {"kaizo4", "Kaizo Master", "Win 150 different original career events in Kaizo Mode.", 150},
+    {"kaizo5", "Kaizo King", "Win all 315 original career events in Kaizo Mode.", 315},
     {"last_gasp", "Last Gasp", "Win from 4th or lower at the start of the final lap.", 1},
 };
 #define NACH (int)(sizeof ach / sizeof ach[0])
@@ -81,6 +90,10 @@ static int ntracks;
 static uint32_t touge[8]; /* the matched events (the Touge's runs) won in a D-Spec car */
 static int ntouge;
 static int streak; /* clean wins in a row (Untouchable): "streak <n>" */
+#define KZ_EVENTS 351
+#define KZ_ORIGINAL(o) ((o) <= 80 || ((o) >= 117 && (o) < KZ_EVENTS))
+static unsigned char kz[KZ_EVENTS]; /* the original career events won in Kaizo Mode: "kaizo <event>" */
+static int nkz;
 #define RING_RECORD 418.6f /* Niki Lauda, Ferrari 312T, 1975 */
 int rt_addon_car(uint32_t ordinal); /* hle_unlock.c */
 int rt_kaizo_setting(void);
@@ -104,15 +117,23 @@ static void load(void) {
     long long t;
     int v;
     double d;
+    /* Each line by its first word, whole (18 Nov: read with "track %47s" and the like, the line "tracks10 10 ..." was
+     * a track named "s10", one more each time the file was read: the user's Globetrotter earned by ten starts of the
+     * game, the real tracks pushed out of the list; "kaizo1 0 0" would have been event 1 won). */
     while (fgets(line, sizeof line, f)) {
-        if (line[0] == '#') continue;
-        if (sscanf(line, "track %47s", a) == 1 && ntracks < MAXTRACKS) snprintf(tracks[ntracks++], sizeof tracks[0], "%s", a);
-        else if (sscanf(line, "miles %lf", &d) == 1) miles = d;
-        else if (sscanf(line, "touge %d", &v) == 1) { if (ntouge < 8) touge[ntouge++] = (uint32_t)v; }
-        else if (sscanf(line, "streak %d", &v) == 1) streak = v;
-        else if (sscanf(line, "%63s %d %lld", a, &v, &t) == 3)
-            for (int i = 0; i < NACH; i++)
-                if (!strcmp(ach[i].id, a)) prog[i] = v, when[i] = t;
+        char key[64], rest[192] = "";
+        if (line[0] == '#' || sscanf(line, "%63s %191[^\n]", key, rest) < 1) continue;
+        if (!strcmp(key, "track")) {
+            int seen = !strcmp(rest, "s10") || !*rest; /* (the old misreading's) */
+            for (int k = 0; k < ntracks; k++) seen |= !strcasecmp(tracks[k], rest);
+            if (!seen && ntracks < MAXTRACKS && sscanf(rest, "%47s", a) == 1) snprintf(tracks[ntracks++], sizeof tracks[0], "%s", a);
+        } else if (!strcmp(key, "miles")) { if (sscanf(rest, "%lf", &d) == 1) miles = d; }
+        else if (!strcmp(key, "touge")) { if (sscanf(rest, "%d", &v) == 1 && ntouge < 8) touge[ntouge++] = (uint32_t)v; }
+        else if (!strcmp(key, "streak")) { if (sscanf(rest, "%d", &v) == 1) streak = v; }
+        else if (!strcmp(key, "kaizo")) { if (sscanf(rest, "%d", &v) == 1 && v >= 0 && v < KZ_EVENTS && KZ_ORIGINAL(v) && !kz[v]) kz[v] = 1, nkz++; }
+        else if (sscanf(rest, "%d %lld", &v, &t) == 2)
+            for (int k = 0; k < NACH; k++)
+                if (!strcmp(ach[k].id, key)) prog[k] = v, when[k] = t;
     }
     fclose(f);
 }
@@ -126,6 +147,7 @@ static void save(void) {
     for (int i = 0; i < ntracks; i++) fprintf(f, "track %s\n", tracks[i]);
     for (int i = 0; i < ntouge; i++) fprintf(f, "touge %u\n", touge[i]);
     fprintf(f, "streak %d\n", streak);
+    for (int i = 0; i < KZ_EVENTS; i++) if (kz[i]) fprintf(f, "kaizo %d\n", i);
     fclose(f);
 }
 
@@ -191,6 +213,7 @@ void rt_ach_tick(void) {
     static int32_t lap_was;
     static float clock_was, pen0, lap_pen, fast_for;
     static uint32_t done_was, lap1_place, field, last_place;
+    static int fin_was;
     static int dirty;
     static uint64_t saved_at;
     if (!xb_rd32(0x592984)) { racer = 0; return; }
@@ -207,7 +230,11 @@ void rt_ach_tick(void) {
     uint32_t done = xb_rd32(r + 0x1B8) & 0xFF;
     if (r != racer) { /* a new race (a restart makes the racers again) */
         racer = r, lap_was = lap, clock_was = clock, pen0 = rdf(timing + 0x98), done_was = done, lap1_place = 0, field = n;
-        lap_pen = pen0, fast_for = 0, last_place = 0;
+        lap_pen = pen0, fast_for = 0, last_place = 0, fin_was = 1; /* (set right below, from this race's laps) */
+        {
+            uint32_t ev0 = xb_rd32(xb_rd32(0x592984) + 0x318), laps0 = ev0 && ev0 < RT_USER_LIMIT ? xb_rd32(ev0 + 0x24) : 0;
+            fin_was = (laps0 && laps0 < 100 && lap >= (int32_t)laps0) || done;
+        }
         return;
     }
     pthread_mutex_lock(&mu);
@@ -266,12 +293,27 @@ void rt_ach_tick(void) {
         dirty = 1;
     }
     lap_was = lap;
-    if (done && !done_was && laps && laps < 100 && lap < (int32_t)laps) done_was = done; /* (quit, not finished: nothing counts) */
-    if (done && !done_was) { /* the finish: the event's laps done (ev +0x24) */
+    /* The finish: the event's laps done (ev +0x24). (18 Nov: it waited for the racer's flag at +0x1B8 alone, which
+     * a race's end does not set while this runs: no win, podium or clean finish had ever counted, the user's file all
+     * 0 after weeks of wins, and two career races finished in tests without the line below. The flag with the laps
+     * short is a race quit: nothing counts.) */
+    int known = laps && laps < 100, fin = known ? lap >= (int32_t)laps : done != 0;
+    if (fin && !fin_was) {
         uint32_t place = xb_rd32(r + 0xBC);
         int clean = rdf(timing + 0x98) <= pen0 + 0.001f;
         fprintf(stderr, "xbrt: achievements: finished %u of %u (lap 1: %u), %s\n", place, field, lap1_place, clean ? "clean" : "penalties");
         if (field >= 2 && place >= 1 && place <= 3) add("podiums", 1);
+        {   /* the Kaizo tiers: an original career event won with Kaizo Mode on */
+            const char *kt = getenv("XBRT_ACH_KAIZO");
+            int kt_ = kt ? atoi(kt) : 0;
+            RtDriftHud dh;
+            uint32_t o = ev && ev < RT_USER_LIMIT && xb_rd32(ev + 0x0C) != 4000 ? xb_rd32(ev + 0x10) : ~0u;
+            if (field >= 2 && (place == 1 || kt_ == 2) && (rt_kaizo_setting() || kt_) && !rt_qr_mayhem() && !rt_drift_hud(&dh) && o < KZ_EVENTS && KZ_ORIGINAL(o)) {
+                if (!kz[o]) kz[o] = 1, nkz++;
+                fprintf(stderr, "xbrt: achievements: career event %u won in Kaizo Mode: %d of the 315 original events\n", o, nkz);
+                reach("kaizo1", nkz), reach("kaizo2", nkz), reach("kaizo3", nkz), reach("kaizo4", nkz), reach("kaizo5", nkz);
+            }
+        }
         if (field >= 2) { /* Untouchable: clean wins in a row; any other finish against rivals starts over */
             streak = place == 1 && clean ? streak + 1 : 0;
             if (streak) reach("untouchable", streak);
@@ -283,7 +325,6 @@ void rt_ach_tick(void) {
             if (field >= 4 && lap1_place == field) reach("comeback", 1);
             const char *tk = rt_loading_track();
             if (clean && tk && !strcasecmp(tk, "Nurburgring") && !rt_qr_mayhem()) reach("ring_clean", 1);
-            if (field >= 3 && rt_kaizo_setting() && !rt_qr_mayhem()) add("kaizo_ace", 1);
             if (field >= 6 && last_place >= 4) reach("last_gasp", 1);
             if (ev && ev < RT_USER_LIMIT && rt_rival_event() && rt_rival_dspec()) { /* a Touge run won in a D-Spec car */
                 uint32_t o = xb_rd32(ev + 0x10);
@@ -298,9 +339,9 @@ void rt_ach_tick(void) {
         if (rt_tt_running() && place == 1) reach("tt_gold", 1);
         dirty = 1;
     }
-    done_was = done;
+    done_was = done, fin_was = fin;
     uint64_t now = rt_now_100ns();
     if (dirty && now - saved_at > 300000000) save(), dirty = 0, saved_at = now; /* (every 30 s at most mid-race; a finish below) */
-    if (done && dirty) save(), dirty = 0, saved_at = now;
+    if (fin && dirty) save(), dirty = 0, saved_at = now;
     pthread_mutex_unlock(&mu);
 }

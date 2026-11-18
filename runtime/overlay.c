@@ -62,7 +62,7 @@ static const OvItem items[] = {
     {"skip_intro", "Skip Intro Video", {"0", "1"}, {"Off", "On"}, 0, "Skips the intro video when the game starts."},
     {"fast_loading", "Fast Loading", {"0", "1"}, {"Off", "On"}, 1,
      "Skips the game's least time on loading screens: races start and restart about a second sooner."},
-    {NULL, "Kaizo Mode", {NULL}, {NULL}, 0, NULL},
+    {NULL, "Kaizo", {NULL}, {NULL}, 0, NULL}, /* (the tab; "Kaizo Mode" with the other seven ran the tabs together) */
     {"kaizo", "Kaizo Mode", {"0", "1"}, {"Off", "On"}, 1, "One mistake ends the race. Takes effect from the next race you start."},
     {NULL, "Audio", {NULL}, {NULL}, 0, NULL},
     {"volume", "Volume", {"0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1"},
@@ -133,6 +133,13 @@ void rt_overlay_item(int i, const char **label, const char **value, int *live) {
     *live = it->live;
 }
 
+/* The i-th setting's place among its values (glover.c: an arrow each way there is one), and whether it applies at once. */
+void rt_overlay_item_pos(int i, int *cur, int *count) {
+    tabs_init();
+    const OvItem *it = at(i);
+    *cur = current(it), *count = nvalues(it);
+}
+
 const char *rt_overlay_help(int i) {
     tabs_init();
     if (tab_n[tab]) return at(i)->help;
@@ -154,12 +161,14 @@ const char *const *rt_overlay_notes(int *n) {
     };
     tabs_init();
     *n = 0;
-    if (strcmp(items[tab_head[tab]].label, "Kaizo Mode")) return NULL;
+    if (strcmp(items[tab_head[tab]].label, "Kaizo")) return NULL;
     *n = (int)(sizeof kaizo / sizeof kaizo[0]);
     return kaizo;
 }
 
 static void apply(const OvItem *it, const char *v) {
+    const char *was = rt_settings_get(it->setting);
+    if (was && !strcmp(was, v)) return; /* (left at the first value, right at the last: nothing changed, and no "restart the game") */
     rt_settings_set(it->setting, v);
     if (!strcmp(it->setting, "volume")) rt_apu_set_volume((float)atof(v));
     else if (!strcmp(it->setting, "antialiasing")) rt_display_fxaa = strcmp(v, "off") != 0;
@@ -200,7 +209,7 @@ void rt_overlay_key(int key) {
     }
     if (!m) { /* the achievements' tab: scrolled, or another tab */
         if (key == RT_OV_UP && scroll > 0) scroll--;
-        else if (key == RT_OV_DOWN && scroll < rt_ach_count() - 1) scroll++;
+        else if (key == RT_OV_DOWN && scroll < rt_ach_count() - RT_ACH_ROWS) scroll++; /* (to the last full page: it scrolled on to one row and a blank panel) */
         else if (key == RT_OV_TAB_PREV) tab = (tab + ntabs - 1) % ntabs, sel = 0, scroll = 0;
         else if (key == RT_OV_TAB_NEXT) tab = (tab + 1) % ntabs, sel = 0, scroll = 0;
         else if (key == RT_OV_BACK) open_ = 0;

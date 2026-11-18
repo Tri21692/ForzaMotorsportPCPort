@@ -84,7 +84,9 @@ int rt_overlay_pad(uint16_t buttons, const uint8_t analog[8], const int16_t thum
 int rt_tt_hud(uint32_t targets[3], uint32_t *elapsed, int *done);
 int rt_overlay_items(void);                       /* in the tab shown */
 int rt_overlay_tabs(const char **names, int max, int *cur);
-int rt_overlay_scroll(void);                      /* the first row shown of a tab with no settings (the achievements) */ /* the tabs' names, how many, the one shown */
+int rt_overlay_scroll(void);
+void rt_overlay_item_pos(int i, int *cur, int *count); /* overlay.c: the setting's value among its values */
+#define RT_ACH_ROWS 6 /* the achievements shown at a time (glover.c, overlay.c) */                      /* the first row shown of a tab with no settings (the achievements) */ /* the tabs' names, how many, the one shown */
 int rt_overlay_selected(void);
 int rt_overlay_needs_restart(void);
 void rt_overlay_item(int i, const char **label, const char **value, int *live);

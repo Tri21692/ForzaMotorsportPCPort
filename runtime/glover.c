@@ -122,6 +122,29 @@ static void ov_text(int font, float x, float y, const char *s, const float c[4],
     }
 }
 
+/* Text in lines no wider than maxw, broken at spaces, lh apart (at most `most` lines; draw 0: only counted). The
+ * lines it took. (18 Nov: the longest help texts ran off the panel's right edge in 4:3.) */
+static int ov_text_wrap(int font, float x, float y, const char *s, const float c[4], float maxw, float lh, int most, int draw) {
+    char line[200];
+    int lines = 0;
+    while (*s && lines < most) {
+        int n = 0, cut = 0;
+        while (s[n] && n < (int)sizeof line - 1) {
+            line[n] = s[n], line[n + 1] = 0;
+            if (ov_width(&ov_font[font], line) > maxw && cut && lines + 1 < most) break;
+            if (s[n] == ' ') cut = n;
+            n++;
+        }
+        if (s[n] && cut && lines + 1 < most) n = cut;
+        line[n] = 0;
+        if (draw) ov_text(font, x, y + lh * (float)lines, line, c, 0);
+        lines++;
+        s += n;
+        while (*s == ' ') s++;
+    }
+    return lines;
+}
+
 /* A round button prompt like the game's: a coloured disc with its letter. */
 static void ov_button(float x, float y, const char *letter, const float col[4], const char *label) {
     static const float white[4] = {1, 1, 1, 1};
@@ -289,17 +312,24 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
     ov_rect(0, 400, W, 404, olive);
     ov_rect(0, 404, W, H, black);
     ov_text(OVF_TITLE, X0 + 64, 22, "OPTIONS", white, 0);
-    if (rt_overlay_page() != 2) ov_text(OVF_MENU, X0 + 590, 26, "PC Settings", white, 1);
+    const char *ach_count_text = NULL;
+    if (rt_overlay_page() == 0) ov_text(OVF_MENU, X0 + 590, 26, "PC Settings", white, 1);
     int n = rt_overlay_items(), sel = rt_overlay_selected();
     /* The tabs (Display, Graphics, HDR, Game, Audio), the one shown picked out; Q / E, Tab or the triggers switch */
     const char *tabs[10];
     int cur, nt = rt_overlay_tabs(tabs, 10, &cur);
-    float tx = X0 + 56;
+    float tx = X0 + 56, tsum = 0, tgap = 4;
+    for (int i = 0; i < nt; i++) tsum += ov_width(&ov_font[OVF_ITEM], tabs[i]);
+    float tpad = nt ? (534 - tsum - tgap * (float)(nt - 1)) / (float)nt : 0; /* (the tabs over the rows' width, 56 to 590: all in 4:3) */
+    if (tpad > 28) tpad = 28;
+    if (tpad < 4) tpad = 4;
+    static const float rule[4] = {0.38f, 0.40f, 0.42f, 0.35f};
+    ov_rect(X0 + 56, 96, X0 + 590, 97, rule);
     for (int i = 0; i < nt; i++) {
-        float w = ov_width(&ov_font[OVF_ITEM], tabs[i]) + (nt > 7 ? 6 : nt > 6 ? 14 : 28); /* (narrower with many: all in 4:3) */
+        float w = ov_width(&ov_font[OVF_ITEM], tabs[i]) + tpad;
         if (i == cur) ov_rect(tx, 72, tx + w, 96, ink), ov_rect(tx, 94, tx + w, 97, green);
-        ov_text(OVF_ITEM, tx + (nt > 7 ? 3 : nt > 6 ? 7 : 14), 74, tabs[i], i == cur ? white : grey, 0);
-        tx += w + (nt > 7 ? 3 : 6);
+        ov_text(OVF_ITEM, tx + tpad / 2, 74, tabs[i], i == cur ? white : grey, 0);
+        tx += w + tgap;
     }
     float y = 106, row = 30;
     /* Eight rows at a time, scrolled to keep the chosen one in view: all of
@@ -354,38 +384,55 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
         ov_text(OVF_MENU, X0 + 590, 26, t, white, 1); /* (in the title bar, for PC Settings: by the tabs it ran over them) */
     } else if (!n) { /* the achievements' tab: each one's name and what it asks, earned or how far along */
         int na = rt_ach_count(), top = rt_overlay_scroll(), got = 0;
+        static const float band[4] = {1, 1, 1, 0.22f}, trough[4] = {0.38f, 0.40f, 0.42f, 0.30f};
+        if (top > na - RT_ACH_ROWS) top = na - RT_ACH_ROWS;
+        if (top < 0) top = 0;
+        if (na > RT_ACH_ROWS) { /* the scroll bar, as the settings' */
+            float st = y - 2, len = RT_ACH_ROWS * 40 - 4;
+            ov_rect(X0 + 598, st, X0 + 602, st + len, grey);
+            ov_rect(X0 + 597, st + len * (float)top / (float)na, X0 + 603, st + len * (float)(top + RT_ACH_ROWS) / (float)na, green);
+        }
         for (int i = 0; i < na; i++) {
             const char *nm, *ds;
             int pr, gl, e;
             rt_ach_get(i, &nm, &ds, &pr, &gl, &e);
             got += e;
-            if (i < top || i >= top + 6) continue;
+            if (i < top || i >= top + RT_ACH_ROWS) continue;
             float yy = y + (i - top) * 40;
-            if (e) ov_rect(X0 + 56, yy - 2, X0 + 62, yy + 34, green);
+            if ((i - top) & 1) ov_rect(X0 + 56, yy - 3, X0 + 590, yy + 35, band); /* (every other row lighter: twenty-odd of them read as a list) */
+            if (e) ov_rect(X0 + 56, yy - 3, X0 + 62, yy + 35, green);
             ov_text(OVF_MENU, X0 + 72, yy - 2, nm, e ? ink : grey, 0);
-            ov_text(OVF_TEXT, X0 + 72, yy + 19, ds, grey, 0);
+            ov_text(OVF_TEXT, X0 + 72, yy + 18, ds, grey, 0);
             char t[32];
-            if (e) snprintf(t, sizeof t, "Earned");
-            else snprintf(t, sizeof t, "%d / %d", pr, gl);
-            ov_text(OVF_ITEM, X0 + 574, yy + 6, t, e ? green : grey, 1);
+            if (e) ov_text(OVF_ITEM, X0 + 580, yy - 1, "Earned", green, 1);
+            else if (gl <= 1) ov_text(OVF_ITEM, X0 + 580, yy - 1, "Locked", grey, 1);
+            else { /* a counted one: how far along, and a bar of it */
+                snprintf(t, sizeof t, "%d / %d", pr, gl);
+                ov_text(OVF_ITEM, X0 + 580, yy - 3, t, grey, 1);
+                ov_rect(X0 + 500, yy + 19, X0 + 580, yy + 24, trough);
+                ov_rect(X0 + 500, yy + 19, X0 + 500 + 80 * (float)(pr > gl ? gl : pr) / (float)gl, yy + 24, green);
+            }
         }
         char t[48];
         snprintf(t, sizeof t, "%d of %d earned", got, na);
-        ov_text(OVF_ITEM, X0 + 574, 342, t, ink, 1);
+        ach_count_text = t, ov_text(OVF_MENU, X0 + 590, 26, ach_count_text, white, 1); /* (in the title bar, as the Moments') */
     }
     for (int i = first; i < n && i < first + VISIBLE; i++) {
         const char *label, *value;
         int live;
         rt_overlay_item(i, &label, &value, &live);
         if (i == sel) {
+            int vc, vn;
+            rt_overlay_item_pos(i, &vc, &vn);
             ov_rect(X0 + 56, y - 2, X0 + 590, y + row - 4, hi);
             ov_rect(X0 + 56, y - 2, X0 + 62, y + row - 4, green);
             ov_text(OVF_MENU, X0 + 72, y, label, ink, 0);
-            ov_text(OVF_ITEM, X0 + 574, y + 1, value, ink, 1);
-            ov_text(OVF_ITEM, X0 + 574 - ov_width(&ov_font[OVF_ITEM], value) - 14, y + 1, "<", grey, 1);
+            ov_text(OVF_ITEM, X0 + 562, y + 1, value, ink, 1);
+            if (vc > 0) ov_text(OVF_ITEM, X0 + 562 - ov_width(&ov_font[OVF_ITEM], value) - 12, y + 1, "<", green, 1); /* (a lower value, a higher one: none at an end) */
+            if (vc < vn - 1) ov_text(OVF_ITEM, X0 + 582, y + 1, ">", green, 1);
         } else {
             ov_text(OVF_MENU, X0 + 72, y, label, grey, 0);
-            ov_text(OVF_ITEM, X0 + 574, y + 1, value, grey, 1);
+            ov_text(OVF_ITEM, X0 + 562, y + 1, value, grey, 1);
         }
         y += row;
     }
@@ -395,8 +442,16 @@ static void gl_overlay_draw(int vx, int vy, int vw, int vh) {
         for (int i = 0; notes && i < nn; i++) ov_text(OVF_TEXT, X0 + 72, y + 12 + 20 * (float)i, notes[i], ink, 0);
     }
     /* What the chosen setting does, and whether it waits for a restart. */
-    ov_text(OVF_TEXT, X0 + 64, 362, rt_overlay_help(sel), grey, 0);
-    if (rt_overlay_needs_restart()) ov_text(OVF_TEXT, X0 + 64, 378, "Restart the game for the new settings to take effect.", amber, 0);
+    {
+        const char *help = rt_overlay_help(sel);
+        int hl = help ? ov_text_wrap(OVF_TEXT, 0, 0, help, grey, 520, 16, 2, 0) : 0;
+        if (help) ov_text_wrap(OVF_TEXT, X0 + 64, hl > 1 ? 348 : 362, help, grey, 520, 16, 2, 1);
+        int live = 1;
+        const char *l_, *v_;
+        if (n) rt_overlay_item(sel, &l_, &v_, &live);
+        if (rt_overlay_needs_restart()) ov_text(OVF_TEXT, X0 + 64, 380, "Restart the game for the new settings to take effect.", amber, 0);
+        else if (n && !live) ov_text(OVF_TEXT, X0 + 64, 380, "This one takes effect the next time the game starts.", grey, 0);
+    }
     if (n) ov_button(X0 + 64, 428, "A", green, "Change"); /* (none on the pages without settings: achievements, Moments) */
     ov_button(X0 + 190, 428, "B", red, "Back");
     { /* the pad's: the triggers switch tabs, Back+Start closes (F1, Q / E and Esc on the keyboard as before) */
@@ -452,11 +507,15 @@ static void gl_qr_draw(int vx, int vy, int vw, int vh) {
             ov_rect(X0 + 56, y - 2, X0 + 62, y + row - 4, green);
         }
         ov_text(OVF_MENU, X0 + 72, y, label, i == sel ? ink : grey, 0);
-        ov_text(OVF_ITEM, X0 + 574, y + 1, value, i == 7 ? gold : i == sel ? ink : grey, 1);
+        ov_text(OVF_ITEM, X0 + 562, y + 1, value, i == 7 ? gold : i == sel ? ink : grey, 1);
+        if (i == sel && i < 7 && *value) { /* (a setting: an arrow each way, as F1's) */
+            ov_text(OVF_ITEM, X0 + 562 - ov_width(&ov_font[OVF_ITEM], value) - 12, y + 1, "<", green, 1);
+            ov_text(OVF_ITEM, X0 + 582, y + 1, ">", green, 1);
+        }
         y += row;
     }
-    ov_text(OVF_TEXT, X0 + 64, 362, "Start Quick Race turns Series 1 - Race 1 into it: pick that event next.", grey, 0);
-    ov_text(OVF_TEXT, X0 + 64, 378, "Takedowns: cars are light, wrecks respawn on the line. 1 opponent is the Catch-Up event's.", grey, 0);
+    ov_text(OVF_TEXT, X0 + 64, 358, "Start Quick Race turns Series 1 - Race 1 into it: pick that event next.", grey, 0);
+    ov_text(OVF_TEXT, X0 + 64, 374, "Takedowns: cars are light, wrecks respawn on the line. 1 opponent is the Catch-Up event's.", grey, 0);
     ov_button(X0 + 64, 428, "A", green, "Change");
     ov_button(X0 + 190, 428, "B", red, "Back");
     ov_submit(vx, vy, vw, vh, W, H);
@@ -474,7 +533,7 @@ static void gl_mg_draw(int vx, int vy, int vw, int vh) {
     RtMatch m;
     rt_mg_state(&m);
     float W = rt_display_widescreen() ? 853 : 640, H = 480, X0 = rt_display_widescreen() ? 106 : 0;
-    static const float dim[4] = {0, 0, 0, 0.9f}, black[4] = {0, 0, 0, 0.92f}, olive[4] = {0.42f, 0.53f, 0.16f, 1},
+    static const float dim[4] = {0.05f, 0.06f, 0.05f, 0.97f}, black[4] = {0, 0, 0, 0.92f}, olive[4] = {0.42f, 0.53f, 0.16f, 1},
                        card[4] = {0.30f, 0.38f, 0.12f, 1}, face[4] = {0.93f, 0.93f, 0.90f, 1}, ink[4] = {0.13f, 0.14f, 0.15f, 1},
                        white[4] = {1, 1, 1, 1}, gold[4] = {0.98f, 0.80f, 0.20f, 1}, grey[4] = {0.6f, 0.62f, 0.64f, 1},
                        green[4] = {0.30f, 0.62f, 0.12f, 1}, red[4] = {0.80f, 0.16f, 0.12f, 1};
@@ -542,9 +601,30 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     char sp_title[128], sp_artist[128];
     float sp_a = 0;
     int sp = !photo && rt_spotify_card(sp_title, sizeof sp_title, sp_artist, sizeof sp_artist, &sp_a); /* spotify.c: a new song */
+    const char *toast_text = rt_toast_text;
+    {   /* XBRT_HUD_DEMO=<n> (the overlays' audit of 18 Nov): each of the HUD's pieces with sample figures, to look at
+         * without driving its event: 1 a time trial running, 2 done, 3 Catch-Up, 4 a drift, 5 the banners, 6 Mayhem's,
+         * 7 its takedown camera */
+        static int demo = -1;
+        static int demo0 = -1;
+        if (demo0 < 0) demo0 = getenv("XBRT_HUD_DEMO") ? atoi(getenv("XBRT_HUD_DEMO")) : 0;
+        demo = demo0 == 9 ? 1 + (int)(rt_now_100ns() / 40000000 % 7) : demo0; /* (9: each in turn, 4 s) */
+        if (demo == 1 || demo == 2) tt = 1, cu = drift = 0, target[0] = 85000, target[1] = 88500, target[2] = 92000, elapsed = 86500, done = demo == 2;
+        if (demo == 3) tt = drift = 0, cu = 1, metres = -34;
+        if (demo == 4) {
+            tt = cu = 0, drift = 1;
+            dh = (RtDriftHud){12850, 640, {20000, 15000, 10000}, 1.5f, 38, 1, 0, "+1,240"};
+        }
+        if (demo == 5) {
+            ach = "Kaizo Professional", toast = 1, toast_text = "Screenshot saved", fps = 1, mg = 1, sp = 1, sp_a = 1;
+            snprintf(sp_title, sizeof sp_title, "A Song With A Fairly Long Name (Remastered 2011)"), snprintf(sp_artist, sizeof sp_artist, "The Artist");
+            if (!(rt_fps_shown > 0)) rt_fps_shown = 60;
+        }
+        if (demo == 6 || demo == 7) qn = "TAKEDOWN!", qtd = 3, qr_hud = 1, tank = 0.6f, qcam = demo == 7;
+    }
     if (!(tt || cu || drift || toast || fps || ach || mg || qn || qtd || qr_hud || qcam || flame || sp) || !ov_init()) return;
     float W = rt_display_widescreen() ? 853 : 640, H = 480, R = W - 40; /* the game's HUD keeps 40 from the right */
-    static const float box[4] = {0, 0, 0, 0.45f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
+    static const float box[4] = {0, 0, 0, 0.62f}, medal[3][4] = {{0.98f, 0.80f, 0.20f, 1}, {0.82f, 0.84f, 0.88f, 1}, {0.85f, 0.55f, 0.30f, 1}},
                        gone[4] = {0.55f, 0.55f, 0.55f, 0.75f}, white[4] = {1, 1, 1, 1},
                        ahead[4] = {0.45f, 0.95f, 0.45f, 1}, behind[4] = {1.0f, 0.55f, 0.35f, 1};
     static const char *place[3] = {"1ST", "2ND", "3RD"};
@@ -591,8 +671,9 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
             snprintf(t, sizeof t, "%u", dh.target[k]);
             if (dh.done && got && (k == 0 || dh.total < dh.target[k - 1]))
                 ov_rect(R - 150, y + (k + 1) * row - 2, R + 6, y + (k + 2) * row - 2, (float[4]){medal[k][0], medal[k][1], medal[k][2], 0.35f});
-            ov_text(OVF_ITEM, R - 144, y + (k + 1) * row - 3, place[k], got ? medal[k] : gone, 0);
-            ov_text(OVF_ITEM, R, y + (k + 1) * row - 3, t, got ? medal[k] : gone, 1);
+            static const float ahead_[4] = {0.82f, 0.84f, 0.86f, 1}; /* (a score still to reach: plain, not the time trial's struck-out grey, which read as nothing on a bright wall) */
+            ov_text(OVF_ITEM, R - 144, y + (k + 1) * row - 3, place[k], got ? medal[k] : ahead_, 0);
+            ov_text(OVF_ITEM, R, y + (k + 1) * row - 3, t, got ? medal[k] : ahead_, 1);
         }
         if (dh.drifting) { /* under the box, on no background (the user's): the drift's points with its length bonus, the angle as a bar (to 90 degrees) */
             float yd = y + 4 * row + 8;
@@ -623,9 +704,12 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     if (mg) { /* Prize Match turns waiting, on the career's menus: top right, under the title bar (low it hid the dealer's cars) */
         static const float gold[4] = {0.98f, 0.80f, 0.20f, 1}, bg[4] = {0, 0, 0, 0.62f};
         char t[64];
-        snprintf(t, sizeof t, "PRIZE MATCH x%d   Q / White: play", rt_mg_turns());
-        ov_rect(W - 300, 72, W - 20, 98, bg);
-        ov_text(OVF_ITEM, W - 160, 76, t, gold, 2);
+        /* (18 Nov: in the title bar's middle, small: under it, it lay over the car's ratings on Select Car and the
+         * event's badge on Event Select) */
+        snprintf(t, sizeof t, "Prize Match x%d:  Q / White", rt_mg_turns());
+        float hw = ov_width(&ov_font[OVF_TEXT], t) / 2 + 10;
+        ov_rect(W / 2 - hw, 4, W / 2 + hw, 24, bg);
+        ov_text(OVF_TEXT, W / 2, 6, t, gold, 2);
     }
     if (flame) { /* Mayhem's boost: a flame at the exhaust, the point and one 1.2 m behind it through the frame's camera
                   * (rows 166-169: clip space), drawn as flickering bands, white-hot at the pipe to red at the tip */
@@ -677,7 +761,7 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
         if (qcam) { /* the takedown camera (the user's: an overlay "like in the video", our own): bars top and bottom,
                      * an IMPACT tag in the top one, the takedown's name large in the bottom one */
             const char *mmf = rt_mm_flash();
-            ov_rect(0, 0, W, 54, bars), ov_rect(0, H - (mmf ? 104 : 64), W, H, bars);
+            ov_rect(0, 0, W, 54, bars), ov_rect(0, H - (mmf ? 104 : 80), W, H, bars); /* (80: over the game's PLACE, cut in half at 64) */
             ov_rect(R - 120, 16, R, 40, red);
             ov_text(OVF_ITEM, R - 60, 18, "IMPACT", white2, 2);
             if (qn && !mmf) ov_text(OVF_TITLE, W / 2 + 2, H - 50, qn, shade, 2), ov_text(OVF_TITLE, W / 2, H - 52, qn, orange, 2);
@@ -702,17 +786,21 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
         }
         if (qtd) { /* top left, large: the run's takedowns (in the bar while the camera is on a wreck) */
             snprintf(t, sizeof t, "TAKEDOWNS  %d", qtd);
-            float ty = qcam ? 16 : 70;
+            float ty = qcam ? 16 : 150; /* (under the game's map: at 70 it lay across it) */
             ov_text(OVF_MENU, 46, ty + 2, t, shade, 0), ov_text(OVF_MENU, 44, ty, t, orange, 0);
         }
-        if (qr_hud) {
-            ov_rect(R - 144, 170, R, 178, track);
-            ov_rect(R - 144, 170, R - 144 + 144 * tank, 178, blue);
+        if (qr_hud) { /* the nitro left: named, in a box as the HUD's others (a bare bar on the sky read as nothing) */
+            static const float nbox[4] = {0, 0, 0, 0.62f};
+            ov_rect(R - 150, 142, R + 6, 164, nbox);
+            ov_text(OVF_ITEM, R - 144, 143, "NITRO", white2, 0);
+            ov_rect(R - 84, 150, R, 157, track);
+            ov_rect(R - 84, 150, R - 84 + 84 * tank, 157, blue);
         }
     }
     if (ach) { /* an achievement just earned: a banner at the top, in the middle */
         static const float gold[4] = {0.98f, 0.80f, 0.20f, 1}, bg[4] = {0, 0, 0, 0.62f};
-        float w = 190;
+        float w = ov_width(&ov_font[OVF_MENU], ach) / 2 + 22, w0 = ov_width(&ov_font[OVF_ITEM], "ACHIEVEMENT UNLOCKED") / 2 + 22;
+        if (w < w0) w = w0; /* (as wide as its words: 380 across, in 4:3 it lay over the game's map and its lap times) */
         ov_rect(W / 2 - w, 60, W / 2 + w, 112, bg);
         ov_rect(W / 2 - w, 60, W / 2 + w, 63, gold);
         ov_text(OVF_ITEM, W / 2, 67, "ACHIEVEMENT UNLOCKED", gold, 2);
@@ -737,7 +825,7 @@ static void gl_tt_hud_draw(int vx, int vy, int vw, int vh) {
     if (toast) {
         float w = 150;
         ov_rect(W / 2 - w, 400, W / 2 + w, 424, box);
-        ov_text(OVF_ITEM, W / 2, 403, rt_toast_text, white, 2);
+        ov_text(OVF_ITEM, W / 2, 403, toast_text, white, 2);
     }
     ov_submit(vx, vy, vw, vh, W, H);
 }
