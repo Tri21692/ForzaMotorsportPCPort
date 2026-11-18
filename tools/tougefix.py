@@ -109,7 +109,7 @@ def main(disc, mods):
     for c in driftcars.CARS:
         if re.search(r'<car name="%s"' % c[1], carlist) and re.search(r'<car name="%s"' % c[0], carlist):
             lines.append('twin %d %d' % (addcar.ordinal_of(carlist, c[1]), addcar.ordinal_of(carlist, c[0])))
-    lines.append('pace %s %s' % (os.environ.get('TOUGE_PACE', '0.08'), os.environ.get('TOUGE_PACE_M', '60')))
+    lines.append('pace %s %s' % (os.environ.get('TOUGE_PACE', '0'), os.environ.get('TOUGE_PACE_M', '60')))
     open(os.path.join(mods, 'rivalmatch.txt'), 'w').write('\n'.join(lines) + '\n')
     print('rivalmatch.txt: ' + '; '.join(lines))
 
