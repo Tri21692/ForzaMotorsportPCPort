@@ -18,6 +18,9 @@ W = r'E:\xbrt_scr\wheels\out'
 MODS0 = r'E:\Forza Motorsport Remastered\run\mods_next'
 
 
+FIX2 = {'countach': {'two': '1'}}  # (its rim's faces wound both ways: drawn from both sides)
+
+
 def style_of(cars, car):
     tk = next(k for k in cars.files if k.lower() == B.join(('cars', car.lower(), 'tooldata.xml')))
     return tk, re.search(r'<WheelStyle>\s*<P0 [^>]*File="([^"]*)"', bytes(cars.files[tk]).decode('latin-1')).group(1)
@@ -45,6 +48,11 @@ def convert(keys, mods=MODS0):
             # (16 Nov, the wheel audit: nfsu2forza's WHEEL_CROP / WHEEL_LIP, for the cars they suit)
             fix = {'impala': ('crop', 'lip'), 'maloo': ('crop',), 'civicfn2': ('crop',)}.get(k, ())
             nfsu2forza.WHEEL_CROP, nfsu2forza.WHEEL_LIP = 'crop' in fix, 'lip' in fix
+            # (17 Nov, the user's screenshots: FIX2 from the environment for trying, else the cars' own)
+            fix2 = dict(f.split('=') for f in os.environ.get('WHEEL_FIX2', '').split(',') if '=' in f) or FIX2.get(k, {})
+            nfsu2forza.WHEEL_TWO_SIDED = bool(int(fix2.get('two', 0)))
+            nfsu2forza.WHEEL_MATERIAL = int(fix2.get('mat', nfsu2forza.RIM))
+            nfsu2forza.WHEEL_ALPHA = int(fix2.get('alpha', 255))
             nfsu2forza.convert_wheel(os.path.join(od, 't_tire.carbin'), os.path.join(od, 't_wheel.xpr'), sd,
                                      os.path.join(od, 'tire.carbin'), os.path.join(od, 'wheel.xpr'))
         except (SystemExit, Exception) as e:

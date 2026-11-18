@@ -277,8 +277,12 @@ static void host_pad(uint32_t pad) {
     uint16_t buttons = 0;
     uint8_t analog[8] = {0};
     int16_t thumbs[4] = {0};
-    pc_pad(&buttons, analog, thumbs);
-    if (!rt_overlay_open()) keyboard(&buttons, analog, thumbs); /* the overlay takes the keys (display.c) */
+    /* (XBRT_INPUT_ONLY=1, test runs: the script's presses alone. A real pad or key reaching the test window opened
+     * the profile screen twice in the dealer's walk of 17 Nov and the walk went on blind.) */
+    static int only = -1;
+    if (only < 0) only = getenv("XBRT_INPUT_ONLY") != NULL;
+    if (!only) pc_pad(&buttons, analog, thumbs);
+    if (!only && !rt_overlay_open()) keyboard(&buttons, analog, thumbs); /* the overlay takes the keys (display.c) */
     scripted(&buttons, analog, thumbs); /* (before the overlay: a test script can open and drive F1 too) */
     int touched = buttons || abs(thumbs[0]) > 8000 || abs(thumbs[1]) > 8000 || abs(thumbs[2]) > 8000 || abs(thumbs[3]) > 8000;
     for (int i = 0; i < 8; i++) touched |= analog[i] > 30; /* (as the player holds them: for held, below) */

@@ -2821,7 +2821,11 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
                 print('wheel: the rim painted from %.0f%% of its sheet across, at %.2f,%.2f: that stretch taken' % (side * 100, lo[0], lo[1]))
     def quv(u, v):
         if box: u, v = (u - box[0]) / box[2], (v - box[1]) / box[2]
-        return (int(min(max(u, 0), 1) * 0.5 * 65535), int(min(max(v, 0), 1) * 0.5 * 65535))
+        # (17 Nov, the user's screenshots: a wheel's texture coordinates count double, u16 / 32768, as Badge's: the
+        # game's own rims run to 0.5 of 65535 and span the whole sheet, its hub caps and spoke shading. At half of
+        # 65535 our rim's picture, in the sheet's top-left quarter, was drawn with the other three quarters round
+        # it: the 190E's hubcap a corner of its face among grey blocks, a donor's yellow hub cap on other rims.)
+        return (int(min(max(u, 0), 1) * WHEEL_UV * 65535), int(min(max(v, 0), 1) * WHEEL_UV * 65535))
     V = np.array([v[:3] for v in part['verts']], float) / 4096
     rim_ix = sorted({i for sp in part['subparts'] if sp['material'] == RIM for i in sp['indices']})
     R = V[rim_ix]
@@ -2868,12 +2872,22 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
                 gn = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
                 if sum(gn[n] * (va[3 + n] + vb[3 + n] + vc[3 + n]) for n in range(3)) < 0: b, c = c, b
                 tris.append((remap[a], remap[b], remap[c]))  # the axis swap mirrors them, as the body's: Forza's strips wind the other way
+            if WHEEL_TWO_SIDED:
+                # (the user's, 17 Nov, of the Countach's rims, "wheel geometries that look weird": 23% of its faces are
+                # wound against their normals, so turning each to its normal left shards, the other faces culled.
+                # Every face again the other way round, on corners of its own with the normal turned.)
+                back = {}
+                for i in sorted({i for t in tris for i in t}):
+                    v = out_verts[i]
+                    back[i] = len(out_verts)
+                    out_verts.append(v[:3] + tuple(-c for c in v[3:6]) + v[6:])
+                tris = tris + [(back[a], back[c], back[b]) for a, b, c in tris]
             subs.append((lod, strip(tris)))
     if not subs or tex is None:
         raise SystemExit('%s: no stock wheel rim' % nfsu_dir)
     tmpl = next(sp for sp in part['subparts'] if sp['material'] == RIM)
     part['subparts'] = [sp for sp in part['subparts'] if sp['material'] != RIM] + \
-        [{'version': tmpl['version'], 'id': lod, 'material': RIM, 'prim': 6, 'extra': tmpl['extra'], 'indices': s, 'tail': b''}
+        [{'version': tmpl['version'], 'id': lod, 'material': WHEEL_MATERIAL, 'prim': 6, 'extra': tmpl['extra'], 'indices': s, 'tail': b''}
          for lod, s in subs]
     # wheel.xpr: the template's at twice the quarter's size, the NFSU wheel texture in the top-left quarter:
     # 64 for an NFSU wheel, 128 for a Most Wanted one (its spokes are painted on a flat face: at 64 they blurred away)
@@ -2894,7 +2908,7 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
         else: want = np.array([40.0, 40.0, 40.0])  # (a texture of the game's own, the brakes': dark)
         d2 = ((small[:, :, :3] - want) ** 2).sum(2)
         vy, vx = np.unravel_index(int(np.argmin(d2)), d2.shape)
-        uv = (int((vx + 0.5) / q * 0.5 * 65535), int((vy + 0.5) / q * 0.5 * 65535))
+        uv = (int((vx + 0.5) / q * WHEEL_UV * 65535), int((vy + 0.5) / q * WHEEL_UV * 65535))
         for i in range(at, at + n): out_verts[i] = out_verts[i][:-2] + uv
     part['verts'] = out_verts
     assert len(out_verts) < 65536
@@ -2906,7 +2920,7 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
     old = fx.dxt(xd[t['start']:], t['w'], t['h'], 5)
     img = np.ascontiguousarray(old.repeat(2 * q // t['w'], 0).repeat(2 * q // t['h'], 1))
     img[:q, :q] = np.clip(small + 0.5, 0, 255).astype(np.uint8)
-    img[:q, :q, 3] = 255
+    img[:q, :q, 3] = WHEEL_ALPHA  # (255 as it always was; see WHEEL_ALPHA)
     open(out_xpr, 'wb').write(fx.write_dxt5(xd, img))
     print('wheel: %d rim triangles in %d levels, scale %.3f' % (sum(len(s) for _, s in subs), len(subs), rim_r / 0.223))
 
@@ -2917,6 +2931,13 @@ def convert_wheel(tire_path, xpr_path, nfsu_dir, out_tire, out_xpr):
 # taken at its lip, not at a spinner that stands out past it (the Impala).
 WHEEL_CROP = False
 WHEEL_LIP = False
+# (17 Nov, the user's screenshots.) TWO_SIDED: every rim face drawn from both sides (the Countach). MATERIAL: the
+# wheel material the rim is drawn with: 11, the game's chrome spokes, mirrors the showroom, and a rim that is a flat
+# painted face (the 190E's hubcap) showed the mirror's blocks all over it; 8 is the tyre's, 12 the barrel's.
+WHEEL_TWO_SIDED = False
+WHEEL_MATERIAL = RIM
+WHEEL_UV = 0.25  # the rim picture's quarter of the sheet in the wheel's texture coordinates (0.5 until 17 Nov: the whole sheet)
+WHEEL_ALPHA = 255  # the rim picture's alpha (the game's own wheels' run from 5 to 255): tried as the mirror's strength
 
 
 VINYL_CANVAS = ('BODY', 'BODY_LEFT', 'BODY_RIGHT', 'BODY_TOP', 'BODY_REAR')  # Most Wanted's painted groups, laid out on its vinyl canvas
