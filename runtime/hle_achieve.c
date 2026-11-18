@@ -5,8 +5,10 @@
  * tab.
  *
  * From the race: the player's racer (the racer list at 0x58DAA0, type +0x14 0), its car (+0xA0:
- * velocity +0x44..+0x4C, m/s), its timing (+0xC0: +0x9C laps done, -1 on the grid; +0xA0 the race's
- * clock; +0x98 the off-track penalty, seconds, growing as it is earned), its place (+0xBC) and its
+ * velocity +0x44..+0x4C, m/s), its timing (+0xC0: +0x9C laps done, -1 on the grid; +0x94 the race's
+ * clock, running from the countdown and standing while paused; +0xA0 the last lap's time, written as
+ * the lap is done (18 Nov: it was read as the race's clock, so the miles never counted: the user's
+ * 0.000 after 100 laps); +0x98 the off-track penalty, seconds, growing as it is earned), its place (+0xBC) and its
  * finish (+0x1B8, low byte, set when its run ends); the track from the file the game loaded
  * (rt_loading_track). */
 #include <math.h>
@@ -44,6 +46,26 @@ static const Ach ach[] = {
     /* (the user's, 17 Nov, as the Touge was opened to every car: "make an achievement for if you beat it with a
      * D-Spec car": both of its runs won in one, each counted once: the "touge <event>" lines of the file) */
     {"touge_dspec", "Touge Purist", "Win both Midnight Touge runs in a D-Spec car.", 2},
+    /* (the user's, 18 Nov: "a few very specific achievements that are somewhat difficult to get. A suggestion is to
+     * beat Timo Bernhard's WR on Nordschleife with the vanilla/OG car list only": 5:19.546, the Porsche 919 Evo's lap
+     * of 29 June 2018, round the real 20,832 m: 233.8 km/h. The game's Nurburgring is 28,167 m round (its AI
+     * waypoints, 14,084 of 2 m; its other tracks are their real length to a percent or three), so 5:19.546 here would
+     * is 317 km/h, past any car of the disc's; his pace over the game's lap would be 7:12.05 (the career time
+     * trial's silver in a P1 car is 7:11.9). Told so, the user: "No, keep Timo's original WR": 5:19.546 it is.
+     * A lap of the Nurburgring under it with no off-track penalty, in a
+     * car of the disc's (not one of <mods>/addon_cars.txt), not in Mayhem (its boost); and five more of the kind.
+     * And (the user's, the same day): "the WR must be in Career and in a regular race": the race a career event's
+     * (the event record at the race's +0x318, its leaderboard at +0x0C not the arcade events' 4000: an arcade race
+     * has a record too, the first test's "a career event" on an arcade Tsukuba) against rivals, not a time trial, a
+     * Catch-Up, a drift or a Mayhem event.
+     * Testing: XBRT_ACH_RING=<track folder>,<seconds>[,any] has another track and time stand in (any: an arcade
+     * race counted too). */
+    {"ring_record", "Ringmeister", "Career race, original car: a clean Nurburgring lap under 5:19.546.", 1},
+    {"ring_clean", "Green Hell, Clean", "Win a Nurburgring race with no off-track penalty.", 1},
+    {"flat_out", "Flat Out", "Hold 200 mph for 30 seconds without dropping below it.", 1},
+    {"untouchable", "Untouchable", "Win 5 races in a row with no off-track penalty.", 5},
+    {"kaizo_ace", "Kaizo Ace", "Win 3 races in Kaizo Mode.", 3},
+    {"last_gasp", "Last Gasp", "Win from 4th or lower at the start of the final lap.", 1},
 };
 #define NACH (int)(sizeof ach / sizeof ach[0])
 #define MAXTRACKS 64
@@ -56,6 +78,11 @@ static char tracks[MAXTRACKS][48];
 static int ntracks;
 static uint32_t touge[8]; /* the matched events (the Touge's runs) won in a D-Spec car */
 static int ntouge;
+static int streak; /* clean wins in a row (Untouchable): "streak <n>" */
+#define RING_RECORD 319.546f /* Timo Bernhard, Porsche 919 Hybrid Evo, 29 June 2018 */
+int rt_addon_car(uint32_t ordinal); /* hle_unlock.c */
+int rt_kaizo_setting(void);
+int rt_qr_mayhem(void);
 int rt_rival_event(void);
 int rt_rival_dspec(void);
 static char banner[64];
@@ -80,6 +107,7 @@ static void load(void) {
         if (sscanf(line, "track %47s", a) == 1 && ntracks < MAXTRACKS) snprintf(tracks[ntracks++], sizeof tracks[0], "%s", a);
         else if (sscanf(line, "miles %lf", &d) == 1) miles = d;
         else if (sscanf(line, "touge %d", &v) == 1) { if (ntouge < 8) touge[ntouge++] = (uint32_t)v; }
+        else if (sscanf(line, "streak %d", &v) == 1) streak = v;
         else if (sscanf(line, "%63s %d %lld", a, &v, &t) == 3)
             for (int i = 0; i < NACH; i++)
                 if (!strcmp(ach[i].id, a)) prog[i] = v, when[i] = t;
@@ -95,6 +123,7 @@ static void save(void) {
     fprintf(f, "miles %.3f\n", miles);
     for (int i = 0; i < ntracks; i++) fprintf(f, "track %s\n", tracks[i]);
     for (int i = 0; i < ntouge; i++) fprintf(f, "touge %u\n", touge[i]);
+    fprintf(f, "streak %d\n", streak);
     fclose(f);
 }
 
@@ -158,8 +187,8 @@ static float rdf(uint32_t a) {
 void rt_ach_tick(void) {
     static uint32_t racer;
     static int32_t lap_was;
-    static float clock_was, pen0;
-    static uint32_t done_was, lap1_place, field;
+    static float clock_was, pen0, lap_pen, fast_for;
+    static uint32_t done_was, lap1_place, field, last_place;
     static int dirty;
     static uint64_t saved_at;
     if (!xb_rd32(0x592984)) { racer = 0; return; }
@@ -172,10 +201,11 @@ void rt_ach_tick(void) {
     uint32_t car = r ? xb_rd32(r + 0xA0) : 0, timing = r ? xb_rd32(r + 0xC0) : 0;
     if (!car || car >= RT_USER_LIMIT || !timing || timing >= RT_USER_LIMIT) return;
     int32_t lap = (int32_t)xb_rd32(timing + 0x9C);
-    float clock = rdf(timing + 0xA0);
+    float clock = rdf(timing + 0x94), lap_time = rdf(timing + 0xA0);
     uint32_t done = xb_rd32(r + 0x1B8) & 0xFF;
     if (r != racer) { /* a new race (a restart makes the racers again) */
         racer = r, lap_was = lap, clock_was = clock, pen0 = rdf(timing + 0x98), done_was = done, lap1_place = 0, field = n;
+        lap_pen = pen0, fast_for = 0, last_place = 0;
         return;
     }
     pthread_mutex_lock(&mu);
@@ -187,11 +217,40 @@ void rt_ach_tick(void) {
         if (mph >= 240) reach("v240", 1);
         double dt = clock - clock_was;
         if (dt > 0 && dt < 0.5) miles += mph * dt / 3600.0, dirty = 1;
+        if (mph < 200 || rt_qr_mayhem()) fast_for = 0; /* (Flat Out: 30 s of the race's clock at 200 mph and over) */
+        else if (dt > 0 && dt < 0.5 && (fast_for += (float)dt) >= 30) reach("flat_out", 1);
         int m = (int)miles;
         if (m > prog[find("miles500")]) reach("miles500", m);
     }
     clock_was = clock;
+    uint32_t ev = xb_rd32(xb_rd32(0x592984) + 0x318), laps = ev && ev < RT_USER_LIMIT ? xb_rd32(ev + 0x24) : 0;
+    static uint32_t ev_told;
+    if (ev && ev < RT_USER_LIMIT && lap >= 0 && ev_told != racer) {
+        ev_told = racer;
+        fprintf(stderr, "xbrt: achievements: the race's event %u, leaderboard %u (%s), track %u, %u laps, %u cars\n", xb_rd32(ev + 0x10), xb_rd32(ev + 0x0C),
+                xb_rd32(ev + 0x0C) == 4000 ? "arcade" : "career", xb_rd32(ev + 0x20), laps, field);
+    }
+    if (lap > lap_was && lap_was < 0) lap_pen = rdf(timing + 0x98); /* (off the grid) */
     if (lap > lap_was && lap >= 1) { /* a lap completed */
+        const char *tk = rt_loading_track();
+        uint32_t init = xb_rd32(r + 0xB4), ord = init && init < RT_USER_LIMIT ? xb_rd32(init) : ~0u;
+        float took = lap_time, pen = rdf(timing + 0x98);
+        const char *ring = "Nurburgring", *te = getenv("XBRT_ACH_RING");
+        float record = RING_RECORD;
+        static char ring_test[48];
+        if (te && sscanf(te, "%47[^,],%f", ring_test, &record) == 2) ring = ring_test;
+        if (lap == lap_was + 1 && tk && !strcasecmp(tk, ring)) {
+            int clean = pen <= lap_pen + 0.001f, og = ord < 1024 && !rt_addon_car(ord);
+            RtDriftHud dh;
+            int career = ev && ev < RT_USER_LIMIT && xb_rd32(ev + 0x0C) != 4000, regular = field >= 2 && !rt_tt_running() && !rt_catchup_event() && !rt_drift_hud(&dh);
+            if (te && strstr(te, ",any")) career = 1;
+            fprintf(stderr, "xbrt: achievements: a %s lap of %.3f s (the record %.3f), %s, car %u %s, %s, %s%s\n", ring, took, record,
+                    clean ? "clean" : "with penalties", ord, og ? "of the original list" : "an add-on", career ? "a career event" : "not the career",
+                    regular ? "a race" : "not a regular race", rt_qr_mayhem() ? ", in Mayhem" : "");
+            if (took > 30 && took < record && clean && og && career && regular && !rt_qr_mayhem()) reach("ring_record", 1);
+        }
+        lap_pen = pen;
+        if (laps >= 2 && laps < 100 && lap == (int32_t)laps - 1) last_place = xb_rd32(r + 0xBC); /* the final lap begins */
         add("laps100", lap - lap_was);
         const char *t = rt_loading_track();
         if (t && *t) {
@@ -205,18 +264,25 @@ void rt_ach_tick(void) {
         dirty = 1;
     }
     lap_was = lap;
-    uint32_t ev = xb_rd32(xb_rd32(0x592984) + 0x318), laps = ev && ev < RT_USER_LIMIT ? xb_rd32(ev + 0x24) : 0;
     if (done && !done_was && laps && laps < 100 && lap < (int32_t)laps) done_was = done; /* (quit, not finished: nothing counts) */
     if (done && !done_was) { /* the finish: the event's laps done (ev +0x24) */
         uint32_t place = xb_rd32(r + 0xBC);
         int clean = rdf(timing + 0x98) <= pen0 + 0.001f;
         fprintf(stderr, "xbrt: achievements: finished %u of %u (lap 1: %u), %s\n", place, field, lap1_place, clean ? "clean" : "penalties");
         if (field >= 2 && place >= 1 && place <= 3) add("podiums", 1);
+        if (field >= 2) { /* Untouchable: clean wins in a row; any other finish against rivals starts over */
+            streak = place == 1 && clean ? streak + 1 : 0;
+            if (streak) reach("untouchable", streak);
+        }
         if (field >= 2 && place == 1) {
             reach("first_win", 1);
             add("wins25", 1);
             if (clean) reach("clean_win", 1);
             if (field >= 4 && lap1_place == field) reach("comeback", 1);
+            const char *tk = rt_loading_track();
+            if (clean && tk && !strcasecmp(tk, "Nurburgring") && !rt_qr_mayhem()) reach("ring_clean", 1);
+            if (field >= 3 && rt_kaizo_setting() && !rt_qr_mayhem()) add("kaizo_ace", 1);
+            if (field >= 6 && last_place >= 4) reach("last_gasp", 1);
             if (ev && ev < RT_USER_LIMIT && rt_rival_event() && rt_rival_dspec()) { /* a Touge run won in a D-Spec car */
                 uint32_t o = xb_rd32(ev + 0x10);
                 int seen = 0;

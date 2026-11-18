@@ -41,6 +41,12 @@ static void unlock_load(void) {
     fclose(f);
 }
 
+/* Is the car an add-on (of addon_cars.txt, not the disc's)? For the achievements (hle_achieve.c). */
+int rt_addon_car(uint32_t ordinal) {
+    if (!rt_unlock_ready) unlock_load();
+    return ordinal < sizeof rt_addon && rt_addon[ordinal];
+}
+
 void orig_f_00171000(XbCtx *c); /* a car unlocked in a query's bitset (wraps.txt) */
 void f_00171000(XbCtx *c) {
     uint32_t self = c->ecx;
