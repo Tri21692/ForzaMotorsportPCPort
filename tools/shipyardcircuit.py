@@ -422,21 +422,55 @@ BRICK_ENDS = []  # every brick wall's (a, b) feet, for join_bricks
 
 def brick_wall(a, b, height=BRICK_H):
     """A brick wall from a to b ((x, y, z), its foot), both faces, half a metre into the ground: as
-    kerb_strips' faces."""
-    BRICK_ENDS.append((np.array(a, float), np.array(b, float)))
-    d = np.subtract(b, a); d[1] = 0; L_ = np.linalg.norm(d); d /= L_
+    kerb_strips' faces. Only where no brick wall stands on its line yet (BRICK_SAME): the turns'
+    barriers, the void's, the invisible walls', fill_bricks' and join_bricks' walls were laid over
+    one another along side road 04 (the audit of 17 Nov: the same bricks twice or three times in one
+    plane, or 8 cm apart, to flicker); what is left of it in pieces, [] when all of it stands."""
+    a, b = np.array(a, float), np.array(b, float)
+    d = b - a; d[1] = 0; L_ = np.linalg.norm(d)
+    if L_ < 1e-6: return []
+    d /= L_
     n = np.array([-d[2], 0.0, d[0]])
+    keep = [(0.0, L_)]
+    for p, q in BRICK_ENDS:
+        e = q - p; e[1] = 0; le = np.linalg.norm(e)
+        if le < 1e-6 or abs(np.dot(e / le, n)) > 0.2: continue                 # (not along it)
+        t0, t1 = sorted((float(np.dot(p - a, d)), float(np.dot(q - a, d))))
+        t0, t1 = max(t0, 0.0), min(t1, L_)
+        if t1 - t0 < 0.02: continue
+        # the stretch they share, in quarter metres: each where the other is within BRICK_SAME of this
+        # wall's plane, its foot at this one's height (two chords of one wall's line cross at a small
+        # angle: the same plane at the crossing, 20 cm apart at an end)
+        ts = np.linspace(t0, t1, max(2, int((t1 - t0) / 0.25) + 1))
+        same = []
+        for t in ts:
+            o = p + (q - p) * np.clip(np.dot(a + d * t - p, e) / le ** 2, 0, 1)
+            same.append(abs(float(np.dot(o - a, n))) <= BRICK_SAME and abs(a[1] + (b[1] - a[1]) * t / L_ - o[1]) <= 0.4)
+        k = 0
+        while k < len(ts):
+            if not same[k]: k += 1; continue
+            j = k
+            while j + 1 < len(ts) and same[j + 1]: j += 1
+            c0, c1 = ts[k], ts[j]
+            if j > k: keep = [(u0, u1) for k0, k1 in keep for u0, u1 in ((k0, min(k1, c0)), (max(k0, c1), k1)) if u1 - u0 > 0.02]
+            k = j + 1
     faces = []
-    for nn in (n, -n):
-        pairs = []
-        for u in np.linspace(0, 1, max(2, int(L_ / 4) + 1)):
-            p = np.add(a, np.subtract(b, a) * u)
-            s = -32768 + 75 * L_ * u
-            pairs.append(((p + (0, height, 0), nn, s, -32768), (p + (0, -0.5, 0), nn, s, -32768 + 153 * (height + 0.5))))
-        a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
-        if np.dot(np.cross(b0 - a0, a1 - a0), nn) > 0: pairs = [(q, p) for p, q in pairs]
-        faces.append([v for pr in pairs for v in pr])
+    for k0, k1 in keep:
+        pa, pb = a + (b - a) * k0 / L_, a + (b - a) * k1 / L_
+        BRICK_ENDS.append((pa, pb))
+        for nn in (n, -n):
+            pairs = []
+            for u in np.linspace(k0, k1, max(2, int((k1 - k0) / 4) + 1)):
+                p = a + (b - a) * u / L_
+                s = -32768 + 75 * u
+                pairs.append(((p + (0, height, 0), nn, s, -32768), (p + (0, -0.5, 0), nn, s, -32768 + 153 * (height + 0.5))))
+            a0, b0, a1 = pairs[0][0][0], pairs[0][1][0], pairs[1][0][0]
+            if np.dot(np.cross(b0 - a0, a1 - a0), nn) > 0: pairs = [(q, p) for p, q in pairs]
+            faces.append([v for pr in pairs for v in pr])
     return faces
+
+
+BRICK_SAME = 0.12  # a brick wall within this of another's plane is the same wall (m)
 
 
 BRICK_AREA = (-160.0, -4.5, -80.0, 60.0)  # garage (u0, u1, v0, v1): east of the shop (to its east wall: past it bricks stood inside, between the tin), side road 04 to its corner with 31 and the
@@ -749,14 +783,14 @@ def edge_ground(drawn, centre, half, dist, where, sp, past=12.0, reach=22.0, ski
         for i in list(where) + [None]:
             if i is not None and (side, i) not in skip:
                 out = min(dist.get((side, i), half[i] + WIDE) + past, half[i] + reach)
-                us = np.arange(half[i] + 0.5, out + 1e-6, 1.0)
+                us = np.arange(half[i] - 2.5, out + 1e-6, 1.0)  # (from inside the half: side road 04's concrete ends 1.2 m short of it, and 2 m lay bare before its brick wall, 18 Nov)
                 l2 = left[i] * side
                 pts = [centre[i][[0, 2]] + l2 * u for u in us]
                 bare = [u for u, p in zip(us, pts) if not drawn(p[0], p[1], centre[i][1])]
                 if bare and np.all(L.off_course([(p[0], centre[i][1], p[1]) for p in pts], sp, margin=0.0)):
                     # (from just inside the first bare probe, not the road's edge: laid from the edge it lay on
                     # the strip's drawn side road as far as the bare ground past it, level with it, 17 Nov)
-                    run.append((i, max(bare) + 0.5, max(min(bare) - 1.0, half[i] - 0.3))); continue
+                    run.append((i, max(bare) + 0.5, max(min(bare) - 1.0, half[i] - 3.0))); continue
             if len(run) >= 2:
                 pairs = []
                 for j, w, w0 in run:
