@@ -51,7 +51,9 @@ static const Ach ach[] = {
      * of 29 June 2018, round the real 20,832 m: 233.8 km/h. The game's Nurburgring is 28,167 m round (its AI
      * waypoints, 14,084 of 2 m; its other tracks are their real length to a percent or three), so 5:19.546 here would
      * is 317 km/h, past any car of the disc's; his pace over the game's lap would be 7:12.05 (the career time
-     * trial's silver in a P1 car is 7:11.9). Told so, the user: "No, keep Timo's original WR": 5:19.546 it is.
+     * trial's silver in a P1 car is 7:11.9). Told so, the user: "No, keep Timo's original WR", and
+     * then: "Just Lauda's, Bernhard's is impossible and I didn't realize": Niki Lauda's 6:58.6 of 1975 (the Ferrari
+     * 312T, the first lap under seven minutes), 242 km/h over the game's lap: at the edge for a P1 car.
      * A lap of the Nurburgring under it with no off-track penalty, in a
      * car of the disc's (not one of <mods>/addon_cars.txt), not in Mayhem (its boost); and five more of the kind.
      * And (the user's, the same day): "the WR must be in Career and in a regular race": the race a career event's
@@ -60,7 +62,7 @@ static const Ach ach[] = {
      * Catch-Up, a drift or a Mayhem event.
      * Testing: XBRT_ACH_RING=<track folder>,<seconds>[,any] has another track and time stand in (any: an arcade
      * race counted too). */
-    {"ring_record", "Ringmeister", "Career race, original car: a clean Nurburgring lap under 5:19.546.", 1},
+    {"ring_record", "Ringmeister", "Career race, original car: a clean Nurburgring lap under Lauda's 6:58.6.", 1},
     {"ring_clean", "Green Hell, Clean", "Win a Nurburgring race with no off-track penalty.", 1},
     {"flat_out", "Flat Out", "Hold 200 mph for 30 seconds without dropping below it.", 1},
     {"untouchable", "Untouchable", "Win 5 races in a row with no off-track penalty.", 5},
@@ -79,7 +81,7 @@ static int ntracks;
 static uint32_t touge[8]; /* the matched events (the Touge's runs) won in a D-Spec car */
 static int ntouge;
 static int streak; /* clean wins in a row (Untouchable): "streak <n>" */
-#define RING_RECORD 319.546f /* Timo Bernhard, Porsche 919 Hybrid Evo, 29 June 2018 */
+#define RING_RECORD 418.6f /* Niki Lauda, Ferrari 312T, 1975 */
 int rt_addon_car(uint32_t ordinal); /* hle_unlock.c */
 int rt_kaizo_setting(void);
 int rt_qr_mayhem(void);
