@@ -152,17 +152,31 @@ func (a *analyzer) decode(va uint32) (x86asm.Inst, bool) {
 	if s == nil {
 		return x86asm.Inst{}, false
 	}
-	n := s.VirtualAddr + s.RawSize - va
 	if va >= s.VirtualAddr+s.RawSize {
 		return x86asm.Inst{}, false
 	}
+	// An instruction may end in the section's zero-filled tail: Forza's
+	// FZFULLUI section stores one byte less than it maps, and its last
+	// instruction (ret 0x1c, C2 1C 00) ends in that byte. The loader
+	// fills it with zeros, so decode with the same zeros.
+	end := s.VirtualAddr + s.VirtualSize
+	if raw := s.VirtualAddr + s.RawSize; raw > end {
+		end = raw
+	}
+	n := end - va
 	if n > 15 {
 		n = 15
 	}
-	b, err := a.f.Bytes(va, n)
+	b := make([]byte, n)
+	have := s.VirtualAddr + s.RawSize - va
+	if have > n {
+		have = n
+	}
+	data, err := a.f.Bytes(va, have)
 	if err != nil {
 		return x86asm.Inst{}, false
 	}
+	copy(b, data)
 	in, err := x86asm.Decode(b, 32)
 	if err != nil {
 		return x86asm.Inst{}, false
@@ -177,9 +191,11 @@ func (a *analyzer) descend(start uint32, owner map[uint32]uint32) *Func {
 	}
 	seen := map[uint32]bool{}
 	work := []uint32{start}
+	branchHist := map[uint32]recent{} // the path so far, at each branch target
 	for len(work) > 0 {
 		va := work[len(work)-1]
 		work = work[:len(work)-1]
+		hist := branchHist[va]
 	path:
 		for !seen[va] {
 			if va != start {
@@ -228,7 +244,7 @@ func (a *analyzer) descend(start uint32, owner map[uint32]uint32) *Func {
 					}
 				} else if k, ok := a.thunkRef(in); ok {
 					fn.KernelCalls = append(fn.KernelCalls, k.Ordinal)
-				} else if targets := a.jumpTable(in, start); len(targets) > 0 {
+				} else if targets := a.jumpTable(in, &hist, start); len(targets) > 0 {
 					fn.JumpTables++
 					work = append(work, targets...)
 				} else {
@@ -239,9 +255,15 @@ func (a *analyzer) descend(start uint32, owner map[uint32]uint32) *Func {
 				if isCondBranch(in.Op) {
 					if t, ok := relTarget(in, next); ok {
 						work = append(work, t)
+						if _, ok := branchHist[t]; !ok {
+							h := hist
+							h.add(in)
+							branchHist[t] = h
+						}
 					}
 				}
 			}
+			hist.add(in)
 			va = next
 		}
 	}
@@ -265,21 +287,91 @@ func (a *analyzer) thunkRef(in x86asm.Inst) (xbe.KernelImport, bool) {
 	return a.f.KernelBySlot(uint32(m.Disp))
 }
 
+// recent keeps the last few instructions of the straight-line path being
+// walked, for the jump table reader.
+type recent struct {
+	in [4]x86asm.Inst
+	n  int
+}
+
+func (r *recent) add(in x86asm.Inst) { r.in[r.n%len(r.in)] = in; r.n++ }
+
+// lastOp is the opcode of the latest instruction on the path, 0 if none.
+func (r *recent) lastOp() x86asm.Op {
+	if r.n == 0 {
+		return 0
+	}
+	return r.in[(r.n-1)%len(r.in)].Op
+}
+
+// indexSetter finds the latest instruction on the path that writes reg,
+// looking back a few instructions.
+func (r *recent) indexSetter(reg x86asm.Reg) (x86asm.Inst, bool) {
+	for k := 1; k <= len(r.in) && k <= r.n; k++ {
+		in := r.in[(r.n-k)%len(r.in)]
+		if dst, ok := in.Args[0].(x86asm.Reg); ok && dst == reg {
+			return in, in.Op != x86asm.CMP && in.Op != x86asm.TEST
+		}
+	}
+	return x86asm.Inst{}, false
+}
+
 // jumpTable reads an MSVC switch table, `jmp dword ptr [table + reg*4]`.
 // Entries are taken while they point into the function's own section; MSVC
 // puts the table right after the function, so the first non-code value ends
-// it.
-func (a *analyzer) jumpTable(in x86asm.Inst, fnStart uint32) []uint32 {
+// it. Three forms in the CRT's hand-written memcpy/memmove need the code
+// before the jump: after `and reg, mask` the table has exactly mask+1
+// slots, some of which may never be used (slot 0 can overlap code); after
+// `neg reg` the table is indexed backwards from its end; after `sub reg,
+// k` taken on a borrow (jb) the index is -k..-1, the k slots below it.
+func (a *analyzer) jumpTable(in x86asm.Inst, hist *recent, fnStart uint32) []uint32 {
 	m, ok := in.Args[0].(x86asm.Mem)
 	if !ok || m.Base != 0 || m.Index == 0 || m.Scale != 4 {
 		return nil
 	}
 	sec := a.f.SectionAt(fnStart)
 	table := uint32(m.Disp)
+	entry := func(addr uint32) (uint32, bool) {
+		v, err := a.f.Uint32(addr)
+		return v, err == nil && sec != nil && sec.Contains(v)
+	}
 	var out []uint32
+	if set, ok := hist.indexSetter(m.Index); ok {
+		switch set.Op {
+		case x86asm.NEG:
+			for i := uint32(0); i < 64; i++ {
+				v, ok := entry(table - 4*i)
+				if !ok {
+					break
+				}
+				out = append(out, v)
+			}
+			return out
+		case x86asm.SUB:
+			if k, ok := set.Args[1].(x86asm.Imm); ok && k > 0 && k <= 16 && hist.lastOp() == x86asm.JB {
+				for i := uint32(1); i <= uint32(k); i++ {
+					if v, ok := entry(table - 4*i); ok {
+						out = append(out, v)
+					}
+				}
+				if len(out) > 0 {
+					return out
+				}
+			}
+		case x86asm.AND:
+			if mask, ok := set.Args[1].(x86asm.Imm); ok && mask >= 0 && mask < 1024 {
+				for i := uint32(0); i <= uint32(mask); i++ {
+					if v, ok := entry(table + 4*i); ok {
+						out = append(out, v)
+					}
+				}
+				return out
+			}
+		}
+	}
 	for i := uint32(0); i < 1024; i++ {
-		v, err := a.f.Uint32(table + 4*i)
-		if err != nil || sec == nil || !sec.Contains(v) {
+		v, ok := entry(table + 4*i)
+		if !ok {
 			break
 		}
 		out = append(out, v)
@@ -423,7 +515,16 @@ func (a *analyzer) looksLikeStart(va uint32) bool {
 	}
 	// Right after ret imm16 (C2 xx xx), which MSVC packs functions behind.
 	r, err := a.f.Bytes(va-3, 1)
-	return err == nil && r[0] == 0xC2
+	if err == nil && r[0] == 0xC2 {
+		return true
+	}
+	// Right after a function that ends in an unconditional jump (EB xx or
+	// E9 xx xx xx xx): DSOUND packs functions behind those too.
+	if j, err := a.f.Bytes(va-2, 1); err == nil && j[0] == 0xEB {
+		return true
+	}
+	j, err := a.f.Bytes(va-5, 1)
+	return err == nil && j[0] == 0xE9
 }
 
 // scanPrologues seeds `push ebp; mov ebp, esp` (55 8B EC) found in unowned
@@ -459,8 +560,9 @@ func (a *analyzer) scanPrologues(owner map[uint32]uint32) {
 // skipped: those are SEH scope-table handlers and similar labels.
 //
 // Generosity is safe here: a false start only adds translated code that
-// never runs, and even one inside a real function stays correct, because a
-// jump to it becomes a tail call into the same code.
+// never runs, and one inside a real function stays correct because Body
+// walks through it when the code before falls into it (live flags and
+// all), and a jump to it becomes a tail call into the same code.
 func (a *analyzer) scanDataRefs(owner map[uint32]uint32) {
 	isCode := func(v uint32) bool {
 		s := a.f.SectionAt(v)
@@ -538,21 +640,34 @@ type Body struct {
 // Code that several functions share (MSVC merges common tails) appears in
 // each of them, which a translator needs because it cannot jump between
 // host functions.
+//
+// Another function's entry ends the walk only where an unconditional jump
+// leads to it: a tail call, after which no flags are live. Code that falls
+// through into a known start, or branches to one conditionally, keeps
+// going through it, because the flags it computed may still be read there
+// and a host call would lose them. (A data reference can make a false
+// start out of a label inside a function: Forza's profile saving went
+// wrong at one, 0x7B649, which tests flags set before it.)
 func (p *Program) Body(start uint32) Body {
 	a := p.a
 	b := Body{Start: start, Tables: map[uint32][]uint32{}}
 	seen := map[uint32]bool{}
 	work := []uint32{start}
+	viaJmp := map[uint32]bool{}       // reached by an unconditional jump
+	branchHist := map[uint32]recent{} // the path so far, at each branch target
 	for len(work) > 0 {
 		va := work[len(work)-1]
 		work = work[:len(work)-1]
+		hist := branchHist[va]
+		first := true
 	path:
 		for !seen[va] {
-			if va != start {
+			if va != start && first && viaJmp[va] {
 				if _, isFunc := a.starts[va]; isFunc {
 					break // tail call; the translator emits it as a call
 				}
 			}
+			first = false
 			in, ok := a.decode(va)
 			if !ok {
 				b.Bad = append(b.Bad, va)
@@ -568,11 +683,15 @@ func (p *Program) Body(start uint32) Body {
 				if t, ok := relTarget(in, next); ok {
 					if a.f.SectionAt(t) == a.f.SectionAt(start) {
 						work = append(work, t)
+						viaJmp[t] = true
 					}
 				} else if _, ok := a.thunkRef(in); !ok {
-					if targets := a.jumpTable(in, start); len(targets) > 0 {
+					if targets := a.jumpTable(in, &hist, start); len(targets) > 0 {
 						b.Tables[va] = targets
 						work = append(work, targets...)
+						for _, t := range targets {
+							viaJmp[t] = true
+						}
 					}
 				}
 				break path
@@ -580,9 +699,15 @@ func (p *Program) Body(start uint32) Body {
 				if isCondBranch(in.Op) {
 					if t, ok := relTarget(in, next); ok {
 						work = append(work, t)
+						if _, ok := branchHist[t]; !ok {
+							h := hist
+							h.add(in)
+							branchHist[t] = h
+						}
 					}
 				}
 			}
+			hist.add(in)
 			va = next
 		}
 	}

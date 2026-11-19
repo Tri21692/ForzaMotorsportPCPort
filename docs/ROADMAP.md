@@ -20,6 +20,8 @@ The hard parts are graphics and audio, not the CPU.
 - [x] Kernel export table with calling conventions
 - [x] Function discovery: descent, jump tables, prologue and vtable scans
 - [x] Disassembly listing per function (`xbedis`)
+- [x] Jump tables indexed after `and reg, mask` (unused slots) and after
+      `neg reg` (backwards), as the CRT's memcpy/memmove use them.
 - [ ] Lower the indirect-jump count: find register-loaded jump tables and
       `jmp eax` after table loads
 - [ ] Cross-references from code to data (strings, globals, float constants)
@@ -56,7 +58,7 @@ Design and test details are in [RECOMPILER.md](RECOMPILER.md).
       flow.
 - [x] Integer core, SSE1, x87 as 80-bit `long double` on the host x87
       with the game's control word mirrored, MMX aliased onto the x87
-      registers as on hardware. **99.1% of Forza's functions translate
+      registers as on hardware. **99.2% of Forza's functions translate
       fully**. The rest is driver code that gets replaced, plus misdecoded
       data, and all of the generated C compiles.
 - [x] Differential testing against Unicorn: 473 edge-case instruction
@@ -92,12 +94,31 @@ The runtime is in `runtime/`; see [runtime/README.md](../runtime/README.md).
       settings, DbgPrint.
 - [x] Controllers: XAPI's input functions replaced (one neutral gamepad).
 - [x] Interrupts, PCI config space, port I/O, the AV encoder.
-- **Status:** the native build runs `mainCRTStartup`, XAPI init, the C++
-  static initializers and Forza's own startup, creates the D3D device and
-  sets the display mode (640x480, 32-bit). It then looks for `D:\MEDIA`,
-  the disc's data, which the runtime needs from the player's own disc.
-- [ ] The Z: utility drive (`XMountUtilityDrive`), the crypto used for
-      saves, the remaining kernel imports as the game reaches them.
+- [x] Windows host (MinGW-w64): the 4 GB guest space as placeholders with
+      the RAM views mapped twice and memory committed on first touch,
+      binary-mode files, timed waits on the wall clock.
+- [x] Preemption: translated loop back-edges hand the big lock to a
+      waiting thread, so code that spins on a fence lets the ISR in.
+- [x] Hard disk as the console has it: raw partitions, the cache partition
+      table on partition 0, formatting, `Z:` (`XMountUtilityDrive`) and
+      `N:`, delete and rename, FILE_OBJECTs for `XGetFilePhysicalSortKey`.
+- [x] Controllers from XInput or the keyboard.
+- [x] File semantics the installer needs: NT share access, unbuffered
+      writes clipped at end of file, failed reads that leave the
+      caller's IO_STATUS_BLOCK and event alone, user APCs (ReadFileEx)
+      delivered in alertable waits, the file system cache calls.
+- [x] APU registers DSOUND waits on (`apu.c`), networking as "no cable"
+      (`hle_net.c`).
+- [x] Directory listings, fibers (one host thread per fiber, sharing the
+      guest thread), the CPU's identity (cpuid, EFLAGS.ID), save signing
+      crypto (SHA-1, HMAC, RC4; the console's keys are zeroed, so saves
+      stay on this machine).
+- **Status:** with the player's extracted disc, the game boots through
+  the install, the movies and its saves into the front end, creates and
+  saves a profile, and races: with `XBRT_GPU=gl` a race on Maple Valley
+  runs at about 15-20 frames a second, all drawn; no sound yet. See
+  [NIGHTLY.md](NIGHTLY.md) for what is next.
+- [ ] The remaining kernel imports as the game reaches them.
 
 ## Phase 4: graphics (in progress)
 
@@ -111,9 +132,24 @@ boundary is smaller and fixed instead.
       (jumps, calls, methods), object lookup in instance memory, fences
       (semaphore release), vertical blank interrupt. D3D initialises the
       device and runs its startup command stream.
-- [ ] Render Kelvin methods on the PC: surfaces, vertex arrays and
-      inline vertices, vertex programs and register combiners translated
-      to shaders, swizzled textures. Present the front buffer.
+- [x] The driver handshakes `Present` needs: semaphore releases mirrored
+      into PGRAPH 0x400B10, NOP notifies trapped to the ISR.
+- [x] A window and screenshots: the scanned-out front buffer with the
+      video overlay composited, so Bink movies play; colour clears.
+- [x] A software rasteriser (`runtime/raster.c`) for the front end:
+      inline and array vertices, vertex programs interpreted, the
+      transform constants the fixed-function methods load, register
+      combiners, four texture stages (swizzled, linear, palettised, DXT;
+      pass-through mode), blending, anti-aliased surfaces. The menus
+      draw, text included.
+- [ ] Pace flips to the vertical blank (they run at ~500 a second now).
+- [x] Depth, swizzled and cube textures, shadow maps, filtering and
+      mipmaps (GPU path), fog: what the race uses so far.
+- [ ] Stencil, fixed-function fog and lighting, texgen.
+- [x] Drawing on the PC's GPU (`XBRT_GPU=gl`, docs/GPU.md): register
+      combiners as one fragment shader, vertex programs translated to
+      GLSL, render targets sampled where they were drawn.
+- [ ] Depth textures sampled on the GPU; batch draws.
 
 Earlier notes, from when the plan was to replace the API:
 

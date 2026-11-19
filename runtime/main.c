@@ -2,6 +2,8 @@
  *
  * usage: forza [path/to/default.xbe]
  *   XBRT_LOG=1   log kernel calls (2: also memory and files)
+ *   XBRT_LOG_FROM=<seconds>  start logging only then
+ *   XBRT_THREAD_DUMP=<seconds>  print every thread's state then (debugging)
  *   XBRT_DISC    directory holding the extracted disc (default: the XBE's)
  *   XBRT_HDD     directory for the hard disk partitions (default: ./hdd)
  */
@@ -12,6 +14,10 @@
 
 #include "rt.h"
 #include "nv2a.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 RtImage rt_image;
 int rt_log_level;
@@ -27,12 +33,12 @@ void rt_log(const char *fmt, ...) {
 
 /* Print the guest stack's likely return addresses, the closest thing to a
  * backtrace: dwords that point at the instruction after a translated call. */
-static void guest_backtrace(XbCtx *c) {
+void rt_backtrace(XbCtx *c) {
     if (!c) return;
     fprintf(stderr, "  eax=%08x ecx=%08x edx=%08x ebx=%08x esp=%08x ebp=%08x esi=%08x edi=%08x\n",
             c->eax, c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi);
     fprintf(stderr, "  stack:");
-    for (int i = 0; i < 24; i++) fprintf(stderr, "%s%08x", i % 8 ? " " : "\n    ", xb_rd32(c->esp + 4 * i));
+    for (int i = 0; i < 64; i++) fprintf(stderr, "%s%08x", i % 8 ? " " : "\n    ", xb_rd32(c->esp + 4 * i));
     fprintf(stderr, "\n");
 }
 
@@ -43,7 +49,7 @@ void rt_fatal(XbCtx *c, const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
-    guest_backtrace(c);
+    rt_backtrace(c);
     fflush(stderr);
     _exit(1);
 }
@@ -52,7 +58,32 @@ void xb_trap(XbCtx *c, uint32_t addr, const char *why) { rt_fatal(c, "trap at %0
 
 uint64_t xb_rdtsc(XbCtx *c) {
     (void)c;
-    return rt_now_100ns() * 733 / 10; /* a 733 MHz Pentium III */
+    return rt_game_now_100ns() * 733 / 10; /* a 733 MHz Pentium III (the game's clock: slow motion) */
+}
+
+/* cpuid as the Xbox's CPU answers it: a GenuineIntel Pentium III
+ * (family 6, model 8) with FPU, TSC, CMOV, MMX, FXSR and SSE, and its
+ * 128 KB L2 cache. Code picks routines from this (Bink and the C runtime
+ * test for MMX), so it must not see the host's CPU. */
+void xb_cpuid(XbCtx *c) {
+    uint32_t leaf = c->eax;
+    c->eax = c->ebx = c->ecx = c->edx = 0;
+    switch (leaf) {
+    case 0:
+        c->eax = 2;           /* highest leaf */
+        c->ebx = 0x756E6547u; /* "Genu" */
+        c->edx = 0x49656E69u; /* "ineI" */
+        c->ecx = 0x6C65746Eu; /* "ntel" */
+        break;
+    case 1:
+        c->eax = 0x0000068Au;  /* family 6, model 8, stepping 10 */
+        c->edx = 0x0383F9FFu;  /* FPU..PGE, CMOV, PAT, PSE36, MMX, FXSR, SSE */
+        break;
+    case 2:
+        c->eax = 0x03020101u; /* TLB and L1 descriptors */
+        c->edx = 0x0C040841u; /* L1 caches, 128 KB L2 */
+        break;
+    }
 }
 
 /* ---- XBE loading ---- */
@@ -95,7 +126,25 @@ static void load_xbe(const char *path) {
     }
     rt_mem_reserve_image(base, img);
 
+    /* XBRT_FPS=30 or 60: Forza's frame rate. The retail game presents every
+     * second vertical blank (30 fps); the 60 fps patch is this one value in
+     * .data set to 1. Only where the neighbouring bytes are Forza's. */
+    const char *fps = getenv("XBRT_FPS");
+    const uint32_t at = 0x554944;
+    int forza = at + 8 <= base + img && xb_rd32(at - 4) == 1 && (xb_rd32(at) == 1 || xb_rd32(at) == 2) && xb_rd32(at + 4) == 0x80000002u;
+    if (forza) rt_frame_interval_at = at; /* the flip pacing reads it (nv2a.c) */
+    if (fps && *fps) {
+        uint32_t interval = atoi(fps) >= 60 ? 1 : 2;
+        if (forza) {
+            rt_log("XBRT_FPS=%s: frame interval %u -> %u vertical blanks\n", fps, xb_rd32(at), interval);
+            xb_wr32(at, interval);
+        } else {
+            fprintf(stderr, "xbrt: XBRT_FPS: this is not the Forza Motorsport the setting knows; ignored\n");
+        }
+    }
+
     rt_image.base = base;
+    rt_image.size = img;
     rt_image.entry = e;
     rt_image.thunk = k;
     rt_image.tls_dir = le32(raw + 0x12C);
@@ -112,17 +161,230 @@ static void load_xbe(const char *path) {
     rt_log("loaded %s: entry %08x, kernel thunks %08x, TLS %u bytes\n", path, e, k, rt_image.tls_size);
 }
 
+/* Functions built with xbrecomp -trace call these: one line per call and
+ * per return. Arguments that point at text show it. */
+static void trace_arg(char *out, size_t n, uint32_t v) {
+    int len = 0;
+    if (v >= 0x10000 && v < 0x08000000)
+        while (len < 60 && xb_mem[v + len] >= 0x20 && xb_mem[v + len] < 0x7F) len++;
+    if (len >= 3 && !xb_mem[v + len]) snprintf(out, n, "%08x \"%.*s\"", v, len, (const char *)xb_mem + v);
+    else snprintf(out, n, "%08x", v);
+}
+
+void xb_trace_enter(XbCtx *c, uint32_t fn) {
+    char a[5][80];
+    for (int i = 0; i < 5; i++) trace_arg(a[i], sizeof a[i], xb_rd32(c->esp + 4 + 4 * i));
+    char e[80];
+    trace_arg(e, sizeof e, c->ecx);
+    fprintf(stderr, "[%10.3f] trace %08x from %08x: ecx %s; %s, %s, %s, %s, %s\n", rt_now_100ns() / 1e7, fn, xb_rd32(c->esp), e,
+            a[0], a[1], a[2], a[3], a[4]);
+}
+
+void xb_trace_leave(XbCtx *c, uint32_t fn) {
+    fprintf(stderr, "[%10.3f] trace %08x returns %08x\n", rt_now_100ns() / 1e7, fn, c->eax);
+}
+
+static int log_deferred;  /* XBRT_LOG's level, held back until XBRT_LOG_FROM */
+static double log_from;
+
+void rt_log_tick(void) {
+    static const char *dumps; /* XBRT_THREAD_DUMP: seconds, comma-separated */
+    static double dump_at = -1;
+    if (dump_at < 0) {
+        dumps = getenv("XBRT_THREAD_DUMP");
+        dump_at = dumps && atof(dumps) > 0 ? atof(dumps) : 0;
+    }
+    if (dump_at > 0 && rt_now_100ns() >= (uint64_t)(dump_at * 1e7)) {
+        fprintf(stderr, "---- threads at %.1f s ----\n", rt_now_100ns() / 1e7);
+        rt_thread_dump();
+        dumps = strchr(dumps, ',');
+        dump_at = dumps ? atof(++dumps) : 0;
+    }
+    { /* A hang: no frame for 8 s once the game has shown some. Every
+       * thread's state, once a stall, for the log (XBRT_HANG_DUMP=0: off);
+       * a wait that never ends is otherwise never logged. */
+        static int on = -1, dumped;
+        static uint32_t flips;
+        static uint64_t since;
+        if (on < 0) on = !getenv("XBRT_HANG_DUMP") || atoi(getenv("XBRT_HANG_DUMP"));
+        uint64_t now = rt_now_100ns();
+        if (nv2a.flips != flips || nv2a.flips < 100) flips = nv2a.flips, since = now, dumped = 0;
+        else if (on && !dumped && now - since > 80000000) {
+            fprintf(stderr, "---- no frame for 8 s at %.1f s (after %u): threads ----\n", now / 1e7, flips);
+            rt_thread_dump();
+            dumped = 1;
+        }
+    }
+    if (log_deferred && rt_now_100ns() >= (uint64_t)(log_from * 1e7)) {
+        rt_log_level = log_deferred, log_deferred = 0;
+        rt_log("logging from here on (XBRT_LOG_FROM)\n");
+    }
+}
+
+void rt_sleep_precise(uint64_t ns) {
+#ifdef _WIN32
+    static __thread HANDLE timer;
+    if (!timer) timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    LARGE_INTEGER due = {.QuadPart = -(LONGLONG)(ns / 100)};
+    if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, INFINITE);
+    else Sleep((DWORD)(ns / 1000000));
+#else
+    struct timespec ts = {(time_t)(ns / 1000000000u), (long)(ns % 1000000000u)};
+    nanosleep(&ts, NULL);
+#endif
+}
+
+/* XBRT_PROFILE=<file>: where a thread spends its time (the device
+ * thread's, nv2a.c), sampled every millisecond from inside the process:
+ * the instruction and two callers, rewritten every 5 s as "<count> <pc>
+ * <caller> <caller's caller>" after a "base" line for addr2line. A
+ * debugger attaching to sample stopped the game long enough to skew it. */
+#ifdef _WIN32
+#define PROF_SLOTS 65536
+typedef struct { uint64_t pc[3]; uint32_t n; } ProfSlot;
+typedef struct { HANDLE th; char path[1024]; ProfSlot *tab; int snaps; } Prof;
+
+static void prof_write(Prof *p) {
+    /* XBRT_PROFILE_EVERY=<ms>: written that often, each as <file>.<n> instead (a stretch read as two snapshots' difference) */
+    static int keep = -1;
+    if (keep < 0) keep = getenv("XBRT_PROFILE_EVERY") ? atoi(getenv("XBRT_PROFILE_EVERY")) : 0;
+    char kept[1100];
+    if (keep > 0) snprintf(kept, sizeof kept, "%s.%05d", p->path, p->snaps++);
+    FILE *f = fopen(keep > 0 ? kept : p->path, "w");
+    if (!f) return;
+    fprintf(f, "base %llx\n", (unsigned long long)(uintptr_t)GetModuleHandleW(NULL));
+    for (int i = 0; i < PROF_SLOTS; i++)
+        if (p->tab[i].n) {
+            /* a sample outside the exe: the module it is in (a wait in ntdll, the GL driver...) */
+            char mod[MAX_PATH] = "";
+            HMODULE m = NULL;
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCSTR)(uintptr_t)p->tab[i].pc[0], &m) && m != GetModuleHandleW(NULL) && GetModuleFileNameA(m, mod, sizeof mod)) {
+                char *b = strrchr(mod, '\\');
+                if (b) memmove(mod, b + 1, strlen(b));
+            } else {
+                mod[0] = 0;
+            }
+            fprintf(f, "%u %llx %llx %llx%s%s\n", p->tab[i].n, (unsigned long long)p->tab[i].pc[0], (unsigned long long)p->tab[i].pc[1],
+                    (unsigned long long)p->tab[i].pc[2], mod[0] ? " " : "", mod);
+        }
+    fclose(f);
+}
+
+static void *prof_main(void *arg) {
+    Prof *pr = arg;
+    HANDLE th = pr->th;
+    uint64_t last = rt_now_100ns();
+    for (;;) {
+        rt_sleep_precise(1000000);
+        if (SuspendThread(th) == (DWORD)-1) break;
+        CONTEXT c = {.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER};
+        uint64_t pc[3] = {0};
+        if (GetThreadContext(th, &c)) {
+            pc[0] = c.Rip;
+            for (int k = 1; k < 3; k++) { /* by the unwind tables: no frame pointers at -O2 */
+                DWORD64 image;
+                PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c.Rip, &image, NULL);
+                if (!fn) break;
+                void *handler;
+                DWORD64 frame;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, c.Rip, fn, &c, &handler, &frame, NULL);
+                pc[k] = c.Rip;
+            }
+        }
+        ResumeThread(th);
+        uint64_t h = (pc[0] * 0x9E3779B97F4A7C15ull ^ pc[1] * 0xC2B2AE3D27D4EB4Full ^ pc[2]) >> 48;
+        for (int probe = 0; probe < 64; probe++, h = (h + 1) % PROF_SLOTS)
+            if (!pr->tab[h].n || !memcmp(pr->tab[h].pc, pc, sizeof pc)) {
+                memcpy(pr->tab[h].pc, pc, sizeof pc), pr->tab[h].n++;
+                break;
+            }
+        static int64_t every = -1;
+        if (every < 0) every = getenv("XBRT_PROFILE_EVERY") && atoi(getenv("XBRT_PROFILE_EVERY")) > 0 ? (int64_t)atoi(getenv("XBRT_PROFILE_EVERY")) * 10000 : 50000000;
+        if (rt_now_100ns() - last > (uint64_t)every) last = rt_now_100ns(), prof_write(pr);
+    }
+    prof_write(pr);
+    return NULL;
+}
+
+static void prof_start(pthread_t t, const char *path) {
+    Prof *pr = calloc(1, sizeof *pr);
+    pr->tab = calloc(PROF_SLOTS, sizeof *pr->tab);
+    pr->th = pthread_gethandle(t);
+    snprintf(pr->path, sizeof pr->path, "%s", path);
+    pthread_t p;
+    pthread_create(&p, NULL, prof_main, pr);
+}
+#endif
+
+void rt_profile_thread(pthread_t t) {
+#ifdef _WIN32
+    if (getenv("XBRT_PROFILE")) prof_start(t, getenv("XBRT_PROFILE"));
+#else
+    (void)t;
+#endif
+}
+
+/* XBRT_PROFILE_GAME=<file>: the same for each guest thread (thread.c), one file each,
+ * <file>.<n>.txt in the order they start: where the game's own code spends its time. */
+void rt_profile_game_thread(pthread_t t) {
+#ifdef _WIN32
+    static int n;
+    const char *base = getenv("XBRT_PROFILE_GAME");
+    if (!base) return;
+    char path[1024];
+    snprintf(path, sizeof path, "%s.%d.txt", base, n++);
+    prof_start(t, path);
+#else
+    (void)t;
+#endif
+}
+
+static void said_exit(void) {
+    fprintf(stderr, "xbrt: exiting (exit, or the last guest thread ended)\n");
+    fflush(stderr);
+}
+
 int main(int argc, char **argv) {
+    atexit(said_exit); /* (every way out says so: HalReturnToFirmware, the window's close and the crash handler do too) */
+    rt_settings_load(); /* forza.ini: before anything reads an XBRT_* switch */
+    rt_soundtracks_init();
+    rt_spotify_init();
     const char *env = getenv("XBRT_LOG");
     rt_log_level = env ? atoi(env) : 0;
+    const char *from = getenv("XBRT_LOG_FROM");
+    if (from && atof(from) > 0 && rt_log_level) log_from = atof(from), log_deferred = rt_log_level, rt_log_level = 0;
+#ifdef _WIN32
+    timeBeginPeriod(1); /* 1 ms sleeps, as the DPC thread and waits expect */
+    { /* which Windows 11 drops for a process with no window in view (headless,
+       * minimised, covered): sleeps to the next vertical blank woke 4-15 ms
+       * late. Nor slow its threads to save power. */
+        PROCESS_POWER_THROTTLING_STATE p = {PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+            PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, 0};
+        SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &p, sizeof p);
+    }
+    { /* aware of the screen's scaling, so the window is drawn at the screen's own pixels: at 150%
+       * Windows had the game draw a smaller window and stretched it (soft, and Game Bar recorded
+       * the smaller picture). Per monitor (v2) where Windows has it, else the whole system's. */
+        typedef BOOL(WINAPI * SetCtx)(HANDLE);
+        SetCtx set = (SetCtx)(void *)GetProcAddress(GetModuleHandleA("user32.dll"), "SetProcessDpiAwarenessContext");
+        if (!set || !set((HANDLE)(intptr_t)-4)) SetProcessDPIAware(); /* -4: DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */
+    }
+#endif
     const char *path = argc > 1 ? argv[1] : "default.xbe";
 
     rt_mem_init();
     load_xbe(path);
     rt_kernel_init();
+    rt_fibers_init();
+    rt_crypto_init();
     rt_files_init();
+    rt_career_cats_init();
+    rt_mods_installer_records();
     rt_hw_init();
     rt_nv2a_init();
+    rt_apu_init();
+    rt_display_init();
 
     RtThread *t = rt_thread_create(0x40000, rt_image.tls_size, 0);
     rt_dpc_start();

@@ -1,0 +1,5 @@
+# Functions in Forza's default.xbe that are only reached through computed
+# pointers, so discovery cannot find them. Give this file to xbrecomp with
+# -entries. Add an address when the runtime stops with "indirect call to X,
+# which is not a translated function".
+2FE3D9    # an x87 helper, called through a pointer during a race

@@ -1,0 +1,93 @@
+{
+ "merge": {
+  "KIT00_BODY": [
+   "KIT00_BODY",
+   "BASE"
+  ],
+  "KIT00_HEADLIGHT": [
+   "KIT00_HEADLIGHT_*2"
+  ],
+  "KIT00_FRONT_BUMPER": [
+   "KIT00_FRONT_BUMPER"
+  ],
+  "KIT00_REAR_BUMPER": [
+   "KIT00_REAR_BUMPER"
+  ],
+  "KIT00_BRAKELIGHT": [
+   "KIT00_BRAKELIGHT"
+  ],
+  "KIT00_LEFT_SIDE_MIRROR": [
+   "KIT00_LEFT_SIDE_MIRROR"
+  ],
+  "KIT00_RIGHT_SIDE_MIRROR": [
+   "KIT00_RIGHT_SIDE_MIRROR"
+  ]
+ },
+ "hide": [
+  "skirt"
+ ],
+ "shop": {
+  "bumperFb": [
+   "KIT01_FRONT_BUMPER",
+   0
+  ],
+  "bumperRb": [
+   "KIT01_REAR_BUMPER",
+   0
+  ],
+  "skirtLb": [
+   "KIT01_SKIRT",
+   -1
+  ],
+  "skirtRb": [
+   "KIT01_SKIRT",
+   1
+  ],
+  "bumperFc": [
+   "KIT03_FRONT_BUMPER",
+   0
+  ],
+  "bumperRc": [
+   "KIT03_REAR_BUMPER",
+   0
+  ],
+  "skirtLc": [
+   "KIT03_SKIRT",
+   -1
+  ],
+  "skirtRc": [
+   "KIT03_SKIRT",
+   1
+  ],
+  "bumperFd": [
+   "KIT09_FRONT_BUMPER",
+   0
+  ],
+  "bumperRd": [
+   "KIT09_REAR_BUMPER",
+   0
+  ],
+  "skirtLd": [
+   "KIT09_SKIRT",
+   -1
+  ],
+  "skirtRd": [
+   "KIT09_SKIRT",
+   1
+  ],
+  "hoodb": [
+   "STYLE01_HOOD",
+   0
+  ],
+  "hoodc": [
+   "STYLE11_HOOD",
+   0
+  ]
+ },
+ "arches": [
+  2.1,
+  -2.1,
+  2.0,
+  -2.15
+ ]
+}

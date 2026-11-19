@@ -26,8 +26,13 @@ see [Building the output](#building-the-output).
 | `call reg` / `call [mem]` | `xb_call_indirect(c, target)` |
 | Anything unsupported | `xb_trap(c, addr, "unsupported: OP")`, so gaps fail loudly at run time |
 
-A function's body is everything reachable from its entry without passing
-through another function's entry (`analysis.Body`). Tails that MSVC shares
+A function's body is everything reachable from its entry without jumping
+to another function's entry (`analysis.Body`). Falling through into a
+known entry, or branching to one conditionally, keeps going: flags can be
+live there, and a host call would lose them. That matters because data
+references create false starts inside real functions; in Forza 3,198
+functions run through one, and one of them (0x7B649, right after a `cmp`)
+made every profile save fail. Tails that MSVC shares
 between functions are duplicated into each one, since C cannot jump between
 functions. Such a tail can sit below the entry, so a function starts with a
 `goto` to its entry whenever the entry is not its lowest address. A jump

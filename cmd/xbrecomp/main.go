@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/Tri21692/ForzaMotorsportPC/analysis"
 	"github.com/Tri21692/ForzaMotorsportPC/recomp"
@@ -27,6 +29,8 @@ func main() {
 	outDir := flag.String("o", "", "write C files to this directory")
 	dbDir := flag.String("xbsdb", "", "XbSymbolDatabase checkout, to name library functions")
 	top := flag.Int("top", 25, "how many unsupported instructions to list")
+	trace := flag.String("trace", "", "comma-separated function addresses (hex) that log their calls and returns")
+	entries := flag.String("entries", "", "file of extra function addresses (hex, one a line, # comments) that discovery cannot find")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: xbrecomp [-xbsdb dir] [-o dir] default.xbe")
 		flag.PrintDefaults()
@@ -62,13 +66,45 @@ func main() {
 			vars[m.Addr] = m.Name // a real global, not a derived struct offset
 		}
 	}
+	if *entries != "" {
+		// Functions only ever reached through computed pointers, which
+		// discovery cannot see: the runtime names them when the game calls
+		// one ("indirect call to X, which is not a translated function").
+		raw, err := os.ReadFile(*entries)
+		if err != nil {
+			fail(err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if i := strings.IndexByte(line, '#'); i >= 0 {
+				line = line[:i]
+			}
+			if line = strings.TrimPrefix(strings.TrimSpace(line), "0x"); line == "" {
+				continue
+			}
+			va, err := strconv.ParseUint(line, 16, 32)
+			if err != nil {
+				fail(fmt.Errorf("%s: %v", *entries, err))
+			}
+			seeds = append(seeds, uint32(va))
+		}
+	}
 	p := analysis.Analyze(f, seeds...)
 	var funcs []uint32
 	for va := range p.Funcs {
 		funcs = append(funcs, va)
 	}
 
-	t := &recomp.Translator{P: p, F: f, Names: names, Vars: vars, HW: analysis.DriverSections}
+	t := &recomp.Translator{P: p, F: f, Names: names, Vars: vars, HW: analysis.DriverSections, Trace: map[uint32]bool{}}
+	for _, s := range strings.Split(*trace, ",") {
+		if s = strings.TrimPrefix(strings.TrimSpace(s), "0x"); s == "" {
+			continue
+		}
+		va, err := strconv.ParseUint(s, 16, 32)
+		if err != nil {
+			fail(fmt.Errorf("-trace: %v", err))
+		}
+		t.Trace[uint32(va)] = true
+	}
 	files, out := t.Program(funcs, 500)
 	report(out, *top)
 
@@ -82,7 +118,11 @@ func main() {
 		}
 		files["xbrt.h"] = string(hdr)
 		for name, body := range files {
-			if err := os.WriteFile(filepath.Join(*outDir, name), []byte(body), 0o644); err != nil {
+			path := filepath.Join(*outDir, name)
+			if old, err := os.ReadFile(path); err == nil && string(old) == body {
+				continue // unchanged: keep its time stamp, so make skips it
+			}
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 				fail(err)
 			}
 		}

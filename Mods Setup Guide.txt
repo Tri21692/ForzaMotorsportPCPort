@@ -1,0 +1,45 @@
+Getting the mods working
+========================
+For "Forza mods 2026-11-15.zip". About five minutes.
+
+What you need first
+  1. The Forza Motorsport Remastered folder (the PC port), already able to start the plain game with "Play Forza.bat".
+  2. Your own copy of the Forza Motorsport (Xbox, 2005) disc, extracted to a folder, so that you have its default.xbe.
+     The mods do not include the game.
+
+Steps
+  1. Close the game if it is running.
+  2. Unzip "Forza mods 2026-11-15.zip" straight into the Forza Motorsport Remastered folder and let it merge.
+     Afterwards you should have:
+         Forza Motorsport Remastered\Play Forza (New mods).bat
+         Forza Motorsport Remastered\runtime\forza-next.exe
+         Forza Motorsport Remastered\run\mods_next\        (the mods themselves)
+     Nothing of the plain game is replaced: forza.exe, your other mods folders and your saves stay as they are.
+  3. Only on a PC other than the one the zip was made on: open "Play Forza (New mods).bat" in Notepad. Its last long
+     line ends with the full path of default.xbe in quotes. Change that path to where your default.xbe is. Save.
+  4. Double-click "Play Forza (New mods).bat".
+
+Checking it worked
+  - Arcade > the track list: Fuji Speedway and the Pacific Shipyards Circuit (and its reverse) are there, each with a
+    drive-through preview.
+  - Career > Buy Cars: the add-on cars are in the dealers (47 of them, from the Nissan 240SX to the Bugatti Chiron).
+  - Career > Go Race: Mayhem, Drift, Time Trial and the other added series are in the Race Type list.
+
+Saves
+  The launcher uses the save disk in run\hdd_test (the "Debug" profile). To play on a different one, change the
+  "set XBRT_HDD=" line in the .bat to that folder. Back the save folder up before the first run with mods: a profile
+  that owns add-on cars needs those cars' files to stay as they are, so do not go back to an older mods folder on the
+  same save.
+
+If something goes wrong
+  - "There's a problem with the disc you're using": the default.xbe path in the .bat is wrong, or the zip was unzipped
+    one folder too deep (look for run\mods_next\media directly under the game folder).
+  - The window closes at once: the .bat pauses on an error; the game's own report is in run\screenshots\play_log.txt.
+  - No new tracks or cars: you started a different .bat. Only "Play Forza (New mods).bat" uses this mods folder.
+  - To go back to the plain game: start "Play Forza.bat". To remove the mods: delete run\mods_next,
+    runtime\forza-next.exe and "Play Forza (New mods).bat".
+
+Good to know
+  - F12 saves a screenshot to run\screenshots.
+  - Fuji Speedway's pit lane can be driven through, but has no speed limit or pit camera yet.
+  - README.txt in the zip lists what was tested.

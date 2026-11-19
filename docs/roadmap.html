@@ -1,0 +1,228 @@
+<title>Forza PC Port Roadmap</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a pit-wall timing sheet. One summary strip, the open tasks grouped by area, then what's done, then the key cards.
+   On a phone each task row becomes a card: the name and note on top, the status and estimate beneath. */
+:root {
+  --bg: #f3f4f6; --panel: #ffffff; --fg: #16191f; --muted: #5b6270; --line: #d9dce3;
+  --accent: #c2410c; --accent-soft: #fde7da;
+  --next: #1d4ed8; --next-bg: #e0e8fb; --wait: #a16207; --wait-bg: #fbf0d4;
+  --later: #4b5563; --later-bg: #e8eaee; --done: #15803d; --done-bg: #dcf2e3;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111318; --panel: #191c23; --fg: #e8eaef; --muted: #9aa1ae; --line: #2c313b;
+  --accent: #fb8a4c; --accent-soft: #3a2418;
+  --next: #8fb0ff; --next-bg: #1c2a4a; --wait: #f0c463; --wait-bg: #3a3017;
+  --later: #b6bcc7; --later-bg: #262a33; --done: #6fd394; --done-bg: #173323; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111318; --panel: #191c23; --fg: #e8eaef; --muted: #9aa1ae; --line: #2c313b;
+  --accent: #fb8a4c; --accent-soft: #3a2418;
+  --next: #8fb0ff; --next-bg: #1c2a4a; --wait: #f0c463; --wait-bg: #3a3017;
+  --later: #b6bcc7; --later-bg: #262a33; --done: #6fd394; --done-bg: #173323; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.5; margin: 0; }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 32px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 6vw, 48px); line-height: 1; margin: 0; text-wrap: balance; letter-spacing: .01em; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 24px; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 65ch; margin: 0; }
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.strip div { background: var(--panel); padding: 14px 16px; display: grid; gap: 2px; }
+.strip b { font-family: var(--display); font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.strip span { font-size: 13px; color: var(--muted); }
+.sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tr.group td { font-family: var(--display); font-size: 18px; font-weight: 600; letter-spacing: .03em; background: var(--accent-soft); color: var(--fg); padding-block: 6px; }
+td.task b { font-weight: 600; display: block; }
+td.task span { color: var(--muted); font-size: 13.5px; }
+td.est { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.next { color: var(--next); background: var(--next-bg); }
+.wait { color: var(--wait); background: var(--wait-bg); }
+.later { color: var(--later); background: var(--later-bg); }
+.done { color: var(--done); background: var(--done-bg); }
+section { display: grid; gap: 12px; }
+.note { color: var(--muted); font-size: 13.5px; max-width: 70ch; margin: 0; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; }
+summary { cursor: pointer; font-weight: 600; }
+details ul { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 4px; color: var(--muted); font-size: 13.5px; }
+details li b { color: var(--fg); font-weight: 600; }
+code { font-family: var(--mono); font-size: 12.5px; }
+.keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
+.key { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding-block: 5px; }
+.key span:last-child { color: var(--muted); text-align: right; }
+kbd { font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; background: var(--bg); white-space: nowrap; }
+@media (max-width: 640px) {
+  thead { display: none; }
+  tbody tr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  tbody tr.group { padding: 0; }
+  tbody tr.group td { flex: 1 1 100%; }
+  tbody td { padding: 0; border: 0; }
+  td.task { flex: 1 1 100%; }
+  tbody tr:last-child { border-bottom: 0; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Forza Motorsport · PC port · as of 7 Nov 2026</div>
+    <h1>Forza PC Port Roadmap</h1>
+    <p class="lede">What's left before the port and its mods are ready to hand to other people, with rough working-time estimates. Estimates are hours of work, not calendar time. Since the last update on 26 Oct there have been 256 commits: two custom tracks, 47 add-on cars, and new career content (Amateur, Time Trial, Drift, Catch-Up, Mayhem).</p>
+  </header>
+
+  <div class="strip">
+    <div><b>32</b><span>tasks left</span></div>
+    <div><b>74–152 h</b><span>estimated work in total</span></div>
+    <div><b>13–26</b><span>nights at about 6 hours of work a night</span></div>
+    <div><b>15</b><span>waiting on you</span></div>
+  </div>
+
+  <section>
+    <h2>Open tasks</h2>
+    <div class="sheet">
+      <table>
+        <thead><tr><th>Task</th><th>Status</th><th>Estimate</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="3">Speed and smoothness</td></tr>
+          <tr><td class="task"><b>Frame drops with several rivals in view</b><span>7 Nov: the GPU thread now skips the graphics calls that change nothing, and re-uploads less geometry. On the Tokyo grid with 7 cars it went from 87% to 71% busy; on New York from 92% to 78%. New York still re-uploads about 66 draws a frame for a reason not found yet. Tell me which tracks still drop.</span></td><td><span class="pill wait">Your check</span></td><td class="est">2–6 h</td></tr>
+          <tr><td class="task"><b>One-frame black screen while racing</b><span>Fixed 7 Nov: a hitch of a few screen refreshes made the window show an empty copy of the picture. Now the last picture holds for up to 2 s.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Dips on the two custom tracks</b><span>Into the Pacific Shipyards Circuit hairpin and through Fuji's back-stretch woods. Averages are 57–59 fps, but the worst moments fall to 45–53. Fuji's woods are limited by the graphics card, so scale 3 helps.</span></td><td><span class="pill next">Next</span></td><td class="est">4–8 h</td></tr>
+          <tr><td class="task"><b>Softlock when quitting a race</b><span>Not seen since 26 Oct. If it happens, leave the game frozen for 10 s: the log gets every thread's state, and tools/hangstack.py now names the code each one is in.</span></td><td><span class="pill wait">Your check</span></td><td class="est">2–6 h</td></tr>
+
+          <tr class="group"><td colspan="3">Graphics</td></tr>
+          <tr><td class="task"><b>NSX rear light panel drawn flat grey</b><span>Its taillight panel shows flat grey with white blocks, in races and in My Cars.</span></td><td><span class="pill next">Next</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Odd texture on the career loading bar</b><span>Seen once on the loading screen before a career race. Not looked into yet.</span></td><td><span class="pill next">Next</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>Signs and cones appear late</b><span>On Pacific Shipyards they pop in a few tens of metres ahead, where xemu shows them from afar. The game itself sends them late; next is tracing its object placement.</span></td><td><span class="pill next">Next</span></td><td class="est">4–8 h</td></tr>
+          <tr><td class="task"><b>Projected shadows flash as dark slabs</b><span>At night, cars' street-lamp shadows sometimes draw in the wrong place for a frame. They're switched off only on the Pacific Shipyards Circuit layouts until this is fixed.</span></td><td><span class="pill next">Next</span></td><td class="est">3–6 h</td></tr>
+          <tr><td class="task"><b>Car shadows in the pre-race preview</b><span>Later shadow fixes may have solved it. Needs a look from you.</span></td><td><span class="pill wait">Your check</span></td><td class="est">1–2 h</td></tr>
+          <tr><td class="task"><b>Loading icon with a see-through background</b><span>Should be gone since the My Cars fix. Tell me if you see it again.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+
+          <tr class="group"><td colspan="3">Career and modes</td></tr>
+          <tr><td class="task"><b>Mayhem: chaos when hitting or riding walls</b><span>7 Nov: for 0.4 s after a hard knock, Mayhem's own steering help, pull, press-down and light gravity stand down, while grip stays. My test runs were too noisy to prove it either way, so tell me how it feels.</span></td><td><span class="pill wait">Your check</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Mayhem Tour Championship</b><span>Eight new Moments proposed, one each on Laguna Seca, Silverstone, Blue Mountains, Road America, Tsukuba, Alpine Ring, Pacific Shipyards Circuit and New York Short, plus four spares. They would fill the game's 16 Moment slots exactly. See docs/research/mayhem-championship.md.</span></td><td><span class="pill wait">Your call</span></td><td class="est">3–5 h</td></tr>
+          <tr><td class="task"><b>Prize cars</b><span>The four Professional series (Shipyard Grand Prix, Rear-Engine Rebellion, Rivals, Nordschleife Endurance) give no car yet, and the add-on cars were meant to be prizes somewhere. Pick which goes where.</span></td><td><span class="pill wait">Your call</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>Class F in Free Run and Arcade</b><span>The F badge shows in the store. Free Run's class picker showed D to R but no F; the add-ons are unlocked there since 6 Nov, but that hasn't been seen in the game yet.</span></td><td><span class="pill wait">Your check</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>Drift score targets</b><span>The 1st, 2nd and 3rd place scores for each drift event are first guesses (in drift.txt). Tell me your scores and I'll tune them.</span></td><td><span class="pill wait">Your feedback</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>Bigger Mayhem fields</b><span>Tried on 5 Nov: with 12 rivals most stalled mid-lap, 14 or more never got the start lights, and 17 crashed. Mayhem went back to 7 rivals.</span></td><td><span class="pill later">Later</span></td><td class="est">8–15 h</td></tr>
+
+          <tr class="group"><td colspan="3">Custom tracks</td></tr>
+          <tr><td class="task"><b>AI racing on Fuji Speedway</b><span>Laps count and the HUD map shows, but nobody has raced the AI there yet. You asked for the scenery and layout first.</span></td><td><span class="pill next">Next</span></td><td class="est">6–12 h</td></tr>
+          <tr><td class="task"><b>Pacific Shipyards Circuit on a fresh copy from GitHub</b><span>A clean clone of the branch built and ran with the mods, but the circuit regressed there. Not looked into yet.</span></td><td><span class="pill next">Next</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Track polish leftovers</b><span>Pacific Shipyards Circuit: a few building fronts set far back stay blurry, and 178 m of invisible walls remain in 13 spots. Fuji: a faint see-through band over the track near one bend.</span></td><td><span class="pill later">Later</span></td><td class="est">4–8 h</td></tr>
+          <tr><td class="task"><b>Fuji's loading screen picture</b><span>The picture is ready, but naming any new loading image gives a disc error. The cause isn't found yet, so Fuji loads with no picture.</span></td><td><span class="pill later">Later</span></td><td class="est">2–4 h</td></tr>
+
+          <tr class="group"><td colspan="3">Custom cars</td></tr>
+          <tr><td class="task"><b>The 32 new add-on cars in races</b><span>Installed 5 Nov. Their wheels were refitted over the store passes of 6–7 Nov (you said "looking better"), but they haven't been raced yet.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Eclipse Custom</b><span>Class A3 at 390 hp. Its store upgrades are locked apart from tyres and window tint. Check the shop hides the locked parts.</span></td><td><span class="pill wait">Your check</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>MX-5 RADBUL</b><span>Taken out on 2 Nov at your word ("I'll think of something later"). Its files are kept.</span></td><td><span class="pill wait">Your call</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>240SX SE shows an S14 body in the dealer</b><span>Found in the 4 Nov audit: its S13 model may not be the one used there.</span></td><td><span class="pill next">Next</span></td><td class="est">1–2 h</td></tr>
+          <tr><td class="task"><b>240SX roof turns grey at random</b><span>The top panel sometimes loses its paint colour. Not looked into yet.</span></td><td><span class="pill next">Next</span></td><td class="est">2–4 h</td></tr>
+          <tr><td class="task"><b>Countach glass, M8 sill</b><span>The Countach has no glass (its own is crumpled), and the M8's sill is ragged.</span></td><td><span class="pill later">Later</span></td><td class="est">1–3 h</td></tr>
+          <tr><td class="task"><b>A save that owns a removed add-on</b><span>A fallback so a profile doesn't break if an add-on car it owns is taken out of the mods.</span></td><td><span class="pill later">Later</span></td><td class="est">3–5 h</td></tr>
+
+          <tr class="group"><td colspan="3">Controls and audio</td></tr>
+          <tr><td class="task"><b>Key and button remapping</b><span>Choose your own keys, saved in a settings file. Your feedback on the stopgap layout feeds into this.</span></td><td><span class="pill wait">Your feedback</span></td><td class="est">3–5 h</td></tr>
+          <tr><td class="task"><b>Reverb and 3D sound positioning</b><span>The Xbox's sound effects processor isn't emulated yet, so tunnels and stands sound flat.</span></td><td><span class="pill later">Later</span></td><td class="est">8–15 h</td></tr>
+
+          <tr class="group"><td colspan="3">Hardware and release</td></tr>
+          <tr><td class="task"><b>Push to GitHub</b><span>The branch on GitHub is 143 commits behind (last pushed 30 Oct). Nothing is pushed without your OK.</span></td><td><span class="pill wait">Your call</span></td><td class="est">—</td></tr>
+          <tr><td class="task"><b>Intel integrated graphics pass</b><span>Last, as you asked. NVIDIA and other high-end GPUs come first.</span></td><td><span class="pill later">Last</span></td><td class="est">4–8 h</td></tr>
+          <tr><td class="task"><b>Packaging</b><span>A launcher that points at your own disc copy, plus a short readme. It ships no game files. The README already covers building and modding, and tools/moddisc.py makes a modded disc copy for ports with no mods folder.</span></td><td><span class="pill later">Last</span></td><td class="est">3–6 h</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The totals cover the 26 open tasks with an estimate. Checks with no work estimated aren't counted.</p>
+  </section>
+
+  <section>
+    <h2>Done since 26 Oct</h2>
+    <div class="sheet">
+      <table>
+        <thead><tr><th>Task</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="3">Mayhem</td></tr>
+          <tr><td class="task"><b>Mayhem career category</b><span>Takedowns with a slow-motion wreck camera, arcade handling, brake-to-drift, and eight Mayhem Moments with photographs on the F1 Moments page. Mayhem Tour I opens at level 15; Tour II, its second half, opens at level 30.</span></td><td><span class="pill done">3–7 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Positions by race distance</b><span>Places come from how far along the road each car is. Point-to-point tracks run as point-to-point races, and every rival starts ahead of you. You: "Works perfectly".</span></td><td><span class="pill done">7 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Takedown camera with no flicker or freeze</b><span>It no longer switches your view. A tip suggests a chase view if you're in another one, and the autopilot after a takedown runs 7 s unless you press a button. You: "Working perfectly".</span></td><td><span class="pill done">7 Nov</span></td><td></td></tr>
+
+          <tr class="group"><td colspan="3">Career</td></tr>
+          <tr><td class="task"><b>Career order</b><span>Time Trial, Point to Point, Amateur (where it opens), Drift, Professional, Mayhem, Championship, Endurance. No auto-scroll.</span></td><td><span class="pill done">7 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Amateur series</b><span>Sunday Stroll, Beetle Face Off, Japanese Showdown and Underdog Challenge, with logos made from the game's art.</span></td><td><span class="pill done">29 Oct</span></td><td></td></tr>
+          <tr><td class="task"><b>Time Trial category</b><span>In place of Online Career, with targets set by the clock that get harder up the ladder.</span></td><td><span class="pill done">28 Oct–1 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Catch-Up Challenge</b><span>Class S from level 35: the opponent gets a head start, and you win a Gallardo.</span></td><td><span class="pill done">30–31 Oct</span></td><td></td></tr>
+          <tr><td class="task"><b>Drift category</b><span>A seventh career tile with its own icon. The Drift Championship is scored on drift length and angle, with D-Spec cars. It opens at level 5.</span></td><td><span class="pill done">1–7 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Four Professional series</b><span>Shipyard Grand Prix, Rear-Engine Rebellion, Rivals and Nordschleife Endurance.</span></td><td><span class="pill done">1 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Quick Race, Prize Match and achievements</b><span>Quick Race's tracks are listed alphabetically, Tokyo included.</span></td><td><span class="pill done">3–4 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Class F and the DLC Cars search</b><span>The hypercars get a class above S. The store's Advanced Search has a DLC Cars entry that lists only the add-ons.</span></td><td><span class="pill done">6 Nov</span></td><td></td></tr>
+
+          <tr class="group"><td colspan="3">Custom tracks</td></tr>
+          <tr><td class="task"><b>Pacific Shipyards Circuit</b><span>A long layout with a hairpin and a garage, plus its reverse, Circuit II. It has its own map, logo and AI files, and seven AI cars race it cleanly.</span></td><td><span class="pill done">27 Oct–4 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Fuji Speedway from Gran Turismo 4</b><span>Built on Road Atlanta's data, with GT4's layout, racing line, hills, trees, pits, stands, banners and logo.</span></td><td><span class="pill done">2–4 Nov</span></td><td></td></tr>
+
+          <tr class="group"><td colspan="3">Custom cars</td></tr>
+          <tr><td class="task"><b>47 add-on cars</b><span>Converted from Need for Speed Underground, Underground 2 and Most Wanted. They include the Hero's M3 GTR (800 hp, about 242 mph, which you confirmed), the SC63, the Cobalt SS and 32 more added on 5 Nov. Each has its own tile with a DLC badge, real top speeds, and up to 7 gears.</span></td><td><span class="pill done">26 Oct–7 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Underground 2 body kits, hoods and spoilers</b><span>In the shop for the Neon, Silvia and Celica.</span></td><td><span class="pill done">5 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Car tools</b><span>Add a car or a maker, tune a car, take a car out, vinyls on converted cars, and audits of the career and car data (both clean).</span></td><td><span class="pill done">26 Oct–7 Nov</span></td><td></td></tr>
+
+          <tr class="group"><td colspan="3">Runtime and graphics</td></tr>
+          <tr><td class="task"><b>Random crashes</b><span>Our own track-streaming tweak wrote into freed memory, which caused the series, Gallardo and decal crashes. The hang after a takedown is guarded too, and no freezes have been seen since 5 Nov.</span></td><td><span class="pill done">30 Oct–5 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Picture options</b><span>HDR output; render scale up to 6× (now 3, your choice); texture upscaling and an HD pack; sharpening, bloom and vibrance; an FPS counter; PNG screenshots as shown; sharp at 150% Windows scaling.</span></td><td><span class="pill done">31 Oct–2 Nov</span></td><td></td></tr>
+          <tr><td class="task"><b>Quality of life</b><span>Mute in the background, a toast when a screenshot is saved, the game window brought to the front, and a "D3bUg" profile that starts at level 50 with everything unlocked.</span></td><td><span class="pill done">29 Oct–1 Nov</span></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <details>
+    <summary>Done up to 26 Oct</summary>
+    <ul>
+      <li><b>Speed:</b> a steady 60 fps race at 4×, even frame pacing, no freeze a second into a race, a fast pause menu, 30 fps mode at the right speed, smooth menus.</li>
+      <li><b>Graphics:</b> the hill corner's scenery, flickers and grey flashes, intro videos, the loading icon's black square, the suggested line, track logos, dark car bodies, the yellow loading screen, scenery texture flicker (the w-buffer), shade stripes, leaf edges, My Cars thumbnails, the menu after the vinyl editor, vinyls on the car, brightness, sharper reflections, a smoother scaled picture, less pop-in on long tracks.</li>
+      <li><b>PC features:</b> borderless fullscreen, a render scale, an in-game settings menu, V-Sync on, keyboard controls.</li>
+      <li><b>Audio:</b> race-start clicks down from up to 90 a second to 3–7.</li>
+      <li><b>Mods:</b> the mods folder, saves and career progress, Pacific Shipyards loading, reading Forza's car format and Need for Speed cars, the first converter.</li>
+    </ul>
+  </details>
+
+  <section>
+    <h2>Keyboard controls (stopgap)</h2>
+    <div class="keys">
+      <div class="key"><span><kbd>W</kbd></span><span>Throttle (RT)</span></div>
+      <div class="key"><span><kbd>S</kbd></span><span>Brake (LT)</span></div>
+      <div class="key"><span><kbd>A</kbd> <kbd>D</kbd> or <kbd>←</kbd> <kbd>→</kbd></span><span>Steer</span></div>
+      <div class="key"><span><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></span><span>Menus (D-pad)</span></div>
+      <div class="key"><span><kbd>Space</kbd> or <kbd>Z</kbd></span><span>A</span></div>
+      <div class="key"><span><kbd>X</kbd></span><span>B</span></div>
+      <div class="key"><span><kbd>C</kbd></span><span>X</span></div>
+      <div class="key"><span><kbd>V</kbd></span><span>Y</span></div>
+      <div class="key"><span><kbd>Q</kbd></span><span>White (left shoulder)</span></div>
+      <div class="key"><span><kbd>E</kbd></span><span>Black (right shoulder)</span></div>
+      <div class="key"><span><kbd>Enter</kbd></span><span>Start</span></div>
+      <div class="key"><span><kbd>Esc</kbd></span><span>Back</span></div>
+    </div>
+    <p class="note">Keys only register while the game window has focus. Steering eases to full lock over a quarter second and recentres in a tenth.</p>
+  </section>
+
+  <section>
+    <h2>Other keys</h2>
+    <div class="keys">
+      <div class="key"><span><kbd>F1</kbd></span><span>Settings, picture effects, Mayhem Moments</span></div>
+      <div class="key"><span><kbd>F12</kbd></span><span>Screenshot (PNG) to <code>run\screenshots\</code></span></div>
+      <div class="key"><span><kbd>F5</kbd></span><span>Culling off</span></div>
+      <div class="key"><span><kbd>F6</kbd></span><span>Depth test off</span></div>
+      <div class="key"><span><kbd>F7</kbd></span><span>Alpha test off</span></div>
+      <div class="key"><span><kbd>F8</kbd></span><span>Depth clip off</span></div>
+      <div class="key"><span><kbd>F9</kbd></span><span>Vertex programs on the CPU</span></div>
+    </div>
+    <p class="note">F5–F9 toggle, and the window title lists what's off. They're for finding rendering bugs, so they make the picture look wrong on purpose.</p>
+  </section>
+</div>

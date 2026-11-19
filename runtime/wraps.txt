@@ -1,0 +1,35 @@
+# Game functions the runtime replaces and still calls, as orig_f_<address> (wraps.awk copies
+# them from the generated code at build time). One hex address a line.
+265046  # GetTickCount: hle_qol.c, fast loading (the loading screens' least time)
+410E0   # CCar::ResetPositionForGrid: hle_career.c's catch-up start (XBRT_MODS catchup.txt)
+78080   # the profile's level getter: hle_minigame.c finds the profile by it
+78050   # the profile's credits getter (the career menus' status bar): likewise
+78940   # the profile's add-credits: hle_kaizo.c, a clean Kaizo race's rewards doubled
+75050   # the grid order (racer list, thiscall): hle_career.c, a big field (over 8 racers) never the random order (8 places on the stack)
+76370   # the random grid order (racer list, by its vtable): hle_career.c, a big field (over 8) in order instead
+BDCE0   # the replay keeps an AI racer's seed (10 of them): hle_career.c, a big field's 11th on not kept
+BDD00   # the replay reads one back: hle_career.c, past the 10th the one ten before
+16D130  # the subclass from the performance figure: hle_fclass.c, class F above S1 (S1 past 0.700)
+171000  # a car unlocked in a query's bitset: hle_unlock.c, the add-on cars in Free Run and the arcade
+3726D0  # the Advanced Search applied: hle_unlock.c, its "DLC Cars" entry
+1767A0  # a query condition (field, comparison, value): hle_unlock.c, that entry's turned to the add-on cars
+B3530   # the race's ranking (a place a racer, +0xBC): hle_career.c, Mayhem's places from where the cars are on the road
+B4AA0   # a racer over the line recorded (thiscall, the racer; its place from +0xBC, put back at the race's end): hle_career.c, Mayhem's place
+17E270  # a finished race's rewards (the cars won, a vector): hle_quickrace.c, the car for every Mayhem Moment pushed on
+56A40   # the garage takes a car (thiscall: ordinal, ...): hle_quickrace.c, the Mayhem prize marked given
+3BD550  # D3D_BlockOnTime: hle_d3d.c, XBRT_BOT_LOG=<ms> logs its long waits (debugging)
+3F602C  # DSOUND: a command for the GP DSP (spins until the last is acknowledged): hle_qol.c acknowledges each at once
+250B60  # an index into a ring of racing-line points (thiscall, one argument): hle_career.c, an empty ring answered without the divide by zero
+243F30  # a racing-line point index wrapped round the line (thiscall, one argument, then 0x2515A0): hle_career.c, an empty line answered without the divide by zero
+24DDD0  # an AI driver's update (thiscall, no arguments): hle_career.c, skipped while its racing-line follower (+0x2E8) is not an object
+24C070  # an AI driver walks its racing line a distance on (thiscall, 3 arguments): hle_quickrace.c, not while a car is NaN (the walk never ended)
+62C80   # the game's fatal error halt (an assert's end: it loops for good): hle_listcheck.c logs the message and, with XBRT_HEAP_TRAP, the freed blocks the stack points into
+258A60  # CSpeedComputer::GetBrakeAdjustedOptimalSpeed (thiscall): hle_listcheck.c, with XBRT_HEAP_TRAP its object and the pointers in it checked against the freed blocks held
+EEE30   # a car's transmission loaded for a race (thiscall; +8 the final drive, +0xC the ratios' count, +0x10 the ratios): hle_quickrace.c, Mayhem's 7 gears
+EF2B0   # a car's aero loaded for a race (thiscall; +0 LongitudinalDrag): hle_quickrace.c, Mayhem's lower drag
+32E010  # the leaderboard cache trimmed to its limit (thiscall): hle_qol.c raises the limit (+0x2DC) from 1 MB, past which the scoreboard just loaded was thrown out and "Updating scoreboards" called through 0
+3ACA10  # BinkCopyToBuffer: hle_clip.c, a track's preview clip of ours painted over the movie's frame
+43A90   # the AI car model list looked up by Id (thiscall, the Id): hle_rival.c, a matched event's rival given the player's car and setup
+16CFF0  # a car's performance figure (a CarInit and its physics): hle_rival.c, logged with XBRT_PERF_LOG to learn an upgraded car's class
+32E1A0  # the leaderboard manager's getter (thiscall: base, id, param): hle_qol.c, its every 0 logged
+A2040   # "Updating scoreboards" (thiscall): hle_qol.c, left out when its scoreboard is 0 (the crash at 0xA208A)

@@ -260,6 +260,48 @@ func (g *gen) sse(in analysis.Inst) bool {
 		g.line("%s", w)
 		return true
 
+	case x86asm.CVTPS2PI, x86asm.CVTTPS2PI:
+		// Two floats (an xmm register's low half, or 64 bits of memory)
+		// to two int32 in an MMX register, rounded or truncated as the
+		// scalar forms are. Writing an MMX register resets the x87 TOP.
+		m, ok := mmReg(a0)
+		if !ok {
+			return false
+		}
+		var f0, f1 string
+		if s, ok := xmm(a1); ok {
+			f0, f1 = fmt.Sprintf("c->xmm[%d].f[0]", s), fmt.Sprintf("c->xmm[%d].f[1]", s)
+		} else if mem, ok := a1.(x86asm.Mem); ok {
+			ad, ok := g.addr(mem)
+			if !ok {
+				return false
+			}
+			f0, f1 = "xb_rdf("+ad+")", "xb_rdf((uint32_t)("+ad+" + 4u))"
+		} else {
+			return false
+		}
+		fn := "xb_f2i_trunc"
+		if op == x86asm.CVTPS2PI {
+			fn = "xb_f2i_round"
+		}
+		g.line("{ XbMM r; r.d[0] = %s(%s); r.d[1] = %s(%s); c->ftop = 0; xb_mmw(c, %d, r.q); }", fn, f0, fn, f1, m)
+		return true
+
+	case x86asm.CVTPI2PS:
+		// Two int32 (an MMX register or 64 bits of memory) to the low two
+		// floats of an xmm register; the high two are kept. Reading an MMX
+		// register is an MMX instruction, which resets the x87 TOP.
+		v, ok := g.mm64(a1)
+		if !dIsXmm || !ok {
+			return false
+		}
+		reset := ""
+		if _, isReg := mmReg(a1); isReg {
+			reset = " c->ftop = 0;"
+		}
+		g.line("{ XbMM s = { .q = %s }; c->xmm[%d].f[0] = (float)s.sd[0]; c->xmm[%d].f[1] = (float)s.sd[1];%s }", v, d, d, reset)
+		return true
+
 	case x86asm.MOVMSKPS:
 		s, ok := xmm(a1)
 		w, ok2 := g.write(a0, 32, fmt.Sprintf("(c->xmm[%d].u[0] >> 31) | (c->xmm[%d].u[1] >> 31) << 1 | (c->xmm[%d].u[2] >> 31) << 2 | (c->xmm[%d].u[3] >> 31) << 3", s, s, s, s))

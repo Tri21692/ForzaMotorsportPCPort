@@ -1,0 +1,13 @@
+# XBRT_INPUT_SCRIPT for a first run: from boot to the main menu with a new
+# profile named "0". Times are seconds from start-up, with no logging (a
+# log slows the game and shifts everything). It assumes the hard disk
+# already holds the "Default" save the game makes for its car icons, so
+# that the name the keyboard offers is taken; see docs/NIGHTLY.md.
+0 auto 48   # START and A through the intro, title and profile screens
+52 A        # dismiss "cannot create profile": back to the keyboard, on Done
+55 RIGHT
+58 A        # the first key typed replaces "Default"
+61 LEFT     # wraps round to the "0" key
+64 A        # name is now "0"
+67 RIGHT    # wraps round to Done
+70 A        # create and save the profile; the main menu follows

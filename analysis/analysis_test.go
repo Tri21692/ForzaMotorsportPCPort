@@ -137,3 +137,41 @@ func TestForza(t *testing.T) {
 		t.Errorf("only %d functions found", len(p.Funcs))
 	}
 }
+
+// TestBodyThroughFalseStart: a known start that the code before it falls
+// into is still part of that function's body. 0x11002 here is like
+// Forza's 0x7B649, a label a data reference made into a "function", right
+// after a cmp whose flags it reads.
+func TestBodyThroughFalseStart(t *testing.T) {
+	text := make([]byte, 0x20)
+	for i := range text {
+		text[i] = 0xCC
+	}
+	copy(text, []byte{
+		0x3B, 0xC3, // 11000 cmp eax, ebx (ends in C3, so 11002 looks like a start)
+		0x75, 0x01, // 11002 jnz 11005
+		0x40,       // 11004 inc eax
+		0xC3,       // 11005 ret
+	})
+	f, err := xbe.Parse(xbetest.Image{
+		Title: "Body", Entry: 0x11000, Thunk: 0x20000,
+		Sections: []xbetest.Section{
+			{Name: ".text", VA: 0x11000, Data: text, Flags: xbe.SecPreload | xbe.SecExecutable},
+			{Name: ".rdata", VA: 0x20000, Data: xbetest.Thunks(187), Flags: xbe.SecPreload},
+		},
+	}.Build())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := analysis.Analyze(f, 0x11002)
+	if !p.IsFunc(0x11002) {
+		t.Fatal("0x11002 not a start; the test no longer sets up the case")
+	}
+	var addrs []uint32
+	for _, in := range p.Body(0x11000).Insts {
+		addrs = append(addrs, in.Addr)
+	}
+	if want := []uint32{0x11000, 0x11002, 0x11004, 0x11005}; !slices.Equal(addrs, want) {
+		t.Errorf("body of 0x11000 is %x, want %x", addrs, want)
+	}
+}

@@ -1,0 +1,9 @@
+{
+  "names_from": "D:/PC/NFSMW 1/CARS",
+  "parts": {
+    "KIT00_FRONT_TIRE": [
+      {"from": [["KIT00_FRONT_TIRE_A", "SC63_RIM", "RIM_KIT00_BLACK"]], "keep": 0.3},
+      {"from": [["KIT00_FRONT_TIRE_A", "SC63_RIM", "RIM_KIT00_BLACK"]], "keep": 0.1}
+    ]
+  }
+}
