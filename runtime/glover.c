@@ -51,13 +51,22 @@ static void ov_font_load(OvFont *f, const char *name, float scale) {
         snprintf(path, sizeof path, "%s/Partition%d/fontcache/euro/%s.sbm", hdd, part, name);
         if (abc) sbm = ov_read(path, &ns);
     }
-    if (!abc || !sbm || na < 128 * 8) {
-        free(abc), free(sbm);
-        return;
-    }
     static uint8_t atlas[6 * 34][16 * 34]; /* the blank edges keep filtering from taking in the next glyph */
     memset(atlas, 0, sizeof atlas);
-    for (int ch = 32; ch < 128; ch++) {
+    int host = 0;
+    if (getenv("XBRT_OVERLAY_HOSTFONT") && atoi(getenv("XBRT_OVERLAY_HOSTFONT"))) free(abc), free(sbm), abc = sbm = NULL; /* (testing the fallback) */
+    if (!abc || !sbm || na < 128 * 8) {
+        /* no font cache where the overlay looks (19 Nov: another launcher's disk layout, or F1 before the game has
+         * made it): Windows' own font, so the menu has its words whatever hosts it */
+        int rt_gl_host_font(int px, int bold, int slant, unsigned char *atlas, signed char *wa, unsigned char *wb, signed char *wc);
+        int title = !strncmp(name, "titlebar", 8), text = !strncmp(name, "text", 4);
+        free(abc), free(sbm), abc = sbm = NULL;
+        static int told;
+        if (!told++) fprintf(stderr, "xbrt: overlay: no font cache under %s (fontcache/euro/%s.abc): the menu in Windows' font\n", hdd, name);
+        if (!rt_gl_host_font(text ? 22 : 24, title, title, &atlas[0][0], f->a, f->b, f->c)) return;
+        host = 1;
+    }
+    for (int ch = 32; ch < 128 && !host; ch++) {
         const uint8_t *e = abc + ch * 8;
         uint32_t off = (uint32_t)e[0] | (uint32_t)e[1] << 8 | (uint32_t)e[2] << 16 | (uint32_t)e[3] << 24;
         int slot = e[4] & 3, k = ch - 32;

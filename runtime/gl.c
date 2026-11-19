@@ -230,7 +230,55 @@ int rt_gl_init(void) {
     rt_gl_on = 1;
     return 1;
 }
+
+/* A font of Windows' own drawn as the overlay's atlas (glover.c: 16 x 6 cells of 34x34, characters 32-127, a glyph's
+ * ink from its cell's left edge, with its A, B and C widths): for when the game's font cache is not where the overlay
+ * looks (another launcher's disk layout, or the menu opened before the game has made it): the menu showed its bars
+ * and no words. px the letters' height, bold, slanted. 1 if it was drawn. */
+int rt_gl_host_font(int px, int bold, int slant, unsigned char *atlas, signed char *wa, unsigned char *wb, signed char *wc) {
+    HDC dc = CreateCompatibleDC(NULL);
+    if (!dc) return 0;
+    BITMAPINFO bi = {0};
+    bi.bmiHeader.biSize = sizeof bi.bmiHeader, bi.bmiHeader.biWidth = 32, bi.bmiHeader.biHeight = -32;
+    bi.bmiHeader.biPlanes = 1, bi.bmiHeader.biBitCount = 32, bi.bmiHeader.biCompression = BI_RGB;
+    void *bits = NULL;
+    HBITMAP bm = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    HFONT font = CreateFontA(-px, 0, 0, 0, bold ? FW_BOLD : FW_SEMIBOLD, slant ? TRUE : FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_TT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+    if (!bm || !bits || !font) {
+        if (bm) DeleteObject(bm);
+        if (font) DeleteObject(font);
+        DeleteDC(dc);
+        return 0;
+    }
+    HGDIOBJ bm0 = SelectObject(dc, bm), f0 = SelectObject(dc, font);
+    SetBkMode(dc, OPAQUE), SetBkColor(dc, RGB(0, 0, 0)), SetTextColor(dc, RGB(255, 255, 255));
+    memset(atlas, 0, 6 * 34 * 16 * 34);
+    for (int ch = 32; ch < 128; ch++) {
+        ABC abc = {0, 0, 0};
+        char c = (char)ch;
+        int k = ch - 32;
+        if (!GetCharABCWidthsA(dc, (UINT)ch, (UINT)ch, &abc)) {
+            SIZE sz = {0, 0};
+            GetTextExtentPoint32A(dc, &c, 1, &sz), abc.abcB = (UINT)sz.cx;
+        }
+        memset(bits, 0, 32 * 32 * 4);
+        TextOutA(dc, -abc.abcA, (32 - px) / 2 - 2, &c, 1);
+        GdiFlush();
+        wa[k] = (signed char)abc.abcA, wb[k] = (unsigned char)(abc.abcB > 32 ? 32 : abc.abcB), wc[k] = (signed char)abc.abcC;
+        const unsigned char *p = bits;
+        for (int y = 0; y < 32; y++)
+            for (int x = 0; x < 32; x++) atlas[(k / 16 * 34 + 1 + y) * (16 * 34) + k % 16 * 34 + 1 + x] = p[(y * 32 + x) * 4 + 1];
+    }
+    SelectObject(dc, f0), SelectObject(dc, bm0);
+    DeleteObject(font), DeleteObject(bm), DeleteDC(dc);
+    return 1;
+}
 #else
+int rt_gl_host_font(int px, int bold, int slant, unsigned char *atlas, signed char *wa, unsigned char *wb, signed char *wc) {
+    (void)px, (void)bold, (void)slant, (void)atlas, (void)wa, (void)wb, (void)wc;
+    return 0;
+}
 int rt_gl_window_begin(int *W, int *H) { (void)W, (void)H; return 0; }
 void rt_gl_window_swap(void) {}
 int rt_gl_init(void) {
